@@ -1,0 +1,219 @@
+/* birds.gaylon.photos — V2 mockup shared styles
+   Family rules: hand-written CSS, no frameworks. WCAG AAA (7:1) text.
+   Mobile-first: base = phone; min-width 640px (tablet) and 1024px (desktop). */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f8f9fa;
+  --card: #ffffff;
+  --border: #e9ecef;
+  --text: #212529;        /* 16.1:1 on white */
+  --muted: #495057;       /* 7.5:1 on white */
+  --accent: #0a5c43;      /* dark green, 7.6:1 on white */
+  --accent-soft: #e3f3ec;
+  --link: #084298;        /* 9.3:1 on white */
+  --need-bg: #fff3cd;  --need-text: #5c4400;     /* 7.6:1 on #fff3cd */
+  --seen-bg: #d1e7dd;  --seen-text: #0a3622;
+  --notable-bg: #f8d7da; --notable-text: #58151c;
+  --danger: #842029;
+  --nav-h: 56px;
+  --bottomnav-h: 64px;
+}
+
+html { font-size: 18px; } /* giftlist pattern: 18px+ base, no iOS zoom on inputs */
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  padding-top: var(--nav-h);
+  /* phone: leave room for fixed bottom nav + notch safe area */
+  padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 16px);
+}
+
+a { color: var(--link); }
+button { font: inherit; touch-action: manipulation; cursor: pointer; }
+input, select { font: inherit; font-size: 1rem; } /* >=16px prevents iOS zoom */
+
+/* ── Top nav (tablet/desktop) ───────────────────────────── */
+.top-nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+  height: var(--nav-h);
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 16px;
+}
+.top-nav .brand {
+  font-weight: 700; color: var(--text); text-decoration: none;
+  margin-right: 12px; font-size: 1rem; display: flex; align-items: center; gap: 8px;
+}
+.top-nav .links { display: none; } /* phone: links live in bottom nav */
+.top-nav .links a {
+  padding: 10px 16px; min-height: 44px; display: inline-flex; align-items: center;
+  text-decoration: none; color: var(--muted);
+  font-size: 0.83rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+  border-radius: 6px;
+}
+.top-nav .links a:hover { color: var(--text); background: var(--bg); }
+.top-nav .links a.active { color: var(--accent); background: var(--accent-soft); }
+.top-nav .spacer { flex: 1; }
+.top-nav .user { color: var(--muted); font-size: 0.83rem; }
+
+/* ── Bottom nav (phone only) — giftlist BottomNav pattern ── */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000;
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bottom-nav a {
+  flex: 1; min-height: var(--bottomnav-h);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  text-decoration: none; color: var(--muted);
+  font-size: 0.72rem; font-weight: 600;
+}
+.bottom-nav a .ico { font-size: 1.3rem; line-height: 1; }
+.bottom-nav a.active { color: var(--accent); }
+
+/* ── Layout ─────────────────────────────────────────────── */
+.page { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.page-head { margin: 4px 0 16px; }
+.page-head h1 { font-size: 1.4rem; }
+.page-head .sub { color: var(--muted); font-size: 0.89rem; margin-top: 2px; }
+
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; margin-bottom: 12px;
+}
+.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
+
+/* list+map: stacked on phone, side-by-side on desktop */
+.split { display: flex; flex-direction: column; gap: 12px; }
+.map-box {
+  height: 50vh; min-height: 280px; max-height: 420px;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: #dde3e8;
+}
+.map-box > div { height: 100%; width: 100%; } /* google.maps.Map fills the box */
+
+/* ── Badges: always color + text label ──────────────────── */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 6px;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.badge.need    { background: var(--need-bg);    color: var(--need-text); }
+.badge.seen    { background: var(--seen-bg);    color: var(--seen-text); }
+.badge.notable { background: var(--notable-bg); color: var(--notable-text); }
+.badge.unmatched { background: var(--notable-bg); color: var(--notable-text); }
+.badge.matched { background: var(--seen-bg); color: var(--seen-text); }
+
+/* ── Species / observation rows ─────────────────────────── */
+.obs {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.obs:first-of-type { border-top: none; }
+.obs .grow { flex: 1; min-width: 0; }
+.obs .name { font-weight: 700; }
+.obs .name a { color: var(--text); text-decoration: none; }
+.obs .name a:hover { text-decoration: underline; }
+.obs .meta { color: var(--muted); font-size: 0.83rem; margin-top: 2px; }
+.obs .right { text-align: right; flex-shrink: 0; }
+.obs .dist { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.obs .when { color: var(--muted); font-size: 0.78rem; }
+
+/* ── Buttons: >=48px tap targets ────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 10px 20px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); font-weight: 600;
+  text-decoration: none; font-size: 0.94rem;
+}
+.btn:hover { background: var(--bg); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #07472f; }
+.btn.danger { background: var(--card); border-color: #d9a5ab; color: var(--danger); }
+.btn.small { min-height: 44px; padding: 8px 14px; font-size: 0.85rem; }
+
+/* ── Forms / filters ────────────────────────────────────── */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filters select, .filters input[type="search"], .filters input[type="text"] {
+  min-height: 48px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  color: var(--text);
+}
+.chip {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px;
+  border-radius: 22px; border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); font-size: 0.85rem; font-weight: 600;
+}
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* ── Photo grid (CDN thumbnails hotlinked from gaylon.photos) ── */
+.photo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.photo-grid a { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: #dde3e8; }
+.photo-grid img { display: block; width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+.photo-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.photo-strip a { flex: 0 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.photo-strip img { display: block; height: 110px; width: auto; }
+
+.species-group { margin-bottom: 20px; }
+.species-group .group-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.species-group .group-head h3 { font-size: 1rem; }
+.species-group .group-head h3 a { color: var(--text); }
+.species-group .group-head .sci { color: var(--muted); font-style: italic; font-size: 0.83rem; }
+.species-group .group-head .count { color: var(--muted); font-size: 0.83rem; }
+
+/* ── Modal (destructive confirmation — never toasts) ────── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; z-index: 2000;
+  background: rgba(33,37,41,0.6);
+  align-items: center; justify-content: center; padding: 16px;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--card); border-radius: 8px; padding: 24px;
+  max-width: 420px; width: 100%;
+}
+.modal h3 { margin-bottom: 8px; }
+.modal p { color: var(--muted); margin-bottom: 20px; }
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal .actions .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ── Attribution footer (eBird ToS) ─────────────────────── */
+.attribution {
+  text-align: center; color: var(--muted); font-size: 0.78rem; padding: 20px 0 8px;
+}
+.attribution a { color: var(--muted); }
+
+/* ── Tablet ≥640px ──────────────────────────────────────── */
+@media (min-width: 640px) {
+  body { padding-bottom: 24px; } /* no bottom nav */
+  .bottom-nav { display: none; }
+  .top-nav .links { display: flex; gap: 4px; }
+  .page { padding: 24px; }
+  .page-head h1 { font-size: 1.6rem; }
+  .photo-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ── Desktop / iPad landscape ≥1024px ───────────────────── */
+@media (min-width: 1024px) {
+  .split { flex-direction: row; align-items: flex-start; }
+  .split .list-col { flex: 1; min-width: 0; }
+  .split .map-col { flex: 0 0 460px; position: sticky; top: calc(var(--nav-h) + 16px); }
+  .split .map-col .map-box { height: 540px; max-height: none; }
+  .photo-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

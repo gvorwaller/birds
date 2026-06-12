@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trips — birds.gaylon.photos mockup</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="index.html"><span>🪶</span> birds.gaylon.photos</a>
+  <div class="links">
+    <a href="dashboard.html">Home</a>
+    <a href="targets.html">Targets</a>
+    <a class="active" href="trips.html">Trips</a>
+    <a href="photos.html">Photos</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="user">gaylon</span>
+</nav>
+
+<main class="page">
+  <div class="page-head">
+    <h1>Trips</h1>
+    <div class="sub">2 trips · <a href="#">+ Create trip</a></div>
+  </div>
+
+  <div class="card">
+    <div class="obs">
+      <div class="grow">
+        <div class="name">Talbot Islands morning run <span class="badge seen">Active</span></div>
+        <div class="meta">Sat Jun 14 · 3 stops · 8 of your current needs reported on route this week</div>
+      </div>
+      <div class="right"><span class="when">shown below</span></div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name">Sweetwater + Paynes Prairie day</div>
+        <div class="meta">no date yet · 2 stops · 5 needs reported this week</div>
+      </div>
+      <div class="right"><a class="btn small" href="#">Open</a></div>
+    </div>
+  </div>
+
+  <div class="page-head" style="margin-top:8px">
+    <h1 style="font-size:1.15rem">Talbot Islands morning run</h1>
+    <div class="sub">Saturday, June 14 · sunrise 6:24 am · 46 km loop from home</div>
+  </div>
+
+  <div class="split">
+    <div class="map-col">
+      <div id="map" class="map-box" aria-label="Trip route map with numbered stops"></div>
+    </div>
+
+    <div class="list-col">
+      <div class="card">
+        <h2>Stops</h2>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name">① Huguenot Memorial Park</div>
+            <div class="meta">5 needs reported this week: Reddish Egret, Gull-billed Tern, Black Tern… ·
+              Note: <em>drive-on beach, arrive before 8 to beat crowds; check tern flock at lagoon spit</em></div>
+          </div>
+          <div class="right"><div class="dist">5 needs</div><div class="when">07:00</div></div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name">② Spoonbill Pond — Big Talbot Island</div>
+            <div class="meta">3 needs: Snowy Plover, American Flamingo (notable!) ·
+              Note: <em>scope from the roadside pull-off, light is best mid-morning</em></div>
+          </div>
+          <div class="right"><div class="dist">3 needs</div><div class="when">09:30</div></div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name">③ Custom pin: Sawpit Creek boat ramp</div>
+            <div class="meta">Custom marker · Note: <em>Marbled Godwit flock seen here in Feb — recheck mudflat at low tide (11:05)</em></div>
+          </div>
+          <div class="right"><div class="dist">—</div><div class="when">11:00</div></div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+          <a class="btn" href="#">+ Add stop</a>
+          <a class="btn" href="#">Export Markdown</a>
+          <button class="btn danger" id="delete-trip">Delete trip…</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Targets on this route</h2>
+        <div class="obs">
+          <div class="grow"><div class="name"><a href="species.html">Reddish Egret</a> <span class="badge need">Need</span></div>
+          <div class="meta">stop ① · 7 reports this week</div></div>
+        </div>
+        <div class="obs">
+          <div class="grow"><div class="name"><a href="species.html">American Flamingo</a> <span class="badge need">Need</span> <span class="badge notable">Notable</span></div>
+          <div class="meta">stop ② · continuing</div></div>
+        </div>
+        <div class="obs">
+          <div class="grow"><div class="name"><a href="species.html">Snowy Plover</a> <span class="badge need">Need</span></div>
+          <div class="meta">stop ② · 1 report</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="attribution">Data from <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a></p>
+</main>
+
+<nav class="bottom-nav">
+  <a href="dashboard.html"><span class="ico">🏠</span>Home</a>
+  <a href="targets.html"><span class="ico">🔭</span>Targets</a>
+  <a class="active" href="trips.html"><span class="ico">🗺️</span>Trips</a>
+  <a href="photos.html"><span class="ico">📷</span>Photos</a>
+</nav>
+
+<!-- Destructive action = modal confirmation, never a toast (family rule) -->
+<div class="modal-overlay" id="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title">Delete this trip?</h3>
+    <p>“Talbot Islands morning run” and its 3 stops will be permanently deleted. Your seen list and photos are not affected.</p>
+    <div class="actions">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn danger" id="modal-confirm">Delete trip</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Same Google Maps setup as gaylon.photos (shared PUBLIC_GOOGLE_MAPS_API_KEY + Map ID).
+  const MAP_ID = '9ff2c76a31d20582e22f6766';
+
+  async function initMap() {
+    const { Map, InfoWindow } = await google.maps.importLibrary('maps');
+    const { AdvancedMarkerElement, PinElement } = await google.maps.importLibrary('marker');
+
+    const map = new Map(document.getElementById('map'), {
+      center: { lat: 30.49, lng: -81.45 },
+      zoom: 11,
+      mapId: MAP_ID,
+      gestureHandling: 'greedy',
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM }
+    });
+    const info = new InfoWindow({ maxWidth: 280 });
+
+    const stops = [
+      [30.457, -81.411, '1', 'Huguenot Memorial Park · 07:00'],
+      [30.503, -81.439, '2', 'Spoonbill Pond · 09:30'],
+      [30.521, -81.448, '3', 'Sawpit Creek boat ramp · 11:00']
+    ];
+    const path = [];
+    for (const [lat, lng, glyph, label] of stops) {
+      path.push({ lat, lng });
+      const pin = new PinElement({ background: '#0a5c43', borderColor: '#07472f', glyphColor: '#fff', glyph });
+      const m = new AdvancedMarkerElement({ map, position: { lat, lng }, title: label, content: pin.element });
+      m.addListener('click', () => { info.setContent(`<b>${label}</b>`); info.open({ map, anchor: m }); });
+    }
+    new google.maps.Polyline({
+      map, path, strokeColor: '#0a5c43', strokeOpacity: 0.8, strokeWeight: 3
+    });
+  }
+
+  // modal demo
+  const modal = document.getElementById('modal');
+  document.getElementById('delete-trip').onclick = () => modal.classList.add('open');
+  document.getElementById('modal-cancel').onclick = () => modal.classList.remove('open');
+  document.getElementById('modal-confirm').onclick = () => modal.classList.remove('open');
+</script>
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBZVRA5vyNXjZzHz89Lia-kX4Ro61Y6i7M&loading=async&callback=initMap&v=weekly"></script>
+</body>
+</html>

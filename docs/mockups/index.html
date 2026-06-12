@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>birds.gaylon.photos — V2 UI Mockups</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  body { padding-top: 0; }
+  .hero { padding: 40px 16px 8px; max-width: 1100px; margin: 0 auto; }
+  .hero h1 { font-size: 1.6rem; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>🪶 birds.gaylon.photos — UI Mockups (V2)</h1>
+  <p style="color:var(--muted); margin-top:6px">
+    Static HTML mockups for the V2 design: gallery is <strong>link-out only</strong> (photos stay on
+    gaylon.photos — real CDN thumbnails are hotlinked below), Postgres + madonnahist infrastructure patterns,
+    and first-class responsive support for iPhone / iPad / desktop.
+    The V1 design doc (<code>birds-app-design.md</code>) is deprecated; see
+    <code>birds-app-design-V2-Fable-revision-plan.md</code> for the V2 spec direction.
+  </p>
+</div>
+
+<main class="page">
+  <div class="card">
+    <h2>Screens</h2>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="dashboard.html">Dashboard / Near Me</a></div>
+        <div class="meta">Home radius, live Google Map (same key/Map ID as gaylon.photos), needs reported nearby with distance + counts + times, life-list stats.</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="targets.html">Targets / Needs Explorer</a></div>
+        <div class="meta">Hancock County, ME trip scenario: "Rare this week" notable feed, your needs with recent activity, family filters, ranked best-places list with add-to-trip. Life list synced automatically via eBird login.</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="trips.html">Trips</a></div>
+        <div class="meta">Trip list + detail: route map with numbered stops, per-stop notes and needs counts, delete-trip modal (family rule: modal, never toast).</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="photos.html">My Photos</a></div>
+        <div class="meta">Real gaylon.photos thumbnails grouped by species, link-out to photo pages, and the unmatched-species override workflow (with real mismatches: “Blue Winged Teal”, “Boat-tailed grackle”).</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="species.html">Species page (Roseate Spoonbill)</a></div>
+        <div class="meta">Your photo strip, recent reports near home, add-to-trip, external resources (eBird / All About Birds / Macaulay / xeno-canto).</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>How to review responsiveness</h2>
+    <p style="color:var(--muted); font-size:0.92rem">
+      Mobile-first with two breakpoints. Resize the window or use Chrome DevTools device toolbar:
+    </p>
+    <div class="obs"><div class="grow"><div class="name">iPhone (&lt; 640px)</div><div class="meta">Fixed bottom nav with safe-area inset, stacked map above list (map capped at 50vh), 48px tap targets, 18px base font.</div></div></div>
+    <div class="obs"><div class="grow"><div class="name">iPad (≥ 640px)</div><div class="meta">Top nav appears, bottom nav hides, 3-column photo grid.</div></div></div>
+    <div class="obs"><div class="grow"><div class="name">Desktop / iPad landscape (≥ 1024px)</div><div class="meta">Map docks to a sticky right column beside the list, 4-column photo grid.</div></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Family compliance notes</h2>
+    <div class="obs"><div class="grow"><div class="meta">Hand-written scoped CSS only (shared <code>mockup.css</code> stands in for component styles) — no Tailwind. White cards on #f8f9fa, 1px #e9ecef borders, 8px radius (gaylonphotos tokens).</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">WCAG AAA: all text ≥ 7:1 contrast incl. muted (#495057); every status is color + text label (NEED / SEEN / NOTABLE badges).</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">Destructive actions use modal confirmation (see Delete trip on the Trips screen) — never toasts.</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">“Data from eBird.org” attribution on every screen using eBird data. Maps are Google Maps reusing the gaylon.photos key + Map ID (needs network to render).</div></div></div>
+  </div>
+</main>
+
+</body>
+</html>

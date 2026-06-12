@@ -6,3 +6,14 @@ build/
 *.log
 .DS_Store
 
+.todos/
+.sidecar/
+.sidecar-agent
+.sidecar-task
+.sidecar-pr
+.sidecar-start.sh
+.sidecar-base
+.td-root
+
+.claude/settings.local.json
+.claude/worktrees/

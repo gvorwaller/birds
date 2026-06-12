@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dashboard / Near Me — birds.gaylon.photos mockup</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="index.html"><span>🪶</span> birds.gaylon.photos</a>
+  <div class="links">
+    <a class="active" href="dashboard.html">Home</a>
+    <a href="targets.html">Targets</a>
+    <a href="trips.html">Trips</a>
+    <a href="photos.html">Photos</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="user">gaylon</span>
+</nav>
+
+<main class="page">
+  <div class="page-head">
+    <h1>Near Me</h1>
+    <div class="sub">Home: Jacksonville, FL · radius 40 km · <a href="#">change</a></div>
+  </div>
+
+  <div class="split">
+    <div class="map-col">
+      <div id="map" class="map-box" aria-label="Map of recent needs near home"></div>
+    </div>
+
+    <div class="list-col">
+      <div class="card">
+        <h2>Your needs reported nearby — last 7 days</h2>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name"><a href="species.html">Reddish Egret</a> <span class="badge need">Need</span></div>
+            <div class="meta">Huguenot Memorial Park · 2 birds · most reports 7–10 am</div>
+          </div>
+          <div class="right">
+            <div class="dist">18.4 km</div>
+            <div class="when">today 8:12 am</div>
+          </div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name"><a href="species.html">Snowy Plover</a> <span class="badge need">Need</span> <span class="badge notable">Notable</span></div>
+            <div class="meta">Spoonbill Pond — Big Talbot Island · 1 bird · single report</div>
+          </div>
+          <div class="right">
+            <div class="dist">21.7 km</div>
+            <div class="when">yesterday 4:40 pm</div>
+          </div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name"><a href="species.html">Swallow-tailed Kite</a> <span class="badge need">Need</span></div>
+            <div class="meta">M&amp;M Dairy · 3 birds · reported 5 of last 7 days</div>
+          </div>
+          <div class="right">
+            <div class="dist">14.9 km</div>
+            <div class="when">today 9:55 am</div>
+          </div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name"><a href="species.html">Black-bellied Whistling-Duck</a> <span class="badge need">Need</span></div>
+            <div class="meta">Sweetwater Wetlands Park · 14 birds · reported daily</div>
+          </div>
+          <div class="right">
+            <div class="dist">36.2 km</div>
+            <div class="when">today 7:30 am</div>
+          </div>
+        </div>
+
+        <div class="obs">
+          <div class="grow">
+            <div class="name"><a href="species.html">Bachman's Sparrow</a> <span class="badge need">Need</span></div>
+            <div class="meta">Jennings State Forest · singing · best 6–8 am</div>
+          </div>
+          <div class="right">
+            <div class="dist">31.5 km</div>
+            <div class="when">2 days ago</div>
+          </div>
+        </div>
+
+        <a class="btn primary" href="trips.html" style="margin-top:12px">🗺️ Plan a trip to chase these</a>
+      </div>
+
+      <div class="card">
+        <h2>At a glance</h2>
+        <div class="obs">
+          <div class="grow"><div class="name">Life list</div><div class="meta">312 species imported from eBird CSV</div></div>
+          <div class="right"><div class="dist">312</div></div>
+        </div>
+        <div class="obs">
+          <div class="grow"><div class="name">Needs reported nearby this week</div><div class="meta">within 40 km of home</div></div>
+          <div class="right"><div class="dist">5</div></div>
+        </div>
+        <div class="obs">
+          <div class="grow"><div class="name">Photos on gaylon.photos</div><div class="meta"><a href="photos.html">My Photos</a> · synced 2 h ago</div></div>
+          <div class="right"><div class="dist">49</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="attribution">Data from <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a></p>
+</main>
+
+<nav class="bottom-nav">
+  <a class="active" href="dashboard.html"><span class="ico">🏠</span>Home</a>
+  <a href="targets.html"><span class="ico">🔭</span>Targets</a>
+  <a href="trips.html"><span class="ico">🗺️</span>Trips</a>
+  <a href="photos.html"><span class="ico">📷</span>Photos</a>
+</nav>
+
+<script>
+  // Same Google Maps setup as gaylon.photos (shared PUBLIC_GOOGLE_MAPS_API_KEY + Map ID).
+  const MAP_ID = '9ff2c76a31d20582e22f6766';
+
+  async function initMap() {
+    const { Map, InfoWindow } = await google.maps.importLibrary('maps');
+    const { AdvancedMarkerElement, PinElement } = await google.maps.importLibrary('marker');
+
+    const map = new Map(document.getElementById('map'), {
+      center: { lat: 30.34, lng: -81.52 },
+      zoom: 10,
+      mapId: MAP_ID,
+      gestureHandling: 'greedy',
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM }
+    });
+    const info = new InfoWindow({ maxWidth: 280 });
+
+    const addMarker = (lat, lng, title, html, colors) => {
+      const pin = new PinElement(colors);
+      const m = new AdvancedMarkerElement({ map, position: { lat, lng }, title, content: pin.element });
+      m.addListener('click', () => { info.setContent(html); info.open({ map, anchor: m }); });
+    };
+
+    addMarker(30.33, -81.55, 'Home', '<b>Home</b><br>Jacksonville, FL',
+      { background: '#084298', borderColor: '#052c65', glyphColor: '#fff' });
+
+    const spots = [
+      [30.457, -81.411, 'Huguenot Memorial Park', 'Reddish Egret · 18.4 km'],
+      [30.503, -81.439, 'Spoonbill Pond — Big Talbot', 'Snowy Plover · 21.7 km'],
+      [30.460, -81.630, 'M&M Dairy', 'Swallow-tailed Kite · 14.9 km'],
+      [30.140, -81.860, 'Jennings State Forest', "Bachman's Sparrow · 31.5 km"]
+    ];
+    for (const [lat, lng, name, sub] of spots) {
+      addMarker(lat, lng, name, `<b>${name}</b><br>${sub}`,
+        { background: '#0a5c43', borderColor: '#07472f', glyphColor: '#fff' });
+    }
+  }
+</script>
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBZVRA5vyNXjZzHz89Lia-kX4Ro61Y6i7M&loading=async&callback=initMap&v=weekly"></script>
+</body>
+</html>
