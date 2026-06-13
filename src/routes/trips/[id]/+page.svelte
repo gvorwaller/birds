@@ -41,6 +41,7 @@
 		<div class="title-row">
 			<h1>{data.trip.name}</h1>
 			<button class="link" onclick={() => (editing = !editing)}>{editing ? 'Close' : 'Edit'}</button>
+			<a class="link" href={`/trips/${data.trip.id}/export`} data-sveltekit-reload>⬇ Export</a>
 		</div>
 		<p class="sub">{fmtDates(data.trip.start_date, data.trip.end_date)} · {data.stops.length} {data.stops.length === 1 ? 'stop' : 'stops'}</p>
 		{#if data.trip.notes && !editing}<p class="notes">{data.trip.notes}</p>{/if}

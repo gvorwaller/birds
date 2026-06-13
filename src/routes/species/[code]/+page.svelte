@@ -25,6 +25,11 @@
 			label: 'xeno-canto ↗',
 			sub: 'sound recordings',
 			href: `https://xeno-canto.org/explore?query=${encodeURIComponent(data.taxon.sci_name)}`
+		},
+		{
+			label: 'iNaturalist ↗',
+			sub: 'observations & range',
+			href: `https://www.inaturalist.org/taxa/search?q=${encodeURIComponent(data.taxon.sci_name)}`
 		}
 	]);
 </script>

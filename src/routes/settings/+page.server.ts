@@ -15,7 +15,7 @@ import { rematchPhotoLinks, syncGallery } from '$server/gallery';
 export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.user!.id;
 
-	const [ebird, user, taxCount, seenBySource, photoStats] = await Promise.all([
+	const [ebird, user, taxCount, seenBySource, photoStats, cacheStats, tripStats] = await Promise.all([
 		query<{
 			api_key_set: boolean;
 			login_set: boolean;
@@ -42,7 +42,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 		),
 		query<{ total: string; matched: string }>(
 			`SELECT COUNT(*) AS total, COUNT(species_code) AS matched FROM photo_links`
-		)
+		),
+		query<{ cache_rows: string; cache_newest: string | null }>(
+			`SELECT COUNT(*) AS cache_rows, MAX(fetched_at)::text AS cache_newest FROM ebird_cache`
+		),
+		query<{ n: string }>('SELECT COUNT(*) AS n FROM trips WHERE user_id = $1', [userId])
 	]);
 
 	const row = ebird.rows[0];
@@ -70,7 +74,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		taxonomyCount: taxCount,
 		seenBySource: seenBySource.rows.map((r) => ({ source: r.source, n: Number(r.n) })),
 		photoTotal: Number(photoStats.rows[0]?.total ?? 0),
-		photoMatched: Number(photoStats.rows[0]?.matched ?? 0)
+		photoMatched: Number(photoStats.rows[0]?.matched ?? 0),
+		cacheRows: Number(cacheStats.rows[0]?.cache_rows ?? 0),
+		cacheNewest: cacheStats.rows[0]?.cache_newest ?? null,
+		tripCount: Number(tripStats.rows[0]?.n ?? 0)
 	};
 };
 
@@ -222,6 +229,16 @@ export const actions: Actions = {
 		} catch (err) {
 			return fail(400, { error: `CSV import failed: ${err instanceof Error ? err.message : err}` });
 		}
+	},
+
+	flush_cache: async () => {
+		const r = await query<{ n: string }>(
+			'WITH d AS (DELETE FROM ebird_cache RETURNING 1) SELECT COUNT(*) AS n FROM d'
+		);
+		return {
+			ok: true as const,
+			message: `Cleared ${Number(r.rows[0]?.n ?? 0)} cached eBird responses — next load fetches fresh.`
+		};
 	},
 
 	sync_gallery: async () => {

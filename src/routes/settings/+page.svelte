@@ -12,6 +12,8 @@
 		form && 'apiKey' in form ? (form as { apiKey: string }).apiKey : null
 	);
 
+	let seenTotal = $derived(data.seenBySource.reduce((a, s) => a + s.n, 0));
+
 	function track(name: string) {
 		return () => {
 			busy = name;
@@ -219,6 +221,34 @@
 					{busy === 'gallery' ? 'Syncing…' : '⟳ Sync'}
 				</button>
 			</form>
+		</div>
+	</section>
+
+	<section class="card">
+		<h2>Tools &amp; data</h2>
+		<div class="obs">
+			<div class="grow">
+				<div class="name">eBird response cache</div>
+				<div class="meta">
+					{data.cacheRows} cached {data.cacheRows === 1 ? 'response' : 'responses'}
+					{#if data.cacheNewest}· newest {new Date(data.cacheNewest).toLocaleString()}{/if}
+					{#if data.cacheRows === 0}· empty{/if}
+				</div>
+			</div>
+			<form method="POST" action="?/flush_cache" use:enhance={track('flush')}>
+				<button type="submit" disabled={busy === 'flush' || data.cacheRows === 0}>
+					{busy === 'flush' ? 'Clearing…' : 'Flush cache'}
+				</button>
+			</form>
+		</div>
+		<div class="obs">
+			<div class="grow">
+				<div class="name">At a glance</div>
+				<div class="meta">
+					{data.taxonomyCount} taxa · {seenTotal} life-list species · {data.photoMatched}/{data.photoTotal}
+					photos matched · {data.tripCount} {data.tripCount === 1 ? 'trip' : 'trips'}
+				</div>
+			</div>
 		</div>
 	</section>
 
