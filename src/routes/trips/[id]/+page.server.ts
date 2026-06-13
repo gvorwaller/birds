@@ -25,7 +25,7 @@ function tripIdFrom(params: { id: string }): number {
 }
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
-	const userId = locals.user!.id;
+	const userId = locals.ownerId!;
 	const tripId = tripIdFrom(params);
 
 	const trip = await getTrip(userId, tripId);
@@ -64,6 +64,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	return {
 		trip,
 		stops,
+		canEdit: locals.user!.role !== 'viewer',
 		needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
 		needsStale: needs.stale,
 		needsError: needs.error,
@@ -85,13 +86,13 @@ export const actions: Actions = {
 		const notes = (form.get('notes') ?? '').toString().trim() || null;
 		if (!name) return fail(400, { error: 'Trip name is required.' });
 		if (start && end && end < start) return fail(400, { error: 'End date is before start date.' });
-		await updateTrip(locals.user!.id, tripId, { name, start_date: start, end_date: end, notes });
+		await updateTrip(locals.ownerId!, tripId, { name, start_date: start, end_date: end, notes });
 		return { ok: true as const, message: 'Trip updated.' };
 	},
 
 	delete_trip: async ({ locals, params }) => {
 		const tripId = tripIdFrom(params);
-		await deleteTrip(locals.user!.id, tripId);
+		await deleteTrip(locals.ownerId!, tripId);
 		throw redirect(303, '/trips');
 	},
 
@@ -104,7 +105,7 @@ export const actions: Actions = {
 		if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) {
 			return fail(400, { error: 'Search a place first, then add it.' });
 		}
-		await addStop(locals.user!.id, tripId, { name, lat, lon });
+		await addStop(locals.ownerId!, tripId, { name, lat, lon });
 		return { ok: true as const, message: `Added "${name}".` };
 	},
 
@@ -118,7 +119,7 @@ export const actions: Actions = {
 		if (!locId || !name || !Number.isFinite(lat) || !Number.isFinite(lon)) {
 			return fail(400, { error: 'Hotspot data was incomplete.' });
 		}
-		await addStop(locals.user!.id, tripId, { hotspot_id: locId, name, lat, lon });
+		await addStop(locals.ownerId!, tripId, { hotspot_id: locId, name, lat, lon });
 		return { ok: true as const, message: `Added "${name}".` };
 	},
 
@@ -127,13 +128,13 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const stopId = Number(form.get('stop_id'));
 		if (!Number.isInteger(stopId)) return fail(400, { error: 'Bad stop id.' });
-		await removeStop(locals.user!.id, tripId, stopId);
+		await removeStop(locals.ownerId!, tripId, stopId);
 		return { ok: true as const };
 	},
 
 	optimize: async ({ locals, params }) => {
 		const tripId = tripIdFrom(params);
-		const userId = locals.user!.id;
+		const userId = locals.ownerId!;
 		const u = await query<{ home_lat: number | null; home_lon: number | null }>(
 			'SELECT home_lat, home_lon FROM users WHERE id = $1',
 			[userId]
@@ -162,7 +163,7 @@ export const actions: Actions = {
 		if (!Number.isInteger(stopId) || (direction !== 'up' && direction !== 'down')) {
 			return fail(400, { error: 'Bad move request.' });
 		}
-		await moveStop(locals.user!.id, tripId, stopId, direction);
+		await moveStop(locals.ownerId!, tripId, stopId, direction);
 		return { ok: true as const };
 	},
 
@@ -172,7 +173,7 @@ export const actions: Actions = {
 		const stopId = Number(form.get('stop_id'));
 		const notes = (form.get('notes') ?? '').toString().trim() || null;
 		if (!Number.isInteger(stopId)) return fail(400, { error: 'Bad stop id.' });
-		await updateStopNotes(locals.user!.id, tripId, stopId, notes);
+		await updateStopNotes(locals.ownerId!, tripId, stopId, notes);
 		return { ok: true as const, message: 'Note saved.' };
 	}
 };

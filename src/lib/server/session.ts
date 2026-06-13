@@ -23,7 +23,7 @@ export async function createSession(userId: number): Promise<string> {
 export interface SessionUser {
 	id: number;
 	username: string;
-	role: 'admin';
+	role: 'admin' | 'viewer';
 	display_name: string;
 }
 
@@ -59,7 +59,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
 	return {
 		id: row.uid,
 		username: row.username,
-		role: row.role as 'admin',
+		role: row.role as 'admin' | 'viewer',
 		display_name: row.display_name
 	};
 }

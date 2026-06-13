@@ -24,11 +24,24 @@ export interface DbUser {
 	id: number;
 	username: string;
 	display_name: string;
-	role: 'admin';
+	role: 'admin' | 'viewer';
 	password_hash: string;
 	home_lat: number | null;
 	home_lon: number | null;
 	last_login_at: string | null;
+}
+
+let cachedOwnerId: number | null = null;
+
+/** The single admin/owner whose data the app surfaces. Cached (never changes). */
+export async function getOwnerId(): Promise<number> {
+	if (cachedOwnerId != null) return cachedOwnerId;
+	const r = await query<{ id: number }>(
+		"SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+	);
+	if (!r.rows[0]) throw new Error('No admin/owner user exists');
+	cachedOwnerId = r.rows[0].id;
+	return cachedOwnerId;
 }
 
 export async function findUserByUsername(username: string): Promise<DbUser | null> {

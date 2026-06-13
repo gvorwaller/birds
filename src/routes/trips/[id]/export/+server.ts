@@ -22,7 +22,7 @@ function slugify(s: string): string {
 
 /** Markdown export of a trip plan (download). Covers the "trip report" need too. */
 export const GET: RequestHandler = async ({ locals, params }) => {
-	const userId = locals.user!.id;
+	const userId = locals.ownerId!; // viewers can export the owner's trips
 	const tripId = Number(params.id);
 	if (!Number.isInteger(tripId) || tripId <= 0) throw error(404, 'Trip not found');
 

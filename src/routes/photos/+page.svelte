@@ -25,21 +25,23 @@
 	</header>
 
 	<section class="card toolbar">
-		<form
-			method="POST"
-			action="?/refresh"
-			use:enhance={() => {
-				syncing = true;
-				return async ({ update }) => {
-					await update();
-					syncing = false;
-				};
-			}}
-		>
-			<button type="submit" disabled={syncing}>
-				{syncing ? 'Syncing…' : '⟳ Refresh from gaylon.photos'}
-			</button>
-		</form>
+		{#if data.canEdit}
+			<form
+				method="POST"
+				action="?/refresh"
+				use:enhance={() => {
+					syncing = true;
+					return async ({ update }) => {
+						await update();
+						syncing = false;
+					};
+				}}
+			>
+				<button type="submit" disabled={syncing}>
+					{syncing ? 'Syncing…' : '⟳ Refresh from gaylon.photos'}
+				</button>
+			</form>
+		{/if}
 		<a class="btn" href="https://gaylon.photos/birds" target="_blank" rel="noopener"
 			>View full collection ↗</a
 		>
@@ -111,7 +113,14 @@
 							</a>
 						{/each}
 					</div>
-					{#if u.name !== '(no species set)'}
+					{#if u.name === '(no species set)'}
+						<p class="muted">
+							Best fixed at the source —
+							<a href="https://gaylon.photos/birds" target="_blank" rel="noopener"
+								>tag them on gaylon.photos ↗</a
+							> and re-sync.
+						</p>
+					{:else if data.canEdit}
 						<form method="POST" action="?/override" use:enhance class="override">
 							<input type="hidden" name="source_name" value={u.name} />
 							<input
@@ -122,13 +131,6 @@
 							/>
 							<button type="submit">Match species</button>
 						</form>
-					{:else}
-						<p class="muted">
-							Best fixed at the source —
-							<a href="https://gaylon.photos/birds" target="_blank" rel="noopener"
-								>tag them on gaylon.photos ↗</a
-							> and re-sync.
-						</p>
 					{/if}
 				</div>
 			{/each}

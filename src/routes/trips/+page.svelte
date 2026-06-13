@@ -23,38 +23,40 @@
 		<p class="sub">{data.trips.length} {data.trips.length === 1 ? 'trip' : 'trips'}</p>
 	</header>
 
-	<section class="card">
-		<h2>Create a trip</h2>
-		{#if form?.error}<p class="err" role="alert">{form.error}</p>{/if}
-		<form
-			method="POST"
-			action="?/create"
-			use:enhance={() => {
-				creating = true;
-				return async ({ update }) => {
-					await update();
-					creating = false;
-				};
-			}}
-		>
-			<label class="grow-field">
-				<span>Name</span>
-				<input type="text" name="name" placeholder="e.g. Hancock County, Maine" required />
-			</label>
-			<label>
-				<span>Start</span>
-				<input type="date" name="start_date" />
-			</label>
-			<label>
-				<span>End</span>
-				<input type="date" name="end_date" />
-			</label>
-			<button type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create trip'}</button>
-		</form>
-	</section>
+	{#if data.canEdit}
+		<section class="card">
+			<h2>Create a trip</h2>
+			{#if form?.error}<p class="err" role="alert">{form.error}</p>{/if}
+			<form
+				method="POST"
+				action="?/create"
+				use:enhance={() => {
+					creating = true;
+					return async ({ update }) => {
+						await update();
+						creating = false;
+					};
+				}}
+			>
+				<label class="grow-field">
+					<span>Name</span>
+					<input type="text" name="name" placeholder="e.g. Hancock County, Maine" required />
+				</label>
+				<label>
+					<span>Start</span>
+					<input type="date" name="start_date" />
+				</label>
+				<label>
+					<span>End</span>
+					<input type="date" name="end_date" />
+				</label>
+				<button type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create trip'}</button>
+			</form>
+		</section>
+	{/if}
 
 	{#if data.trips.length === 0}
-		<section class="card"><p class="muted">No trips yet — create one above.</p></section>
+		<section class="card"><p class="muted">No trips yet.</p></section>
 	{/if}
 
 	{#each data.trips as t (t.id)}

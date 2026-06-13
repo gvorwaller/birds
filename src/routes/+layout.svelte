@@ -6,6 +6,7 @@
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
 	let menuOpen = $state(false);
+	let isViewer = $derived(data.user?.role === 'viewer');
 
 	const items = [
 		{ href: '/', label: 'Home', ico: '🏠' },
@@ -43,9 +44,13 @@
 			{/each}
 		</div>
 		<div class="spacer"></div>
-		<a class="settings" href="/settings" class:active={$page.url.pathname.startsWith('/settings')}
-			>⚙ Settings</a
-		>
+		{#if isViewer}
+			<span class="ro-tag">👀 Read-only</span>
+		{:else}
+			<a class="settings" href="/settings" class:active={$page.url.pathname.startsWith('/settings')}
+				>⚙ Settings</a
+			>
+		{/if}
 	</nav>
 
 	<!-- Hamburger drawer (all sizes) -->
@@ -57,7 +62,7 @@
 				<button class="close" aria-label="Close menu" onclick={() => (menuOpen = false)}>✕</button>
 			</div>
 			<nav class="drawer-links">
-				{#each items as item (item.href)}
+				{#each isViewer ? items.slice(0, 4) : items as item (item.href)}
 					<a
 						href={item.href}
 						class:active={isActive(item.href, $page.url.pathname)}
@@ -68,7 +73,7 @@
 				{/each}
 			</nav>
 			<div class="drawer-foot">
-				<div class="who">Signed in as {data.user.display_name}</div>
+				<div class="who">Signed in as {data.user.display_name}{isViewer ? ' · read-only' : ''}</div>
 				<form method="POST" action="/login?/logout">
 					<button type="submit" class="signout">Sign out</button>
 				</form>
@@ -78,6 +83,9 @@
 {/if}
 
 <main class:with-nav={!!data.user}>
+	{#if isViewer}
+		<div class="ro-banner">👀 Read-only family view — exploring Gaylon's birds.</div>
+	{/if}
 	{@render children()}
 </main>
 
@@ -175,6 +183,24 @@
 	}
 	.settings {
 		display: none;
+	}
+	.ro-tag {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		color: var(--accent);
+		background: var(--accent-soft);
+		padding: 6px 12px;
+		border-radius: 6px;
+	}
+	.ro-banner {
+		background: var(--accent-soft);
+		color: var(--accent);
+		text-align: center;
+		font-size: 0.83rem;
+		font-weight: 600;
+		padding: 6px 12px;
 	}
 
 	/* Drawer */

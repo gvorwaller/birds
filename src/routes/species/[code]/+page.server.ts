@@ -8,7 +8,7 @@ const NEARBY_DIST_KM = 50;
 const NEARBY_BACK_DAYS = 14;
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-	const userId = locals.user!.id;
+	const userId = locals.ownerId!; // viewers see the owner's data
 	const code = params.code;
 
 	const taxon = await query<{

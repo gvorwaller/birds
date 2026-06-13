@@ -5,9 +5,13 @@ declare global {
 			user?: {
 				id: number;
 				username: string;
-				role: 'admin';
+				role: 'admin' | 'viewer';
 				display_name: string;
 			};
+			// The owner (admin) whose data every page reads. For the admin this is
+			// their own id; for a viewer it points at the admin so they see the
+			// owner's birds read-only.
+			ownerId?: number;
 		}
 	}
 

@@ -16,7 +16,7 @@ export interface SpeciesGroup {
 	photos: PhotoLink[];
 }
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ locals }) => {
 	await refreshGalleryIfStale();
 	const links = await allPhotoLinks();
 
@@ -64,7 +64,8 @@ export const load: PageServerLoad = async () => {
 		unmatched: [...unmatched.entries()].map(([name, photos]) => ({ name, photos })),
 		total: links.length,
 		fetchedAt: newest.rows[0]?.newest ?? null,
-		photoPoints
+		photoPoints,
+		canEdit: locals.user!.role !== 'viewer'
 	};
 };
 

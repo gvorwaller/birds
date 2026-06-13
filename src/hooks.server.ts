@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
+import { getOwnerId } from '$server/auth';
 import { dev } from '$app/environment';
 
 export const SESSION_COOKIE_OPTS = {
@@ -24,6 +25,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const user = await validateSession(token);
 		if (user) {
 			event.locals.user = user;
+			event.locals.ownerId = await getOwnerId();
 		} else {
 			event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
 		}
@@ -40,6 +42,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 			status: 401,
 			headers: { 'Content-Type': 'application/json' }
 		});
+	}
+
+	// Read-only viewers: no writes, no settings (holds eBird credentials).
+	if (event.locals.user?.role === 'viewer') {
+		const method = event.request.method;
+		// Block every mutation except logout (posts to /login?/logout).
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login') {
+			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
+		}
+		// Hide Settings entirely (it holds eBird credentials).
+		if (path.startsWith('/settings')) throw redirect(303, '/');
 	}
 
 	return resolve(event);

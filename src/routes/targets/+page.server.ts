@@ -13,7 +13,7 @@ const PLACE_SUGGESTIONS = [
 ];
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-	const userId = locals.user!.id;
+	const userId = locals.ownerId!; // viewers see the owner's data
 	const place = (url.searchParams.get('place') ?? '').trim();
 	const dist = Math.min(Math.max(Number(url.searchParams.get('dist') ?? DEFAULT_DIST_KM) || DEFAULT_DIST_KM, 1), 50);
 	const back = Math.min(Math.max(Number(url.searchParams.get('back') ?? 7) || 7, 1), 30);

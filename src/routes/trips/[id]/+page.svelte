@@ -40,7 +40,9 @@
 		<p class="sub"><a href="/trips">← Trips</a></p>
 		<div class="title-row">
 			<h1>{data.trip.name}</h1>
-			<button class="link" onclick={() => (editing = !editing)}>{editing ? 'Close' : 'Edit'}</button>
+			{#if data.canEdit}
+				<button class="link" onclick={() => (editing = !editing)}>{editing ? 'Close' : 'Edit'}</button>
+			{/if}
 			<a class="link" href={`/trips/${data.trip.id}/export`} data-sveltekit-reload>⬇ Export</a>
 		</div>
 		<p class="sub">{fmtDates(data.trip.start_date, data.trip.end_date)} · {data.stops.length} {data.stops.length === 1 ? 'stop' : 'stops'}</p>
@@ -82,7 +84,7 @@
 	<section class="card">
 		<div class="stops-head">
 			<h2>Stops</h2>
-			{#if data.stops.length >= 3}
+			{#if data.stops.length >= 3 && data.canEdit}
 				<form method="POST" action="?/optimize" use:enhance>
 					<button type="submit" class="small optimize">↕ Optimize order</button>
 				</form>
@@ -110,38 +112,43 @@
 						{/if}
 					</div>
 					{#if s.notes}<div class="stopnote">{s.notes}</div>{/if}
-					<details class="noteedit">
-						<summary>{s.notes ? 'Edit note' : 'Add note'}</summary>
-						<form method="POST" action="?/save_notes" use:enhance>
+					{#if data.canEdit}
+						<details class="noteedit">
+							<summary>{s.notes ? 'Edit note' : 'Add note'}</summary>
+							<form method="POST" action="?/save_notes" use:enhance>
+								<input type="hidden" name="stop_id" value={s.id} />
+								<textarea name="notes" rows="2" placeholder="e.g. scope the lagoon spit at low tide">{s.notes ?? ''}</textarea>
+								<button type="submit" class="small">Save note</button>
+							</form>
+						</details>
+					{/if}
+				</div>
+				{#if data.canEdit}
+					<div class="stop-actions">
+						<form method="POST" action="?/move_stop" use:enhance>
 							<input type="hidden" name="stop_id" value={s.id} />
-							<textarea name="notes" rows="2" placeholder="e.g. scope the lagoon spit at low tide">{s.notes ?? ''}</textarea>
-							<button type="submit" class="small">Save note</button>
+							<input type="hidden" name="direction" value="up" />
+							<button type="submit" class="icon" aria-label="Move up" disabled={i === 0}>↑</button>
 						</form>
-					</details>
-				</div>
-				<div class="stop-actions">
-					<form method="POST" action="?/move_stop" use:enhance>
-						<input type="hidden" name="stop_id" value={s.id} />
-						<input type="hidden" name="direction" value="up" />
-						<button type="submit" class="icon" aria-label="Move up" disabled={i === 0}>↑</button>
-					</form>
-					<form method="POST" action="?/move_stop" use:enhance>
-						<input type="hidden" name="stop_id" value={s.id} />
-						<input type="hidden" name="direction" value="down" />
-						<button type="submit" class="icon" aria-label="Move down" disabled={i === data.stops.length - 1}>↓</button>
-					</form>
-					<form method="POST" action="?/remove_stop" use:enhance>
-						<input type="hidden" name="stop_id" value={s.id} />
-						<button type="submit" class="icon danger" aria-label="Remove stop">✕</button>
-					</form>
-				</div>
+						<form method="POST" action="?/move_stop" use:enhance>
+							<input type="hidden" name="stop_id" value={s.id} />
+							<input type="hidden" name="direction" value="down" />
+							<button type="submit" class="icon" aria-label="Move down" disabled={i === data.stops.length - 1}>↓</button>
+						</form>
+						<form method="POST" action="?/remove_stop" use:enhance>
+							<input type="hidden" name="stop_id" value={s.id} />
+							<button type="submit" class="icon danger" aria-label="Remove stop">✕</button>
+						</form>
+					</div>
+				{/if}
 			</div>
 		{/each}
 	</section>
 
-	<section class="card">
-		<h2>Add a stop</h2>
-		<p class="muted intro">Search a place to add it directly, or pick a nearby eBird hotspot.</p>
+	{#if data.canEdit}
+		<section class="card">
+			<h2>Add a stop</h2>
+			<p class="muted intro">Search a place to add it directly, or pick a nearby eBird hotspot.</p>
 		<form method="GET" class="search">
 			<input type="text" name="hs" value={data.hs} placeholder="Search a place — park, town, address…" />
 			<button type="submit">Search</button>
@@ -186,9 +193,10 @@
 		{/if}
 	</section>
 
-	<section class="card">
-		<button class="danger-btn" onclick={() => (deleteOpen = true)}>Delete trip…</button>
-	</section>
+		<section class="card">
+			<button class="danger-btn" onclick={() => (deleteOpen = true)}>Delete trip…</button>
+		</section>
+	{/if}
 
 	<p class="attribution">Data from <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a></p>
 </div>

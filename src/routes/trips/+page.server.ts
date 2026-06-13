@@ -3,7 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { createTrip, listTrips } from '$server/trips';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	return { trips: await listTrips(locals.user!.id) };
+	return { trips: await listTrips(locals.ownerId!), canEdit: locals.user!.role !== 'viewer' };
 };
 
 export const actions: Actions = {
@@ -16,7 +16,7 @@ export const actions: Actions = {
 		if (start && end && end < start) {
 			return fail(400, { error: 'End date is before the start date.' });
 		}
-		const id = await createTrip(locals.user!.id, name, start, end);
+		const id = await createTrip(locals.ownerId!, name, start, end);
 		throw redirect(303, `/trips/${id}`);
 	}
 };

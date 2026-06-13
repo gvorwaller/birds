@@ -7,7 +7,7 @@ const NEARBY_DIST_KM = 40;
 const NEARBY_BACK_DAYS = 7;
 
 export const load: PageServerLoad = async ({ locals }) => {
-	const userId = locals.user!.id;
+	const userId = locals.ownerId!; // viewers see the owner's data
 
 	const userRow = await query<{ home_lat: number | null; home_lon: number | null }>(
 		'SELECT home_lat, home_lon FROM users WHERE id = $1',
