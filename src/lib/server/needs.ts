@@ -32,12 +32,74 @@ export interface NotableEntry extends SpeciesActivity {
 	seen: boolean;
 }
 
+export interface PlaceRanking {
+	locId: string | null;
+	locName: string;
+	lat: number;
+	lng: number;
+	needCount: number;
+	needSpecies: { code: string; comName: string }[];
+	lastObsDt: string;
+	distanceKm: number | null;
+}
+
 export interface TargetsView {
 	needs: SpeciesActivity[];
 	notable: NotableEntry[];
+	bestPlaces: PlaceRanking[];
 	stale: boolean;
 	fetchedAt: Date;
 	seenCount: number;
+}
+
+/**
+ * Rank locations by how many distinct *needs* were reported there. Built from
+ * the same recent-obs payload used for the needs list — no extra API calls.
+ */
+function rankPlaces(
+	obs: EbirdObs[],
+	seen: Set<string>,
+	origin: { lat: number; lon: number } | null
+): PlaceRanking[] {
+	interface Acc {
+		locId: string | null;
+		locName: string;
+		lat: number;
+		lng: number;
+		species: Map<string, string>;
+		lastObsDt: string;
+	}
+	const byLoc = new Map<string, Acc>();
+	for (const o of obs) {
+		if (!o.speciesCode || seen.has(o.speciesCode)) continue;
+		const key = o.locId || `${o.lat},${o.lng}`;
+		let p = byLoc.get(key);
+		if (!p) {
+			p = {
+				locId: o.locId ?? null,
+				locName: o.locName,
+				lat: o.lat,
+				lng: o.lng,
+				species: new Map(),
+				lastObsDt: o.obsDt
+			};
+			byLoc.set(key, p);
+		}
+		if (!p.species.has(o.speciesCode)) p.species.set(o.speciesCode, o.comName);
+		if (o.obsDt > p.lastObsDt) p.lastObsDt = o.obsDt;
+	}
+	return [...byLoc.values()]
+		.map((p) => ({
+			locId: p.locId,
+			locName: p.locName,
+			lat: p.lat,
+			lng: p.lng,
+			needCount: p.species.size,
+			needSpecies: [...p.species.entries()].map(([code, comName]) => ({ code, comName })),
+			lastObsDt: p.lastObsDt,
+			distanceKm: origin ? haversineKm(origin.lat, origin.lon, p.lat, p.lng) : null
+		}))
+		.sort((a, b) => b.needCount - a.needCount || b.lastObsDt.localeCompare(a.lastObsDt));
 }
 
 export async function seenSet(userId: number): Promise<Set<string>> {
@@ -114,6 +176,7 @@ async function buildView(
 	return {
 		needs,
 		notable: notableList,
+		bestPlaces: rankPlaces(recent.data, seen, home),
 		stale: recent.stale || notable.stale,
 		fetchedAt: recent.fetchedAt,
 		seenCount: seen.size
@@ -161,7 +224,7 @@ export async function nearbyNeeds(
 	home: { lat: number; lon: number },
 	distKm: number,
 	back: number
-): Promise<{ needs: SpeciesActivity[]; stale: boolean; fetchedAt: Date }> {
+): Promise<{ needs: SpeciesActivity[]; bestPlaces: PlaceRanking[]; stale: boolean; fetchedAt: Date }> {
 	const recent = await recentNearbyObs(apiKey, home.lat, home.lon, distKm, back);
 	const seen = await seenSet(userId);
 	const photoCounts = await (await import('$server/gallery')).photoCountsBySpecies();
@@ -169,5 +232,10 @@ export async function nearbyNeeds(
 	const needs = [...agg.values()]
 		.filter((a) => !seen.has(a.speciesCode))
 		.sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
-	return { needs, stale: recent.stale, fetchedAt: recent.fetchedAt };
+	return {
+		needs,
+		bestPlaces: rankPlaces(recent.data, seen, home),
+		stale: recent.stale,
+		fetchedAt: recent.fetchedAt
+	};
 }

@@ -1,7 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { query } from '$lib/db';
 import { getEbirdApiKey, EbirdError } from '$server/ebird';
-import { nearbyNeeds, type SpeciesActivity } from '$server/needs';
+import { nearbyNeeds, type PlaceRanking, type SpeciesActivity } from '$server/needs';
 
 const NEARBY_DIST_KM = 40;
 const NEARBY_BACK_DAYS = 7;
@@ -28,6 +28,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	]);
 
 	let needs: SpeciesActivity[] = [];
+	let bestPlaces: PlaceRanking[] = [];
 	let needsError: string | null = null;
 	let stale = false;
 	const apiKey = await getEbirdApiKey(userId);
@@ -36,6 +37,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		try {
 			const result = await nearbyNeeds(userId, apiKey, home, NEARBY_DIST_KM, NEARBY_BACK_DAYS);
 			needs = result.needs.slice(0, 20);
+			bestPlaces = result.bestPlaces.slice(0, 6);
 			stale = result.stale;
 		} catch (err) {
 			needsError = err instanceof EbirdError ? err.message : 'Could not load recent observations.';
@@ -46,6 +48,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		home,
 		hasApiKey: !!apiKey,
 		needs,
+		bestPlaces,
 		needsError,
 		stale,
 		distKm: NEARBY_DIST_KM,

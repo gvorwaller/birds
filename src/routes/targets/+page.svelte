@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
+	import BestPlaces from '$components/BestPlaces.svelte';
 	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
@@ -192,6 +193,8 @@
 				</button>
 			{/if}
 		</section>
+
+		<BestPlaces places={data.view.bestPlaces} />
 	{/if}
 
 	<p class="attribution">

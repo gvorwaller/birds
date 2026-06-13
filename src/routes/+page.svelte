@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
+	import BestPlaces from '$components/BestPlaces.svelte';
 	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
@@ -90,6 +91,8 @@
 			{/each}
 		</section>
 	{/if}
+
+	<BestPlaces places={data.bestPlaces} title="Best places near you" limit={6} />
 
 	<section class="card">
 		<h2>At a glance</h2>
