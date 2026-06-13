@@ -1,0 +1,1 @@
+import"./Bzak7iHL.js";import{v as r,x as o,l as m,o as p,r as f}from"./s5gLsJt6.js";import{s as l}from"./4EdvJpvX.js";import{s as i}from"./ZRluw53g.js";var n=f("<span> </span>");function _(e,a){var t=n(),s=r(t,!0);o(t),m(()=>{i(t,1,`badge ${a.kind??""}`,"svelte-dtbgkf"),l(s,a.label)}),p(e,t)}export{_ as B};

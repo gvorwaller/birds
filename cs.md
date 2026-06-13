@@ -102,17 +102,17 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 
 ### Connection
 - **Engine**: Native PostgreSQL (Homebrew on dev, package install on prod) — no Docker
-- **Port**: `5434` (shared instance; BTC Dashboard=5433, prod tunnel=5435 — never touch those)
+- **Port**: `5436` — birds has its OWN Postgres cluster (5433=BTC Dashboard, 5434=madonnahist, 5435=prod tunnel — never touch those)
 - **Database**: `birds` · **Roles**: `birds_owner` (migrations), `birds_app` (runtime)
 - **Query command**:
   ```bash
-  psql -p 5434 -U birds_app -d birds -c "YOUR SQL HERE;"
+  psql -h 127.0.0.1 -p 5436 -U birds_app -d birds -c "YOUR SQL HERE;"
   ```
 - **Critical**: store timestamps as `TIMESTAMPTZ` in UTC; format for display only at the edge.
 
 ### Local Test Isolation (CRITICAL)
-- Dedicated `birds_test` DB on `127.0.0.1:15434` — modeled exactly on madonnahist `docs/local-test-environment.md`
-- `BIRDS_ENV=test` required by guard scripts; scripts refuse prod ports (5433/5435) and the prod DB name
+- Dedicated `birds_test` DB on `127.0.0.1:15436` — modeled exactly on madonnahist `docs/local-test-environment.md`
+- `BIRDS_ENV=test` required by guard scripts; scripts refuse reserved ports (5433/5434/5435) and the prod DB name
 - Never seed real eBird credentials into the test DB; gallery sync in tests uses fixture JSON, never live fetches
 - Test dev server: `npx vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test`
 
