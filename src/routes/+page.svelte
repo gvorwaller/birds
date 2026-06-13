@@ -1,9 +1,25 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
+	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	let homeCenter = $derived(data.home ? { lat: data.home.lat, lng: data.home.lon } : null);
+	let mapPoints = $derived<ObsPoint[]>([
+		...(data.home ? [{ lat: data.home.lat, lng: data.home.lon, title: 'Home', kind: 'home' as const }] : []),
+		...data.needs.map((n) => ({
+			lat: n.lastLat,
+			lng: n.lastLng,
+			title: n.comName,
+			sub: [n.locations[0], n.distanceKm != null ? formatKm(n.distanceKm) : null]
+				.filter(Boolean)
+				.join(' · '),
+			href: `/species/${n.speciesCode}`,
+			kind: 'need' as const
+		}))
+	]);
 </script>
 
 <svelte:head>
@@ -22,6 +38,12 @@
 			{/if}
 		</p>
 	</header>
+
+	{#if data.home && data.hasApiKey && !data.needsError}
+		<section class="card map-card">
+			<ObsMap points={mapPoints} center={homeCenter} />
+		</section>
+	{/if}
 
 	{#if !data.hasApiKey}
 		<section class="card">
@@ -122,6 +144,9 @@
 		border-radius: 8px;
 		padding: 16px;
 		margin-bottom: 12px;
+	}
+	.map-card {
+		padding: 8px;
 	}
 	.card h2 {
 		font-size: 1.05rem;

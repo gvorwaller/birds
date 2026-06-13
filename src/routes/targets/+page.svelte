@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
+	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
 
@@ -10,6 +11,37 @@
 	let needsShown = $derived(
 		data.view ? (showAllNeeds ? data.view.needs : data.view.needs.slice(0, NEEDS_PREVIEW)) : []
 	);
+
+	let mapCenter = $derived(data.location ? { lat: data.location.lat, lng: data.location.lng } : null);
+	let mapPoints = $derived.by<ObsPoint[]>(() => {
+		if (!data.view || !data.location) return [];
+		const notableCodes = new Set(data.view.notable.map((n) => n.speciesCode));
+		const pts: ObsPoint[] = [
+			{ lat: data.location.lat, lng: data.location.lng, title: data.location.label, kind: 'home' }
+		];
+		for (const n of data.view.notable) {
+			pts.push({
+				lat: n.lastLat,
+				lng: n.lastLng,
+				title: n.comName,
+				sub: ['Notable', n.locations[0]].filter(Boolean).join(' · '),
+				href: `/species/${n.speciesCode}`,
+				kind: 'notable'
+			});
+		}
+		for (const n of data.view.needs) {
+			if (notableCodes.has(n.speciesCode)) continue;
+			pts.push({
+				lat: n.lastLat,
+				lng: n.lastLng,
+				title: n.comName,
+				sub: n.locations[0] ?? '',
+				href: `/species/${n.speciesCode}`,
+				kind: 'need'
+			});
+		}
+		return pts;
+	});
 </script>
 
 <svelte:head>
@@ -66,6 +98,17 @@
 		<section class="card">
 			<p class="muted">
 				Search a place above, or <a href="/settings">set your home location</a> to default to it.
+			</p>
+		</section>
+	{/if}
+
+	{#if data.view && mapCenter}
+		<section class="card map-card">
+			<ObsMap points={mapPoints} center={mapCenter} />
+			<p class="legend">
+				<span class="dot need"></span> need
+				<span class="dot notable"></span> notable
+				<span class="dot home"></span> searched location
 			</p>
 		</section>
 	{/if}
@@ -190,6 +233,35 @@
 	.card h2 {
 		font-size: 1.05rem;
 		margin-bottom: 10px;
+	}
+	.map-card {
+		padding: 8px;
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		align-items: center;
+		font-size: 0.78rem;
+		color: var(--muted);
+		padding: 8px 4px 2px;
+	}
+	.dot {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		margin-right: 3px;
+		vertical-align: middle;
+	}
+	.dot.need {
+		background: #0a5c43;
+	}
+	.dot.notable {
+		background: #842029;
+	}
+	.dot.home {
+		background: #084298;
 	}
 	.filters {
 		display: flex;
