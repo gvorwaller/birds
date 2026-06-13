@@ -6,6 +6,7 @@
 import { query } from '$lib/db';
 import { haversineKm } from '$lib/geo';
 import {
+	notableNearbyObs,
 	notableObs,
 	recentNearbyObs,
 	recentObs,
@@ -131,6 +132,27 @@ export async function regionTargets(
 		notableObs(apiKey, regionCode, back)
 	]);
 	return buildView(userId, recent, notable, home);
+}
+
+/**
+ * Targets for an arbitrary location (geo endpoints — no region code needed).
+ * Distances are measured from the search center. eBird caps geo dist at 50 km.
+ */
+export async function geoTargets(
+	userId: number,
+	apiKey: string,
+	lat: number,
+	lng: number,
+	distKm: number,
+	back: number
+): Promise<TargetsView> {
+	const dist = Math.min(Math.max(distKm, 1), 50);
+	const origin = { lat, lon: lng };
+	const [recent, notable] = await Promise.all([
+		recentNearbyObs(apiKey, lat, lng, dist, back),
+		notableNearbyObs(apiKey, lat, lng, dist, back)
+	]);
+	return buildView(userId, recent, notable, origin);
 }
 
 export async function nearbyNeeds(

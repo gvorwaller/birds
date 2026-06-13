@@ -152,6 +152,23 @@ export async function recentNearbyObs(
 	);
 }
 
+export async function notableNearbyObs(
+	apiKey: string,
+	lat: number,
+	lng: number,
+	distKm: number,
+	back: number
+): Promise<CachedResult<EbirdObs[]>> {
+	const la = lat.toFixed(2);
+	const ln = lng.toFixed(2);
+	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () =>
+		ebirdFetch<EbirdObs[]>(
+			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
+			apiKey
+		)
+	);
+}
+
 export async function recentNearbySpeciesObs(
 	apiKey: string,
 	speciesCode: string,

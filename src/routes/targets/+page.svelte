@@ -19,27 +19,33 @@
 <div class="page">
 	<header class="page-head">
 		<h1>Targets</h1>
-		<p class="sub">Your needs for a region, with live recent activity</p>
+		<p class="sub">Your needs for a place, with live recent activity</p>
 	</header>
 
 	<section class="card">
 		<form method="GET" class="filters">
-			<label>
-				<span>Region code</span>
+			<label class="grow-field">
+				<span>Place</span>
 				<input
 					type="text"
-					name="region"
-					value={data.region}
-					list="region-presets"
-					autocapitalize="characters"
-					autocorrect="off"
-					spellcheck="false"
+					name="place"
+					placeholder="Search a city, county, park, or address…"
+					value={data.location?.label ?? ''}
+					list="place-suggestions"
 				/>
-				<datalist id="region-presets">
-					{#each data.presets as p (p.code)}
-						<option value={p.code}>{p.label}</option>
+				<datalist id="place-suggestions">
+					{#each data.suggestions as s (s)}
+						<option value={s}></option>
 					{/each}
 				</datalist>
+			</label>
+			<label>
+				<span>Within</span>
+				<select name="dist">
+					{#each [10, 25, 50] as d (d)}
+						<option value={d} selected={data.dist === d}>{d} km</option>
+					{/each}
+				</select>
 			</label>
 			<label>
 				<span>Window</span>
@@ -49,23 +55,36 @@
 					{/each}
 				</select>
 			</label>
-			<button type="submit">Load</button>
+			<button type="submit">Search</button>
 		</form>
+		{#if data.location}
+			<p class="muted loc">📍 {data.location.label} · within {data.dist} km · last {data.back} days</p>
+		{/if}
 	</section>
+
+	{#if data.needsLocation}
+		<section class="card">
+			<p class="muted">
+				Search a place above, or <a href="/settings">set your home location</a> to default to it.
+			</p>
+		</section>
+	{/if}
 
 	{#if data.error}
 		<section class="card">
-			<p class="muted">{data.error} <a href="/settings">Settings</a></p>
+			<p class="muted">{data.error} {#if !data.location}<a href="/settings">Settings</a>{/if}</p>
 		</section>
-	{:else if data.view}
+	{/if}
+
+	{#if data.view}
 		<section class="card">
 			<h2>
 				Rare this week <Badge kind="notable" label="Notable" />
 				{#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
 			</h2>
 			<p class="muted intro">
-				eBird notable reports in {data.region} — last {data.back} days, whether or not they're on
-				your needs list.
+				eBird notable reports near {data.location?.label ?? 'here'} — last {data.back} days, whether
+				or not they're on your needs list.
 			</p>
 			{#if data.view.notable.length === 0}
 				<p class="muted">No notable reports in this window.</p>
@@ -97,9 +116,7 @@
 		</section>
 
 		<section class="card">
-			<h2>
-				{data.view.needs.length} needs reported in {data.region} — last {data.back} days
-			</h2>
+			<h2>{data.view.needs.length} needs reported here — last {data.back} days</h2>
 			{#if data.view.seenCount === 0}
 				<p class="muted">
 					Your life list is empty, so every species counts as a need. Sync it in
@@ -116,14 +133,12 @@
 						<div class="meta">
 							{n.nReports}
 							{n.nReports === 1 ? 'report' : 'reports'} · {n.locations.join(' · ')}
-							{#if n.distanceKm != null}
-								· {formatKm(n.distanceKm)} from home{/if}
 							{#if n.photoCount === 0}
 								· 📷 no photo yet{/if}
 						</div>
 					</div>
 					<div class="right">
-						<div class="dist">{n.nReports} ×</div>
+						{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}
 						<div class="when">{n.lastObsDt}</div>
 					</div>
 				</div>
@@ -161,6 +176,10 @@
 	.intro {
 		margin-bottom: 8px;
 	}
+	.loc {
+		margin-top: 10px;
+		font-weight: 600;
+	}
 	.card {
 		background: var(--card);
 		border: 1px solid var(--border);
@@ -186,6 +205,10 @@
 		font-weight: 600;
 		color: var(--muted);
 	}
+	.filters .grow-field {
+		flex: 1;
+		min-width: 220px;
+	}
 	.filters input,
 	.filters select {
 		min-height: 48px;
@@ -194,7 +217,9 @@
 		border-radius: 8px;
 		background: var(--card);
 		color: var(--text);
-		min-width: 180px;
+	}
+	.filters .grow-field input {
+		width: 100%;
 	}
 	.filters button {
 		min-height: 48px;
