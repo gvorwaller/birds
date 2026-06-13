@@ -1,12 +1,11 @@
 # birds — Design (V2) + roadmap
 
 > **Status (2026-06-13): SHIPPED & live at https://birds.gaylon.photos.**
-> Phases 1–3 and most of Phase 4 are built and deployed: auth (single admin, argon2id) · per-user eBird API key + credentialed life-list sync (Cornell CAS) · Near Me · Targets with place search, "rare this week", and best-places ranking · link-out gallery with species matching + override workflow · species pages · **Trips planner** (stops via place/eBird-hotspot search, per-stop live needs counts, route map, **smart nearest-neighbor route ordering**, Markdown export) · Google maps on Dashboard/Targets · photo GPS map · settings + admin/tools (cache flush, data counts) · **PWA** (installable + offline app shell) · DB backup script. Dedicated Postgres 17 cluster on port 5436; deploy via `scripts/deploy-to-DO.sh`.
+> Phases 1–3 and most of Phase 4 are built and deployed: auth (admin owner, argon2id) · **family sharing** (shared read-only `family` viewer login — sees the owner's data, no writes, no credentials) · per-user eBird API key + credentialed life-list sync (Cornell CAS) · Near Me · Targets with place search, "rare this week", and best-places ranking · link-out gallery with species matching + override workflow · species pages · **Trips planner** (stops via place/eBird-hotspot search, per-stop live needs counts, route map, **smart nearest-neighbor route ordering**, Markdown export) · Google maps on Dashboard/Targets · photo GPS map · settings + admin/tools (cache flush, data counts) · **PWA** (installable + offline app shell) · DB backup script. Dedicated Postgres 17 cluster on port 5436; deploy via `scripts/deploy-to-DO.sh`.
 
 ## Future items (not yet built)
 
 **Decision needed before building:**
-- **Family sharing / multi-user** — a read-only "viewer" role so family can see trips, needs, and photos without editing (wife would use it; possibly two sons). Reshapes the current single-admin auth. *Likely the next build.* Open questions: one shared viewer login vs per-person accounts; exactly what a viewer sees (own life list is the owner's; trips/photos read-only).
 - **Need-alert notifications** — "a high-priority need was just reported near home." Needs a channel decision — **email** (wire an email sender) or **web push** (VAPID keys) — plus a background poller/worker (the app currently has no worker process).
 
 **Deferred (low urgency, on hold per owner):**
