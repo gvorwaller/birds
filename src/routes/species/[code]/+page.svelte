@@ -43,7 +43,7 @@
 		<p class="sub">
 			<em>{data.taxon.sci_name}</em> · eBird code <code>{data.taxon.species_code}</code>
 			{#if data.taxon.family}· {data.taxon.family}{/if}
-			{#if data.seen?.first_seen}· first seen {data.seen.first_seen}{/if}
+			{#if data.seen?.first_seen}· first seen {new Date(data.seen.first_seen).toLocaleDateString()}{/if}
 		</p>
 	</header>
 
