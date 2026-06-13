@@ -187,6 +187,35 @@ export async function recentNearbySpeciesObs(
 	);
 }
 
+export interface EbirdHotspot {
+	locId: string;
+	locName: string;
+	lat: number;
+	lng: number;
+	numSpeciesAllTime?: number;
+	latestObsDt?: string;
+}
+
+const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely
+
+/** eBird hotspots within distKm of a point (ref/hotspot/geo). */
+export async function hotspotsNear(
+	apiKey: string,
+	lat: number,
+	lng: number,
+	distKm: number
+): Promise<CachedResult<EbirdHotspot[]>> {
+	const la = lat.toFixed(2);
+	const ln = lng.toFixed(2);
+	const dist = Math.min(Math.max(distKm, 1), 50);
+	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, () =>
+		ebirdFetch<EbirdHotspot[]>(
+			`/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`,
+			apiKey
+		)
+	);
+}
+
 interface TaxonEntry {
 	sciName: string;
 	comName: string;
