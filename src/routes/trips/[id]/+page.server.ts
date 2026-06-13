@@ -1,5 +1,6 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { query } from '$lib/db';
 import { getEbirdApiKey, hotspotsNear, EbirdError, type EbirdHotspot } from '$server/ebird';
 import { geocodePlace } from '$server/geocode';
 import {
@@ -9,6 +10,7 @@ import {
 	getTrip,
 	moveStop,
 	needsCountForStops,
+	optimizeStopOrder,
 	removeStop,
 	updateStopNotes,
 	updateTrip
@@ -127,6 +129,29 @@ export const actions: Actions = {
 		if (!Number.isInteger(stopId)) return fail(400, { error: 'Bad stop id.' });
 		await removeStop(locals.user!.id, tripId, stopId);
 		return { ok: true as const };
+	},
+
+	optimize: async ({ locals, params }) => {
+		const tripId = tripIdFrom(params);
+		const userId = locals.user!.id;
+		const u = await query<{ home_lat: number | null; home_lon: number | null }>(
+			'SELECT home_lat, home_lon FROM users WHERE id = $1',
+			[userId]
+		);
+		const home =
+			u.rows[0]?.home_lat != null && u.rows[0]?.home_lon != null
+				? { lat: u.rows[0].home_lat, lon: u.rows[0].home_lon }
+				: null;
+		const res = await optimizeStopOrder(userId, tripId, home);
+		if (!res.changed) {
+			return fail(400, { error: 'Add at least 3 located stops to optimize the route.' });
+		}
+		return {
+			ok: true as const,
+			message: res.anchoredAtHome
+				? 'Stops reordered into a route starting from home (nearest-neighbor by distance).'
+				: 'Stops reordered into a nearest-neighbor route from the first stop.'
+		};
 	},
 
 	move_stop: async ({ locals, params, request }) => {

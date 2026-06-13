@@ -80,7 +80,14 @@
 	{/if}
 
 	<section class="card">
-		<h2>Stops</h2>
+		<div class="stops-head">
+			<h2>Stops</h2>
+			{#if data.stops.length >= 3}
+				<form method="POST" action="?/optimize" use:enhance>
+					<button type="submit" class="small optimize">↕ Optimize order</button>
+				</form>
+			{/if}
+		</div>
 		{#if data.stops.length === 0}
 			<p class="muted">No stops yet — add one below.</p>
 		{/if}
@@ -213,6 +220,10 @@
 	.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
 	.map-card { padding: 8px; }
 	.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
+	.stops-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+	.stops-head h2 { margin-bottom: 10px; }
+	.optimize { background: var(--card); border: 1px solid var(--accent); color: var(--accent); }
+	.optimize:hover { background: var(--accent-soft); }
 	.sub2 { font-size: 0.9rem; margin: 12px 0 4px; color: var(--muted); }
 	button.link { min-height: auto; padding: 4px 0; background: none; border: none; color: var(--link); font-weight: 600; font-size: 0.85rem; text-decoration: underline; }
 

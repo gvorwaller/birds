@@ -1,4 +1,24 @@
-# Revise docs/birds-app-design.md → V2
+# birds — Design (V2) + roadmap
+
+> **Status (2026-06-13): SHIPPED & live at https://birds.gaylon.photos.**
+> Phases 1–3 and most of Phase 4 are built and deployed: auth (single admin, argon2id) · per-user eBird API key + credentialed life-list sync (Cornell CAS) · Near Me · Targets with place search, "rare this week", and best-places ranking · link-out gallery with species matching + override workflow · species pages · **Trips planner** (stops via place/eBird-hotspot search, per-stop live needs counts, route map, **smart nearest-neighbor route ordering**, Markdown export) · Google maps on Dashboard/Targets · photo GPS map · settings + admin/tools (cache flush, data counts) · **PWA** (installable + offline app shell) · DB backup script. Dedicated Postgres 17 cluster on port 5436; deploy via `scripts/deploy-to-DO.sh`.
+
+## Future items (not yet built)
+
+**Decision needed before building:**
+- **Family sharing / multi-user** — a read-only "viewer" role so family can see trips, needs, and photos without editing (wife would use it; possibly two sons). Reshapes the current single-admin auth. *Likely the next build.* Open questions: one shared viewer login vs per-person accounts; exactly what a viewer sees (own life list is the owner's; trips/photos read-only).
+- **Need-alert notifications** — "a high-priority need was just reported near home." Needs a channel decision — **email** (wire an email sender) or **web push** (VAPID keys) — plus a background poller/worker (the app currently has no worker process).
+
+**Deferred (low urgency, on hold per owner):**
+- Deeper taxonomy handling — subspecies / hybrids / eBird taxonomy splits over time.
+
+**On hold — out of scope by design or externally gated:**
+- **eBird Status & Trends abundance overlays** ("should be here now") — requires a separate, gated Cornell S&T data product, not the eBird API v2 the app uses.
+- **Sound upload + BirdNET ID** — requires audio *storage*, which the link-out / no-media-storage design deliberately excludes; would mean reversing that core decision.
+- **pgvector semantic search over notes** — overkill for a handful of short trip notes.
+- **Public / curated photo subsets** — `gaylon.photos/birds` is already public; nothing to add here.
+
+---
 
 > **Amendments (2026-06-12, after mockup review):**
 > 1. **Google Maps, not Leaflet** — reuse gaylon.photos' `PUBLIC_GOOGLE_MAPS_API_KEY` + `PUBLIC_GOOGLE_MAPS_MAP_ID` (in `gaylonphotos/.env`). Copy sources: `gaylonphotos/src/lib/google-maps.js` (loader) and `gaylonphotos/src/lib/components/common/Map.svelte` (AdvancedMarkerElement + InfoWindow patterns). This supersedes every Leaflet mention below.

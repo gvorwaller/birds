@@ -4,6 +4,7 @@
  * geo recent-obs endpoint, diffed against the user's seen list.
  */
 import { query, withTransaction } from '$lib/db';
+import { haversineKm } from '$lib/geo';
 import { recentNearbyObs } from '$server/ebird';
 import { seenSet } from '$server/needs';
 
@@ -158,6 +159,73 @@ export async function moveStop(
 		await client.query('UPDATE trip_stops SET sort_order = $2 WHERE id = $1', [a.id, swapIdx]);
 		await client.query('UPDATE trip_stops SET sort_order = $2 WHERE id = $1', [b.id, idx]);
 	});
+}
+
+/**
+ * Reorder a trip's stops into a sensible driving route via greedy
+ * nearest-neighbor on great-circle distance. Anchors at home when home is
+ * near the stops (≤100 km of one), otherwise keeps the current first stop as
+ * the start. Stops without coords are pushed to the end, order preserved.
+ *
+ * (Great-circle, not live drive-time — accurate enough for a day trip and
+ * needs no Directions API / billing. Live drive-time ordering is a future
+ * enhancement that requires the Directions API enabled.)
+ */
+export async function optimizeStopOrder(
+	userId: number,
+	tripId: number,
+	origin: { lat: number; lon: number } | null
+): Promise<{ changed: boolean; anchoredAtHome: boolean }> {
+	if (!(await assertOwnsTrip(userId, tripId))) return { changed: false, anchoredAtHome: false };
+	const stops = await getStops(tripId);
+	const located = stops.filter(
+		(s): s is TripStop & { lat: number; lon: number } => s.lat != null && s.lon != null
+	);
+	const unlocated = stops.filter((s) => s.lat == null || s.lon == null);
+	if (located.length < 3) return { changed: false, anchoredAtHome: false };
+
+	const remaining = [...located];
+	const tour: (TripStop & { lat: number; lon: number })[] = [];
+	let curLat: number;
+	let curLon: number;
+
+	const homeNear =
+		origin != null &&
+		located.some((s) => haversineKm(origin.lat, origin.lon, s.lat, s.lon) <= 100);
+
+	if (homeNear && origin) {
+		curLat = origin.lat;
+		curLon = origin.lon;
+	} else {
+		const first = remaining.shift()!; // current first stop (getStops is sort_order-ordered)
+		tour.push(first);
+		curLat = first.lat;
+		curLon = first.lon;
+	}
+
+	while (remaining.length) {
+		let bestIdx = 0;
+		let bestDist = Infinity;
+		for (let i = 0; i < remaining.length; i++) {
+			const d = haversineKm(curLat, curLon, remaining[i].lat, remaining[i].lon);
+			if (d < bestDist) {
+				bestDist = d;
+				bestIdx = i;
+			}
+		}
+		const next = remaining.splice(bestIdx, 1)[0];
+		tour.push(next);
+		curLat = next.lat;
+		curLon = next.lon;
+	}
+
+	await withTransaction(async (client) => {
+		let order = 0;
+		for (const s of [...tour, ...unlocated]) {
+			await client.query('UPDATE trip_stops SET sort_order = $2 WHERE id = $1', [s.id, order++]);
+		}
+	});
+	return { changed: true, anchoredAtHome: !!homeNear };
 }
 
 const STOP_NEEDS_DIST_KM = 16;
