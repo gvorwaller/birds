@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import Badge from '$components/Badge.svelte';
+	import MapPicker, { type PickedLocation } from '$components/MapPicker.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let busy = $state('');
+	let homePick = $state<PickedLocation | null>(null);
+
+	let revealedKey = $derived(
+		form && 'apiKey' in form ? (form as { apiKey: string }).apiKey : null
+	);
 
 	function track(name: string) {
 		return () => {
@@ -49,13 +55,28 @@
 		</p>
 		<form method="POST" action="?/save_api_key" use:enhance={track('key')}>
 			<input
-				type="password"
+				type="text"
 				name="api_key"
-				placeholder={data.ebird.api_key_set ? '•••••••• (saved — enter to replace)' : 'eBird API key'}
+				placeholder={data.ebird.api_key_set ? 'saved — enter to replace' : 'eBird API key'}
 				autocomplete="off"
+				autocapitalize="none"
+				spellcheck="false"
 			/>
 			<button type="submit" disabled={busy === 'key'}>Save key</button>
 		</form>
+		{#if data.ebird.api_key_set}
+			<div class="actionrow">
+				<form method="POST" action="?/reveal_api_key" use:enhance={track('revealkey')}>
+					<button type="submit" class="link" disabled={busy === 'revealkey'}>Reveal key</button>
+				</form>
+				<form method="POST" action="?/clear_api_key" use:enhance={track('clearkey')}>
+					<button type="submit" class="link danger" disabled={busy === 'clearkey'}>Remove key</button>
+				</form>
+				{#if revealedKey}
+					<code class="revealed">{revealedKey}</code>
+				{/if}
+			</div>
+		{/if}
 	</section>
 
 	<section class="card">
@@ -71,34 +92,52 @@
 			life-list endpoint). This rides eBird's website login — if Cornell changes it, the sync fails
 			soft and your last synced list keeps working.
 		</p>
+		{#if data.ebird.login_set && data.ebird.login_username}
+			<p class="muted saved-as">Saved account: <strong>{data.ebird.login_username}</strong></p>
+		{/if}
 		<form method="POST" action="?/save_login" use:enhance={track('login')}>
 			<input
 				type="text"
 				name="ebird_username"
-				placeholder="eBird username"
+				placeholder={data.ebird.login_set ? 'username (enter to replace)' : 'eBird username'}
 				autocomplete="off"
 				autocapitalize="none"
 			/>
-			<input type="password" name="ebird_password" placeholder="eBird password" autocomplete="off" />
+			<input
+				type="password"
+				name="ebird_password"
+				placeholder={data.ebird.login_set ? 'password (enter to replace)' : 'eBird password'}
+				autocomplete="off"
+			/>
 			<button type="submit" disabled={busy === 'login'}>Save credentials</button>
 		</form>
 		<div class="syncrow">
+			<form method="POST" action="?/test_login" use:enhance={track('testlogin')}>
+				<button type="submit" disabled={busy === 'testlogin' || !data.ebird.login_set}>
+					{busy === 'testlogin' ? 'Testing…' : 'Test login'}
+				</button>
+			</form>
 			<form method="POST" action="?/sync_lifelist" use:enhance={track('lifelist')}>
 				<button type="submit" disabled={busy === 'lifelist' || !data.ebird.login_set}>
 					{busy === 'lifelist' ? 'Syncing… (logs into eBird)' : '⟳ Sync life list now'}
 				</button>
 			</form>
-			<span class="muted">
-				{#if data.ebird.life_list_synced_at}
-					last sync {new Date(data.ebird.life_list_synced_at).toLocaleString()}
-					{#if data.ebird.life_list_status === 'error'}
-						<Badge kind="notable" label="error" /> {data.ebird.life_list_error}
-					{/if}
-				{:else}
-					never synced
-				{/if}
-			</span>
+			{#if data.ebird.login_set}
+				<form method="POST" action="?/clear_login" use:enhance={track('clearlogin')}>
+					<button type="submit" class="link danger" disabled={busy === 'clearlogin'}>Remove</button>
+				</form>
+			{/if}
 		</div>
+		<p class="muted">
+			{#if data.ebird.life_list_synced_at}
+				Last sync {new Date(data.ebird.life_list_synced_at).toLocaleString()}
+				{#if data.ebird.life_list_status === 'error'}
+					<Badge kind="notable" label="error" /> {data.ebird.life_list_error}
+				{/if}
+			{:else}
+				Never synced.
+			{/if}
+		</p>
 		<details>
 			<summary>Fallback: import a CSV instead</summary>
 			<p class="muted">
@@ -118,23 +157,28 @@
 
 	<section class="card">
 		<h2>Home location</h2>
-		<p class="muted">Used for distances and the Near Me view.</p>
-		<form method="POST" action="?/save_home" use:enhance={track('home')}>
-			<input
-				type="text"
-				name="home_lat"
-				inputmode="decimal"
-				placeholder="Latitude"
-				value={data.home.home_lat ?? ''}
-			/>
-			<input
-				type="text"
-				name="home_lon"
-				inputmode="decimal"
-				placeholder="Longitude"
-				value={data.home.home_lon ?? ''}
-			/>
-			<button type="submit" disabled={busy === 'home'}>Save home</button>
+		<p class="muted">
+			Used for distances and the Near Me view. Search a place or tap the map to drop a pin.
+			{#if data.home.home_label}
+				<br />Current: <strong>{data.home.home_label}</strong>
+			{:else if data.home.home_lat != null}
+				<br />Current: {data.home.home_lat.toFixed(4)}, {data.home.home_lon?.toFixed(4)}
+			{/if}
+		</p>
+
+		<MapPicker
+			bind:selected={homePick}
+			initialLat={data.home.home_lat}
+			initialLng={data.home.home_lon}
+		/>
+
+		<form method="POST" action="?/save_home" use:enhance={track('home')} class="savehome">
+			<input type="hidden" name="home_lat" value={homePick?.lat ?? data.home.home_lat ?? ''} />
+			<input type="hidden" name="home_lon" value={homePick?.lng ?? data.home.home_lon ?? ''} />
+			<input type="hidden" name="home_label" value={homePick?.label ?? data.home.home_label ?? ''} />
+			<button type="submit" disabled={busy === 'home' || (!homePick && data.home.home_lat == null)}>
+				{busy === 'home' ? 'Saving…' : homePick ? `Save: ${homePick.label}` : 'Save home'}
+			</button>
 		</form>
 	</section>
 
@@ -302,6 +346,45 @@
 	.err {
 		color: var(--danger);
 		font-weight: 600;
+	}
+	.actionrow {
+		display: flex;
+		gap: 16px;
+		align-items: center;
+		flex-wrap: wrap;
+		margin-top: 10px;
+	}
+	.actionrow form {
+		display: inline;
+	}
+	button.link {
+		min-height: auto;
+		padding: 4px 0;
+		background: none;
+		border: none;
+		color: var(--link);
+		font-weight: 600;
+		font-size: 0.85rem;
+		text-decoration: underline;
+	}
+	button.link.danger {
+		color: var(--danger);
+		border: none;
+		background: none;
+	}
+	.revealed {
+		font-size: 0.85rem;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 4px 8px;
+		word-break: break-all;
+	}
+	.saved-as {
+		margin-bottom: 10px;
+	}
+	.savehome {
+		margin-top: 12px;
 	}
 	@media (min-width: 640px) {
 		.page {

@@ -1,12 +1,13 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { query } from '$lib/db';
-import { encryptSecret } from '$server/crypto';
+import { decryptSecret, encryptSecret } from '$server/crypto';
 import { getEbirdApiKey, syncTaxonomy, taxonomyCount, EbirdError } from '$server/ebird';
 import {
 	importLifeList,
 	parseLifeListCsv,
 	syncLifeListFromEbird,
+	testEbirdLogin,
 	EbirdLoginError
 } from '$server/ebird-account';
 import { rematchPhotoLinks, syncGallery } from '$server/gallery';
@@ -18,18 +19,20 @@ export const load: PageServerLoad = async ({ locals }) => {
 		query<{
 			api_key_set: boolean;
 			login_set: boolean;
+			login_username_enc: string | null;
 			life_list_synced_at: string | null;
 			life_list_status: string | null;
 			life_list_error: string | null;
 		}>(
 			`SELECT api_key_enc IS NOT NULL AS api_key_set,
 			        (login_username_enc IS NOT NULL AND login_password_enc IS NOT NULL) AS login_set,
+			        login_username_enc,
 			        life_list_synced_at, life_list_status, life_list_error
 			   FROM user_ebird WHERE user_id = $1`,
 			[userId]
 		),
-		query<{ home_lat: number | null; home_lon: number | null }>(
-			'SELECT home_lat, home_lon FROM users WHERE id = $1',
+		query<{ home_lat: number | null; home_lon: number | null; home_label: string | null }>(
+			'SELECT home_lat, home_lon, home_label FROM users WHERE id = $1',
 			[userId]
 		),
 		taxonomyCount(),
@@ -42,15 +45,28 @@ export const load: PageServerLoad = async ({ locals }) => {
 		)
 	]);
 
+	const row = ebird.rows[0];
+	// The eBird username is an identifier (low-sensitivity) — show it so the
+	// user can confirm which account is saved. The password is never returned.
+	let loginUsername: string | null = null;
+	if (row?.login_username_enc) {
+		try {
+			loginUsername = decryptSecret(row.login_username_enc);
+		} catch {
+			loginUsername = null;
+		}
+	}
+
 	return {
-		ebird: ebird.rows[0] ?? {
-			api_key_set: false,
-			login_set: false,
-			life_list_synced_at: null,
-			life_list_status: null,
-			life_list_error: null
+		ebird: {
+			api_key_set: row?.api_key_set ?? false,
+			login_set: row?.login_set ?? false,
+			login_username: loginUsername,
+			life_list_synced_at: row?.life_list_synced_at ?? null,
+			life_list_status: row?.life_list_status ?? null,
+			life_list_error: row?.life_list_error ?? null
 		},
-		home: user.rows[0] ?? { home_lat: null, home_lon: null },
+		home: user.rows[0] ?? { home_lat: null, home_lon: null, home_label: null },
 		taxonomyCount: taxCount,
 		seenBySource: seenBySource.rows.map((r) => ({ source: r.source, n: Number(r.n) })),
 		photoTotal: Number(photoStats.rows[0]?.total ?? 0),
@@ -95,16 +111,59 @@ export const actions: Actions = {
 		return { ok: true as const, message: 'eBird account credentials saved (encrypted).' };
 	},
 
+	reveal_api_key: async ({ locals }) => {
+		const userId = locals.user!.id;
+		const key = await getEbirdApiKey(userId);
+		if (!key) return fail(404, { error: 'No API key saved.' });
+		return { ok: true as const, apiKey: key };
+	},
+
+	clear_api_key: async ({ locals }) => {
+		const userId = locals.user!.id;
+		await query('UPDATE user_ebird SET api_key_enc = NULL, updated_at = NOW() WHERE user_id = $1', [
+			userId
+		]);
+		return { ok: true as const, message: 'eBird API key removed.' };
+	},
+
+	clear_login: async ({ locals }) => {
+		const userId = locals.user!.id;
+		await query(
+			`UPDATE user_ebird SET login_username_enc = NULL, login_password_enc = NULL,
+			        life_list_status = NULL, life_list_error = NULL, updated_at = NOW()
+			  WHERE user_id = $1`,
+			[userId]
+		);
+		return { ok: true as const, message: 'eBird account credentials removed.' };
+	},
+
+	test_login: async ({ locals }) => {
+		const userId = locals.user!.id;
+		try {
+			await testEbirdLogin(userId);
+			return { ok: true as const, message: 'eBird login works — credentials accepted.' };
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			return fail(502, { error: `eBird login test failed: ${msg}` });
+		}
+	},
+
 	save_home: async ({ locals, request }) => {
 		const userId = locals.user!.id;
 		const form = await request.formData();
 		const lat = Number(form.get('home_lat'));
 		const lon = Number(form.get('home_lon'));
+		const label = (form.get('home_label') ?? '').toString().trim() || null;
 		if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-			return fail(400, { error: 'Enter a valid latitude and longitude.' });
+			return fail(400, { error: 'Pick a location on the map first.' });
 		}
-		await query('UPDATE users SET home_lat = $2, home_lon = $3 WHERE id = $1', [userId, lat, lon]);
-		return { ok: true as const, message: `Home location saved: ${lat.toFixed(4)}, ${lon.toFixed(4)}.` };
+		await query('UPDATE users SET home_lat = $2, home_lon = $3, home_label = $4 WHERE id = $1', [
+			userId,
+			lat,
+			lon,
+			label
+		]);
+		return { ok: true as const, message: `Home location saved${label ? `: ${label}` : ''}.` };
 	},
 
 	sync_taxonomy: async ({ locals }) => {

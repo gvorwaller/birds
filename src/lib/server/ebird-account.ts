@@ -12,11 +12,16 @@ import { query, withTransaction } from '$lib/db';
 import { decryptSecret } from '$server/crypto';
 import { buildMatcher } from '$server/species-match';
 
-const CAS_LOGIN_URL =
-	'https://secure.birdcount.org/cassso/login?service=' +
-	encodeURIComponent('https://ebird.org/login/cas?portal=ebird');
+// eBird auth is a Spring-Security CAS form at secure.birds.cornell.edu (the
+// old secure.birdcount.org host no longer resolves). The sign-in form carries
+// an `execution` token + `_eventId=submit`; success redirects through the
+// service URL with a ticket, which sets the ebird.org session cookie.
+const CAS_BASE = 'https://secure.birds.cornell.edu/cassso/login';
+const CAS_SERVICE = 'https://ebird.org/login/cas?portal=ebird';
+const CAS_LOGIN_URL = `${CAS_BASE}?service=${encodeURIComponent(CAS_SERVICE)}&locale=en_US`;
 const LIFELIST_CSV_URL = 'https://ebird.org/lifelist?r=world&time=life&fmt=csv';
-const UA = 'birds.gaylon.photos personal life-list sync (single user)';
+const UA =
+	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) birds.gaylon.photos personal life-list sync';
 
 export class EbirdLoginError extends Error {
 	constructor(message: string) {
@@ -72,7 +77,7 @@ async function followRedirects(start: Response, jar: CookieJar, maxHops = 8): Pr
 }
 
 function extractInput(html: string, name: string): string | null {
-	// CAS login form hidden fields (lt, execution). Attribute order varies.
+	// CAS hidden fields (execution, service, locale). Attribute order varies.
 	const re = new RegExp(
 		`<input[^>]*name=["']${name}["'][^>]*value=["']([^"']*)["']|<input[^>]*value=["']([^"']*)["'][^>]*name=["']${name}["']`,
 		'i'
@@ -85,41 +90,66 @@ function extractInput(html: string, name: string): string | null {
 async function casLogin(username: string, password: string): Promise<CookieJar> {
 	const jar = new CookieJar();
 
-	const formRes = await followRedirects(await fetchWithJar(CAS_LOGIN_URL, jar), jar);
-	const formHtml = await formRes.text();
-	const lt = extractInput(formHtml, 'lt');
-	const execution = extractInput(formHtml, 'execution');
-	if (!execution && !lt) {
+	let formRes: Response;
+	try {
+		formRes = await followRedirects(await fetchWithJar(CAS_LOGIN_URL, jar), jar);
+	} catch (err) {
 		throw new EbirdLoginError(
-			'eBird login page did not look like the expected CAS form — Cornell may have changed the flow.'
+			`Could not reach the eBird sign-in page: ${err instanceof Error ? err.message : err}`
 		);
 	}
+	const formHtml = await formRes.text();
+	const execution = extractInput(formHtml, 'execution');
+	if (!execution) {
+		throw new EbirdLoginError(
+			'eBird sign-in page did not contain the expected form (no execution token) — Cornell may have changed the login flow.'
+		);
+	}
+	const service = extractInput(formHtml, 'service') ?? CAS_SERVICE;
+	const locale = extractInput(formHtml, 'locale') ?? 'en_US';
 
 	const body = new URLSearchParams({
 		username,
 		password,
+		execution,
 		_eventId: 'submit',
-		...(lt ? { lt } : {}),
-		...(execution ? { execution } : {})
+		service,
+		locale
 	});
 
-	const loginRes = await fetchWithJar(formRes.url || CAS_LOGIN_URL, jar, {
+	// The browser posts action="login" relative to the page → CAS_BASE (no query).
+	const loginRes = await fetchWithJar(CAS_BASE, jar, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: body.toString()
 	});
 
-	if (loginRes.status === 200) {
+	// Success is a 3xx redirect to the service URL with a ticket. A 200/401 here
+	// means the form came back — almost always bad credentials.
+	if (loginRes.status >= 300 && loginRes.status < 400) {
+		await followRedirects(loginRes, jar);
+		return jar;
+	}
+	if (loginRes.status === 200 || loginRes.status === 401) {
 		const html = await loginRes.text();
-		if (/password|credentials|sign in/i.test(html)) {
+		if (/invalid|incorrect|name=["']password["']/i.test(html)) {
 			throw new EbirdLoginError('eBird rejected the username or password.');
 		}
-		throw new EbirdLoginError('Unexpected response from eBird login (no redirect).');
 	}
+	throw new EbirdLoginError(`Unexpected eBird login response (HTTP ${loginRes.status}).`);
+}
 
-	// Success path: 302 chain through ebird.org/login/cas?ticket=ST-... sets the session.
-	await followRedirects(loginRes, jar);
-	return jar;
+/** Verify saved credentials authenticate, without importing anything. */
+export async function testEbirdLogin(userId: number): Promise<void> {
+	const creds = await query<{ login_username_enc: string | null; login_password_enc: string | null }>(
+		'SELECT login_username_enc, login_password_enc FROM user_ebird WHERE user_id = $1',
+		[userId]
+	);
+	const row = creds.rows[0];
+	if (!row?.login_username_enc || !row.login_password_enc) {
+		throw new EbirdLoginError('No eBird account credentials saved — add them first.');
+	}
+	await casLogin(decryptSecret(row.login_username_enc), decryptSecret(row.login_password_enc));
 }
 
 interface ParsedLifeList {

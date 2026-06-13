@@ -70,8 +70,9 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - Field renames in gaylonphotos' API require a matching update here — same owner, coordinate via that repo.
 
 ### Google Maps
-- Reuse gaylonphotos' `PUBLIC_GOOGLE_MAPS_API_KEY` + `PUBLIC_GOOGLE_MAPS_MAP_ID` (in `gaylonphotos/.env`). The key's website restrictions already include `birds.gaylon.photos/*` and `http://127.0.0.1:8431/*` (mockups).
-- Copy loader/marker patterns from `gaylonphotos/src/lib/google-maps.js` and `src/lib/components/common/Map.svelte` (AdvancedMarkerElement + InfoWindow).
+- Reuse gaylonphotos' `PUBLIC_GOOGLE_MAPS_API_KEY` + `PUBLIC_GOOGLE_MAPS_MAP_ID` (in `gaylonphotos/.env`). The key's website restrictions must include every origin that loads a map: `birds.gaylon.photos/*`, `http://127.0.0.1:5178/*` (dev), `http://127.0.0.1:8431/*` (mockups). Add new origins in the gaylonphotos GCP project.
+- Server-side place search / reverse geocode uses `GOOGLE_GEOCODING_KEY` (also from gaylonphotos/.env) via `/api/geocode`. The map picker lives in `src/lib/components/MapPicker.svelte`; loader in `src/lib/google-maps.ts`. Patterns adapted from `gaylonphotos/src/lib/google-maps.js`, `src/routes/api/geocode/+server.js`, and `Map.svelte`.
+- Home location is set via the map picker (search + tap), never raw lat/lon entry.
 
 ### CSS & UI
 - **No Tailwind. No utility frameworks.** Component-scoped `<style>` blocks only.
