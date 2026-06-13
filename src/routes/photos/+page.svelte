@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import Badge from '$components/Badge.svelte';
+	import ObsMap from '$components/ObsMap.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -61,6 +62,15 @@
 				Nothing synced yet. Hit “Refresh from gaylon.photos” — and make sure the taxonomy is synced
 				in <a href="/settings">Settings</a> so species names can be matched.
 			</p>
+		</section>
+	{/if}
+
+	{#if data.photoPoints.length > 0}
+		<section class="card map-card">
+			<h2 class="map-title">
+				🗺️ Where you've shot — {data.photoPoints.length} geotagged {data.photoPoints.length === 1 ? 'photo' : 'photos'}
+			</h2>
+			<ObsMap points={data.photoPoints} />
 		</section>
 	{/if}
 
@@ -162,6 +172,13 @@
 	.card h2 {
 		font-size: 1.05rem;
 		margin-bottom: 10px;
+	}
+	.map-card {
+		padding: 8px;
+	}
+	.map-title {
+		font-size: 1rem;
+		margin: 4px 8px 8px;
 	}
 	.toolbar {
 		display: flex;

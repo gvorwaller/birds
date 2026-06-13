@@ -46,11 +46,25 @@ export const load: PageServerLoad = async () => {
 		'SELECT MAX(fetched_at)::text AS newest FROM photo_links'
 	);
 
+	const photoPoints = links
+		.filter((l) => l.lat != null && l.lng != null)
+		.map((l) => ({
+			lat: l.lat as number,
+			lng: l.lng as number,
+			title: l.com_name ?? l.source_species ?? 'Photo',
+			sub: l.taken_on ?? undefined,
+			img: l.thumbnail,
+			href: l.page_url,
+			linkText: 'View on gaylon.photos →',
+			kind: 'photo' as const
+		}));
+
 	return {
 		groups: [...groups.values()].sort((a, b) => b.photos.length - a.photos.length),
 		unmatched: [...unmatched.entries()].map(([name, photos]) => ({ name, photos })),
 		total: links.length,
-		fetchedAt: newest.rows[0]?.newest ?? null
+		fetchedAt: newest.rows[0]?.newest ?? null,
+		photoPoints
 	};
 };
 

@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { dbHealthCheck } from '$lib/db';
 import { galleryHealth } from '$server/gallery';
 
-const VERSION = process.env.GIT_SHA ?? 'dev';
+const VERSION = __GIT_SHA__;
 
 export const GET: RequestHandler = async () => {
 	const [dbOk, gallerySource] = await Promise.all([dbHealthCheck(), galleryHealth()]);

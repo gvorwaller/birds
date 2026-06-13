@@ -10,6 +10,9 @@ declare global {
 			};
 		}
 	}
+
+	// Injected by Vite `define` at build time (commit SHA, or 'dev' locally).
+	const __GIT_SHA__: string;
 }
 
 export {};

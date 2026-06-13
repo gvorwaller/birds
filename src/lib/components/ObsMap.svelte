@@ -5,7 +5,9 @@
 		title: string;
 		sub?: string;
 		href?: string;
-		kind?: 'need' | 'notable' | 'home';
+		linkText?: string;
+		img?: string;
+		kind?: 'need' | 'notable' | 'home' | 'photo';
 	}
 </script>
 
@@ -25,7 +27,8 @@
 	const COLORS = {
 		need: { background: '#0a5c43', borderColor: '#07472f', glyphColor: '#fff' },
 		notable: { background: '#842029', borderColor: '#58151c', glyphColor: '#fff' },
-		home: { background: '#084298', borderColor: '#052c65', glyphColor: '#fff' }
+		home: { background: '#084298', borderColor: '#052c65', glyphColor: '#fff' },
+		photo: { background: '#6f42c1', borderColor: '#4d2d89', glyphColor: '#fff' }
 	};
 
 	let mapEl: HTMLDivElement;
@@ -76,11 +79,14 @@
 					content: pin.element
 				});
 				m.addListener('click', () => {
+					const img = p.img
+						? `<img src="${encodeURI(p.img)}" alt="" loading="lazy" style="width:100%;max-width:220px;border-radius:6px;display:block;margin-bottom:6px">`
+						: '';
 					const link = p.href
-						? `<br><a href="${p.href}" style="color:#084298;font-weight:600">View species →</a>`
+						? `<br><a href="${encodeURI(p.href)}" style="color:#084298;font-weight:600">${escapeHtml(p.linkText ?? 'View species →')}</a>`
 						: '';
 					info.setContent(
-						`<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}`
+						`${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}`
 					);
 					info.open({ map, anchor: m });
 				});
