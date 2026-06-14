@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getEbirdApiKey } from '$server/ebird';
 import { getStops, getTrip, needsCountForStops } from '$server/trips';
+import { mapsPlaceUrl, mapsDirectionsUrl } from '$lib/geo';
 
 function fmtDate(d: string): string {
 	return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
@@ -60,7 +61,8 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 		const n = counts.get(s.id);
 		if (n !== undefined) meta.push(`${n} of your needs reported here (last 14 days, ≤16 km)`);
 		if (s.lat != null && s.lon != null) {
-			meta.push(`[map](https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon})`);
+			meta.push(`[📍 Map](${mapsPlaceUrl(s.lat, s.lon)})`);
+			meta.push(`[Directions](${mapsDirectionsUrl(s.lat, s.lon)})`);
 		}
 		if (s.hotspot_id) {
 			meta.push(`[eBird hotspot](https://ebird.org/hotspot/${s.hotspot_id})`);
