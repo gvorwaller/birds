@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
 	import BestPlaces from '$components/BestPlaces.svelte';
+	import MapLink from '$components/MapLink.svelte';
 	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
@@ -150,6 +151,7 @@
 								· 📷 you have {n.photoCount}
 								{n.photoCount === 1 ? 'photo' : 'photos'}{/if}
 						</div>
+						<MapLink lat={n.lastLat} lng={n.lastLng} />
 					</div>
 					<div class="right">
 						<div class="dist">{n.nReports} ×</div>
@@ -180,6 +182,7 @@
 							{#if n.photoCount === 0}
 								· 📷 no photo yet{/if}
 						</div>
+						<MapLink lat={n.lastLat} lng={n.lastLng} />
 					</div>
 					<div class="right">
 						{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}

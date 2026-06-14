@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
+	import MapLink from '$components/MapLink.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
 
@@ -94,6 +95,7 @@
 					<div class="grow">
 						<div class="name">{o.locName}</div>
 						<div class="meta">{o.howMany ?? 1} {(o.howMany ?? 1) === 1 ? 'bird' : 'birds'}</div>
+						<MapLink lat={o.lat} lng={o.lng} />
 					</div>
 					<div class="right">
 						{#if o.distanceKm != null}<div class="dist">{formatKm(o.distanceKm)}</div>{/if}

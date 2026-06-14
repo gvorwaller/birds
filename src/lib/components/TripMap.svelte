@@ -2,6 +2,13 @@
 	import { onMount } from 'svelte';
 	import { env } from '$env/dynamic/public';
 	import { loadGoogleMaps } from '$lib/google-maps';
+	import { mapsPlaceUrl, mapsDirectionsUrl } from '$lib/geo';
+
+	function escapeHtml(s: string): string {
+		return s.replace(/[&<>"']/g, (c) =>
+			({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
+		);
+	}
 
 	export interface MapStop {
 		lat: number;
@@ -61,7 +68,13 @@
 					content: pin.element
 				});
 				m.addListener('click', () => {
-					info.setContent(`<b>${s.order}. ${s.label}</b>`);
+					info.setContent(
+						`<b>${s.order}. ${escapeHtml(s.label)}</b>` +
+							`<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
+							`<a href="${mapsPlaceUrl(s.lat, s.lng)}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
+							`<a href="${mapsDirectionsUrl(s.lat, s.lng)}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
+							`</div>`
+					);
 					info.open({ map, anchor: m });
 				});
 				bounds.extend({ lat: s.lat, lng: s.lng });

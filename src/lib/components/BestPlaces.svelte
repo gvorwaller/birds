@@ -15,6 +15,7 @@
 
 <script lang="ts">
 	import { formatKm } from '$lib/geo';
+	import MapLink from '$components/MapLink.svelte';
 
 	let {
 		places = [],
@@ -49,6 +50,7 @@
 						{/if}
 					</div>
 					<div class="meta">{speciesList(p)}</div>
+					<MapLink lat={p.lat} lng={p.lng} />
 				</div>
 				<div class="right">
 					<div class="count">{p.needCount} <span class="lbl">{p.needCount === 1 ? 'need' : 'needs'}</span></div>

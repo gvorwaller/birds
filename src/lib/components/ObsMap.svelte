@@ -15,6 +15,7 @@
 	import { onMount } from 'svelte';
 	import { env } from '$env/dynamic/public';
 	import { loadGoogleMaps } from '$lib/google-maps';
+	import { mapsPlaceUrl, mapsDirectionsUrl } from '$lib/geo';
 
 	let {
 		points = [],
@@ -85,8 +86,16 @@
 					const link = p.href
 						? `<br><a href="${encodeURI(p.href)}" style="color:#084298;font-weight:600">${escapeHtml(p.linkText ?? 'View species →')}</a>`
 						: '';
+					// Home marker doesn't need "directions to home".
+					const maps =
+						p.kind === 'home'
+							? ''
+							: `<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
+								`<a href="${mapsPlaceUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
+								`<a href="${mapsDirectionsUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
+								`</div>`;
 					info.setContent(
-						`${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}`
+						`${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}${maps}`
 					);
 					info.open({ map, anchor: m });
 				});

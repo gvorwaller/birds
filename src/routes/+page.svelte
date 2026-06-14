@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Badge from '$components/Badge.svelte';
 	import BestPlaces from '$components/BestPlaces.svelte';
+	import MapLink from '$components/MapLink.svelte';
 	import ObsMap, { type ObsPoint } from '$components/ObsMap.svelte';
 	import { formatKm } from '$lib/geo';
 	import type { PageData } from './$types';
@@ -82,6 +83,7 @@
 							{n.locations.join(' · ')} · {n.nReports}
 							{n.nReports === 1 ? 'report' : 'reports'} · {n.totalCount} birds
 						</div>
+						<MapLink lat={n.lastLat} lng={n.lastLng} />
 					</div>
 					<div class="right">
 						{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}
