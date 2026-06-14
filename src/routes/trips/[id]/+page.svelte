@@ -1,13 +1,43 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { tick } from 'svelte';
+	import { env } from '$env/dynamic/public';
 	import Badge from '$components/Badge.svelte';
 	import TripMap, { type MapStop } from '$components/TripMap.svelte';
+	import { optimizeDrivingRoute, formatDuration } from '$lib/route';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let editing = $state(false);
 	let deleteOpen = $state(false);
+
+	const MAPS_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+
+	// "Optimize order" runs Google's driving-distance optimizer in the browser,
+	// then posts the resulting sequence to ?/set_order. If Directions is
+	// unavailable it falls back to the server's straight-line ?/optimize.
+	let optimizing = $state(false);
+	let orderValue = $state('');
+	let orderForm = $state<HTMLFormElement>();
+	let fallbackForm = $state<HTMLFormElement>();
+	let routeSummary = $state<{ km: number; min: number } | null>(null);
+
+	async function runOptimize() {
+		if (optimizing) return;
+		optimizing = true;
+		try {
+			const res = await optimizeDrivingRoute(MAPS_KEY, {
+				home: data.home,
+				stops: data.stops.map((s) => ({ id: s.id, lat: s.lat as number, lon: s.lon as number }))
+			});
+			orderValue = res.orderedIds.join(',');
+			await tick();
+			orderForm?.requestSubmit();
+		} catch {
+			fallbackForm?.requestSubmit();
+		}
+	}
 
 	let mapStops = $derived<MapStop[]>(
 		data.stops
@@ -76,8 +106,13 @@
 	{#if mapStops.length > 0 || mapExtra}
 		<section class="card map-card">
 			{#key mapStops.map((s) => `${s.lat},${s.lng}`).join('|') + (mapExtra ? `+${mapExtra.lat}` : '')}
-				<TripMap stops={mapStops} extra={mapExtra} />
+				<TripMap stops={mapStops} extra={mapExtra} onSummary={(s) => (routeSummary = s)} />
 			{/key}
+			{#if routeSummary}
+				<p class="route-summary">
+					🚗 ~{Math.round(routeSummary.km)} km · {formatDuration(routeSummary.min)} driving (in order)
+				</p>
+			{/if}
 		</section>
 	{/if}
 
@@ -85,11 +120,37 @@
 		<div class="stops-head">
 			<h2>Stops</h2>
 			{#if data.stops.length >= 3 && data.canEdit}
-				<form method="POST" action="?/optimize" use:enhance>
-					<button type="submit" class="small optimize">↕ Optimize order</button>
-				</form>
+				<button type="button" class="small optimize" onclick={runOptimize} disabled={optimizing}>
+					{optimizing ? 'Optimizing…' : '↕ Optimize order'}
+				</button>
 			{/if}
 		</div>
+		{#if data.canEdit}
+			<!-- hidden: client computes the driving order, posts it here to persist -->
+			<form
+				bind:this={orderForm}
+				method="POST"
+				action="?/set_order"
+				use:enhance={() => async ({ update }) => {
+					await update();
+					optimizing = false;
+				}}
+				hidden
+			>
+				<input type="hidden" name="order" value={orderValue} />
+			</form>
+			<!-- hidden: straight-line fallback when Directions is unavailable -->
+			<form
+				bind:this={fallbackForm}
+				method="POST"
+				action="?/optimize"
+				use:enhance={() => async ({ update }) => {
+					await update();
+					optimizing = false;
+				}}
+				hidden
+			></form>
+		{/if}
 		{#if data.stops.length === 0}
 			<p class="muted">No stops yet — add one below.</p>
 		{/if}
@@ -227,6 +288,7 @@
 	.notes { margin-top: 6px; }
 	.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
 	.map-card { padding: 8px; }
+	.route-summary { margin: 8px 4px 2px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 	.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
 	.stops-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 	.stops-head h2 { margin-bottom: 10px; }

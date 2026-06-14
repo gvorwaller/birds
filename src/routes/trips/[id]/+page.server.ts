@@ -12,9 +12,20 @@ import {
 	needsCountForStops,
 	optimizeStopOrder,
 	removeStop,
+	setStopOrder,
 	updateStopNotes,
 	updateTrip
 } from '$server/trips';
+
+async function homeOf(userId: number): Promise<{ lat: number; lon: number } | null> {
+	const u = await query<{ home_lat: number | null; home_lon: number | null }>(
+		'SELECT home_lat, home_lon FROM users WHERE id = $1',
+		[userId]
+	);
+	return u.rows[0]?.home_lat != null && u.rows[0]?.home_lon != null
+		? { lat: u.rows[0].home_lat, lon: u.rows[0].home_lon }
+		: null;
+}
 
 const HOTSPOT_SEARCH_DIST_KM = 25;
 
@@ -64,6 +75,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	return {
 		trip,
 		stops,
+		home: await homeOf(userId),
 		canEdit: locals.user!.role !== 'viewer',
 		needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
 		needsStale: needs.stale,
@@ -132,26 +144,33 @@ export const actions: Actions = {
 		return { ok: true as const };
 	},
 
+	// Client-computed driving-distance order (Google DirectionsService). The
+	// browser posts the optimized stop-id sequence here to persist it.
+	set_order: async ({ locals, params, request }) => {
+		const tripId = tripIdFrom(params);
+		const form = await request.formData();
+		const ids = (form.get('order') ?? '')
+			.toString()
+			.split(',')
+			.map((x) => Number(x.trim()))
+			.filter((n) => Number.isInteger(n) && n > 0);
+		const ok = await setStopOrder(locals.ownerId!, tripId, ids);
+		if (!ok) return fail(400, { error: 'Could not apply the optimized order.' });
+		return { ok: true as const, message: 'Stops reordered by real driving distance.' };
+	},
+
+	// Fallback: straight-line nearest-neighbor (no Directions API needed). Used
+	// when the browser can't reach the Directions service.
 	optimize: async ({ locals, params }) => {
 		const tripId = tripIdFrom(params);
 		const userId = locals.ownerId!;
-		const u = await query<{ home_lat: number | null; home_lon: number | null }>(
-			'SELECT home_lat, home_lon FROM users WHERE id = $1',
-			[userId]
-		);
-		const home =
-			u.rows[0]?.home_lat != null && u.rows[0]?.home_lon != null
-				? { lat: u.rows[0].home_lat, lon: u.rows[0].home_lon }
-				: null;
-		const res = await optimizeStopOrder(userId, tripId, home);
+		const res = await optimizeStopOrder(userId, tripId, await homeOf(userId));
 		if (!res.changed) {
 			return fail(400, { error: 'Add at least 3 located stops to optimize the route.' });
 		}
 		return {
 			ok: true as const,
-			message: res.anchoredAtHome
-				? 'Stops reordered into a route starting from home (nearest-neighbor by distance).'
-				: 'Stops reordered into a nearest-neighbor route from the first stop.'
+			message: 'Stops reordered by straight-line distance (driving routing was unavailable).'
 		};
 	},
 

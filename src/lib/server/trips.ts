@@ -228,6 +228,38 @@ export async function optimizeStopOrder(
 	return { changed: true, anchoredAtHome: !!homeNear };
 }
 
+/**
+ * Persist an explicit stop ordering (array of stop IDs in desired visiting
+ * order). Ignores IDs that aren't this trip's stops; any of the trip's stops
+ * missing from the list are appended at the end in their current order. Used by
+ * the client-side driving-route optimizer. Returns false if nothing valid given.
+ */
+export async function setStopOrder(
+	userId: number,
+	tripId: number,
+	orderedIds: number[]
+): Promise<boolean> {
+	if (!(await assertOwnsTrip(userId, tripId))) return false;
+	const stops = await getStops(tripId);
+	const validIds = new Set(stops.map((s) => s.id));
+	const seen = new Set<number>();
+	const ids = orderedIds.filter((id) => validIds.has(id) && !seen.has(id) && seen.add(id));
+	if (ids.length === 0) return false;
+	const finalOrder = [...ids, ...stops.map((s) => s.id).filter((id) => !seen.has(id))];
+
+	await withTransaction(async (client) => {
+		let order = 0;
+		for (const id of finalOrder) {
+			await client.query('UPDATE trip_stops SET sort_order = $2 WHERE id = $1 AND trip_id = $3', [
+				id,
+				order++,
+				tripId
+			]);
+		}
+	});
+	return true;
+}
+
 const STOP_NEEDS_DIST_KM = 16;
 const STOP_NEEDS_BACK_DAYS = 14;
 

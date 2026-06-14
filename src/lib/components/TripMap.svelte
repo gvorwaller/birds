@@ -17,7 +17,16 @@
 		order: number;
 	}
 
-	let { stops = [], extra = null }: { stops?: MapStop[]; extra?: MapStop | null } = $props();
+	let {
+		stops = [],
+		extra = null,
+		onSummary
+	}: {
+		stops?: MapStop[];
+		extra?: MapStop | null;
+		/** Reports total driving distance/time of the drawn route, or null if it fell back to a straight line. */
+		onSummary?: (s: { km: number; min: number } | null) => void;
+	} = $props();
 
 	const API_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
 	const MAP_ID = env.PUBLIC_GOOGLE_MAPS_MAP_ID ?? '';
@@ -31,7 +40,7 @@
 			return;
 		}
 		try {
-			const libs = await loadGoogleMaps(API_KEY, ['maps', 'marker']);
+			const libs = await loadGoogleMaps(API_KEY, ['maps', 'marker', 'routes']);
 			/* eslint-disable @typescript-eslint/no-explicit-any */
 			const gmaps = (window as any).google.maps;
 			const markerLib = libs.marker as any;
@@ -95,7 +104,7 @@
 				bounds.extend({ lat: extra.lat, lng: extra.lng });
 			}
 
-			if (pts.length >= 2) {
+			const drawStraightLine = () => {
 				new gmaps.Polyline({
 					map,
 					path: pts.map((s) => ({ lat: s.lat, lng: s.lng })),
@@ -103,6 +112,45 @@
 					strokeOpacity: 0.8,
 					strokeWeight: 3
 				});
+			};
+
+			// Draw the REAL road route through the stops (in current order) so the
+			// drive is visible — a straight line across a bridgeless bay is a lie.
+			// Falls back to the straight line if Directions is unavailable.
+			if (pts.length >= 2) {
+				/* eslint-disable @typescript-eslint/no-explicit-any */
+				const routesLib = libs.routes as any;
+				/* eslint-enable @typescript-eslint/no-explicit-any */
+				try {
+					const svc = new routesLib.DirectionsService();
+					const renderer = new routesLib.DirectionsRenderer({
+						map,
+						suppressMarkers: true,
+						preserveViewport: true,
+						polylineOptions: { strokeColor: '#0a5c43', strokeOpacity: 0.85, strokeWeight: 4 }
+					});
+					const res = await svc.route({
+						origin: { lat: pts[0].lat, lng: pts[0].lng },
+						destination: { lat: pts[pts.length - 1].lat, lng: pts[pts.length - 1].lng },
+						waypoints: pts
+							.slice(1, -1)
+							.map((s) => ({ location: { lat: s.lat, lng: s.lng }, stopover: true })),
+						travelMode: 'DRIVING'
+					});
+					renderer.setDirections(res);
+					let meters = 0;
+					let seconds = 0;
+					for (const leg of res?.routes?.[0]?.legs ?? []) {
+						meters += leg.distance?.value ?? 0;
+						seconds += leg.duration?.value ?? 0;
+					}
+					onSummary?.({ km: meters / 1000, min: Math.round(seconds / 60) });
+				} catch {
+					drawStraightLine();
+					onSummary?.(null);
+				}
+			} else {
+				onSummary?.(null);
 			}
 
 			const multi = pts.length + (extra ? 1 : 0) >= 2;
