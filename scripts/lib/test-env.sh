@@ -95,13 +95,23 @@ parse_env_arg() {
 }
 
 find_pg_bin() {
-  local name="$1"
-  if [[ -x "/opt/homebrew/opt/postgresql@17/bin/$name" ]]; then
-    printf '%s\n' "/opt/homebrew/opt/postgresql@17/bin/$name"
-  elif command -v "$name" >/dev/null 2>&1; then
+  # The local test cluster and prod are BOTH PostgreSQL 17 (a PG16 binary
+  # cannot start a PG17 data dir), so we require PG17 binaries. Prefer the
+  # linked formula, then an *unlinked* PG17 in the Cellar (the symlink under
+  # opt/ is sometimes missing), then whatever PG17 is on PATH.
+  local name="$1" candidate
+  for candidate in \
+    "/opt/homebrew/opt/postgresql@17/bin/$name" \
+    /opt/homebrew/Cellar/postgresql@17/*/bin/"$name"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  if command -v "$name" >/dev/null 2>&1; then
     command -v "$name"
-  else
-    echo "ERROR: $name not found. Install PostgreSQL 17 or add it to PATH." >&2
-    exit 1
+    return 0
   fi
+  echo "ERROR: $name (PostgreSQL 17) not found. Install with: brew install postgresql@17" >&2
+  exit 1
 }
