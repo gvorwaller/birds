@@ -27,3 +27,22 @@ export function mapsPlaceUrl(lat: number, lng: number): string {
 export function mapsDirectionsUrl(lat: number, lng: number): string {
 	return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 }
+
+/**
+ * Multi-stop driving directions through every point in order, starting from the
+ * device's current location: all but the last point become ordered waypoints,
+ * the last is the destination. Google's universal URL preserves waypoint order
+ * (it does not re-optimize), so pass coordinates already in trip order. Returns
+ * the single-destination URL for one point, and '' for none. Keep the list small
+ * — Google's cross-platform URL caps waypoints (≈9).
+ */
+export function mapsRouteUrl(points: Array<{ lat: number; lng: number }>): string {
+	if (points.length === 0) return '';
+	if (points.length === 1) return mapsDirectionsUrl(points[0].lat, points[0].lng);
+	const dest = points[points.length - 1];
+	const waypoints = points
+		.slice(0, -1)
+		.map((p) => `${p.lat},${p.lng}`)
+		.join('|');
+	return `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&waypoints=${waypoints}&travelmode=driving`;
+}

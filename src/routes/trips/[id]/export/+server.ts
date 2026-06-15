@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getEbirdApiKey } from '$server/ebird';
 import { getStops, getTrip, needsCountForStops } from '$server/trips';
-import { mapsPlaceUrl, mapsDirectionsUrl } from '$lib/geo';
+import { mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 
 function fmtDate(d: string): string {
 	return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
@@ -53,6 +53,12 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 	lines.push(`## Stops (${stops.length})`, '');
 	if (stops.length === 0) {
 		lines.push('_No stops yet._', '');
+	}
+	const routePoints = stops
+		.filter((s) => s.lat != null && s.lon != null)
+		.map((s) => ({ lat: s.lat as number, lng: s.lon as number }));
+	if (routePoints.length >= 2) {
+		lines.push(`[🧭 Navigate all stops](${mapsRouteUrl(routePoints)})`, '');
 	}
 	stops.forEach((s, i) => {
 		const name = s.custom_name ?? 'Stop';

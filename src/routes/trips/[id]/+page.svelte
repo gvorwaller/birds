@@ -5,6 +5,7 @@
 	import Badge from '$components/Badge.svelte';
 	import TripMap, { type MapStop } from '$components/TripMap.svelte';
 	import { optimizeDrivingRoute, formatDuration } from '$lib/route';
+	import { mapsRouteUrl } from '$lib/geo';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -51,6 +52,11 @@
 	);
 	let mapExtra = $derived<MapStop | null>(
 		data.hsCenter ? { lat: data.hsCenter.lat, lng: data.hsCenter.lng, label: data.hsCenter.label, order: 0 } : null
+	);
+	// Multi-waypoint Google Maps hand-off: from the device's location through
+	// every located stop in order. Needs ≥2 stops to be a "route".
+	let routeUrl = $derived(
+		mapStops.length >= 2 ? mapsRouteUrl(mapStops.map((s) => ({ lat: s.lat, lng: s.lng }))) : ''
 	);
 
 	function fmtDates(start: string | null, end: string | null): string {
@@ -108,10 +114,17 @@
 			{#key mapStops.map((s) => `${s.lat},${s.lng}`).join('|') + (mapExtra ? `+${mapExtra.lat}` : '')}
 				<TripMap stops={mapStops} extra={mapExtra} onSummary={(s) => (routeSummary = s)} />
 			{/key}
-			{#if routeSummary}
-				<p class="route-summary">
-					🚗 ~{Math.round(routeSummary.km)} km · {formatDuration(routeSummary.min)} driving (in order)
-				</p>
+			{#if routeSummary || routeUrl}
+				<div class="route-bar">
+					{#if routeSummary}
+						<p class="route-summary">
+							🚗 ~{Math.round(routeSummary.km)} km · {formatDuration(routeSummary.min)} driving (in order)
+						</p>
+					{/if}
+					{#if routeUrl}
+						<a class="navigate" href={routeUrl} target="_blank" rel="noopener">🧭 Navigate all stops ↗</a>
+					{/if}
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -288,7 +301,10 @@
 	.notes { margin-top: 6px; }
 	.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
 	.map-card { padding: 8px; }
-	.route-summary { margin: 8px 4px 2px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+	.route-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 8px 4px 2px; }
+	.route-summary { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin: 0; }
+	.navigate { margin-left: auto; min-height: 40px; display: inline-flex; align-items: center; padding: 8px 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: #fff; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+	.navigate:hover { filter: brightness(0.95); }
 	.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
 	.stops-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 	.stops-head h2 { margin-bottom: 10px; }
