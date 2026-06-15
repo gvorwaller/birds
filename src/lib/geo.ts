@@ -1,5 +1,10 @@
 /** Great-circle distance in km between two lat/lng points (haversine). */
-export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export function haversineKm(
+	lat1: number,
+	lon1: number,
+	lat2: number,
+	lon2: number,
+): number {
 	const R = 6371;
 	const toRad = (d: number) => (d * Math.PI) / 180;
 	const dLat = toRad(lat2 - lat1);
@@ -12,6 +17,44 @@ export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
 
 export function formatKm(km: number): string {
 	return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}
+
+/** Miles → kilometers. Used to convert UI radius input at the boundary. */
+export const MILES_TO_KM = 1.609344;
+export function milesToKm(mi: number): number {
+	return mi * MILES_TO_KM;
+}
+
+/**
+ * Greedy nearest-neighbor ordering of points starting from `origin`, by
+ * great-circle distance. Deterministic (stable for equal distances via input
+ * order). Pure — no side effects — so the query engine and tests can use it
+ * without a DB or Directions API. Returns a new array; `items` is not mutated.
+ */
+export function nearestNeighborOrder<T extends { lat: number; lng: number }>(
+	origin: { lat: number; lng: number },
+	items: T[],
+): T[] {
+	const remaining = [...items];
+	const ordered: T[] = [];
+	let curLat = origin.lat;
+	let curLng = origin.lng;
+	while (remaining.length) {
+		let bestIdx = 0;
+		let bestDist = Infinity;
+		for (let i = 0; i < remaining.length; i++) {
+			const d = haversineKm(curLat, curLng, remaining[i].lat, remaining[i].lng);
+			if (d < bestDist) {
+				bestDist = d;
+				bestIdx = i;
+			}
+		}
+		const next = remaining.splice(bestIdx, 1)[0];
+		ordered.push(next);
+		curLat = next.lat;
+		curLng = next.lng;
+	}
+	return ordered;
 }
 
 /**
@@ -36,13 +79,16 @@ export function mapsDirectionsUrl(lat: number, lng: number): string {
  * the single-destination URL for one point, and '' for none. Keep the list small
  * — Google's cross-platform URL caps waypoints (≈9).
  */
-export function mapsRouteUrl(points: Array<{ lat: number; lng: number }>): string {
-	if (points.length === 0) return '';
-	if (points.length === 1) return mapsDirectionsUrl(points[0].lat, points[0].lng);
+export function mapsRouteUrl(
+	points: Array<{ lat: number; lng: number }>,
+): string {
+	if (points.length === 0) return "";
+	if (points.length === 1)
+		return mapsDirectionsUrl(points[0].lat, points[0].lng);
 	const dest = points[points.length - 1];
 	const waypoints = points
 		.slice(0, -1)
 		.map((p) => `${p.lat},${p.lng}`)
-		.join('|');
+		.join("|");
 	return `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&waypoints=${waypoints}&travelmode=driving`;
 }

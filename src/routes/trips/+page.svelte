@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import type { ActionData, PageData } from './$types';
+	import { enhance } from "$app/forms";
+	import type { ActionData, PageData } from "./$types";
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let creating = $state(false);
 
 	function fmtDates(start: string | null, end: string | null): string {
-		if (!start && !end) return 'no dates yet';
-		const f = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString();
-		if (start && end) return start === end ? f(start) : `${f(start)} – ${f(end)}`;
+		if (!start && !end) return "no dates yet";
+		const f = (d: string) => new Date(d + "T00:00:00").toLocaleDateString();
+		if (start && end)
+			return start === end ? f(start) : `${f(start)} – ${f(end)}`;
 		return f((start ?? end) as string);
 	}
 </script>
@@ -19,8 +20,16 @@
 
 <div class="page">
 	<header class="page-head">
-		<h1>Trips</h1>
-		<p class="sub">{data.trips.length} {data.trips.length === 1 ? 'trip' : 'trips'}</p>
+		<div class="title-row">
+			<h1>Trips</h1>
+			{#if data.canEdit}
+				<a class="plan-link" href="/trips/plan">🧭 Plan a trip</a>
+			{/if}
+		</div>
+		<p class="sub">
+			{data.trips.length}
+			{data.trips.length === 1 ? "trip" : "trips"}
+		</p>
 	</header>
 
 	{#if data.canEdit}
@@ -40,7 +49,12 @@
 			>
 				<label class="grow-field">
 					<span>Name</span>
-					<input type="text" name="name" placeholder="e.g. Hancock County, Maine" required />
+					<input
+						type="text"
+						name="name"
+						placeholder="e.g. Hancock County, Maine"
+						required
+					/>
 				</label>
 				<label>
 					<span>Start</span>
@@ -50,7 +64,9 @@
 					<span>End</span>
 					<input type="date" name="end_date" />
 				</label>
-				<button type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create trip'}</button>
+				<button type="submit" disabled={creating}
+					>{creating ? "Creating…" : "Create trip"}</button
+				>
 			</form>
 		</section>
 	{/if}
@@ -63,7 +79,10 @@
 		<a class="card trip" href={`/trips/${t.id}`}>
 			<div class="grow">
 				<div class="name">{t.name}</div>
-				<div class="meta">{fmtDates(t.start_date, t.end_date)} · {t.stop_count} {t.stop_count === 1 ? 'stop' : 'stops'}</div>
+				<div class="meta">
+					{fmtDates(t.start_date, t.end_date)} · {t.stop_count}
+					{t.stop_count === 1 ? "stop" : "stops"}
+				</div>
 			</div>
 			<div class="chev">›</div>
 		</a>
@@ -78,6 +97,25 @@
 	}
 	.page-head {
 		margin: 4px 0 16px;
+	}
+	.title-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+	.plan-link {
+		min-height: 40px;
+		display: inline-flex;
+		align-items: center;
+		padding: 8px 14px;
+		border: 1px solid var(--accent);
+		border-radius: 8px;
+		background: var(--accent);
+		color: #fff;
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-decoration: none;
 	}
 	h1 {
 		font-size: 1.4rem;
