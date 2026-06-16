@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { query } from '$lib/db';
 import { getEbirdApiKey, hotspotsNear, EbirdError, type EbirdHotspot } from '$server/ebird';
 import { geocodePlace } from '$server/geocode';
+import { weatherFor, type WeatherResult } from '$server/weather';
 import {
 	addStop,
 	deleteTrip,
@@ -46,6 +47,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	const apiKey = await getEbirdApiKey(userId);
 	const needs = await needsCountForStops(userId, apiKey, stops);
 
+	// Weather for the trip area (first located stop). Supplementary — never blocks
+	// the page; null when there's no stop, no US coverage, or the provider fails.
+	const firstLocated = stops.find((s) => s.lat != null && s.lon != null);
+	let weather: WeatherResult | null = null;
+	if (firstLocated) {
+		weather = await weatherFor(firstLocated.lat as number, firstLocated.lon as number);
+	}
+
 	// Optional "find hotspots near <place>" search.
 	const hs = (url.searchParams.get('hs') ?? '').trim();
 	let hotspots: EbirdHotspot[] = [];
@@ -84,7 +93,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		hs,
 		hotspots,
 		hsCenter,
-		hsError
+		hsError,
+		weather
 	};
 };
 

@@ -129,6 +129,29 @@
 		</section>
 	{/if}
 
+	{#if data.weather && data.weather.periods.length > 0}
+		<section class="card">
+			<div class="wx-head">
+				<h2>Weather{#if data.weather.locationLabel} · {data.weather.locationLabel}{/if}</h2>
+				{#if data.weather.stale}<Badge kind="stale" label="cached" />{/if}
+			</div>
+			<div class="wx-periods">
+				{#each data.weather.periods as p (p.name)}
+					<div class="wx-period" class:night={!p.isDaytime}>
+						<div class="wx-name">{p.name}</div>
+						<div class="wx-temp">{p.tempF}°F</div>
+						<div class="wx-short">{p.shortForecast}</div>
+						<div class="wx-wind">
+							{p.windDirection}
+							{p.windSpeed}{#if p.precipPct != null && p.precipPct > 0} · {p.precipPct}% precip{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+			<p class="wx-attr">Weather from the US <a href="https://www.weather.gov" target="_blank" rel="noopener">National Weather Service</a>.</p>
+		</section>
+	{/if}
+
 	<section class="card">
 		<div class="stops-head">
 			<h2>Stops</h2>
@@ -305,6 +328,17 @@
 	.route-summary { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin: 0; }
 	.navigate { margin-left: auto; min-height: 40px; display: inline-flex; align-items: center; padding: 8px 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: #fff; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
 	.navigate:hover { filter: brightness(0.95); }
+	.wx-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+	.wx-head h2 { margin-bottom: 0; }
+	.wx-periods { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+	.wx-period { flex: 0 0 auto; min-width: 130px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--bg); }
+	.wx-period.night { background: var(--card); }
+	.wx-name { font-weight: 700; font-size: 0.85rem; }
+	.wx-temp { font-size: 1.3rem; font-weight: 700; color: var(--accent); margin: 2px 0; }
+	.wx-short { font-size: 0.82rem; }
+	.wx-wind { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+	.wx-attr { text-align: left; color: var(--muted); font-size: 0.76rem; margin-top: 8px; }
+	.wx-attr a { color: var(--muted); }
 	.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
 	.stops-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 	.stops-head h2 { margin-bottom: 10px; }
