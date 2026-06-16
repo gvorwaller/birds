@@ -3,16 +3,104 @@
 	import Badge from "$components/Badge.svelte";
 	import MapLink from "$components/MapLink.svelte";
 	import TripMap, { type MapStop } from "$components/TripMap.svelte";
-	import { formatKm } from "$lib/geo";
+	import { formatKm, nearestNeighborOrder } from "$lib/geo";
+	import { untrack } from "svelte";
 	import type { ActionData, PageData } from "./$types";
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let saving = $state(false);
 
-	// Map markers from the previewed (ordered) stops, anchor shown as the start pin.
+	type PreviewStop = NonNullable<PageData["preview"]>["stops"][number];
+	type Candidate = NonNullable<PageData["query"]>["candidates"][number];
+
+	const candKey = (c: { locId: string | null; lat: number; lng: number }) =>
+		c.locId ?? `${c.lat},${c.lng}`;
+	const stopKey = (s: PreviewStop) => s.hotspotId ?? `${s.lat},${s.lng}`;
+
+	function noteFor(c: Candidate): string {
+		const names = c.triggerSpecies.slice(0, 4).map((t) => t.comName);
+		const extra = c.triggerSpecies.length - names.length;
+		return `${c.matchCount} of your needs reported here (last seen ${c.lastObsDt.slice(0, 10)}): ${names.join(", ")}${extra > 0 ? `, +${extra} more` : ""}.`;
+	}
+
+	// Reactive defaults from the current plan. The historical stop isn't in the
+	// candidate list, so it gets its own toggle.
+	let historicalStop = $derived<PreviewStop | null>(
+		data.preview?.stops.find((s) => s.kind === "historical") ?? null,
+	);
+	let defaultKeys = $derived(
+		(data.preview?.stops ?? [])
+			.filter((s) => s.kind === "hotspot")
+			.map(stopKey),
+	);
+	// Identity of the current plan; changes whenever new filters produce a new
+	// result, which re-seeds curation (the component is reused across same-route
+	// navigations, so this can't rely on a remount).
+	let planSig = $derived(
+		(data.anchor?.label ?? "") +
+			"|" +
+			(data.query?.candidates ?? []).map(candKey).join(","),
+	);
+
+	// Curation state, seeded from the planner's auto-selection. untrack() marks
+	// the initial read as intentional (keeps SSR correct); the $effect re-seeds
+	// when a new plan loads. The candidate list lets you add/remove freely (no cap).
+	let selected = $state(untrack(() => new Set(defaultKeys)));
+	let includeHistorical = $state(untrack(() => !!historicalStop));
+	let appliedSig = $state(untrack(() => planSig));
+
+	$effect(() => {
+		if (planSig !== appliedSig) {
+			appliedSig = planSig;
+			selected = new Set(defaultKeys);
+			includeHistorical = !!historicalStop;
+		}
+	});
+
+	function toggle(key: string) {
+		const next = new Set(selected);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		selected = next;
+	}
+
+	// Selected hotspots in candidate-rank order, mapped to the stop shape.
+	let hotspotStops = $derived<PreviewStop[]>(
+		(data.query?.candidates ?? [])
+			.filter((c) => selected.has(candKey(c)))
+			.map((c) => ({
+				hotspotId: c.locId,
+				name: c.locName,
+				lat: c.lat,
+				lng: c.lng,
+				matchCount: c.matchCount,
+				triggerSpecies: c.triggerSpecies,
+				kind: "hotspot" as const,
+				note: noteFor(c),
+			})),
+	);
+
+	// Final ordered itinerary: hotspots (+ historical if kept), nearest-neighbor
+	// ordered from the anchor — the same logic the server uses, recomputed live.
+	let stops = $derived.by<PreviewStop[]>(() => {
+		const all = [...hotspotStops];
+		if (includeHistorical && historicalStop) all.push(historicalStop);
+		return data.anchor && all.length > 1
+			? nearestNeighborOrder(
+					{ lat: data.anchor.lat, lng: data.anchor.lng },
+					all,
+				)
+			: all;
+	});
+
+	let distinctNeeds = $derived(
+		new Set(hotspotStops.flatMap((s) => s.triggerSpecies.map((t) => t.code)))
+			.size,
+	);
+
 	let mapStops = $derived<MapStop[]>(
-		(data.preview?.stops ?? []).map((s, i) => ({
+		stops.map((s, i) => ({
 			lat: s.lat,
 			lng: s.lng,
 			label: s.name,
@@ -30,10 +118,10 @@
 			: null,
 	);
 
-	// What the Save action persists — exactly the previewed stops (no drift).
+	// What Save persists — exactly the curated, ordered stops (no drift).
 	let saveStops = $derived(
 		JSON.stringify(
-			(data.preview?.stops ?? []).map((s) => ({
+			stops.map((s) => ({
 				hotspot_id: s.hotspotId,
 				name: s.name,
 				lat: s.lat,
@@ -43,21 +131,6 @@
 			})),
 		),
 	);
-
-	// Which candidate locIds ended up in the trip (to badge them in the full list).
-	let chosenIds = $derived(
-		new Set(
-			(data.preview?.stops ?? [])
-				.filter((s) => s.hotspotId)
-				.map((s) => s.hotspotId),
-		),
-	);
-
-	const HISTORICAL_MSG: Record<string, string> = {
-		none_found: "No historical/cultural site found near the route.",
-		not_configured: "Places API is not configured — historical stop skipped.",
-		unavailable: "Places service was unavailable — historical stop skipped.",
-	};
 </script>
 
 <svelte:head>
@@ -196,21 +269,21 @@
 				<p class="warn">{w}</p>
 			{/each}
 
-			{#if data.preview.stops.length === 0}
+			{#if stops.length === 0}
 				<p class="muted">
-					No stops to build a trip from. Loosen the filters and try again.
+					No stops selected — add hotspots from the list below, or loosen the
+					filters and re-plan.
 				</p>
 			{:else}
 				<p class="muted summary">
-					{data.preview.stops.length}
-					{data.preview.stops.length === 1 ? "stop" : "stops"} ·
-					{data.preview.totalMatchSpecies} distinct {data.inputs.seenStatus ===
-					"needs"
+					{stops.length}
+					{stops.length === 1 ? "stop" : "stops"} ·
+					{distinctNeeds} distinct {data.inputs.seenStatus === "needs"
 						? "needs"
 						: "species"} across the route
 				</p>
 
-				{#each data.preview.stops as s, i (s.name + i)}
+				{#each stops as s, i (stopKey(s))}
 					<div class="stop">
 						<div class="ordnum" class:hist={s.kind === "historical"}>
 							{i + 1}
@@ -223,7 +296,7 @@
 										label="history"
 									/>{:else}<Badge
 										kind="seen"
-										label="{s.matchCount} needs"
+										label={`${s.matchCount} ${s.matchCount === 1 ? "need" : "needs"}`}
 									/>{/if}
 							</div>
 							{#if s.triggerSpecies.length}
@@ -234,9 +307,29 @@
 							<div class="stopnote">{s.note}</div>
 							<MapLink lat={s.lat} lng={s.lng} />
 						</div>
+						<button
+							type="button"
+							class="remove"
+							onclick={() =>
+								s.kind === "historical"
+									? (includeHistorical = false)
+									: toggle(stopKey(s))}
+							aria-label="Remove {s.name}">Remove</button
+						>
 					</div>
 				{/each}
+			{/if}
 
+			{#if historicalStop && !includeHistorical}
+				<button
+					type="button"
+					class="add-hist"
+					onclick={() => (includeHistorical = true)}
+					>+ Add historical stop — {historicalStop.name}</button
+				>
+			{/if}
+
+			{#if stops.length > 0}
 				{#if data.canEdit}
 					<form
 						method="POST"
@@ -275,17 +368,16 @@
 			<p class="muted intro">
 				Every hotspot in range with {data.inputs.seenStatus === "needs"
 					? "your needs"
-					: "species"} reported, ranked. Chosen stops are marked.
+					: "species"} reported, ranked. Add or remove any to curate the trip above
+				before saving.
 			</p>
 			{#each data.query.candidates as c (c.locId ?? c.locName)}
+				{@const inTrip = selected.has(candKey(c))}
 				<div class="obs">
 					<div class="grow">
 						<div class="name">
 							{c.locName}
-							{#if c.locId && chosenIds.has(c.locId)}<Badge
-									kind="seen"
-									label="in trip"
-								/>{/if}
+							{#if inTrip}<Badge kind="seen" label="in trip" />{/if}
 							{#if !c.eligible}<Badge kind="stale" label="below min" />{/if}
 						</div>
 						<div class="meta">
@@ -305,6 +397,15 @@
 					<div class="right">
 						<div class="count">{c.matchCount}</div>
 						<div class="when">{formatKm(c.distanceKm)}</div>
+						{#if data.canEdit}
+							<button
+								type="button"
+								class="toggle"
+								class:in={inTrip}
+								onclick={() => toggle(candKey(c))}
+								>{inTrip ? "Remove" : "+ Add"}</button
+							>
+						{/if}
 					</div>
 				</div>
 			{/each}
@@ -476,6 +577,51 @@
 		margin-top: 4px;
 		font-style: italic;
 		color: var(--text);
+	}
+	.remove {
+		flex-shrink: 0;
+		align-self: center;
+		min-height: 36px;
+		padding: 6px 12px;
+		border-radius: 8px;
+		border: 1px solid #d9a5ab;
+		background: var(--card);
+		color: var(--danger);
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+	.remove:hover {
+		background: #fdf0f1;
+	}
+	.add-hist {
+		margin-top: 12px;
+		min-height: 40px;
+		padding: 8px 14px;
+		border-radius: 8px;
+		border: 1px dashed var(--accent);
+		background: var(--card);
+		color: var(--accent);
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+	.add-hist:hover {
+		background: var(--accent-soft);
+	}
+	.toggle {
+		margin-top: 6px;
+		min-height: 34px;
+		padding: 5px 12px;
+		border-radius: 8px;
+		border: 1px solid var(--accent);
+		background: var(--accent);
+		color: #fff;
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+	.toggle.in {
+		background: var(--card);
+		color: var(--danger);
+		border-color: #d9a5ab;
 	}
 	.links {
 		display: flex;
