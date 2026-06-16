@@ -3,13 +3,15 @@ import type { PageServerLoad } from './$types';
 import { query } from '$lib/db';
 import { getEbirdApiKey, recentNearbySpeciesObs, EbirdError, type EbirdObs } from '$server/ebird';
 import { haversineKm } from '$lib/geo';
+import { ownerGalleryUrl } from '$server/access';
 
 const NEARBY_DIST_KM = 50;
 const NEARBY_BACK_DAYS = 14;
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-	const userId = locals.ownerId!; // viewers see the owner's data
+	const userId = locals.scopeId!; // the data owner this account reads
 	const code = params.code;
+	const hasGallery = (await ownerGalleryUrl(userId)) != null;
 
 	const taxon = await query<{
 		species_code: string;
@@ -24,16 +26,20 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	}
 	const t = taxon.rows[0];
 
+	type PhotoRow = { photo_id: string; thumbnail: string; page_url: string; taken_on: string | null };
 	const [seen, photos, userRow] = await Promise.all([
 		query<{ first_seen: string | null; source: string }>(
 			'SELECT first_seen, source FROM seen_species WHERE user_id = $1 AND species_code = $2',
 			[userId, code]
 		),
-		query<{ photo_id: string; thumbnail: string; page_url: string; taken_on: string | null }>(
-			`SELECT photo_id, thumbnail, page_url, taken_on FROM photo_links
-			  WHERE species_code = $1 ORDER BY taken_on DESC NULLS LAST`,
-			[code]
-		),
+		// Gallery is owner-scoped: only the gallery owner (and their viewer) see photos.
+		hasGallery
+			? query<PhotoRow>(
+					`SELECT photo_id, thumbnail, page_url, taken_on FROM photo_links
+				  WHERE species_code = $1 ORDER BY taken_on DESC NULLS LAST`,
+					[code]
+				)
+			: Promise.resolve({ rows: [] as PhotoRow[] }),
 		query<{ home_lat: number | null; home_lon: number | null }>(
 			'SELECT home_lat, home_lon FROM users WHERE id = $1',
 			[userId]
@@ -77,6 +83,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		taxon: t,
 		seen: seen.rows[0] ?? null,
 		photos: photos.rows,
+		hasGallery,
 		nearby,
 		nearbyError,
 		stale,

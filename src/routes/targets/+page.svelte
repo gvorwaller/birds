@@ -147,7 +147,7 @@
 						</div>
 						<div class="meta">
 							{n.locations.join(' · ')}
-							{#if n.photoCount > 0}
+							{#if data.hasGallery && n.photoCount > 0}
 								· 📷 you have {n.photoCount}
 								{n.photoCount === 1 ? 'photo' : 'photos'}{/if}
 						</div>
@@ -179,7 +179,7 @@
 						<div class="meta">
 							{n.nReports}
 							{n.nReports === 1 ? 'report' : 'reports'} · {n.locations.join(' · ')}
-							{#if n.photoCount === 0}
+							{#if data.hasGallery && n.photoCount === 0}
 								· 📷 no photo yet{/if}
 						</div>
 						<MapLink lat={n.lastLat} lng={n.lastLng} />

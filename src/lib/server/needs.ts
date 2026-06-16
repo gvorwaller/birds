@@ -158,10 +158,10 @@ async function buildView(
 	userId: number,
 	recent: CachedResult<EbirdObs[]>,
 	notable: CachedResult<EbirdObs[]>,
-	home: { lat: number; lon: number } | null
+	home: { lat: number; lon: number } | null,
+	photoCounts: Map<string, number>
 ): Promise<TargetsView> {
 	const seen = await seenSet(userId);
-	const photoCounts = await (await import('$server/gallery')).photoCountsBySpecies();
 
 	const recentAgg = aggregate(recent.data, home, photoCounts);
 	const needs = [...recentAgg.values()]
@@ -188,13 +188,14 @@ export async function regionTargets(
 	apiKey: string,
 	regionCode: string,
 	back: number,
-	home: { lat: number; lon: number } | null
+	home: { lat: number; lon: number } | null,
+	photoCounts: Map<string, number> = new Map()
 ): Promise<TargetsView> {
 	const [recent, notable] = await Promise.all([
 		recentObs(apiKey, regionCode, back),
 		notableObs(apiKey, regionCode, back)
 	]);
-	return buildView(userId, recent, notable, home);
+	return buildView(userId, recent, notable, home, photoCounts);
 }
 
 /**
@@ -207,7 +208,8 @@ export async function geoTargets(
 	lat: number,
 	lng: number,
 	distKm: number,
-	back: number
+	back: number,
+	photoCounts: Map<string, number> = new Map()
 ): Promise<TargetsView> {
 	const dist = Math.min(Math.max(distKm, 1), 50);
 	const origin = { lat, lon: lng };
@@ -215,7 +217,7 @@ export async function geoTargets(
 		recentNearbyObs(apiKey, lat, lng, dist, back),
 		notableNearbyObs(apiKey, lat, lng, dist, back)
 	]);
-	return buildView(userId, recent, notable, origin);
+	return buildView(userId, recent, notable, origin, photoCounts);
 }
 
 export async function nearbyNeeds(
@@ -223,11 +225,11 @@ export async function nearbyNeeds(
 	apiKey: string,
 	home: { lat: number; lon: number },
 	distKm: number,
-	back: number
+	back: number,
+	photoCounts: Map<string, number> = new Map()
 ): Promise<{ needs: SpeciesActivity[]; bestPlaces: PlaceRanking[]; stale: boolean; fetchedAt: Date }> {
 	const recent = await recentNearbyObs(apiKey, home.lat, home.lon, distKm, back);
 	const seen = await seenSet(userId);
-	const photoCounts = await (await import('$server/gallery')).photoCountsBySpecies();
 	const agg = aggregate(recent.data, home, photoCounts);
 	const needs = [...agg.values()]
 		.filter((a) => !seen.has(a.speciesCode))

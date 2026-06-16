@@ -53,28 +53,30 @@
 		</p>
 	</header>
 
-	<section class="card">
-		<h2>
-			Your photos
-			<span class="muted">
-				{data.photos.length} on gaylon.photos
-			</span>
-		</h2>
-		{#if data.photos.length === 0}
-			<p class="muted">
-				No photos of this species yet — new uploads to gaylon.photos appear after the next
-				<a href="/photos">gallery sync</a>.
-			</p>
-		{:else}
-			<div class="strip">
-				{#each data.photos as p (p.photo_id)}
-					<a href={p.page_url} target="_blank" rel="noopener">
-						<img loading="lazy" src={p.thumbnail} alt={data.taxon.com_name} />
-					</a>
-				{/each}
-			</div>
-		{/if}
-	</section>
+	{#if data.hasGallery}
+		<section class="card">
+			<h2>
+				Your photos
+				<span class="muted">
+					{data.photos.length} on gaylon.photos
+				</span>
+			</h2>
+			{#if data.photos.length === 0}
+				<p class="muted">
+					No photos of this species yet — new uploads to gaylon.photos appear after the next
+					<a href="/photos">gallery sync</a>.
+				</p>
+			{:else}
+				<div class="strip">
+					{#each data.photos as p (p.photo_id)}
+						<a href={p.page_url} target="_blank" rel="noopener">
+							<img loading="lazy" src={p.thumbnail} alt={data.taxon.com_name} />
+						</a>
+					{/each}
+				</div>
+			{/if}
+		</section>
+	{/if}
 
 	<section class="card">
 		<h2>

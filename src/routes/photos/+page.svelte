@@ -18,13 +18,27 @@
 	<header class="page-head">
 		<h1>My Photos</h1>
 		<p class="sub">
-			{data.total} photos synced from
-			<a href="https://gaylon.photos/birds" target="_blank" rel="noopener">gaylon.photos/birds</a>
-			{#if data.fetchedAt}· refreshed {new Date(data.fetchedAt).toLocaleString()}{/if}
+			{#if data.hasGallery}
+				{data.total} photos synced from
+				<a href="https://gaylon.photos/birds" target="_blank" rel="noopener">gaylon.photos/birds</a>
+				{#if data.fetchedAt}· refreshed {new Date(data.fetchedAt).toLocaleString()}{/if}
+			{:else}
+				No photo gallery configured for your account.
+			{/if}
 		</p>
 	</header>
 
-	<section class="card toolbar">
+	{#if !data.hasGallery}
+		<section class="card">
+			<p class="muted">
+				The photo gallery links out to a personal photo collection (gaylon.photos). Your account
+				doesn't have one configured, so there's nothing to show here.
+			</p>
+		</section>
+	{/if}
+
+	{#if data.hasGallery}
+		<section class="card toolbar">
 		{#if data.canEdit}
 			<form
 				method="POST"
@@ -135,6 +149,7 @@
 				</div>
 			{/each}
 		</section>
+		{/if}
 	{/if}
 
 	<p class="attribution">

@@ -8,6 +8,7 @@ import {
 	type PhotoLink
 } from '$server/gallery';
 import { buildMatcher, normalizeName } from '$server/species-match';
+import { ownerGalleryUrl } from '$server/access';
 
 export interface SpeciesGroup {
 	speciesCode: string;
@@ -17,6 +18,21 @@ export interface SpeciesGroup {
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
+	// Gallery is owner-scoped: only a user whose data-owner has a configured
+	// photo source sees it. Others (e.g. Marcus) get a graceful empty state.
+	const hasGallery = (await ownerGalleryUrl(locals.scopeId!)) != null;
+	if (!hasGallery) {
+		return {
+			hasGallery: false,
+			groups: [],
+			unmatched: [],
+			total: 0,
+			fetchedAt: null,
+			photoPoints: [],
+			canEdit: locals.user!.role !== 'viewer'
+		};
+	}
+
 	await refreshGalleryIfStale();
 	const links = await allPhotoLinks();
 
@@ -65,12 +81,16 @@ export const load: PageServerLoad = async ({ locals }) => {
 		total: links.length,
 		fetchedAt: newest.rows[0]?.newest ?? null,
 		photoPoints,
+		hasGallery: true,
 		canEdit: locals.user!.role !== 'viewer'
 	};
 };
 
 export const actions: Actions = {
-	refresh: async () => {
+	refresh: async ({ locals }) => {
+		if (!(await ownerGalleryUrl(locals.user!.id))) {
+			return fail(403, { error: 'No photo source is configured for your account.' });
+		}
 		try {
 			const result = await syncGallery();
 			return { ok: true as const, message: `Synced ${result.total} photos (${result.matched} matched).` };
@@ -81,7 +101,10 @@ export const actions: Actions = {
 		}
 	},
 
-	override: async ({ request }) => {
+	override: async ({ locals, request }) => {
+		if (!(await ownerGalleryUrl(locals.user!.id))) {
+			return fail(403, { error: 'No photo source is configured for your account.' });
+		}
 		const form = await request.formData();
 		const sourceName = (form.get('source_name') ?? '').toString().trim();
 		const speciesText = (form.get('species') ?? '').toString().trim();

@@ -3,6 +3,7 @@ import { query } from '$lib/db';
 import { getEbirdApiKey, EbirdError } from '$server/ebird';
 import { geoTargets, type TargetsView } from '$server/needs';
 import { geocodePlace } from '$server/geocode';
+import { galleryContext } from '$server/access';
 
 const DEFAULT_DIST_KM = 50; // eBird geo endpoints cap at 50 km
 const PLACE_SUGGESTIONS = [
@@ -13,7 +14,7 @@ const PLACE_SUGGESTIONS = [
 ];
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-	const userId = locals.ownerId!; // viewers see the owner's data
+	const userId = locals.scopeId!; // the data owner this account reads
 	const place = (url.searchParams.get('place') ?? '').trim();
 	const dist = Math.min(Math.max(Number(url.searchParams.get('dist') ?? DEFAULT_DIST_KM) || DEFAULT_DIST_KM, 1), 50);
 	const back = Math.min(Math.max(Number(url.searchParams.get('back') ?? 7) || 7, 1), 30);
@@ -23,6 +24,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		[userId]
 	);
 	const home = userRow.rows[0];
+	const { hasGallery, photoCounts } = await galleryContext(userId);
 
 	// Resolve the location: searched place → geocode; else fall back to home.
 	let location: { lat: number; lng: number; label: string } | null = null;
@@ -50,17 +52,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	if (!location) {
 		// No place searched and no home set — guide the user.
-		return { location: null, dist, back, suggestions: PLACE_SUGGESTIONS, view: null, error, needsLocation: true };
+		return { location: null, dist, back, suggestions: PLACE_SUGGESTIONS, view: null, error, needsLocation: true, hasGallery };
 	}
 	if (!apiKey) {
 		error = error ?? 'Add your eBird API key in Settings to load live targets.';
 	} else {
 		try {
-			view = await geoTargets(userId, apiKey, location.lat, location.lng, dist, back);
+			view = await geoTargets(userId, apiKey, location.lat, location.lng, dist, back, photoCounts);
 		} catch (err) {
 			error = err instanceof EbirdError ? err.message : `Could not load data for ${location.label}.`;
 		}
 	}
 
-	return { location, dist, back, suggestions: PLACE_SUGGESTIONS, view, error, needsLocation: false };
+	return { location, dist, back, suggestions: PLACE_SUGGESTIONS, view, error, needsLocation: false, hasGallery };
 };

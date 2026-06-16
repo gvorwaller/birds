@@ -23,8 +23,10 @@ export async function createSession(userId: number): Promise<string> {
 export interface SessionUser {
 	id: number;
 	username: string;
-	role: 'admin' | 'viewer';
+	role: 'admin' | 'user' | 'viewer';
 	display_name: string;
+	/** The owner this account reads (null = self). See $server/access. */
+	views_user_id: number | null;
 }
 
 export async function validateSession(token: string): Promise<SessionUser | null> {
@@ -35,9 +37,10 @@ export async function validateSession(token: string): Promise<SessionUser | null
 		username: string;
 		role: string;
 		display_name: string;
+		views_user_id: number | null;
 	}>(
 		`SELECT s.id AS sid, s.expires_at,
-		        u.id AS uid, u.username, u.role, u.display_name
+		        u.id AS uid, u.username, u.role, u.display_name, u.views_user_id
 		   FROM sessions s
 		   JOIN users u ON u.id = s.user_id
 		  WHERE s.id = $1`,
@@ -59,8 +62,9 @@ export async function validateSession(token: string): Promise<SessionUser | null
 	return {
 		id: row.uid,
 		username: row.username,
-		role: row.role as 'admin' | 'viewer',
-		display_name: row.display_name
+		role: row.role as 'admin' | 'user' | 'viewer',
+		display_name: row.display_name,
+		views_user_id: row.views_user_id
 	};
 }
 

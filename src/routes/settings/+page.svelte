@@ -211,17 +211,19 @@
 				</div>
 			</div>
 		</div>
-		<div class="obs">
-			<div class="grow">
-				<div class="name">Gallery links (gaylon.photos)</div>
-				<div class="meta">{data.photoTotal} photos, {data.photoMatched} matched to species</div>
+		{#if data.hasGallery}
+			<div class="obs">
+				<div class="grow">
+					<div class="name">Gallery links (gaylon.photos)</div>
+					<div class="meta">{data.photoTotal} photos, {data.photoMatched} matched to species</div>
+				</div>
+				<form method="POST" action="?/sync_gallery" use:enhance={track('gallery')}>
+					<button type="submit" disabled={busy === 'gallery'}>
+						{busy === 'gallery' ? 'Syncing…' : '⟳ Sync'}
+					</button>
+				</form>
 			</div>
-			<form method="POST" action="?/sync_gallery" use:enhance={track('gallery')}>
-				<button type="submit" disabled={busy === 'gallery'}>
-					{busy === 'gallery' ? 'Syncing…' : '⟳ Sync'}
-				</button>
-			</form>
-		</div>
+		{/if}
 	</section>
 
 	<section class="card">
@@ -251,6 +253,52 @@
 			</div>
 		</div>
 	</section>
+
+	{#if data.isAdmin}
+		<section class="card">
+			<h2>Users</h2>
+			<p class="sub2">Provision family accounts. Each user sees only their own data.</p>
+			{#each data.users as u (u.id)}
+				<div class="obs user-row">
+					<div class="grow">
+						<div class="name">
+							{u.display_name}
+							<span class="muted">@{u.username}</span>
+							<Badge kind="seen" label={u.role} />
+							{#if u.views_user_id}<Badge kind="notable" label="views #{u.views_user_id}" />{/if}
+							{#if u.has_gallery}<Badge kind="seen" label="gallery" />{/if}
+						</div>
+						<div class="meta">
+							{#if u.last_login_at}last login {new Date(u.last_login_at).toLocaleDateString()}{:else}never
+								logged in{/if}
+						</div>
+					</div>
+					<form method="POST" action="?/set_user_password" use:enhance={track(`pw-${u.id}`)} class="pw-form">
+						<input type="hidden" name="user_id" value={u.id} />
+						<input type="password" name="password" placeholder="New password" minlength="8" required />
+						<button type="submit" disabled={busy === `pw-${u.id}`}>Set</button>
+					</form>
+				</div>
+			{/each}
+
+			<details class="add-user">
+				<summary>+ Add a user</summary>
+				<form method="POST" action="?/create_user" use:enhance={track('create-user')} class="create-form">
+					<label><span>Username</span><input type="text" name="new_username" placeholder="marcus" required /></label>
+					<label><span>Display name</span><input type="text" name="new_display_name" placeholder="Marcus" required /></label>
+					<label><span>Role</span>
+						<select name="new_role">
+							<option value="user">user — own data</option>
+							<option value="viewer">viewer — read-only of an owner</option>
+							<option value="admin">admin — own data + user management</option>
+						</select>
+					</label>
+					<label><span>Password</span><input type="password" name="new_password" placeholder="8+ characters" minlength="8" required /></label>
+					<button type="submit" disabled={busy === 'create-user'}>Create user</button>
+				</form>
+			</details>
+		</section>
+	{/if}
 
 	<section class="card">
 		<h2>Session</h2>
@@ -356,6 +404,69 @@
 	}
 	.obs:first-of-type {
 		border-top: none;
+	}
+	.sub2 {
+		color: var(--muted);
+		font-size: 0.85rem;
+		margin-bottom: 8px;
+	}
+	.user-row {
+		flex-wrap: wrap;
+	}
+	.user-row .name :global(.badge) {
+		margin-left: 4px;
+	}
+	.pw-form {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.pw-form input {
+		min-height: 40px;
+		padding: 6px 10px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--card);
+		color: var(--text);
+		font-size: 16px;
+	}
+	.add-user {
+		margin-top: 12px;
+		border-top: 1px solid var(--border);
+		padding-top: 12px;
+	}
+	.add-user summary {
+		cursor: pointer;
+		color: var(--link);
+		font-weight: 600;
+		min-height: 36px;
+		display: flex;
+		align-items: center;
+	}
+	.create-form {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		align-items: flex-end;
+		margin-top: 10px;
+	}
+	.create-form label {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--muted);
+	}
+	.create-form input,
+	.create-form select {
+		min-height: 44px;
+		padding: 8px 10px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--card);
+		color: var(--text);
+		font-size: 16px;
 	}
 	.grow {
 		flex: 1;

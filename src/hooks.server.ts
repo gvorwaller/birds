@@ -1,7 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
-import { getOwnerId } from '$server/auth';
+import { scopeOwnerId } from '$server/access';
 import { dev } from '$app/environment';
 
 export const SESSION_COOKIE_OPTS = {
@@ -25,7 +25,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const user = await validateSession(token);
 		if (user) {
 			event.locals.user = user;
-			event.locals.ownerId = await getOwnerId();
+			event.locals.scopeId = scopeOwnerId(user);
 		} else {
 			event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
 		}

@@ -11,9 +11,31 @@ import {
 	EbirdLoginError
 } from '$server/ebird-account';
 import { rematchPhotoLinks, syncGallery } from '$server/gallery';
+import { ownerGalleryUrl } from '$server/access';
+import { hashPassword } from '$server/auth';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.user!.id;
+	const isAdmin = locals.user!.role === 'admin';
+	const hasGallery = (await ownerGalleryUrl(userId)) != null;
+
+	// Admin-only user management (provisioning family accounts).
+	const users = isAdmin
+		? (
+				await query<{
+					id: number;
+					username: string;
+					display_name: string;
+					role: string;
+					views_user_id: number | null;
+					gallery_url: string | null;
+					last_login_at: string | null;
+				}>(
+					`SELECT id, username, display_name, role, views_user_id, gallery_url, last_login_at
+					   FROM users ORDER BY id`
+				)
+			).rows
+		: [];
 
 	const [ebird, user, taxCount, seenBySource, photoStats, cacheStats, tripStats] = await Promise.all([
 		query<{
@@ -73,11 +95,22 @@ export const load: PageServerLoad = async ({ locals }) => {
 		home: user.rows[0] ?? { home_lat: null, home_lon: null, home_label: null },
 		taxonomyCount: taxCount,
 		seenBySource: seenBySource.rows.map((r) => ({ source: r.source, n: Number(r.n) })),
-		photoTotal: Number(photoStats.rows[0]?.total ?? 0),
-		photoMatched: Number(photoStats.rows[0]?.matched ?? 0),
+		photoTotal: hasGallery ? Number(photoStats.rows[0]?.total ?? 0) : 0,
+		photoMatched: hasGallery ? Number(photoStats.rows[0]?.matched ?? 0) : 0,
 		cacheRows: Number(cacheStats.rows[0]?.cache_rows ?? 0),
 		cacheNewest: cacheStats.rows[0]?.cache_newest ?? null,
-		tripCount: Number(tripStats.rows[0]?.n ?? 0)
+		tripCount: Number(tripStats.rows[0]?.n ?? 0),
+		hasGallery,
+		isAdmin,
+		users: users.map((u) => ({
+			id: u.id,
+			username: u.username,
+			display_name: u.display_name,
+			role: u.role,
+			views_user_id: u.views_user_id,
+			has_gallery: !!u.gallery_url,
+			last_login_at: u.last_login_at
+		}))
 	};
 };
 
@@ -241,7 +274,10 @@ export const actions: Actions = {
 		};
 	},
 
-	sync_gallery: async () => {
+	sync_gallery: async ({ locals }) => {
+		if (!(await ownerGalleryUrl(locals.user!.id))) {
+			return fail(403, { error: 'No photo source is configured for your account.' });
+		}
 		try {
 			const result = await syncGallery();
 			return {
@@ -251,5 +287,56 @@ export const actions: Actions = {
 		} catch (err) {
 			return fail(502, { error: `Gallery sync failed: ${err instanceof Error ? err.message : err}` });
 		}
+	},
+
+	// --- Admin-only user management (provision family accounts) ---
+	create_user: async ({ locals, request }) => {
+		if (locals.user!.role !== 'admin') return fail(403, { error: 'Admins only.' });
+		const form = await request.formData();
+		const username = (form.get('new_username') ?? '').toString().trim().toLowerCase();
+		const displayName = (form.get('new_display_name') ?? '').toString().trim();
+		const role = (form.get('new_role') ?? 'user').toString();
+		const password = (form.get('new_password') ?? '').toString();
+		if (!username || !displayName || !password) {
+			return fail(400, { error: 'Username, display name, and password are required.' });
+		}
+		if (!/^[a-z0-9_]+$/.test(username)) {
+			return fail(400, { error: 'Username may use only lowercase letters, numbers, and underscores.' });
+		}
+		if (!['admin', 'user', 'viewer'].includes(role)) {
+			return fail(400, { error: 'Invalid role.' });
+		}
+		if (password.length < 8) {
+			return fail(400, { error: 'Password must be at least 8 characters.' });
+		}
+		// A viewer reads a chosen owner's data; default to the creating admin.
+		let viewsUserId: number | null = null;
+		if (role === 'viewer') {
+			const v = Number(form.get('views_user_id'));
+			viewsUserId = Number.isInteger(v) && v > 0 ? v : locals.user!.id;
+		}
+		const exists = await query('SELECT 1 FROM users WHERE username = $1', [username]);
+		if (exists.rowCount) return fail(409, { error: `Username "${username}" is already taken.` });
+		const hash = await hashPassword(password);
+		await query(
+			`INSERT INTO users (username, display_name, password_hash, role, views_user_id)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			[username, displayName, hash, role, viewsUserId]
+		);
+		return { ok: true as const, message: `Created ${role} account "${username}".` };
+	},
+
+	set_user_password: async ({ locals, request }) => {
+		if (locals.user!.role !== 'admin') return fail(403, { error: 'Admins only.' });
+		const form = await request.formData();
+		const targetId = Number(form.get('user_id'));
+		const password = (form.get('password') ?? '').toString();
+		if (!Number.isInteger(targetId) || password.length < 8) {
+			return fail(400, { error: 'Pick a user and an 8+ character password.' });
+		}
+		const hash = await hashPassword(password);
+		const r = await query('UPDATE users SET password_hash = $2 WHERE id = $1', [targetId, hash]);
+		if (!r.rowCount) return fail(404, { error: 'User not found.' });
+		return { ok: true as const, message: 'Password updated.' };
 	}
 };

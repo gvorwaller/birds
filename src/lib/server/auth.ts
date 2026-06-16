@@ -20,11 +20,13 @@ export async function verifyPassword(hash: string, password: string): Promise<bo
 	}
 }
 
+export type UserRole = 'admin' | 'user' | 'viewer';
+
 export interface DbUser {
 	id: number;
 	username: string;
 	display_name: string;
-	role: 'admin' | 'viewer';
+	role: UserRole;
 	password_hash: string;
 	home_lat: number | null;
 	home_lon: number | null;

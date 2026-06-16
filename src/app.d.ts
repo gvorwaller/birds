@@ -5,13 +5,15 @@ declare global {
 			user?: {
 				id: number;
 				username: string;
-				role: 'admin' | 'viewer';
+				role: 'admin' | 'user' | 'viewer';
 				display_name: string;
+				views_user_id: number | null;
 			};
-			// The owner (admin) whose data every page reads. For the admin this is
-			// their own id; for a viewer it points at the admin so they see the
-			// owner's birds read-only.
-			ownerId?: number;
+			// The owner whose data this request READS. Self for normal users
+			// (strict isolation); for the `family` viewer it points at the owner
+			// they were linked to. Writes always use locals.user.id. See
+			// $server/access → scopeOwnerId.
+			scopeId?: number;
 		}
 	}
 

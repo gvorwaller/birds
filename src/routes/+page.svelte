@@ -112,13 +112,15 @@
 			</div>
 			<div class="right"><div class="dist">{data.seenCount}</div></div>
 		</div>
-		<div class="obs">
-			<div class="grow">
-				<div class="name">Photos on gaylon.photos</div>
-				<div class="meta"><a href="/photos">My Photos</a></div>
+		{#if data.hasGallery}
+			<div class="obs">
+				<div class="grow">
+					<div class="name">Photos on gaylon.photos</div>
+					<div class="meta"><a href="/photos">My Photos</a></div>
+				</div>
+				<div class="right"><div class="dist">{data.photoCount}</div></div>
 			</div>
-			<div class="right"><div class="dist">{data.photoCount}</div></div>
-		</div>
+		{/if}
 	</section>
 
 	<p class="attribution">

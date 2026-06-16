@@ -23,7 +23,7 @@ function numParam(v: string | null, fallback: number): number {
 }
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-	const userId = locals.ownerId!; // viewers preview the owner's data (save is blocked globally)
+	const userId = locals.scopeId!; // the data owner this account reads (save is blocked for viewers)
 	const canEdit = locals.user!.role !== "viewer";
 	const p = url.searchParams;
 
@@ -243,7 +243,7 @@ export const actions: Actions = {
 		}
 
 		const tripId = await savePlannedTrip(
-			locals.ownerId!,
+			locals.user!.id,
 			{
 				name,
 				startDate: null,
