@@ -24,6 +24,18 @@
 		return `${c.matchCount} of your needs reported here (last seen ${c.lastObsDt.slice(0, 10)}): ${names.join(", ")}${extra > 0 ? `, +${extra} more` : ""}.`;
 	}
 
+	// eBird hotspot stats (species all-time + last report), keyed by locId from
+	// the server's one geo call. Empty string when the spot isn't an eBird hotspot.
+	function hotspotMetaLine(locId: string | null | undefined): string {
+		const m = locId ? data.hotspotMeta[locId] : undefined;
+		if (!m) return "";
+		const parts: string[] = [];
+		if (m.numSpeciesAllTime != null)
+			parts.push(`${m.numSpeciesAllTime} species all-time`);
+		if (m.latestObsDt) parts.push(`last report ${m.latestObsDt.slice(0, 10)}`);
+		return parts.join(" · ");
+	}
+
 	// Reactive defaults from the current plan. The historical stop isn't in the
 	// candidate list, so it gets its own toggle.
 	let historicalStop = $derived<PreviewStop | null>(
@@ -304,6 +316,9 @@
 									{s.triggerSpecies.map((t) => t.comName).join(", ")}
 								</div>
 							{/if}
+							{#if hotspotMetaLine(s.hotspotId)}
+								<div class="meta hsmeta">{hotspotMetaLine(s.hotspotId)}</div>
+							{/if}
 							<div class="stopnote">{s.note}</div>
 							<MapLink lat={s.lat} lng={s.lng} />
 						</div>
@@ -383,6 +398,9 @@
 						<div class="meta">
 							{c.triggerSpecies.map((t) => t.comName).join(", ")}
 						</div>
+						{#if hotspotMetaLine(c.locId)}
+							<div class="meta hsmeta">{hotspotMetaLine(c.locId)}</div>
+						{/if}
 						<div class="links">
 							<MapLink lat={c.lat} lng={c.lng} />
 							{#if c.locId}
@@ -571,6 +589,10 @@
 		color: var(--muted);
 		font-size: 0.83rem;
 		margin-top: 2px;
+	}
+	.hsmeta {
+		font-size: 0.78rem;
+		opacity: 0.85;
 	}
 	.stopnote {
 		font-size: 0.85rem;

@@ -1,7 +1,7 @@
 import { fail, redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { getEbirdApiKey, EbirdError } from "$server/ebird";
+import { getEbirdApiKey, EbirdError, hotspotsNear } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { milesToKm } from "$lib/geo";
 import {
@@ -38,7 +38,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		includeHistorical: p.get("hist") === "1",
 	};
 
-	const base = { inputs, bounds: BOUNDS, canEdit };
+	// Per-hotspot "how birdy / how recent" context, keyed by locId. eBird's
+	// ref/hotspot/info has no such stats (admin metadata only); they come from the
+	// geo hotspots endpoint, which one cached call covers for the whole radius.
+	type HotspotMeta = Record<
+		string,
+		{ numSpeciesAllTime: number | null; latestObsDt: string | null }
+	>;
+	const base = {
+		inputs,
+		bounds: BOUNDS,
+		canEdit,
+		hotspotMeta: {} as HotspotMeta,
+	};
 
 	// No query yet (first visit) → just render the form.
 	if (!p.has("place") && !p.has("radius")) {
@@ -146,6 +158,27 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		);
 	}
 
+	// Supplementary hotspot stats (one cached geo call). Never fail the plan on it.
+	const hotspotMeta: HotspotMeta = {};
+	if (queryResult) {
+		try {
+			const hs = await hotspotsNear(
+				apiKey,
+				anchor.lat,
+				anchor.lng,
+				params.radiusKm,
+			);
+			for (const h of hs.data) {
+				hotspotMeta[h.locId] = {
+					numSpeciesAllTime: h.numSpeciesAllTime ?? null,
+					latestObsDt: h.latestObsDt ?? null,
+				};
+			}
+		} catch {
+			/* enrichment only — the plan still works without it */
+		}
+	}
+
 	return {
 		...base,
 		anchor,
@@ -153,6 +186,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		preview,
 		errors,
 		needsLocation: false,
+		hotspotMeta,
 	};
 };
 
