@@ -4,6 +4,7 @@ import { query } from '$lib/db';
 import { getEbirdApiKey, hotspotsNear, EbirdError, type EbirdHotspot } from '$server/ebird';
 import { geocodePlace } from '$server/geocode';
 import { weatherFor, type WeatherResult } from '$server/weather';
+import { generateFieldTips, GuidanceError } from '$server/ai-guidance';
 import {
 	addStop,
 	deleteTrip,
@@ -194,6 +195,35 @@ export const actions: Actions = {
 		}
 		await moveStop(locals.ownerId!, tripId, stopId, direction);
 		return { ok: true as const };
+	},
+
+	// Opt-in LLM field-guidance: one batched call → a hedged tip per stop.
+	field_tips: async ({ locals, params }) => {
+		const tripId = tripIdFrom(params);
+		const userId = locals.ownerId!;
+		const trip = await getTrip(userId, tripId);
+		if (!trip) return fail(404, { error: 'Trip not found.' });
+		const stops = await getStops(tripId);
+		if (stops.length === 0) return fail(400, { error: 'Add a stop first.' });
+
+		const firstLocated = stops.find((s) => s.lat != null && s.lon != null);
+		const weather = firstLocated
+			? await weatherFor(firstLocated.lat as number, firstLocated.lon as number)
+			: null;
+
+		try {
+			const tips = await generateFieldTips({
+				tripName: trip.name,
+				stops: stops.map((s) => ({ id: s.id, name: s.custom_name ?? 'Stop', notes: s.notes })),
+				weather,
+				now: new Date()
+			});
+			return { ok: true as const, tips };
+		} catch (err) {
+			return fail(400, {
+				error: err instanceof GuidanceError ? err.message : 'Could not generate field tips.'
+			});
+		}
 	},
 
 	save_notes: async ({ locals, params, request }) => {

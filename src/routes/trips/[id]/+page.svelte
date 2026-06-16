@@ -19,6 +19,7 @@
 	// then posts the resulting sequence to ?/set_order. If Directions is
 	// unavailable it falls back to the server's straight-line ?/optimize.
 	let optimizing = $state(false);
+	let tipsLoading = $state(false);
 	let orderValue = $state('');
 	let orderForm = $state<HTMLFormElement>();
 	let fallbackForm = $state<HTMLFormElement>();
@@ -155,11 +156,30 @@
 	<section class="card">
 		<div class="stops-head">
 			<h2>Stops</h2>
-			{#if data.stops.length >= 3 && data.canEdit}
-				<button type="button" class="small optimize" onclick={runOptimize} disabled={optimizing}>
-					{optimizing ? 'Optimizing…' : '↕ Optimize order'}
-				</button>
-			{/if}
+			<div class="stops-actions">
+				{#if data.stops.length > 0 && data.canEdit}
+					<form
+						method="POST"
+						action="?/field_tips"
+						use:enhance={() => {
+							tipsLoading = true;
+							return async ({ update }) => {
+								await update();
+								tipsLoading = false;
+							};
+						}}
+					>
+						<button type="submit" class="small tips-btn" disabled={tipsLoading}>
+							{tipsLoading ? 'Thinking…' : '💡 Field tips'}
+						</button>
+					</form>
+				{/if}
+				{#if data.stops.length >= 3 && data.canEdit}
+					<button type="button" class="small optimize" onclick={runOptimize} disabled={optimizing}>
+						{optimizing ? 'Optimizing…' : '↕ Optimize order'}
+					</button>
+				{/if}
+			</div>
 		</div>
 		{#if data.canEdit}
 			<!-- hidden: client computes the driving order, posts it here to persist -->
@@ -209,6 +229,12 @@
 						{/if}
 					</div>
 					{#if s.notes}<div class="stopnote">{s.notes}</div>{/if}
+					{#if form && 'tips' in form && form.tips?.[s.id]}
+						<div class="aitip">
+							💡 {form.tips[s.id]}
+							<span class="aiverify">AI suggestion — verify in the field</span>
+						</div>
+					{/if}
 					{#if data.canEdit}
 						<details class="noteedit">
 							<summary>{s.notes ? 'Edit note' : 'Add note'}</summary>
@@ -339,6 +365,11 @@
 	.wx-wind { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
 	.wx-attr { text-align: left; color: var(--muted); font-size: 0.76rem; margin-top: 8px; }
 	.wx-attr a { color: var(--muted); }
+	.stops-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+	.tips-btn { background: var(--card); border: 1px solid var(--accent); color: var(--accent); }
+	.tips-btn:hover:not(:disabled) { background: var(--accent-soft); }
+	.aitip { margin-top: 6px; padding: 8px 10px; background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 6px; font-size: 0.85rem; }
+	.aiverify { display: block; color: var(--muted); font-size: 0.76rem; font-style: italic; margin-top: 3px; }
 	.card h2 { font-size: 1.05rem; margin-bottom: 10px; }
 	.stops-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 	.stops-head h2 { margin-bottom: 10px; }
