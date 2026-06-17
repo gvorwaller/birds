@@ -71,6 +71,14 @@
 						<span class="ico">{item.ico}</span>{item.label}
 					</a>
 				{/each}
+				<!-- Reference-only Help link — drawer only (all roles), not a primary tab. -->
+				<a
+					href="/help"
+					class:active={isActive('/help', $page.url.pathname)}
+					onclick={() => (menuOpen = false)}
+				>
+					<span class="ico">❓</span>Help
+				</a>
 			</nav>
 			<div class="drawer-foot">
 				<div class="who">Signed in as {data.user.display_name}{isViewer ? ' · read-only' : ''}</div>
