@@ -35,7 +35,11 @@ export interface TripSummary extends Trip {
 
 export async function listTrips(userId: number): Promise<TripSummary[]> {
 	const r = await query<TripSummary>(
-		`SELECT t.*, COUNT(s.id)::int AS stop_count
+		// Cast the DATE columns to text so they arrive as 'YYYY-MM-DD' strings
+		// (node-pg otherwise hands back JS Date objects, which break date display
+		// and the date-picker prefill). The trailing aliases override t.*.
+		`SELECT t.*, t.start_date::text AS start_date, t.end_date::text AS end_date,
+		        COUNT(s.id)::int AS stop_count
 		   FROM trips t
 		   LEFT JOIN trip_stops s ON s.trip_id = t.id
 		  WHERE t.user_id = $1
@@ -51,7 +55,8 @@ export async function getTrip(
 	tripId: number,
 ): Promise<Trip | null> {
 	const r = await query<Trip>(
-		"SELECT * FROM trips WHERE id = $1 AND user_id = $2",
+		// start_date/end_date cast to text → 'YYYY-MM-DD' strings (see listTrips).
+		"SELECT *, start_date::text AS start_date, end_date::text AS end_date FROM trips WHERE id = $1 AND user_id = $2",
 		[tripId, userId],
 	);
 	return r.rows[0] ?? null;

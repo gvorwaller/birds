@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from "$app/forms";
+	import DatePicker from "$components/DatePicker.svelte";
 	import type { ActionData, PageData } from "./$types";
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -58,11 +59,11 @@
 				</label>
 				<label>
 					<span>Start</span>
-					<input type="date" name="start_date" />
+					<DatePicker name="start_date" />
 				</label>
 				<label>
 					<span>End</span>
-					<input type="date" name="end_date" />
+					<DatePicker name="end_date" />
 				</label>
 				<button type="submit" disabled={creating}
 					>{creating ? "Creating…" : "Create trip"}</button

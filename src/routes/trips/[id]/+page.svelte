@@ -3,6 +3,7 @@
 	import { tick } from 'svelte';
 	import { env } from '$env/dynamic/public';
 	import Badge from '$components/Badge.svelte';
+	import DatePicker from '$components/DatePicker.svelte';
 	import TripMap, { type MapStop } from '$components/TripMap.svelte';
 	import { optimizeDrivingRoute, formatDuration } from '$lib/route';
 	import { mapsRouteUrl } from '$lib/geo';
@@ -100,8 +101,8 @@
 				<label class="grow-field"><span>Name</span>
 					<input type="text" name="name" value={data.trip.name} required />
 				</label>
-				<label><span>Start</span><input type="date" name="start_date" value={data.trip.start_date ?? ''} /></label>
-				<label><span>End</span><input type="date" name="end_date" value={data.trip.end_date ?? ''} /></label>
+				<label><span>Start</span><DatePicker name="start_date" value={data.trip.start_date} /></label>
+				<label><span>End</span><DatePicker name="end_date" value={data.trip.end_date} /></label>
 				<label class="grow-field"><span>Notes</span>
 					<textarea name="notes" rows="2" placeholder="Trip notes…">{data.trip.notes ?? ''}</textarea>
 				</label>
