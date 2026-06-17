@@ -27,8 +27,25 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const canEdit = locals.user!.role !== "viewer";
 	const p = url.searchParams;
 
+	// A pin dropped on the map submits exact lat/lng (option "b": the tapped point
+	// is the anchor, not a re-geocoded place name). Coords win over the text box;
+	// the text box still carries the reverse-geocoded label for display.
+	const rawLat = p.get("lat");
+	const rawLng = p.get("lng");
+	const latNum = rawLat ? Number(rawLat) : NaN;
+	const lngNum = rawLng ? Number(rawLng) : NaN;
+	const hasCoord =
+		Number.isFinite(latNum) &&
+		Number.isFinite(lngNum) &&
+		latNum >= -90 &&
+		latNum <= 90 &&
+		lngNum >= -180 &&
+		lngNum <= 180;
+
 	const inputs = {
 		place: (p.get("place") ?? "").trim(),
+		placeLat: hasCoord ? latNum : null,
+		placeLng: hasCoord ? lngNum : null,
 		radiusMi: numParam(p.get("radius"), DEFAULTS.radiusMi),
 		back: numParam(p.get("back"), DEFAULTS.back),
 		stops: numParam(p.get("stops"), DEFAULTS.stops),
@@ -53,7 +70,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	};
 
 	// No query yet (first visit) → just render the form.
-	if (!p.has("place") && !p.has("radius")) {
+	if (!p.has("place") && !p.has("radius") && !hasCoord) {
 		return {
 			...base,
 			anchor: null,
@@ -76,7 +93,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	let anchor: { lat: number; lng: number; label: string } | null = null;
 	const errors: string[] = [];
-	if (inputs.place) {
+	if (inputs.placeLat != null && inputs.placeLng != null) {
+		// Exact point from a map pin — no geocode round-trip; keep the precision.
+		anchor = {
+			lat: inputs.placeLat,
+			lng: inputs.placeLng,
+			label:
+				inputs.place ||
+				`${inputs.placeLat.toFixed(4)}, ${inputs.placeLng.toFixed(4)}`,
+		};
+	} else if (inputs.place) {
 		const geo = await geocodePlace(inputs.place);
 		if (geo) anchor = { lat: geo.lat, lng: geo.lng, label: geo.name };
 		else

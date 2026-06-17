@@ -2,6 +2,9 @@
 	import { enhance } from "$app/forms";
 	import Badge from "$components/Badge.svelte";
 	import MapLink from "$components/MapLink.svelte";
+	import MapPicker, {
+		type PickedLocation,
+	} from "$components/MapPicker.svelte";
 	import TripMap, { type MapStop } from "$components/TripMap.svelte";
 	import { formatKm, nearestNeighborOrder } from "$lib/geo";
 	import { untrack } from "svelte";
@@ -10,6 +13,31 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let saving = $state(false);
+
+	// Map-pick anchor (option "b"): a dropped pin sets exact lat/lng plus a
+	// reverse-geocoded label. Coords ride along in hidden fields; the label fills
+	// the "Near" box. Typing in "Near" clears the coords so the text geocodes.
+	let showPicker = $state(false);
+	let picked = $state<PickedLocation | null>(null);
+	// Seeded once from the URL (direct load/refresh); thereafter this client state
+	// is the source of truth and persists across the GET-form re-navigation.
+	let placeText = $state(untrack(() => data.inputs.place));
+	let pickedLat = $state<number | null>(untrack(() => data.inputs.placeLat));
+	let pickedLng = $state<number | null>(untrack(() => data.inputs.placeLng));
+
+	$effect(() => {
+		if (picked) {
+			placeText = picked.label;
+			pickedLat = picked.lat;
+			pickedLng = picked.lng;
+		}
+	});
+
+	function onPlaceInput() {
+		// Manual typing overrides a dropped pin → geocode the text instead.
+		pickedLat = null;
+		pickedLng = null;
+	}
 
 	type PreviewStop = NonNullable<PageData["preview"]>["stops"][number];
 	type Candidate = NonNullable<PageData["query"]>["candidates"][number];
@@ -161,13 +189,16 @@
 
 	<section class="card">
 		<form method="GET" class="filters">
+			<input type="hidden" name="lat" value={pickedLat ?? ""} />
+			<input type="hidden" name="lng" value={pickedLng ?? ""} />
 			<label class="grow-field">
 				<span>Near</span>
 				<input
 					type="text"
 					name="place"
 					placeholder="City, county, park, or address…"
-					value={data.inputs.place}
+					bind:value={placeText}
+					oninput={onPlaceInput}
 				/>
 			</label>
 			<label>
@@ -237,6 +268,27 @@
 			</label>
 			<button type="submit">Plan</button>
 		</form>
+		<button
+			type="button"
+			class="pick-toggle"
+			aria-expanded={showPicker}
+			onclick={() => (showPicker = !showPicker)}
+		>
+			📍 {showPicker ? "Hide map" : "Pick on map"}
+		</button>
+		{#if showPicker}
+			<div class="picker-wrap">
+				<p class="muted">
+					Tap the map (or drag the pin) to drop your start point, then press
+					<strong>Plan</strong>.
+				</p>
+				<MapPicker
+					bind:selected={picked}
+					initialLat={data.anchor?.lat ?? null}
+					initialLng={data.anchor?.lng ?? null}
+				/>
+			</div>
+		{/if}
 		{#if data.anchor}
 			<p class="muted loc">
 				📍 {data.anchor.label} · {data.inputs.radiusMi} mi · last {data.inputs
@@ -540,6 +592,27 @@
 		background: var(--accent);
 		color: #fff;
 		font-weight: 600;
+	}
+
+	.pick-toggle {
+		margin-top: 10px;
+		min-height: 40px;
+		padding: 8px 14px;
+		border-radius: 8px;
+		border: 1px dashed var(--accent);
+		background: var(--card);
+		color: var(--accent);
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+	.pick-toggle:hover {
+		background: var(--accent-soft);
+	}
+	.picker-wrap {
+		margin-top: 10px;
+	}
+	.picker-wrap .muted {
+		margin-bottom: 8px;
 	}
 
 	.warn {
