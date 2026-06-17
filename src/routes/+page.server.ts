@@ -46,7 +46,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 				NEARBY_BACK_DAYS,
 				photoCounts
 			);
-			needs = result.needs.slice(0, 20);
+			// Send the full needs list — the page previews the first 20 but the
+			// client-side species search filters across all of them.
+			needs = result.needs;
 			bestPlaces = result.bestPlaces.slice(0, 6);
 			stale = result.stale;
 		} catch (err) {

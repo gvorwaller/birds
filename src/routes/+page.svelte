@@ -8,20 +8,71 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Client-side species search over the full needs list (the server now sends
+	// all needs, not just the top 20). When searching, a matched species expands
+	// to show every place in range it was reported.
+	let q = $state('');
+	let showAll = $state(false);
+	let expanded = $state(new Set<string>());
+	const PREVIEW = 20;
+
+	let ql = $derived(q.trim().toLowerCase());
+	let searching = $derived(ql.length > 0);
+	let matched = $derived(
+		searching
+			? data.needs.filter(
+					(n) => n.comName.toLowerCase().includes(ql) || n.sciName.toLowerCase().includes(ql)
+				)
+			: data.needs
+	);
+	let needsShown = $derived(searching || showAll ? matched : matched.slice(0, PREVIEW));
+
+	function toggleExpand(code: string) {
+		const next = new Set(expanded);
+		next.has(code) ? next.delete(code) : next.add(code);
+		expanded = next;
+	}
+	let showPlaces = $derived((code: string) => searching || expanded.has(code));
+
 	let homeCenter = $derived(data.home ? { lat: data.home.lat, lng: data.home.lon } : null);
-	let mapPoints = $derived<ObsPoint[]>([
-		...(data.home ? [{ lat: data.home.lat, lng: data.home.lon, title: 'Home', kind: 'home' as const }] : []),
-		...data.needs.map((n) => ({
-			lat: n.lastLat,
-			lng: n.lastLng,
-			title: n.comName,
-			sub: [n.locations[0], n.distanceKm != null ? formatKm(n.distanceKm) : null]
-				.filter(Boolean)
-				.join(' · '),
-			href: `/species/${n.speciesCode}`,
-			kind: 'need' as const
-		}))
-	]);
+	// The map mirrors the visible list: one pin per shown need by default, or
+	// every place of each matched species while searching.
+	let mapPoints = $derived.by<ObsPoint[]>(() => {
+		const home: ObsPoint[] = data.home
+			? [{ lat: data.home.lat, lng: data.home.lon, title: 'Home', kind: 'home' }]
+			: [];
+		if (searching) {
+			const pts: ObsPoint[] = [];
+			for (const n of matched) {
+				for (const pl of n.places) {
+					pts.push({
+						lat: pl.lat,
+						lng: pl.lng,
+						title: n.comName,
+						sub: [pl.locName, pl.distanceKm != null ? formatKm(pl.distanceKm) : null]
+							.filter(Boolean)
+							.join(' · '),
+						href: `/species/${n.speciesCode}`,
+						kind: 'need'
+					});
+				}
+			}
+			return [...home, ...pts];
+		}
+		return [
+			...home,
+			...needsShown.map((n) => ({
+				lat: n.lastLat,
+				lng: n.lastLng,
+				title: n.comName,
+				sub: [n.locations[0], n.distanceKm != null ? formatKm(n.distanceKm) : null]
+					.filter(Boolean)
+					.join(' · '),
+				href: `/species/${n.speciesCode}`,
+				kind: 'need' as const
+			}))
+		];
+	});
 </script>
 
 <svelte:head>
@@ -71,26 +122,63 @@
 					{#if data.seenCount === 0}Import your life list in <a href="/settings">Settings</a> first —
 						otherwise everything counts as a need.{/if}
 				</p>
+			{:else}
+				<input
+					class="search"
+					type="search"
+					placeholder="Search your {data.needs.length} needs by name…"
+					bind:value={q}
+				/>
+				{#if searching && matched.length === 0}
+					<p class="muted no-match">No needs match “{q}”.</p>
+				{/if}
+				{#each needsShown as n (n.speciesCode)}
+					<div class="obs">
+						<div class="grow">
+							<div class="name">
+								<a href={`/species/${n.speciesCode}`}>{n.comName}</a>
+								<Badge kind="need" label="Need" />
+							</div>
+							<div class="meta">
+								{n.locations.join(' · ')} · {n.nReports}
+								{n.nReports === 1 ? 'report' : 'reports'} · {n.totalCount} birds
+							</div>
+							{#if n.places.length > 1 && !searching}
+								<button class="places-toggle" onclick={() => toggleExpand(n.speciesCode)}>
+									{expanded.has(n.speciesCode)
+										? '▾ Hide places'
+										: `▸ Show all ${n.places.length} places`}
+								</button>
+							{/if}
+							{#if showPlaces(n.speciesCode) && n.places.length > 0}
+								<ul class="places">
+									{#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
+										<li>
+											<MapLink lat={pl.lat} lng={pl.lng} />
+											<span class="pl-name">{pl.locName}</span>
+											<span class="pl-meta"
+												>{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} · {/if}{pl.nReports}× ·
+												{pl.lastObsDt}</span
+											>
+										</li>
+									{/each}
+								</ul>
+							{:else}
+								<MapLink lat={n.lastLat} lng={n.lastLng} />
+							{/if}
+						</div>
+						<div class="right">
+							{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}
+							<div class="when">{n.lastObsDt}</div>
+						</div>
+					</div>
+				{/each}
+				{#if !searching && matched.length > PREVIEW}
+					<button class="more" onclick={() => (showAll = !showAll)}>
+						{showAll ? 'Show fewer' : `Show all ${matched.length} needs`}
+					</button>
+				{/if}
 			{/if}
-			{#each data.needs as n (n.speciesCode)}
-				<div class="obs">
-					<div class="grow">
-						<div class="name">
-							<a href={`/species/${n.speciesCode}`}>{n.comName}</a>
-							<Badge kind="need" label="Need" />
-						</div>
-						<div class="meta">
-							{n.locations.join(' · ')} · {n.nReports}
-							{n.nReports === 1 ? 'report' : 'reports'} · {n.totalCount} birds
-						</div>
-						<MapLink lat={n.lastLat} lng={n.lastLng} />
-					</div>
-					<div class="right">
-						{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}
-						<div class="when">{n.lastObsDt}</div>
-					</div>
-				</div>
-			{/each}
 		</section>
 	{/if}
 
@@ -158,6 +246,64 @@
 	.card h2 {
 		font-size: 1.05rem;
 		margin-bottom: 10px;
+	}
+	.search {
+		width: 100%;
+		min-height: 44px;
+		padding: 8px 12px;
+		margin-bottom: 8px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--card);
+		color: var(--text);
+		font-size: 16px;
+	}
+	.no-match {
+		padding: 8px 0;
+	}
+	.places-toggle {
+		margin-top: 4px;
+		padding: 2px 0;
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.places {
+		list-style: none;
+		margin: 6px 0 2px;
+		padding: 8px 0 2px 10px;
+		border-left: 2px solid var(--accent-soft);
+	}
+	.places li {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 3px 0;
+		font-size: 0.83rem;
+	}
+	.pl-name {
+		font-weight: 600;
+	}
+	.pl-meta {
+		color: var(--muted);
+		font-size: 0.78rem;
+	}
+	.more {
+		margin-top: 12px;
+		min-height: 48px;
+		padding: 10px 20px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--card);
+		color: var(--text);
+		font-weight: 600;
+	}
+	.more:hover {
+		background: var(--bg);
 	}
 	.obs {
 		display: flex;

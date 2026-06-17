@@ -8,20 +8,72 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Client-side species search across both lists (Rare-this-week + needs). A
+	// matched species expands to show every place in range it was reported.
+	let q = $state('');
 	let showAllNeeds = $state(false);
+	let expanded = $state(new Set<string>());
 	const NEEDS_PREVIEW = 25;
+
+	let ql = $derived(q.trim().toLowerCase());
+	let searching = $derived(ql.length > 0);
+	function matches(n: { comName: string; sciName: string }): boolean {
+		return n.comName.toLowerCase().includes(ql) || n.sciName.toLowerCase().includes(ql);
+	}
+
+	let notableAll = $derived(data.view?.notable ?? []);
+	let needsAll = $derived(data.view?.needs ?? []);
+	let notableShown = $derived(searching ? notableAll.filter(matches) : notableAll);
+	let needsMatched = $derived(searching ? needsAll.filter(matches) : needsAll);
 	let needsShown = $derived(
-		data.view ? (showAllNeeds ? data.view.needs : data.view.needs.slice(0, NEEDS_PREVIEW)) : []
+		searching || showAllNeeds ? needsMatched : needsMatched.slice(0, NEEDS_PREVIEW)
 	);
 
+	function toggleExpand(code: string) {
+		const next = new Set(expanded);
+		next.has(code) ? next.delete(code) : next.add(code);
+		expanded = next;
+	}
+	let showPlaces = $derived((code: string) => searching || expanded.has(code));
+
 	let mapCenter = $derived(data.location ? { lat: data.location.lat, lng: data.location.lng } : null);
+	// The map mirrors the visible lists: a pin per shown species by default, or
+	// every place of each matched species while searching.
 	let mapPoints = $derived.by<ObsPoint[]>(() => {
 		if (!data.view || !data.location) return [];
-		const notableCodes = new Set(data.view.notable.map((n) => n.speciesCode));
+		const notableCodes = new Set(notableAll.map((n) => n.speciesCode));
 		const pts: ObsPoint[] = [
 			{ lat: data.location.lat, lng: data.location.lng, title: data.location.label, kind: 'home' }
 		];
-		for (const n of data.view.notable) {
+		if (searching) {
+			for (const n of notableShown) {
+				for (const pl of n.places) {
+					pts.push({
+						lat: pl.lat,
+						lng: pl.lng,
+						title: n.comName,
+						sub: ['Notable', pl.locName].filter(Boolean).join(' · '),
+						href: `/species/${n.speciesCode}`,
+						kind: 'notable'
+					});
+				}
+			}
+			for (const n of needsMatched) {
+				if (notableCodes.has(n.speciesCode)) continue;
+				for (const pl of n.places) {
+					pts.push({
+						lat: pl.lat,
+						lng: pl.lng,
+						title: n.comName,
+						sub: pl.locName,
+						href: `/species/${n.speciesCode}`,
+						kind: 'need'
+					});
+				}
+			}
+			return pts;
+		}
+		for (const n of notableShown) {
 			pts.push({
 				lat: n.lastLat,
 				lng: n.lastLng,
@@ -31,7 +83,7 @@
 				kind: 'notable'
 			});
 		}
-		for (const n of data.view.needs) {
+		for (const n of needsShown) {
 			if (notableCodes.has(n.speciesCode)) continue;
 			pts.push({
 				lat: n.lastLat,
@@ -122,6 +174,24 @@
 	{/if}
 
 	{#if data.view}
+		<section class="card search-card">
+			<input
+				class="search"
+				type="search"
+				placeholder="Search species by name…"
+				bind:value={q}
+			/>
+			{#if searching}
+				<span class="search-count"
+					>{notableShown.length + needsMatched.length} match{notableShown.length +
+						needsMatched.length ===
+					1
+						? ''
+						: 'es'}</span
+				>
+			{/if}
+		</section>
+
 		<section class="card">
 			<h2>
 				Rare this week <Badge kind="notable" label="Notable" />
@@ -133,8 +203,10 @@
 			</p>
 			{#if data.view.notable.length === 0}
 				<p class="muted">No notable reports in this window.</p>
+			{:else if searching && notableShown.length === 0}
+				<p class="muted">No notable reports match “{q}”.</p>
 			{/if}
-			{#each data.view.notable as n (n.speciesCode)}
+			{#each notableShown as n (n.speciesCode)}
 				<div class="obs">
 					<div class="grow">
 						<div class="name">
@@ -151,7 +223,29 @@
 								· 📷 you have {n.photoCount}
 								{n.photoCount === 1 ? 'photo' : 'photos'}{/if}
 						</div>
-						<MapLink lat={n.lastLat} lng={n.lastLng} />
+						{#if n.places.length > 1 && !searching}
+							<button class="places-toggle" onclick={() => toggleExpand(n.speciesCode)}>
+								{expanded.has(n.speciesCode)
+									? '▾ Hide places'
+									: `▸ Show all ${n.places.length} places`}
+							</button>
+						{/if}
+						{#if showPlaces(n.speciesCode) && n.places.length > 0}
+							<ul class="places">
+								{#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
+									<li>
+										<MapLink lat={pl.lat} lng={pl.lng} />
+										<span class="pl-name">{pl.locName}</span>
+										<span class="pl-meta"
+											>{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} · {/if}{pl.nReports}× ·
+											{pl.lastObsDt}</span
+										>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<MapLink lat={n.lastLat} lng={n.lastLng} />
+						{/if}
 					</div>
 					<div class="right">
 						<div class="dist">{n.nReports} ×</div>
@@ -169,6 +263,9 @@
 					<a href="/settings">Settings</a>.
 				</p>
 			{/if}
+			{#if searching && needsMatched.length === 0}
+				<p class="muted">No needs match “{q}”.</p>
+			{/if}
 			{#each needsShown as n (n.speciesCode)}
 				<div class="obs">
 					<div class="grow">
@@ -182,7 +279,29 @@
 							{#if data.hasGallery && n.photoCount === 0}
 								· 📷 no photo yet{/if}
 						</div>
-						<MapLink lat={n.lastLat} lng={n.lastLng} />
+						{#if n.places.length > 1 && !searching}
+							<button class="places-toggle" onclick={() => toggleExpand(n.speciesCode)}>
+								{expanded.has(n.speciesCode)
+									? '▾ Hide places'
+									: `▸ Show all ${n.places.length} places`}
+							</button>
+						{/if}
+						{#if showPlaces(n.speciesCode) && n.places.length > 0}
+							<ul class="places">
+								{#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
+									<li>
+										<MapLink lat={pl.lat} lng={pl.lng} />
+										<span class="pl-name">{pl.locName}</span>
+										<span class="pl-meta"
+											>{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} · {/if}{pl.nReports}× ·
+											{pl.lastObsDt}</span
+										>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<MapLink lat={n.lastLat} lng={n.lastLng} />
+						{/if}
 					</div>
 					<div class="right">
 						{#if n.distanceKm != null}<div class="dist">{formatKm(n.distanceKm)}</div>{/if}
@@ -190,9 +309,9 @@
 					</div>
 				</div>
 			{/each}
-			{#if data.view.needs.length > NEEDS_PREVIEW}
+			{#if !searching && needsMatched.length > NEEDS_PREVIEW}
 				<button class="more" onclick={() => (showAllNeeds = !showAllNeeds)}>
-					{showAllNeeds ? 'Show fewer' : `Show all ${data.view.needs.length} needs`}
+					{showAllNeeds ? 'Show fewer' : `Show all ${needsMatched.length} needs`}
 				</button>
 			{/if}
 		</section>
@@ -307,6 +426,58 @@
 		background: var(--accent);
 		color: #fff;
 		font-weight: 600;
+	}
+	.search-card {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.search {
+		flex: 1;
+		min-height: 44px;
+		padding: 8px 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--card);
+		color: var(--text);
+		font-size: 16px;
+	}
+	.search-count {
+		color: var(--muted);
+		font-size: 0.83rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.places-toggle {
+		margin-top: 4px;
+		padding: 2px 0;
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.places {
+		list-style: none;
+		margin: 6px 0 2px;
+		padding: 8px 0 2px 10px;
+		border-left: 2px solid var(--accent-soft);
+	}
+	.places li {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 3px 0;
+		font-size: 0.83rem;
+	}
+	.pl-name {
+		font-weight: 600;
+	}
+	.pl-meta {
+		color: var(--muted);
+		font-size: 0.78rem;
 	}
 	.obs {
 		display: flex;

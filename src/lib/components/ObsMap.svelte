@@ -46,8 +46,13 @@
 
 	// On-demand satellite view on the existing vector map (no extra API/cost):
 	// 'hybrid' = satellite imagery + labels, 'roadmap' = the styled base map.
-	/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+	/* eslint-disable @typescript-eslint/no-explicit-any */
 	let map: any = null;
+	let gmaps: any = null;
+	let markerLib: any = null;
+	let info: any = null;
+	let markers: any[] = [];
+	/* eslint-enable @typescript-eslint/no-explicit-any */
 	let satellite = $state(false);
 	let mapReady = $state(false);
 	function toggleSatellite() {
@@ -69,6 +74,60 @@
 		);
 	}
 
+	// (Re)build the markers from the current `points`. Called once the map is
+	// ready and again whenever `points` changes (e.g. the species search filters
+	// the list), so the map always mirrors what's shown — including every place
+	// of a searched species.
+	function renderMarkers() {
+		if (!map) return;
+		for (const m of markers) m.map = null;
+		markers = [];
+
+		const pts = points.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+		const bounds = new gmaps.LatLngBounds();
+		if (center) bounds.extend(center);
+
+		for (const p of pts) {
+			const pin = new markerLib.PinElement(COLORS[p.kind ?? 'need']);
+			const m = new markerLib.AdvancedMarkerElement({
+				map,
+				position: { lat: p.lat, lng: p.lng },
+				title: p.title,
+				content: pin.element,
+			});
+			m.addListener('click', () => {
+				const img = p.img
+					? `<img src="${encodeURI(p.img)}" alt="" loading="lazy" style="width:100%;max-width:220px;border-radius:6px;display:block;margin-bottom:6px">`
+					: '';
+				const link = p.href
+					? `<br><a href="${encodeURI(p.href)}" style="color:#084298;font-weight:600">${escapeHtml(p.linkText ?? 'View species →')}</a>`
+					: '';
+				// Home marker doesn't need "directions to home".
+				const maps =
+					p.kind === 'home'
+						? ''
+						: `<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
+							`<a href="${mapsPlaceUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
+							`<a href="${mapsDirectionsUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
+							`</div>`;
+				info.setContent(
+					`${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}${maps}`,
+				);
+				info.open({ map, anchor: m });
+			});
+			markers.push(m);
+			bounds.extend({ lat: p.lat, lng: p.lng });
+		}
+
+		const start = center ?? pts[0] ?? { lat: 39.5, lng: -98.35 };
+		const total = pts.length + (center ? 1 : 0);
+		if (total >= 2) map.fitBounds(bounds, 56);
+		else {
+			map.setCenter({ lat: start.lat, lng: start.lng });
+			map.setZoom(pts.length ? 11 : 6);
+		}
+	}
+
 	onMount(async () => {
 		if (!API_KEY) {
 			loadError = 'Google Maps key is not configured.';
@@ -76,20 +135,16 @@
 		}
 		try {
 			const libs = await loadGoogleMaps(API_KEY, ['maps', 'marker']);
-			/* eslint-disable @typescript-eslint/no-explicit-any */
-			const gmaps = (window as any).google.maps;
-			const markerLib = libs.marker as any;
-			const { Map } = libs.maps as any;
-			/* eslint-enable @typescript-eslint/no-explicit-any */
+			gmaps = (window as any).google.maps; // eslint-disable-line @typescript-eslint/no-explicit-any
+			markerLib = libs.marker;
+			const { Map } = libs.maps as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-			const pts = points.filter(
-				(p) => Number.isFinite(p.lat) && Number.isFinite(p.lng),
-			);
-			const start = center ?? pts[0] ?? { lat: 39.5, lng: -98.35 };
+			const startPts = points.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+			const start = center ?? startPts[0] ?? { lat: 39.5, lng: -98.35 };
 
 			map = new Map(mapEl, {
 				center: { lat: start.lat, lng: start.lng },
-				zoom: pts.length ? 10 : 6,
+				zoom: startPts.length ? 10 : 6,
 				mapId: MAP_ID || undefined,
 				gestureHandling: 'greedy',
 				zoomControlOptions: { position: gmaps.ControlPosition.RIGHT_BOTTOM },
@@ -97,57 +152,14 @@
 				mapTypeControl: false,
 				fullscreenControl: false,
 			});
-			const info = new gmaps.InfoWindow({ maxWidth: 260 });
-			const bounds = new gmaps.LatLngBounds();
-			if (center) bounds.extend(center);
-
-			for (const p of pts) {
-				const pin = new markerLib.PinElement(COLORS[p.kind ?? 'need']);
-				const m = new markerLib.AdvancedMarkerElement({
-					map,
-					position: { lat: p.lat, lng: p.lng },
-					title: p.title,
-					content: pin.element,
-				});
-				m.addListener('click', () => {
-					const img = p.img
-						? `<img src="${encodeURI(p.img)}" alt="" loading="lazy" style="width:100%;max-width:220px;border-radius:6px;display:block;margin-bottom:6px">`
-						: '';
-					const link = p.href
-						? `<br><a href="${encodeURI(p.href)}" style="color:#084298;font-weight:600">${escapeHtml(p.linkText ?? 'View species →')}</a>`
-						: '';
-					// Home marker doesn't need "directions to home".
-					const maps =
-						p.kind === 'home'
-							? ''
-							: `<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
-								`<a href="${mapsPlaceUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
-								`<a href="${mapsDirectionsUrl(p.lat, p.lng)}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
-								`</div>`;
-					info.setContent(
-						`${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ''}${link}${maps}`,
-					);
-					info.open({ map, anchor: m });
-				});
-				bounds.extend({ lat: p.lat, lng: p.lng });
-			}
-
-			const total = pts.length + (center ? 1 : 0);
-			const applyView = () => {
-				if (total >= 2) map.fitBounds(bounds, 56);
-				else {
-					map.setCenter({ lat: start.lat, lng: start.lng });
-					map.setZoom(pts.length ? 11 : 6);
-				}
-			};
-			applyView();
-			mapReady = true;
+			info = new gmaps.InfoWindow({ maxWidth: 260 });
+			mapReady = true; // triggers the $effect below to draw the markers
 
 			// WebGL vector maps can render blank until composited — nudge on first visibility.
 			const io = new IntersectionObserver((entries) => {
 				if (entries.some((e) => e.isIntersecting)) {
 					gmaps.event.trigger(map, 'resize');
-					applyView();
+					renderMarkers();
 					io.disconnect();
 				}
 			});
@@ -156,6 +168,12 @@
 			loadError =
 				err instanceof Error ? err.message : 'Could not load the map.';
 		}
+	});
+
+	// Redraw whenever the map becomes ready or the points change.
+	$effect(() => {
+		points; // track
+		if (mapReady) renderMarkers();
 	});
 </script>
 

@@ -14,6 +14,16 @@ import {
 	type EbirdObs
 } from '$server/ebird';
 
+export interface SpeciesPlace {
+	locId: string | null;
+	locName: string;
+	lat: number;
+	lng: number;
+	lastObsDt: string;
+	nReports: number;
+	distanceKm: number | null;
+}
+
 export interface SpeciesActivity {
 	speciesCode: string;
 	comName: string;
@@ -22,6 +32,8 @@ export interface SpeciesActivity {
 	totalCount: number;
 	lastObsDt: string;
 	locations: string[];
+	/** Every distinct place in range this species was reported, nearest first. */
+	places: SpeciesPlace[];
 	lastLat: number;
 	lastLng: number;
 	distanceKm: number | null;
@@ -116,6 +128,8 @@ function aggregate(
 	photoCounts: Map<string, number>
 ): Map<string, SpeciesActivity> {
 	const bySpecies = new Map<string, SpeciesActivity>();
+	// Per-species accumulator of distinct places, keyed by speciesCode → locKey.
+	const placesBySpecies = new Map<string, Map<string, SpeciesPlace>>();
 	for (const o of obs) {
 		if (!o.speciesCode) continue;
 		let agg = bySpecies.get(o.speciesCode);
@@ -128,12 +142,14 @@ function aggregate(
 				totalCount: 0,
 				lastObsDt: o.obsDt,
 				locations: [],
+				places: [],
 				lastLat: o.lat,
 				lastLng: o.lng,
 				distanceKm: null,
 				photoCount: photoCounts.get(o.speciesCode) ?? 0
 			};
 			bySpecies.set(o.speciesCode, agg);
+			placesBySpecies.set(o.speciesCode, new Map());
 		}
 		agg.nReports++;
 		agg.totalCount += o.howMany ?? 1;
@@ -145,11 +161,38 @@ function aggregate(
 		if (o.locName && !agg.locations.includes(o.locName) && agg.locations.length < 3) {
 			agg.locations.push(o.locName);
 		}
+		// Track every distinct place (full list powers the inline "all places" view).
+		const pmap = placesBySpecies.get(o.speciesCode)!;
+		const key = o.locId || `${o.lat},${o.lng}`;
+		let pl = pmap.get(key);
+		if (!pl) {
+			pl = {
+				locId: o.locId ?? null,
+				locName: o.locName,
+				lat: o.lat,
+				lng: o.lng,
+				lastObsDt: o.obsDt,
+				nReports: 0,
+				distanceKm: null
+			};
+			pmap.set(key, pl);
+		}
+		pl.nReports++;
+		if (o.obsDt > pl.lastObsDt) pl.lastObsDt = o.obsDt;
 	}
-	if (home) {
-		for (const agg of bySpecies.values()) {
+	// Finalize per-species place lists + distances (nearest first when we have an origin).
+	for (const [code, agg] of bySpecies) {
+		const places = [...placesBySpecies.get(code)!.values()];
+		if (home) {
+			for (const pl of places) pl.distanceKm = haversineKm(home.lat, home.lon, pl.lat, pl.lng);
 			agg.distanceKm = haversineKm(home.lat, home.lon, agg.lastLat, agg.lastLng);
 		}
+		places.sort((a, b) =>
+			home
+				? (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9)
+				: b.lastObsDt.localeCompare(a.lastObsDt)
+		);
+		agg.places = places;
 	}
 	return bySpecies;
 }
