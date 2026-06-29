@@ -111,7 +111,12 @@
               {o.howMany ?? 1}
               {(o.howMany ?? 1) === 1 ? "bird" : "birds"}
             </div>
-            <MapLink lat={o.lat} lng={o.lng} name={o.locName} />
+            <MapLink
+              lat={o.lat}
+              lng={o.lng}
+              name={o.locName}
+              googlePlaceId={o.googlePlaceId}
+            />
           </div>
           <div class="right">
             {#if o.distanceKm != null}<div class="dist">

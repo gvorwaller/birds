@@ -181,8 +181,8 @@
               </div>
               <div class="meta">
                 <strong
-                  >{n.nReports}
-                  {n.nReports === 1 ? "report" : "reports"}</strong
+                  >{n.locationCount}
+                  {n.locationCount === 1 ? "location" : "locations"}</strong
                 >
                 ·
                 <strong
@@ -206,7 +206,12 @@
                 <ul class="places">
                   {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
                     <li>
-                      <MapLink lat={pl.lat} lng={pl.lng} name={pl.locName} />
+                      <MapLink
+                        lat={pl.lat}
+                        lng={pl.lng}
+                        name={pl.locName}
+                        googlePlaceId={pl.googlePlaceId}
+                      />
                       <span class="pl-name">{pl.locName}</span>
                       <span class="pl-meta"
                         >{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} ·
@@ -223,6 +228,7 @@
                   lat={n.lastLat}
                   lng={n.lastLng}
                   name={n.locations[0] ?? n.comName}
+                  googlePlaceId={n.googlePlaceId}
                 />
               {/if}
             </div>

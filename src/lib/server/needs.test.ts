@@ -60,6 +60,7 @@ describe("aggregate", () => {
     const osprey = activity.get("ospre1")!;
     expect(osprey.nReports).toBe(3);
     expect(osprey.totalCount).toBe(6);
+    expect(osprey.locationCount).toBe(2);
     expect(osprey.places).toHaveLength(2);
     expect(osprey.places.find((p) => p.locId === "L1")).toMatchObject({
       nReports: 2,

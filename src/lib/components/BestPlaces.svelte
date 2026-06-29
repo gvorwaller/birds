@@ -6,6 +6,7 @@
     locName: string;
     lat: number;
     lng: number;
+    googlePlaceId: string | null;
     needCount: number;
     needSpecies: { code: string; comName: string }[];
     lastObsDt: string;
@@ -54,7 +55,12 @@
             {/if}
           </div>
           <div class="meta">{speciesList(p)}</div>
-          <MapLink lat={p.lat} lng={p.lng} name={p.locName} />
+          <MapLink
+            lat={p.lat}
+            lng={p.lng}
+            name={p.locName}
+            googlePlaceId={p.googlePlaceId}
+          />
         </div>
         <div class="right">
           <div class="count">

@@ -9,6 +9,10 @@ import {
 } from "$server/ebird";
 import { haversineKm } from "$lib/geo";
 import { ownerGalleryUrl } from "$server/access";
+import {
+  attachGooglePlaceIds,
+  hydrateEbirdLocationPlaceIds,
+} from "$server/location-placeids";
 
 const NEARBY_DIST_KM = 50;
 const NEARBY_BACK_DAYS = 14;
@@ -88,7 +92,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ? { lat: userRow.rows[0].home_lat, lon: userRow.rows[0].home_lon }
       : null;
 
-  let nearby: (EbirdObs & { distanceKm: number | null })[] = [];
+  let nearby: (EbirdObs & {
+    distanceKm: number | null;
+    googlePlaceId: string | null;
+  })[] = [];
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
@@ -103,7 +110,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
         backDays,
       );
       stale = result.stale;
-      nearby = result.data
+      const placeIds = await hydrateEbirdLocationPlaceIds(result.data);
+      nearby = attachGooglePlaceIds(result.data, placeIds)
         .map((o) => ({
           ...o,
           distanceKm: home

@@ -21,6 +21,7 @@ import {
 } from "$server/ebird";
 import { seenSet } from "$server/needs";
 import { placesNearby, type PlacesNearbyResult } from "$server/geocode";
+import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 
 // Inclusive bounds enforced by validation; out-of-range params are explicit
 // errors, never silently clamped to a meaning-changing default. (Codex.)
@@ -63,6 +64,7 @@ export interface PlaceCandidate {
   locName: string;
   lat: number;
   lng: number;
+  googlePlaceId: string | null;
   distanceKm: number;
   /** Distinct matching species reported here (needs, or all per seenStatus). */
   matchCount: number;
@@ -193,6 +195,7 @@ export function buildCandidates(
   > & {
     minNeedsPerStop?: number;
   },
+  locationPlaceIds: Map<string, string> = new Map(),
 ): PlaceCandidate[] {
   interface Acc {
     locId: string | null;
@@ -250,6 +253,7 @@ export function buildCandidates(
         locName: p.locName,
         lat: p.lat,
         lng: p.lng,
+        googlePlaceId: p.locId ? (locationPlaceIds.get(p.locId) ?? null) : null,
         distanceKm,
         matchCount: p.species.size,
         triggerSpecies,
@@ -289,10 +293,15 @@ export async function runQuery(
         filters.daysBack,
       );
 
-  const candidates = buildCandidates(obsRes.data, seen, {
-    ...filters,
-    minNeedsPerStop,
-  });
+  const candidates = buildCandidates(
+    obsRes.data,
+    seen,
+    {
+      ...filters,
+      minNeedsPerStop,
+    },
+    await hydrateEbirdLocationPlaceIds(obsRes.data),
+  );
   const speciesSet = new Set<string>();
   for (const c of candidates)
     for (const s of c.triggerSpecies) speciesSet.add(s.code);
@@ -399,7 +408,7 @@ export async function assembleTripPreview(
     name: c.locName,
     lat: c.lat,
     lng: c.lng,
-    googlePlaceId: null,
+    googlePlaceId: c.googlePlaceId,
     matchCount: c.matchCount,
     triggerSpecies: c.triggerSpecies,
     kind: "hotspot",

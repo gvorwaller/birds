@@ -416,6 +416,11 @@
               <input type="hidden" name="name" value={h.locName} />
               <input type="hidden" name="lat" value={h.lat} />
               <input type="hidden" name="lon" value={h.lng} />
+              <input
+                type="hidden"
+                name="google_place_id"
+                value={h.googlePlaceId ?? ""}
+              />
               <button type="submit" class="small primary">+ Add</button>
             </form>
           </div>

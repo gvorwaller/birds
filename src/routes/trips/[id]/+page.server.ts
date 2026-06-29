@@ -23,6 +23,10 @@ import {
   updateStopNotes,
   updateTrip,
 } from "$server/trips";
+import {
+  attachGooglePlaceIds,
+  hydrateEbirdLocationPlaceIds,
+} from "$server/location-placeids";
 
 async function homeOf(
   userId: number,
@@ -68,7 +72,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 
   // Optional "find hotspots near <place>" search.
   const hs = (url.searchParams.get("hs") ?? "").trim();
-  let hotspots: EbirdHotspot[] = [];
+  let hotspots: Array<EbirdHotspot & { googlePlaceId: string | null }> = [];
   let hsCenter: {
     lat: number;
     lng: number;
@@ -101,9 +105,11 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
           const existing = new Set(
             stops.map((s) => s.hotspot_id).filter(Boolean),
           );
-          hotspots = res.data
+          const shown = res.data
             .filter((h) => !existing.has(h.locId))
             .slice(0, 15);
+          const placeIds = await hydrateEbirdLocationPlaceIds(shown);
+          hotspots = attachGooglePlaceIds(shown, placeIds);
         } catch (err) {
           hsError =
             err instanceof EbirdError
@@ -182,6 +188,8 @@ export const actions: Actions = {
     const form = await request.formData();
     const locId = (form.get("loc_id") ?? "").toString().trim();
     const name = (form.get("name") ?? "").toString().trim();
+    const googlePlaceId =
+      (form.get("google_place_id") ?? "").toString().trim() || null;
     const lat = Number(form.get("lat"));
     const lon = Number(form.get("lon"));
     if (!locId || !name || !Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -192,6 +200,7 @@ export const actions: Actions = {
       name,
       lat,
       lon,
+      google_place_id: googlePlaceId,
     });
     return { ok: true as const, message: `Added "${name}".` };
   },

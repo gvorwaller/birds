@@ -5,10 +5,12 @@
  */
 import { query } from "$lib/db";
 import { haversineKm } from "$lib/geo";
+import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
   notableNearbyObs,
   notableObs,
   recentNearbyObs,
+  recentNearbySpeciesObs,
   recentObs,
   type CachedResult,
   type EbirdObs,
@@ -23,6 +25,7 @@ export interface SpeciesPlace {
   nReports: number;
   totalCount: number;
   distanceKm: number | null;
+  googlePlaceId: string | null;
 }
 
 export interface SpeciesActivity {
@@ -31,12 +34,15 @@ export interface SpeciesActivity {
   sciName: string;
   nReports: number;
   totalCount: number;
+  /** Distinct reported locations for this species. */
+  locationCount: number;
   lastObsDt: string;
   locations: string[];
   /** Every distinct place in range this species was reported, nearest first. */
   places: SpeciesPlace[];
   lastLat: number;
   lastLng: number;
+  googlePlaceId: string | null;
   distanceKm: number | null;
   photoCount: number;
 }
@@ -50,6 +56,7 @@ export interface PlaceRanking {
   locName: string;
   lat: number;
   lng: number;
+  googlePlaceId: string | null;
   needCount: number;
   needSpecies: { code: string; comName: string }[];
   lastObsDt: string;
@@ -73,6 +80,7 @@ function rankPlaces(
   obs: EbirdObs[],
   seen: Set<string>,
   origin: { lat: number; lon: number } | null,
+  locationPlaceIds: Map<string, string> = new Map(),
 ): PlaceRanking[] {
   interface Acc {
     locId: string | null;
@@ -107,6 +115,7 @@ function rankPlaces(
       locName: p.locName,
       lat: p.lat,
       lng: p.lng,
+      googlePlaceId: p.locId ? (locationPlaceIds.get(p.locId) ?? null) : null,
       needCount: p.species.size,
       needSpecies: [...p.species.entries()].map(([code, comName]) => ({
         code,
@@ -135,6 +144,7 @@ export function aggregate(
   obs: EbirdObs[],
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number>,
+  locationPlaceIds: Map<string, string> = new Map(),
 ): Map<string, SpeciesActivity> {
   const bySpecies = new Map<string, SpeciesActivity>();
   // Per-species accumulator of distinct places, keyed by speciesCode → locKey.
@@ -149,11 +159,13 @@ export function aggregate(
         sciName: o.sciName,
         nReports: 0,
         totalCount: 0,
+        locationCount: 0,
         lastObsDt: o.obsDt,
         locations: [],
         places: [],
         lastLat: o.lat,
         lastLng: o.lng,
+        googlePlaceId: o.locId ? (locationPlaceIds.get(o.locId) ?? null) : null,
         distanceKm: null,
         photoCount: photoCounts.get(o.speciesCode) ?? 0,
       };
@@ -166,6 +178,9 @@ export function aggregate(
       agg.lastObsDt = o.obsDt;
       agg.lastLat = o.lat;
       agg.lastLng = o.lng;
+      agg.googlePlaceId = o.locId
+        ? (locationPlaceIds.get(o.locId) ?? null)
+        : null;
     }
     if (
       o.locName &&
@@ -188,12 +203,16 @@ export function aggregate(
         nReports: 0,
         totalCount: 0,
         distanceKm: null,
+        googlePlaceId: null,
       };
       pmap.set(key, pl);
     }
     pl.nReports++;
     pl.totalCount += o.howMany ?? 1;
     if (o.obsDt > pl.lastObsDt) pl.lastObsDt = o.obsDt;
+    if (o.locId && locationPlaceIds.has(o.locId)) {
+      pl.googlePlaceId = locationPlaceIds.get(o.locId)!;
+    }
   }
   // Finalize per-species place lists + distances (nearest first when we have an origin).
   for (const [code, agg] of bySpecies) {
@@ -213,9 +232,86 @@ export function aggregate(
         ? (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9)
         : b.lastObsDt.localeCompare(a.lastObsDt),
     );
+    agg.locationCount = places.length;
     agg.places = places;
   }
   return bySpecies;
+}
+
+const SPECIES_DETAIL_CONCURRENCY = 4;
+
+function sortNeedsByActivity(a: SpeciesActivity, b: SpeciesActivity): number {
+  return (
+    b.locationCount - a.locationCount ||
+    b.totalCount - a.totalCount ||
+    b.nReports - a.nReports ||
+    a.comName.localeCompare(b.comName)
+  );
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        results[index] = await fn(items[index]);
+      }
+    }),
+  );
+  return results;
+}
+
+async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
+  needs: T[],
+  apiKey: string,
+  origin: { lat: number; lon: number },
+  distKm: number,
+  back: number,
+  photoCounts: Map<string, number>,
+): Promise<{ needs: T[]; stale: boolean }> {
+  if (needs.length === 0) return { needs, stale: false };
+
+  const dist = Math.min(Math.max(distKm, 1), 50);
+  let stale = false;
+  const enriched = await mapWithConcurrency(
+    needs,
+    SPECIES_DETAIL_CONCURRENCY,
+    async (need) => {
+      try {
+        const result = await recentNearbySpeciesObs(
+          apiKey,
+          need.speciesCode,
+          origin.lat,
+          origin.lon,
+          dist,
+          back,
+        );
+        stale = stale || result.stale;
+        const detailedPlaceIds = await hydrateEbirdLocationPlaceIds(
+          result.data,
+          { resolveMissing: false },
+        );
+        const detailed = aggregate(
+          result.data,
+          origin,
+          photoCounts,
+          detailedPlaceIds,
+        ).get(need.speciesCode);
+        return detailed ? ({ ...need, ...detailed } as T) : need;
+      } catch {
+        return need;
+      }
+    },
+  );
+
+  return { needs: enriched, stale };
 }
 
 async function buildView(
@@ -224,17 +320,21 @@ async function buildView(
   notable: CachedResult<EbirdObs[]>,
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number>,
+  locationPlaceIds: Map<string, string> = new Map(),
 ): Promise<TargetsView> {
   const seen = await seenSet(userId);
 
-  const recentAgg = aggregate(recent.data, home, photoCounts);
+  const recentAgg = aggregate(recent.data, home, photoCounts, locationPlaceIds);
   const needs = [...recentAgg.values()]
     .filter((a) => !seen.has(a.speciesCode))
-    .sort(
-      (a, b) => b.nReports - a.nReports || a.comName.localeCompare(b.comName),
-    );
+    .sort(sortNeedsByActivity);
 
-  const notableAgg = aggregate(notable.data, home, photoCounts);
+  const notableAgg = aggregate(
+    notable.data,
+    home,
+    photoCounts,
+    locationPlaceIds,
+  );
   const notableList = [...notableAgg.values()]
     .map((a) => ({ ...a, seen: seen.has(a.speciesCode) }))
     .sort((a, b) => b.lastObsDt.localeCompare(a.lastObsDt));
@@ -242,7 +342,7 @@ async function buildView(
   return {
     needs,
     notable: notableList,
-    bestPlaces: rankPlaces(recent.data, seen, home),
+    bestPlaces: rankPlaces(recent.data, seen, home, locationPlaceIds),
     stale: recent.stale || notable.stale,
     fetchedAt: recent.fetchedAt,
     seenCount: seen.size,
@@ -261,7 +361,18 @@ export async function regionTargets(
     recentObs(apiKey, regionCode, back),
     notableObs(apiKey, regionCode, back),
   ]);
-  return buildView(userId, recent, notable, home, photoCounts);
+  const locationPlaceIds = await hydrateEbirdLocationPlaceIds([
+    ...recent.data,
+    ...notable.data,
+  ]);
+  return buildView(
+    userId,
+    recent,
+    notable,
+    home,
+    photoCounts,
+    locationPlaceIds,
+  );
 }
 
 /**
@@ -283,7 +394,31 @@ export async function geoTargets(
     recentNearbyObs(apiKey, lat, lng, dist, back),
     notableNearbyObs(apiKey, lat, lng, dist, back),
   ]);
-  return buildView(userId, recent, notable, origin, photoCounts);
+  const locationPlaceIds = await hydrateEbirdLocationPlaceIds([
+    ...recent.data,
+    ...notable.data,
+  ]);
+  const view = await buildView(
+    userId,
+    recent,
+    notable,
+    origin,
+    photoCounts,
+    locationPlaceIds,
+  );
+  const enriched = await enrichNeedsWithSpeciesReports(
+    view.needs,
+    apiKey,
+    origin,
+    dist,
+    back,
+    photoCounts,
+  );
+  return {
+    ...view,
+    needs: enriched.needs.sort(sortNeedsByActivity),
+    stale: view.stale || enriched.stale,
+  };
 }
 
 export async function nearbyNeeds(
@@ -307,14 +442,25 @@ export async function nearbyNeeds(
     back,
   );
   const seen = await seenSet(userId);
-  const agg = aggregate(recent.data, home, photoCounts);
+  const locationPlaceIds = await hydrateEbirdLocationPlaceIds(recent.data);
+  const agg = aggregate(recent.data, home, photoCounts, locationPlaceIds);
   const needs = [...agg.values()]
     .filter((a) => !seen.has(a.speciesCode))
     .sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
-  return {
+  const enriched = await enrichNeedsWithSpeciesReports(
     needs,
-    bestPlaces: rankPlaces(recent.data, seen, home),
-    stale: recent.stale,
+    apiKey,
+    home,
+    distKm,
+    back,
+    photoCounts,
+  );
+  return {
+    needs: enriched.needs.sort(
+      (a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9),
+    ),
+    bestPlaces: rankPlaces(recent.data, seen, home, locationPlaceIds),
+    stale: recent.stale || enriched.stale,
     fetchedAt: recent.fetchedAt,
   };
 }

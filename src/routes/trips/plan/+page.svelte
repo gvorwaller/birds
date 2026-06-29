@@ -112,7 +112,7 @@
         name: c.locName,
         lat: c.lat,
         lng: c.lng,
-        googlePlaceId: null,
+        googlePlaceId: c.googlePlaceId,
         matchCount: c.matchCount,
         triggerSpecies: c.triggerSpecies,
         kind: "hotspot" as const,
@@ -459,7 +459,12 @@
               <div class="meta hsmeta">{hotspotMetaLine(c.locId)}</div>
             {/if}
             <div class="links">
-              <MapLink lat={c.lat} lng={c.lng} name={c.locName} />
+              <MapLink
+                lat={c.lat}
+                lng={c.lng}
+                name={c.locName}
+                googlePlaceId={c.googlePlaceId}
+              />
               {#if c.locId}
                 <a
                   href={`https://ebird.org/hotspot/${c.locId}`}
