@@ -7,6 +7,7 @@
     lat: number;
     lng: number;
     googlePlaceId: string | null;
+    isHotspot: boolean;
     needCount: number;
     needSpecies: { code: string; comName: string }[];
     lastObsDt: string;
@@ -43,7 +44,25 @@
       <div class="place">
         <div class="rank">{i + 1}</div>
         <div class="grow">
-          <div class="name">{p.locName}</div>
+          <div class="name">
+            {#if p.isHotspot && p.locId}
+              <a
+                class="place-link"
+                href={`https://ebird.org/hotspot/${p.locId}`}
+                target="_blank"
+                rel="noopener">{p.locName}</a
+              >
+              <a
+                class="hotspot-badge"
+                href={`https://ebird.org/hotspot/${p.locId}`}
+                target="_blank"
+                rel="noopener"
+                title="Verified eBird hotspot">eBird hotspot ↗</a
+              >
+            {:else}
+              {p.locName}
+            {/if}
+          </div>
           <div class="meta">{speciesList(p)}</div>
           <MapLink
             lat={p.lat}
@@ -114,6 +133,28 @@
   }
   .name {
     font-weight: 700;
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .place-link {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .hotspot-badge {
+    background: #e8f2ff;
+    border: 1px solid #bfd8ff;
+    border-radius: 999px;
+    color: #165c9f;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    text-decoration: none;
+    text-transform: uppercase;
   }
   .meta {
     color: var(--muted);

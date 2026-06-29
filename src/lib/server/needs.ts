@@ -7,6 +7,7 @@ import { query } from "$lib/db";
 import { haversineKm } from "$lib/geo";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
+  hotspotsNear,
   notableNearbyObs,
   notableObs,
   recentNearbyObs,
@@ -57,6 +58,7 @@ export interface PlaceRanking {
   lat: number;
   lng: number;
   googlePlaceId: string | null;
+  isHotspot: boolean;
   needCount: number;
   needSpecies: { code: string; comName: string }[];
   lastObsDt: string;
@@ -81,6 +83,7 @@ function rankPlaces(
   seen: Set<string>,
   origin: { lat: number; lon: number } | null,
   locationPlaceIds: Map<string, string> = new Map(),
+  hotspotLocIds: Set<string> = new Set(),
 ): PlaceRanking[] {
   interface Acc {
     locId: string | null;
@@ -116,6 +119,7 @@ function rankPlaces(
       lat: p.lat,
       lng: p.lng,
       googlePlaceId: p.locId ? (locationPlaceIds.get(p.locId) ?? null) : null,
+      isHotspot: p.locId ? hotspotLocIds.has(p.locId) : false,
       needCount: p.species.size,
       needSpecies: [...p.species.entries()].map(([code, comName]) => ({
         code,
@@ -321,6 +325,7 @@ async function buildView(
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number>,
   locationPlaceIds: Map<string, string> = new Map(),
+  hotspotLocIds: Set<string> = new Set(),
 ): Promise<TargetsView> {
   const seen = await seenSet(userId);
 
@@ -342,7 +347,13 @@ async function buildView(
   return {
     needs,
     notable: notableList,
-    bestPlaces: rankPlaces(recent.data, seen, home, locationPlaceIds),
+    bestPlaces: rankPlaces(
+      recent.data,
+      seen,
+      home,
+      locationPlaceIds,
+      hotspotLocIds,
+    ),
     stale: recent.stale || notable.stale,
     fetchedAt: recent.fetchedAt,
     seenCount: seen.size,
@@ -375,6 +386,23 @@ export async function regionTargets(
   );
 }
 
+async function verifiedHotspotLocIds(
+  apiKey: string,
+  lat: number,
+  lng: number,
+  distKm: number,
+): Promise<{ locIds: Set<string>; stale: boolean }> {
+  try {
+    const hotspots = await hotspotsNear(apiKey, lat, lng, distKm);
+    return {
+      locIds: new Set(hotspots.data.map((h) => h.locId)),
+      stale: hotspots.stale,
+    };
+  } catch {
+    return { locIds: new Set(), stale: false };
+  }
+}
+
 /**
  * Targets for an arbitrary location (geo endpoints — no region code needed).
  * Distances are measured from the search center. eBird caps geo dist at 50 km.
@@ -394,6 +422,7 @@ export async function geoTargets(
     recentNearbyObs(apiKey, lat, lng, dist, back),
     notableNearbyObs(apiKey, lat, lng, dist, back),
   ]);
+  const hotspots = await verifiedHotspotLocIds(apiKey, lat, lng, dist);
   const locationPlaceIds = await hydrateEbirdLocationPlaceIds([
     ...recent.data,
     ...notable.data,
@@ -405,6 +434,7 @@ export async function geoTargets(
     origin,
     photoCounts,
     locationPlaceIds,
+    hotspots.locIds,
   );
   const enriched = await enrichNeedsWithSpeciesReports(
     view.needs,
@@ -417,7 +447,7 @@ export async function geoTargets(
   return {
     ...view,
     needs: enriched.needs.sort(sortNeedsByActivity),
-    stale: view.stale || enriched.stale,
+    stale: view.stale || enriched.stale || hotspots.stale,
   };
 }
 
@@ -434,13 +464,10 @@ export async function nearbyNeeds(
   stale: boolean;
   fetchedAt: Date;
 }> {
-  const recent = await recentNearbyObs(
-    apiKey,
-    home.lat,
-    home.lon,
-    distKm,
-    back,
-  );
+  const [recent, hotspots] = await Promise.all([
+    recentNearbyObs(apiKey, home.lat, home.lon, distKm, back),
+    verifiedHotspotLocIds(apiKey, home.lat, home.lon, distKm),
+  ]);
   const seen = await seenSet(userId);
   const locationPlaceIds = await hydrateEbirdLocationPlaceIds(recent.data);
   const agg = aggregate(recent.data, home, photoCounts, locationPlaceIds);
@@ -459,8 +486,14 @@ export async function nearbyNeeds(
     needs: enriched.needs.sort(
       (a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9),
     ),
-    bestPlaces: rankPlaces(recent.data, seen, home, locationPlaceIds),
-    stale: recent.stale || enriched.stale,
+    bestPlaces: rankPlaces(
+      recent.data,
+      seen,
+      home,
+      locationPlaceIds,
+      hotspots.locIds,
+    ),
+    stale: recent.stale || enriched.stale || hotspots.stale,
     fetchedAt: recent.fetchedAt,
   };
 }
