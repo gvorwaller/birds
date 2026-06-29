@@ -3,6 +3,7 @@ import type { PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import {
   getEbirdApiKey,
+  notableNearbyObs,
   recentNearbySpeciesObs,
   EbirdError,
   type EbirdObs,
@@ -13,6 +14,7 @@ import {
   attachGooglePlaceIds,
   hydrateEbirdLocationPlaceIds,
 } from "$server/location-placeids";
+import { mergeSpeciesObservations } from "$server/observations";
 
 const NEARBY_DIST_KM = 50;
 const NEARBY_BACK_DAYS = 14;
@@ -101,17 +103,37 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const apiKey = await getEbirdApiKey(userId);
   if (apiKey && home) {
     try {
-      const result = await recentNearbySpeciesObs(
-        apiKey,
+      const [recentResult, notableResult] = await Promise.allSettled([
+        recentNearbySpeciesObs(
+          apiKey,
+          code,
+          home.lat,
+          home.lon,
+          NEARBY_DIST_KM,
+          backDays,
+        ),
+        notableNearbyObs(apiKey, home.lat, home.lon, NEARBY_DIST_KM, backDays),
+      ]);
+      if (
+        recentResult.status === "rejected" &&
+        notableResult.status === "rejected"
+      ) {
+        throw recentResult.reason;
+      }
+      const recentData =
+        recentResult.status === "fulfilled" ? recentResult.value.data : [];
+      const notableData =
+        notableResult.status === "fulfilled" ? notableResult.value.data : [];
+      stale =
+        (recentResult.status === "fulfilled" && recentResult.value.stale) ||
+        (notableResult.status === "fulfilled" && notableResult.value.stale);
+      const observations = mergeSpeciesObservations(
         code,
-        home.lat,
-        home.lon,
-        NEARBY_DIST_KM,
-        backDays,
+        recentData,
+        notableData,
       );
-      stale = result.stale;
-      const placeIds = await hydrateEbirdLocationPlaceIds(result.data);
-      nearby = attachGooglePlaceIds(result.data, placeIds)
+      const placeIds = await hydrateEbirdLocationPlaceIds(observations);
+      nearby = attachGooglePlaceIds(observations, placeIds)
         .map((o) => ({
           ...o,
           distanceKm: home
