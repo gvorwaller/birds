@@ -25,6 +25,7 @@ import {
 } from "$server/trips";
 import {
   attachGooglePlaceIds,
+  googlePlaceIdsForLocIds,
   hydrateEbirdLocationPlaceIds,
 } from "$server/location-placeids";
 
@@ -55,7 +56,17 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const trip = await getTrip(userId, tripId);
   if (!trip) throw error(404, "Trip not found");
 
-  const stops = await getStops(tripId);
+  const rawStops = await getStops(tripId);
+  const savedPlaceIds = await googlePlaceIdsForLocIds(
+    rawStops.map((s) => s.hotspot_id),
+  );
+  const stops = rawStops.map((s) => ({
+    ...s,
+    google_place_id:
+      s.google_place_id ??
+      (s.hotspot_id ? savedPlaceIds.get(s.hotspot_id) : null) ??
+      null,
+  }));
   const apiKey = await getEbirdApiKey(userId);
   const needs = await needsCountForStops(userId, apiKey, stops);
 

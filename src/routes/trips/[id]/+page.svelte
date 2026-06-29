@@ -5,6 +5,7 @@
   import Badge from "$components/Badge.svelte";
   import DatePicker from "$components/DatePicker.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
+  import MapLink from "$components/MapLink.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
@@ -294,8 +295,23 @@
         <div class="ordnum">{i + 1}</div>
         <div class="grow">
           <div class="name">
-            {s.custom_name ?? "Stop"}
-            {#if s.hotspot_id}<Badge kind="seen" label="hotspot" />{/if}
+            {#if s.hotspot_id}
+              <a
+                class="place-link"
+                href={`https://ebird.org/hotspot/${s.hotspot_id}`}
+                target="_blank"
+                rel="noopener">{s.custom_name ?? "Stop"}</a
+              >
+              <a
+                class="hotspot-badge"
+                href={`https://ebird.org/hotspot/${s.hotspot_id}`}
+                target="_blank"
+                rel="noopener"
+                title="eBird hotspot">eBird hotspot ↗</a
+              >
+            {:else}
+              {s.custom_name ?? "Stop"}
+            {/if}
           </div>
           <div class="meta">
             {#if !data.hasApiKey}
@@ -308,6 +324,12 @@
               —
             {/if}
           </div>
+          <MapLink
+            lat={s.lat}
+            lng={s.lon}
+            name={s.custom_name ?? s.hotspot_id ?? "Stop"}
+            googlePlaceId={s.google_place_id}
+          />
           {#if s.notes}<div class="stopnote">{s.notes}</div>{/if}
           {#if form && "tips" in form && form.tips?.[s.id]}
             <div class="aitip">
@@ -750,6 +772,28 @@
   }
   .name {
     font-weight: 700;
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .place-link {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .hotspot-badge {
+    background: #e8f2ff;
+    border: 1px solid #bfd8ff;
+    border-radius: 999px;
+    color: #165c9f;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    text-decoration: none;
+    text-transform: uppercase;
   }
   .meta {
     color: var(--muted);
