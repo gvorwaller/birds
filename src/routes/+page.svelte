@@ -1,12 +1,14 @@
 <script lang="ts">
   import Badge from "$components/Badge.svelte";
   import BestPlaces from "$components/BestPlaces.svelte";
+  import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
-  import { formatKm } from "$lib/geo";
+  import { formatDistance, type DistanceUnit } from "$lib/geo";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+  let distanceUnit = $state<DistanceUnit>("mi");
 
   // Client-side species search over the full needs list (the server now sends
   // all needs, not just the top 20). When searching, a matched species expands
@@ -67,7 +69,9 @@
             title: n.comName,
             sub: [
               pl.locName,
-              pl.distanceKm != null ? formatKm(pl.distanceKm) : null,
+              pl.distanceKm != null
+                ? formatDistance(pl.distanceKm, distanceUnit)
+                : null,
             ]
               .filter(Boolean)
               .join(" · "),
@@ -86,7 +90,9 @@
         title: n.comName,
         sub: [
           n.locations[0],
-          n.distanceKm != null ? formatKm(n.distanceKm) : null,
+          n.distanceKm != null
+            ? formatDistance(n.distanceKm, distanceUnit)
+            : null,
         ]
           .filter(Boolean)
           .join(" · "),
@@ -106,8 +112,10 @@
     <h1>Near Me</h1>
     <p class="sub">
       {#if data.home}
-        Home: {data.home.lat.toFixed(3)}, {data.home.lon.toFixed(3)} · radius {data.distKm}
-        km ·
+        Home: {data.home.lat.toFixed(3)}, {data.home.lon.toFixed(3)} · radius {formatDistance(
+          data.distKm,
+          distanceUnit,
+        )} ·
         <a href="/settings">change</a>
       {:else}
         No home location saved — <a href="/settings">set it in Settings</a>
@@ -141,6 +149,10 @@
         {#if data.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <form method="GET" class="window-form">
+        <div class="unit-control">
+          <span>Units</span>
+          <DistanceUnitToggle bind:unit={distanceUnit} />
+        </div>
         <label>
           <span>Window</span>
           <select
@@ -157,7 +169,10 @@
       </form>
       {#if data.needs.length === 0}
         <p class="muted">
-          No unseen species reported within {data.distKm} km this week.
+          No unseen species reported within {formatDistance(
+            data.distKm,
+            distanceUnit,
+          )} this week.
           {#if data.seenCount === 0}Import your life list in <a href="/settings"
               >Settings</a
             > first — otherwise everything counts as a need.{/if}
@@ -214,7 +229,10 @@
                       />
                       <span class="pl-name">{pl.locName}</span>
                       <span class="pl-meta"
-                        >{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} ·
+                        >{#if pl.distanceKm != null}{formatDistance(
+                            pl.distanceKm,
+                            distanceUnit,
+                          )} ·
                         {/if}{pl.nReports}
                         {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
                         {pl.totalCount === 1 ? "bird" : "birds"} ·
@@ -234,7 +252,7 @@
             </div>
             <div class="right">
               {#if n.distanceKm != null}<div class="dist">
-                  {formatKm(n.distanceKm)}
+                  {formatDistance(n.distanceKm, distanceUnit)}
                 </div>{/if}
               <div class="when">{n.lastObsDt}</div>
             </div>
@@ -249,7 +267,12 @@
     </section>
   {/if}
 
-  <BestPlaces places={data.bestPlaces} title="Best places near you" limit={6} />
+  <BestPlaces
+    places={data.bestPlaces}
+    title="Best places near you"
+    limit={6}
+    {distanceUnit}
+  />
 
   <section class="card">
     <h2>At a glance</h2>
@@ -333,9 +356,12 @@
   .window-form {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
     margin: -4px 0 10px;
   }
-  .window-form label {
+  .window-form label,
+  .unit-control {
     display: flex;
     align-items: center;
     gap: 8px;

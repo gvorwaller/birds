@@ -1,12 +1,14 @@
 <script lang="ts">
   import Badge from "$components/Badge.svelte";
   import BestPlaces from "$components/BestPlaces.svelte";
+  import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
-  import { formatKm } from "$lib/geo";
+  import { formatDistance, type DistanceUnit } from "$lib/geo";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+  let distanceUnit = $state<DistanceUnit>("mi");
 
   // Client-side species search across both lists (Rare-this-week + needs). A
   // matched species expands to show every place in range it was reported.
@@ -158,6 +160,10 @@
           {/each}
         </select>
       </label>
+      <div class="unit-control">
+        <span>Units</span>
+        <DistanceUnitToggle bind:unit={distanceUnit} />
+      </div>
       <button type="submit">Search</button>
     </form>
     {#if data.location}
@@ -277,7 +283,10 @@
                     />
                     <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
-                      >{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} ·
+                      >{#if pl.distanceKm != null}{formatDistance(
+                          pl.distanceKm,
+                          distanceUnit,
+                        )} ·
                       {/if}{pl.nReports}
                       {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
                       {pl.totalCount === 1 ? "bird" : "birds"} ·
@@ -359,7 +368,10 @@
                     />
                     <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
-                      >{#if pl.distanceKm != null}{formatKm(pl.distanceKm)} ·
+                      >{#if pl.distanceKm != null}{formatDistance(
+                          pl.distanceKm,
+                          distanceUnit,
+                        )} ·
                       {/if}{pl.nReports}
                       {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
                       {pl.totalCount === 1 ? "bird" : "birds"} ·
@@ -379,7 +391,7 @@
           </div>
           <div class="right">
             {#if n.distanceKm != null}<div class="dist">
-                {formatKm(n.distanceKm)}
+                {formatDistance(n.distanceKm, distanceUnit)}
               </div>{/if}
             <div class="when">{n.lastObsDt}</div>
           </div>
@@ -394,7 +406,7 @@
       {/if}
     </section>
 
-    <BestPlaces places={data.view.bestPlaces} />
+    <BestPlaces places={data.view.bestPlaces} {distanceUnit} />
   {/if}
 
   <p class="attribution">
@@ -474,7 +486,8 @@
     gap: 8px;
     align-items: flex-end;
   }
-  .filters label {
+  .filters label,
+  .unit-control {
     display: flex;
     flex-direction: column;
     gap: 4px;

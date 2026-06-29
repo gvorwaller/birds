@@ -19,6 +19,17 @@ export function formatKm(km: number): string {
   return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
 }
 
+export type DistanceUnit = "mi" | "km";
+
+export function formatMiles(km: number): string {
+  const miles = km / MILES_TO_KM;
+  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+}
+
+export function formatDistance(km: number, unit: DistanceUnit = "mi"): string {
+  return unit === "km" ? formatKm(km) : formatMiles(km);
+}
+
 export interface MapPlace {
   name?: string | null;
   lat?: number | null;

@@ -1,16 +1,22 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import Badge from "$components/Badge.svelte";
+  import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
-  import { formatKm, nearestNeighborOrder } from "$lib/geo";
+  import {
+    formatDistance,
+    nearestNeighborOrder,
+    type DistanceUnit,
+  } from "$lib/geo";
   import { untrack } from "svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let saving = $state(false);
+  let distanceUnit = $state<DistanceUnit>("mi");
 
   // Map-pick anchor (option "b"): a dropped pin sets exact lat/lng plus a
   // reverse-geocoded label. Coords ride along in hidden fields; the label fills
@@ -295,6 +301,10 @@
           .back} days
       </p>
     {/if}
+    <div class="unit-row">
+      <span>Distance units</span>
+      <DistanceUnitToggle bind:unit={distanceUnit} />
+    </div>
   </section>
 
   {#if form?.error}
@@ -476,7 +486,7 @@
           </div>
           <div class="right">
             <div class="count">{c.matchCount}</div>
-            <div class="when">{formatKm(c.distanceKm)}</div>
+            <div class="when">{formatDistance(c.distanceKm, distanceUnit)}</div>
             {#if data.canEdit}
               <button
                 type="button"
@@ -526,6 +536,15 @@
   .summary {
     margin-bottom: 10px;
     font-weight: 600;
+  }
+  .unit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
+    margin-top: 10px;
   }
   .card {
     background: var(--card);

@@ -16,14 +16,20 @@
 </script>
 
 <script lang="ts">
-  import { formatKm } from "$lib/geo";
+  import { formatDistance, type DistanceUnit } from "$lib/geo";
   import MapLink from "$components/MapLink.svelte";
 
   let {
     places = [],
     title = "Best places for your needs",
     limit = 10,
-  }: { places?: Place[]; title?: string; limit?: number } = $props();
+    distanceUnit = "mi",
+  }: {
+    places?: Place[];
+    title?: string;
+    limit?: number;
+    distanceUnit?: DistanceUnit;
+  } = $props();
 
   let shown = $derived(places.slice(0, limit));
 
@@ -77,7 +83,10 @@
             <span class="lbl">{p.needCount === 1 ? "need" : "needs"}</span>
           </div>
           <div class="when">
-            {#if p.distanceKm != null}{formatKm(p.distanceKm)} ·
+            {#if p.distanceKm != null}{formatDistance(
+                p.distanceKm,
+                distanceUnit,
+              )} ·
             {/if}{p.lastObsDt.slice(0, 10)}
           </div>
         </div>

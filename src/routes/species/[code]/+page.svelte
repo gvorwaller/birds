@@ -1,10 +1,12 @@
 <script lang="ts">
   import Badge from "$components/Badge.svelte";
+  import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
-  import { formatKm } from "$lib/geo";
+  import { formatDistance, type DistanceUnit } from "$lib/geo";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+  let distanceUnit = $state<DistanceUnit>("mi");
 
   const links = $derived([
     {
@@ -88,10 +90,16 @@
   {/if}
 
   <section class="card">
-    <h2>
-      Recent reports near home — last {data.backDays} days
-      {#if data.stale}<Badge kind="stale" label="cached" />{/if}
-    </h2>
+    <div class="card-head">
+      <h2>
+        Recent reports near home — last {data.backDays} days
+        {#if data.stale}<Badge kind="stale" label="cached" />{/if}
+      </h2>
+      <div class="unit-control">
+        <span>Units</span>
+        <DistanceUnitToggle bind:unit={distanceUnit} />
+      </div>
+    </div>
     {#if !data.hasApiKey || !data.hasHome}
       <p class="muted">
         Set your eBird API key and home location in <a href="/settings"
@@ -101,7 +109,9 @@
     {:else if data.nearbyError}
       <p class="muted">{data.nearbyError}</p>
     {:else if data.nearby.length === 0}
-      <p class="muted">No reports within {data.distKm} km in this window.</p>
+      <p class="muted">
+        No reports within {formatDistance(data.distKm, distanceUnit)} in this window.
+      </p>
     {:else}
       {#each data.nearby as o (o.locId + o.obsDt)}
         <div class="obs">
@@ -138,7 +148,7 @@
           </div>
           <div class="right">
             {#if o.distanceKm != null}<div class="dist">
-                {formatKm(o.distanceKm)}
+                {formatDistance(o.distanceKm, distanceUnit)}
               </div>{/if}
             <div class="when">{o.obsDt}</div>
           </div>
@@ -202,6 +212,25 @@
   .card h2 {
     font-size: 1.05rem;
     margin-bottom: 10px;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .card-head h2 {
+    margin-bottom: 0;
+  }
+  .unit-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
   }
   .card h2 .muted {
     font-weight: 400;

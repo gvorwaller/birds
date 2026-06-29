@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { mapsDirectionsUrl, mapsPlaceUrl } from "./geo";
+import {
+  formatDistance,
+  formatKm,
+  formatMiles,
+  mapsDirectionsUrl,
+  mapsPlaceUrl,
+} from "./geo";
+
+describe("distance formatting", () => {
+  it("formats kilometers using the existing display rules", () => {
+    expect(formatKm(2.4)).toBe("2.4 km");
+    expect(formatKm(12.4)).toBe("12 km");
+  });
+
+  it("formats miles from kilometer distances", () => {
+    expect(formatMiles(2.4)).toBe("1.5 mi");
+    expect(formatMiles(42)).toBe("26 mi");
+  });
+
+  it("defaults display distances to miles and can switch to kilometers", () => {
+    expect(formatDistance(16)).toBe("9.9 mi");
+    expect(formatDistance(16, "km")).toBe("16 km");
+  });
+});
 
 describe("Google Maps link builders", () => {
   it("prefers Google place IDs for map and directions links", () => {

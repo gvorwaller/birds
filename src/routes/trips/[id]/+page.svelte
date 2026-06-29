@@ -4,15 +4,17 @@
   import { env } from "$env/dynamic/public";
   import Badge from "$components/Badge.svelte";
   import DatePicker from "$components/DatePicker.svelte";
+  import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
-  import { mapsRouteUrl } from "$lib/geo";
+  import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let editing = $state(false);
   let deleteOpen = $state(false);
+  let distanceUnit = $state<DistanceUnit>("mi");
 
   const MAPS_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
@@ -108,6 +110,10 @@
       {fmtDates(data.trip.start_date, data.trip.end_date)} · {data.stops.length}
       {data.stops.length === 1 ? "stop" : "stops"}
     </p>
+    <div class="unit-row">
+      <span>Distance units</span>
+      <DistanceUnitToggle bind:unit={distanceUnit} />
+    </div>
     {#if data.trip.notes && !editing}<p class="notes">{data.trip.notes}</p>{/if}
   </header>
 
@@ -172,9 +178,8 @@
         <div class="route-bar">
           {#if routeSummary}
             <p class="route-summary">
-              🚗 ~{Math.round(routeSummary.km)} km · {formatDuration(
-                routeSummary.min,
-              )} driving (in order)
+              🚗 ~{formatDistance(routeSummary.km, distanceUnit)} ·
+              {formatDuration(routeSummary.min)} driving (in order)
             </p>
           {/if}
           {#if routeUrl}
@@ -297,7 +302,7 @@
               <a href="/settings">add eBird key</a> for needs counts
             {:else if data.needsCounts[String(s.id)] !== undefined}
               {data.needsCounts[String(s.id)]} of your needs reported here · last
-              14 days, ≤16 km
+              14 days, ≤{formatDistance(16, distanceUnit)}
               {#if data.needsStale}<Badge kind="stale" label="cached" />{/if}
             {:else}
               —
@@ -494,6 +499,15 @@
   }
   .notes {
     margin-top: 6px;
+  }
+  .unit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
+    margin-top: 8px;
   }
   .card {
     background: var(--card);
