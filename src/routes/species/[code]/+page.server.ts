@@ -15,6 +15,7 @@ import {
   hydrateEbirdLocationPlaceIds,
 } from "$server/location-placeids";
 import { mergeSpeciesObservations } from "$server/observations";
+import { verifiedHotspotLocIds } from "$server/hotspots";
 
 const NEARBY_DIST_KM = 50;
 const NEARBY_BACK_DAYS = 14;
@@ -97,6 +98,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let nearby: (EbirdObs & {
     distanceKm: number | null;
     googlePlaceId: string | null;
+    isHotspot: boolean;
   })[] = [];
   let nearbyError: string | null = null;
   let stale = false;
@@ -132,10 +134,18 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
         recentData,
         notableData,
       );
+      const hotspots = await verifiedHotspotLocIds(
+        apiKey,
+        home.lat,
+        home.lon,
+        NEARBY_DIST_KM,
+      );
+      stale = stale || hotspots.stale;
       const placeIds = await hydrateEbirdLocationPlaceIds(observations);
       nearby = attachGooglePlaceIds(observations, placeIds)
         .map((o) => ({
           ...o,
+          isHotspot: o.locId ? hotspots.locIds.has(o.locId) : false,
           distanceKm: home
             ? haversineKm(home.lat, home.lon, o.lat, o.lng)
             : null,

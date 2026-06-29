@@ -5,9 +5,9 @@
  */
 import { query } from "$lib/db";
 import { haversineKm } from "$lib/geo";
+import { verifiedHotspotLocIds } from "$server/hotspots";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
-  hotspotsNear,
   notableNearbyObs,
   notableObs,
   recentNearbyObs,
@@ -384,23 +384,6 @@ export async function regionTargets(
     photoCounts,
     locationPlaceIds,
   );
-}
-
-async function verifiedHotspotLocIds(
-  apiKey: string,
-  lat: number,
-  lng: number,
-  distKm: number,
-): Promise<{ locIds: Set<string>; stale: boolean }> {
-  try {
-    const hotspots = await hotspotsNear(apiKey, lat, lng, distKm);
-    return {
-      locIds: new Set(hotspots.data.map((h) => h.locId)),
-      stale: hotspots.stale,
-    };
-  } catch {
-    return { locIds: new Set(), stale: false };
-  }
 }
 
 /**

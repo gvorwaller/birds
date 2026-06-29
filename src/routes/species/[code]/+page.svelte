@@ -106,7 +106,25 @@
       {#each data.nearby as o (o.locId + o.obsDt)}
         <div class="obs">
           <div class="grow">
-            <div class="name">{o.locName}</div>
+            <div class="name">
+              {#if o.isHotspot && o.locId}
+                <a
+                  class="place-link"
+                  href={`https://ebird.org/hotspot/${o.locId}`}
+                  target="_blank"
+                  rel="noopener">{o.locName}</a
+                >
+                <a
+                  class="hotspot-badge"
+                  href={`https://ebird.org/hotspot/${o.locId}`}
+                  target="_blank"
+                  rel="noopener"
+                  title="Verified eBird hotspot">eBird hotspot ↗</a
+                >
+              {:else}
+                {o.locName}
+              {/if}
+            </div>
             <div class="meta">
               {o.howMany ?? 1}
               {(o.howMany ?? 1) === 1 ? "bird" : "birds"}
@@ -221,7 +239,29 @@
     min-width: 0;
   }
   .name {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     font-weight: 700;
+  }
+  .place-link {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .hotspot-badge {
+    background: #e8f2ff;
+    border: 1px solid #bfd8ff;
+    border-radius: 999px;
+    color: #165c9f;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    text-decoration: none;
+    text-transform: uppercase;
   }
   .meta {
     color: var(--muted);
