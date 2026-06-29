@@ -28,6 +28,8 @@ export interface TripStop {
   lon: number | null;
   google_place_id: string | null;
   notes: string | null;
+  field_tip: string | null;
+  field_tip_generated_at: string | null;
 }
 
 export interface TripSummary extends Trip {
@@ -65,7 +67,11 @@ export async function getTrip(
 
 export async function getStops(tripId: number): Promise<TripStop[]> {
   const r = await query<TripStop>(
-    "SELECT * FROM trip_stops WHERE trip_id = $1 ORDER BY sort_order, id",
+    `SELECT *,
+            field_tip_generated_at::text AS field_tip_generated_at
+       FROM trip_stops
+      WHERE trip_id = $1
+      ORDER BY sort_order, id`,
     [tripId],
   );
   return r.rows;
@@ -244,6 +250,30 @@ export async function updateStopNotes(
     "UPDATE trip_stops SET notes = $3 WHERE id = $1 AND trip_id = $2",
     [stopId, tripId, notes],
   );
+}
+
+export async function updateStopFieldTips(
+  userId: number,
+  tripId: number,
+  tips: Record<number, string>,
+): Promise<void> {
+  if (!(await assertOwnsTrip(userId, tripId))) return;
+  const entries = Object.entries(tips)
+    .map(([id, tip]) => [Number(id), tip.trim()] as const)
+    .filter(([id, tip]) => Number.isInteger(id) && id > 0 && tip.length > 0);
+  if (entries.length === 0) return;
+
+  await withTransaction(async (client) => {
+    for (const [stopId, tip] of entries) {
+      await client.query(
+        `UPDATE trip_stops
+            SET field_tip = $3,
+                field_tip_generated_at = NOW()
+          WHERE id = $1 AND trip_id = $2`,
+        [stopId, tripId, tip],
+      );
+    }
+  });
 }
 
 /** Move a stop up or down by swapping sort_order with its neighbor. */

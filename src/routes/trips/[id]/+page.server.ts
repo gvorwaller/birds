@@ -20,6 +20,7 @@ import {
   optimizeStopOrder,
   removeStop,
   setStopOrder,
+  updateStopFieldTips,
   updateStopNotes,
   updateTrip,
 } from "$server/trips";
@@ -285,6 +286,13 @@ export const actions: Actions = {
     if (!trip) return fail(404, { error: "Trip not found." });
     const stops = await getStops(tripId);
     if (stops.length === 0) return fail(400, { error: "Add a stop first." });
+    const missingTips = stops.filter((s) => !s.field_tip?.trim());
+    if (missingTips.length === 0) {
+      return {
+        ok: true as const,
+        message: "Field tips are already saved for every stop.",
+      };
+    }
 
     const firstLocated = stops.find((s) => s.lat != null && s.lon != null);
     const weather = firstLocated
@@ -294,7 +302,7 @@ export const actions: Actions = {
     try {
       const tips = await generateFieldTips({
         tripName: trip.name,
-        stops: stops.map((s) => ({
+        stops: missingTips.map((s) => ({
           id: s.id,
           name: s.custom_name ?? "Stop",
           notes: s.notes,
@@ -302,7 +310,12 @@ export const actions: Actions = {
         weather,
         now: new Date(),
       });
-      return { ok: true as const, tips };
+      await updateStopFieldTips(userId, tripId, tips);
+      const n = Object.keys(tips).length;
+      return {
+        ok: true as const,
+        message: `Saved ${n} field ${n === 1 ? "tip" : "tips"}.`,
+      };
     } catch (err) {
       return fail(400, {
         error:

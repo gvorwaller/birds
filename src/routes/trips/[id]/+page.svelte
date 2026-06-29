@@ -85,6 +85,11 @@
       return start === end ? f(start) : `${f(start)} – ${f(end)}`;
     return f((start ?? end) as string);
   }
+
+  function fmtTipGeneratedAt(value: string | null): string {
+    if (!value) return "AI suggestion — verify in the field";
+    return `AI suggestion — generated ${new Date(value).toLocaleString()} — verify in the field`;
+  }
 </script>
 
 <svelte:head>
@@ -331,10 +336,12 @@
             googlePlaceId={s.google_place_id}
           />
           {#if s.notes}<div class="stopnote">{s.notes}</div>{/if}
-          {#if form && "tips" in form && form.tips?.[s.id]}
+          {#if s.field_tip}
             <div class="aitip">
-              💡 {form.tips[s.id]}
-              <span class="aiverify">AI suggestion — verify in the field</span>
+              💡 {s.field_tip}
+              <span class="aiverify"
+                >{fmtTipGeneratedAt(s.field_tip_generated_at)}</span
+              >
             </div>
           {/if}
           {#if data.canEdit}
