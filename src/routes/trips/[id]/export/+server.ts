@@ -3,6 +3,7 @@ import type { RequestHandler } from "./$types";
 import { getEbirdApiKey } from "$server/ebird";
 import { getStops, getTrip, needsCountForStops } from "$server/trips";
 import { mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from "$lib/geo";
+import { normalizeTripStopNote } from "$lib/planner-note";
 
 function fmtDate(d: string): string {
   return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
@@ -84,7 +85,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
       meta.push(`[eBird hotspot](https://ebird.org/hotspot/${s.hotspot_id})`);
     }
     if (meta.length) lines.push("", meta.join(" · "));
-    if (s.notes) lines.push("", `> ${s.notes}`);
+    if (s.notes) lines.push("", `> ${normalizeTripStopNote(s.notes)}`);
     lines.push("");
   });
 

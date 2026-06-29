@@ -13,6 +13,7 @@
  * pure given the obs payload + seen set, so they are testable without I/O.
  */
 import { nearestNeighborOrder, haversineKm } from "$lib/geo";
+import { plannerTargetNote } from "$lib/planner-note";
 import {
   notableNearbyObs,
   recentNearbyObs,
@@ -318,8 +319,7 @@ export async function runQuery(
 function stopNote(c: PlaceCandidate): string {
   const names = c.triggerSpecies.slice(0, 4).map((s) => s.comName);
   const extra = c.triggerSpecies.length - names.length;
-  const list = names.join(", ") + (extra > 0 ? `, +${extra} more` : "");
-  return `${c.matchCount} of your needs reported here (last seen ${c.lastObsDt.slice(0, 10)}): ${list}.`;
+  return plannerTargetNote(names, c.lastObsDt.slice(0, 10), extra);
 }
 
 function historicalNote(name: string): string {

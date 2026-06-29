@@ -10,6 +10,7 @@
     nearestNeighborOrder,
     type DistanceUnit,
   } from "$lib/geo";
+  import { plannerTargetNote } from "$lib/planner-note";
   import { untrack } from "svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -53,7 +54,7 @@
   function noteFor(c: Candidate): string {
     const names = c.triggerSpecies.slice(0, 4).map((t) => t.comName);
     const extra = c.triggerSpecies.length - names.length;
-    return `${c.matchCount} of your needs reported here (last seen ${c.lastObsDt.slice(0, 10)}): ${names.join(", ")}${extra > 0 ? `, +${extra} more` : ""}.`;
+    return plannerTargetNote(names, c.lastObsDt.slice(0, 10), extra);
   }
 
   // eBird hotspot stats (species all-time + last report), keyed by locId from

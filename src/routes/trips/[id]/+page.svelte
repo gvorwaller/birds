@@ -7,6 +7,7 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
+  import { normalizeTripStopNote } from "$lib/planner-note";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import type { ActionData, PageData } from "./$types";
@@ -335,7 +336,9 @@
             name={s.custom_name ?? s.hotspot_id ?? "Stop"}
             googlePlaceId={s.google_place_id}
           />
-          {#if s.notes}<div class="stopnote">{s.notes}</div>{/if}
+          {#if s.notes}<div class="stopnote">
+              {normalizeTripStopNote(s.notes)}
+            </div>{/if}
           {#if s.field_tip}
             <div class="aitip">
               💡 {s.field_tip}
@@ -353,7 +356,7 @@
                   name="notes"
                   rows="2"
                   placeholder="e.g. scope the lagoon spit at low tide"
-                  >{s.notes ?? ""}</textarea
+                  >{s.notes ? normalizeTripStopNote(s.notes) : ""}</textarea
                 >
                 <button type="submit" class="small">Save note</button>
               </form>
