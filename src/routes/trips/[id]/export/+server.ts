@@ -1,93 +1,103 @@
-import { error } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { getEbirdApiKey } from '$server/ebird';
-import { getStops, getTrip, needsCountForStops } from '$server/trips';
-import { mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
+import { error } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { getEbirdApiKey } from "$server/ebird";
+import { getStops, getTrip, needsCountForStops } from "$server/trips";
+import { mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from "$lib/geo";
 
 function fmtDate(d: string): string {
-	return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
-		weekday: 'short',
-		year: 'numeric',
-		month: 'short',
-		day: 'numeric'
-	});
+  return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '')
-		.slice(0, 60) || 'trip';
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "trip"
+  );
 }
 
 /** Markdown export of a trip plan (download). Covers the "trip report" need too. */
 export const GET: RequestHandler = async ({ locals, params }) => {
-	const userId = locals.scopeId!; // the data owner this account reads
-	const tripId = Number(params.id);
-	if (!Number.isInteger(tripId) || tripId <= 0) throw error(404, 'Trip not found');
+  const userId = locals.scopeId!; // the data owner this account reads
+  const tripId = Number(params.id);
+  if (!Number.isInteger(tripId) || tripId <= 0)
+    throw error(404, "Trip not found");
 
-	const trip = await getTrip(userId, tripId);
-	if (!trip) throw error(404, 'Trip not found');
+  const trip = await getTrip(userId, tripId);
+  if (!trip) throw error(404, "Trip not found");
 
-	const stops = await getStops(tripId);
-	const apiKey = await getEbirdApiKey(userId);
-	const { counts } = await needsCountForStops(userId, apiKey, stops);
+  const stops = await getStops(tripId);
+  const apiKey = await getEbirdApiKey(userId);
+  const { counts } = await needsCountForStops(userId, apiKey, stops);
 
-	const lines: string[] = [];
-	lines.push(`# ${trip.name}`, '');
+  const lines: string[] = [];
+  lines.push(`# ${trip.name}`, "");
 
-	const dates =
-		trip.start_date && trip.end_date
-			? trip.start_date === trip.end_date
-				? fmtDate(trip.start_date)
-				: `${fmtDate(trip.start_date)} – ${fmtDate(trip.end_date)}`
-			: trip.start_date
-				? fmtDate(trip.start_date)
-				: trip.end_date
-					? fmtDate(trip.end_date)
-					: null;
-	if (dates) lines.push(`**Dates:** ${dates}`, '');
-	if (trip.notes) lines.push(trip.notes, '');
+  const dates =
+    trip.start_date && trip.end_date
+      ? trip.start_date === trip.end_date
+        ? fmtDate(trip.start_date)
+        : `${fmtDate(trip.start_date)} – ${fmtDate(trip.end_date)}`
+      : trip.start_date
+        ? fmtDate(trip.start_date)
+        : trip.end_date
+          ? fmtDate(trip.end_date)
+          : null;
+  if (dates) lines.push(`**Dates:** ${dates}`, "");
+  if (trip.notes) lines.push(trip.notes, "");
 
-	lines.push(`## Stops (${stops.length})`, '');
-	if (stops.length === 0) {
-		lines.push('_No stops yet._', '');
-	}
-	const routePoints = stops
-		.filter((s) => s.lat != null && s.lon != null)
-		.map((s) => ({ lat: s.lat as number, lng: s.lon as number }));
-	if (routePoints.length >= 2) {
-		lines.push(`[🧭 Navigate all stops](${mapsRouteUrl(routePoints)})`, '');
-	}
-	stops.forEach((s, i) => {
-		const name = s.custom_name ?? 'Stop';
-		lines.push(`### ${i + 1}. ${name}`);
-		const meta: string[] = [];
-		const n = counts.get(s.id);
-		if (n !== undefined) meta.push(`${n} of your needs reported here (last 14 days, ≤16 km)`);
-		if (s.lat != null && s.lon != null) {
-			meta.push(`[📍 Map](${mapsPlaceUrl(s.lat, s.lon)})`);
-			meta.push(`[Directions](${mapsDirectionsUrl(s.lat, s.lon)})`);
-		}
-		if (s.hotspot_id) {
-			meta.push(`[eBird hotspot](https://ebird.org/hotspot/${s.hotspot_id})`);
-		}
-		if (meta.length) lines.push('', meta.join(' · '));
-		if (s.notes) lines.push('', `> ${s.notes}`);
-		lines.push('');
-	});
+  lines.push(`## Stops (${stops.length})`, "");
+  if (stops.length === 0) {
+    lines.push("_No stops yet._", "");
+  }
+  const routePoints = stops
+    .filter((s) => s.lat != null && s.lon != null)
+    .map((s) => ({ lat: s.lat as number, lng: s.lon as number }));
+  if (routePoints.length >= 2) {
+    lines.push(`[🧭 Navigate all stops](${mapsRouteUrl(routePoints)})`, "");
+  }
+  stops.forEach((s, i) => {
+    const name = s.custom_name ?? "Stop";
+    lines.push(`### ${i + 1}. ${name}`);
+    const meta: string[] = [];
+    const n = counts.get(s.id);
+    if (n !== undefined)
+      meta.push(`${n} of your needs reported here (last 14 days, ≤16 km)`);
+    if (s.lat != null && s.lon != null) {
+      const place = {
+        name,
+        lat: s.lat,
+        lng: s.lon,
+        google_place_id: s.google_place_id,
+      };
+      meta.push(`[📍 Map](${mapsPlaceUrl(place)})`);
+      meta.push(`[Directions](${mapsDirectionsUrl(place)})`);
+    }
+    if (s.hotspot_id) {
+      meta.push(`[eBird hotspot](https://ebird.org/hotspot/${s.hotspot_id})`);
+    }
+    if (meta.length) lines.push("", meta.join(" · "));
+    if (s.notes) lines.push("", `> ${s.notes}`);
+    lines.push("");
+  });
 
-	lines.push('---', '');
-	lines.push(
-		`_Generated by birds.gaylon.photos on ${new Date().toLocaleDateString('en-US')}. Data from eBird.org._`
-	);
+  lines.push("---", "");
+  lines.push(
+    `_Generated by birds.gaylon.photos on ${new Date().toLocaleDateString("en-US")}. Data from eBird.org._`,
+  );
 
-	const body = lines.join('\n');
-	return new Response(body, {
-		headers: {
-			'Content-Type': 'text/markdown; charset=utf-8',
-			'Content-Disposition': `attachment; filename="trip-${slugify(trip.name)}.md"`
-		}
-	});
+  const body = lines.join("\n");
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="trip-${slugify(trip.name)}.md"`,
+    },
+  });
 };

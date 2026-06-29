@@ -9,88 +9,90 @@ import { recentNearbyObs } from "$server/ebird";
 import { seenSet } from "$server/needs";
 
 export interface Trip {
-	id: number;
-	user_id: number;
-	name: string;
-	start_date: string | null;
-	end_date: string | null;
-	notes: string | null;
-	created_at: string;
+  id: number;
+  user_id: number;
+  name: string;
+  start_date: string | null;
+  end_date: string | null;
+  notes: string | null;
+  created_at: string;
 }
 
 export interface TripStop {
-	id: number;
-	trip_id: number;
-	sort_order: number;
-	hotspot_id: string | null;
-	custom_name: string | null;
-	lat: number | null;
-	lon: number | null;
-	notes: string | null;
+  id: number;
+  trip_id: number;
+  sort_order: number;
+  hotspot_id: string | null;
+  custom_name: string | null;
+  lat: number | null;
+  lon: number | null;
+  google_place_id: string | null;
+  notes: string | null;
 }
 
 export interface TripSummary extends Trip {
-	stop_count: number;
+  stop_count: number;
 }
 
 export async function listTrips(userId: number): Promise<TripSummary[]> {
-	const r = await query<TripSummary>(
-		// Cast the DATE columns to text so they arrive as 'YYYY-MM-DD' strings
-		// (node-pg otherwise hands back JS Date objects, which break date display
-		// and the date-picker prefill). The trailing aliases override t.*.
-		`SELECT t.*, t.start_date::text AS start_date, t.end_date::text AS end_date,
+  const r = await query<TripSummary>(
+    // Cast the DATE columns to text so they arrive as 'YYYY-MM-DD' strings
+    // (node-pg otherwise hands back JS Date objects, which break date display
+    // and the date-picker prefill). The trailing aliases override t.*.
+    `SELECT t.*, t.start_date::text AS start_date, t.end_date::text AS end_date,
 		        COUNT(s.id)::int AS stop_count
 		   FROM trips t
 		   LEFT JOIN trip_stops s ON s.trip_id = t.id
 		  WHERE t.user_id = $1
 		  GROUP BY t.id
 		  ORDER BY COALESCE(t.start_date, t.created_at::date) DESC, t.id DESC`,
-		[userId],
-	);
-	return r.rows;
+    [userId],
+  );
+  return r.rows;
 }
 
 export async function getTrip(
-	userId: number,
-	tripId: number,
+  userId: number,
+  tripId: number,
 ): Promise<Trip | null> {
-	const r = await query<Trip>(
-		// start_date/end_date cast to text → 'YYYY-MM-DD' strings (see listTrips).
-		"SELECT *, start_date::text AS start_date, end_date::text AS end_date FROM trips WHERE id = $1 AND user_id = $2",
-		[tripId, userId],
-	);
-	return r.rows[0] ?? null;
+  const r = await query<Trip>(
+    // start_date/end_date cast to text → 'YYYY-MM-DD' strings (see listTrips).
+    "SELECT *, start_date::text AS start_date, end_date::text AS end_date FROM trips WHERE id = $1 AND user_id = $2",
+    [tripId, userId],
+  );
+  return r.rows[0] ?? null;
 }
 
 export async function getStops(tripId: number): Promise<TripStop[]> {
-	const r = await query<TripStop>(
-		"SELECT * FROM trip_stops WHERE trip_id = $1 ORDER BY sort_order, id",
-		[tripId],
-	);
-	return r.rows;
+  const r = await query<TripStop>(
+    "SELECT * FROM trip_stops WHERE trip_id = $1 ORDER BY sort_order, id",
+    [tripId],
+  );
+  return r.rows;
 }
 
 export async function createTrip(
-	userId: number,
-	name: string,
-	startDate: string | null,
-	endDate: string | null,
+  userId: number,
+  name: string,
+  startDate: string | null,
+  endDate: string | null,
 ): Promise<number> {
-	const r = await query<{ id: number }>(
-		`INSERT INTO trips (user_id, name, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING id`,
-		[userId, name, startDate, endDate],
-	);
-	return r.rows[0].id;
+  const r = await query<{ id: number }>(
+    `INSERT INTO trips (user_id, name, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [userId, name, startDate, endDate],
+  );
+  return r.rows[0].id;
 }
 
 export interface PlannedTripStopInput {
-	hotspot_id: string | null;
-	name: string;
-	lat: number;
-	lon: number;
-	notes: string | null;
-	/** Snapshot of matching needs at save time; NULL for non-birding stops. */
-	target_count_at_save: number | null;
+  hotspot_id: string | null;
+  name: string;
+  lat: number;
+  lon: number;
+  google_place_id?: string | null;
+  notes: string | null;
+  /** Snapshot of matching needs at save time; NULL for non-birding stops. */
+  target_count_at_save: number | null;
 }
 
 /**
@@ -101,177 +103,180 @@ export interface PlannedTripStopInput {
  * a fake 0). Returns the new trip id.
  */
 export async function savePlannedTrip(
-	userId: number,
-	trip: {
-		name: string;
-		startDate: string | null;
-		endDate: string | null;
-		notes: string | null;
-	},
-	stops: PlannedTripStopInput[],
+  userId: number,
+  trip: {
+    name: string;
+    startDate: string | null;
+    endDate: string | null;
+    notes: string | null;
+  },
+  stops: PlannedTripStopInput[],
 ): Promise<number> {
-	return withTransaction(async (client) => {
-		const tr = await client.query<{ id: number }>(
-			`INSERT INTO trips (user_id, name, start_date, end_date, notes)
+  return withTransaction(async (client) => {
+    const tr = await client.query<{ id: number }>(
+      `INSERT INTO trips (user_id, name, start_date, end_date, notes)
 			 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			[userId, trip.name, trip.startDate, trip.endDate, trip.notes],
-		);
-		const tripId = tr.rows[0].id;
-		let order = 0;
-		for (const s of stops) {
-			await client.query(
-				`INSERT INTO trip_stops
-				   (trip_id, sort_order, hotspot_id, custom_name, lat, lon, notes, target_count_at_save)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-				[
-					tripId,
-					order++,
-					s.hotspot_id,
-					s.name,
-					s.lat,
-					s.lon,
-					s.notes,
-					s.target_count_at_save,
-				],
-			);
-		}
-		return tripId;
-	});
+      [userId, trip.name, trip.startDate, trip.endDate, trip.notes],
+    );
+    const tripId = tr.rows[0].id;
+    let order = 0;
+    for (const s of stops) {
+      await client.query(
+        `INSERT INTO trip_stops
+				   (trip_id, sort_order, hotspot_id, custom_name, lat, lon, google_place_id, notes, target_count_at_save)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          tripId,
+          order++,
+          s.hotspot_id,
+          s.name,
+          s.lat,
+          s.lon,
+          s.google_place_id ?? null,
+          s.notes,
+          s.target_count_at_save,
+        ],
+      );
+    }
+    return tripId;
+  });
 }
 
 export async function updateTrip(
-	userId: number,
-	tripId: number,
-	fields: {
-		name?: string;
-		start_date?: string | null;
-		end_date?: string | null;
-		notes?: string | null;
-	},
+  userId: number,
+  tripId: number,
+  fields: {
+    name?: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    notes?: string | null;
+  },
 ): Promise<void> {
-	await query(
-		`UPDATE trips SET
+  await query(
+    `UPDATE trips SET
 		    name = COALESCE($3, name),
 		    start_date = $4,
 		    end_date = $5,
 		    notes = $6
 		  WHERE id = $1 AND user_id = $2`,
-		[
-			tripId,
-			userId,
-			fields.name ?? null,
-			fields.start_date ?? null,
-			fields.end_date ?? null,
-			fields.notes ?? null,
-		],
-	);
+    [
+      tripId,
+      userId,
+      fields.name ?? null,
+      fields.start_date ?? null,
+      fields.end_date ?? null,
+      fields.notes ?? null,
+    ],
+  );
 }
 
 export async function deleteTrip(
-	userId: number,
-	tripId: number,
+  userId: number,
+  tripId: number,
 ): Promise<void> {
-	await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [
-		tripId,
-		userId,
-	]);
+  await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [
+    tripId,
+    userId,
+  ]);
 }
 
 /** Ownership guard used before any stop mutation. */
 async function assertOwnsTrip(
-	userId: number,
-	tripId: number,
+  userId: number,
+  tripId: number,
 ): Promise<boolean> {
-	const r = await query("SELECT 1 FROM trips WHERE id = $1 AND user_id = $2", [
-		tripId,
-		userId,
-	]);
-	return r.rowCount === 1;
+  const r = await query("SELECT 1 FROM trips WHERE id = $1 AND user_id = $2", [
+    tripId,
+    userId,
+  ]);
+  return r.rowCount === 1;
 }
 
 export async function addStop(
-	userId: number,
-	tripId: number,
-	stop: {
-		hotspot_id?: string | null;
-		name: string;
-		lat: number;
-		lon: number;
-		notes?: string | null;
-	},
+  userId: number,
+  tripId: number,
+  stop: {
+    hotspot_id?: string | null;
+    name: string;
+    lat: number;
+    lon: number;
+    google_place_id?: string | null;
+    notes?: string | null;
+  },
 ): Promise<void> {
-	if (!(await assertOwnsTrip(userId, tripId))) return;
-	await query(
-		`INSERT INTO trip_stops (trip_id, sort_order, hotspot_id, custom_name, lat, lon, notes)
+  if (!(await assertOwnsTrip(userId, tripId))) return;
+  await query(
+    `INSERT INTO trip_stops (trip_id, sort_order, hotspot_id, custom_name, lat, lon, google_place_id, notes)
 		 VALUES ($1, COALESCE((SELECT MAX(sort_order) + 1 FROM trip_stops WHERE trip_id = $1), 0),
-		         $2, $3, $4, $5, $6)`,
-		[
-			tripId,
-			stop.hotspot_id ?? null,
-			stop.name,
-			stop.lat,
-			stop.lon,
-			stop.notes ?? null,
-		],
-	);
+		         $2, $3, $4, $5, $6, $7)`,
+    [
+      tripId,
+      stop.hotspot_id ?? null,
+      stop.name,
+      stop.lat,
+      stop.lon,
+      stop.google_place_id ?? null,
+      stop.notes ?? null,
+    ],
+  );
 }
 
 export async function removeStop(
-	userId: number,
-	tripId: number,
-	stopId: number,
+  userId: number,
+  tripId: number,
+  stopId: number,
 ): Promise<void> {
-	if (!(await assertOwnsTrip(userId, tripId))) return;
-	await query("DELETE FROM trip_stops WHERE id = $1 AND trip_id = $2", [
-		stopId,
-		tripId,
-	]);
+  if (!(await assertOwnsTrip(userId, tripId))) return;
+  await query("DELETE FROM trip_stops WHERE id = $1 AND trip_id = $2", [
+    stopId,
+    tripId,
+  ]);
 }
 
 export async function updateStopNotes(
-	userId: number,
-	tripId: number,
-	stopId: number,
-	notes: string | null,
+  userId: number,
+  tripId: number,
+  stopId: number,
+  notes: string | null,
 ): Promise<void> {
-	if (!(await assertOwnsTrip(userId, tripId))) return;
-	await query(
-		"UPDATE trip_stops SET notes = $3 WHERE id = $1 AND trip_id = $2",
-		[stopId, tripId, notes],
-	);
+  if (!(await assertOwnsTrip(userId, tripId))) return;
+  await query(
+    "UPDATE trip_stops SET notes = $3 WHERE id = $1 AND trip_id = $2",
+    [stopId, tripId, notes],
+  );
 }
 
 /** Move a stop up or down by swapping sort_order with its neighbor. */
 export async function moveStop(
-	userId: number,
-	tripId: number,
-	stopId: number,
-	direction: "up" | "down",
+  userId: number,
+  tripId: number,
+  stopId: number,
+  direction: "up" | "down",
 ): Promise<void> {
-	if (!(await assertOwnsTrip(userId, tripId))) return;
-	await withTransaction(async (client) => {
-		const stops = (
-			await client.query<TripStop>(
-				"SELECT id, sort_order FROM trip_stops WHERE trip_id = $1 ORDER BY sort_order, id",
-				[tripId],
-			)
-		).rows;
-		const idx = stops.findIndex((s) => s.id === stopId);
-		if (idx < 0) return;
-		const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-		if (swapIdx < 0 || swapIdx >= stops.length) return;
-		const a = stops[idx];
-		const b = stops[swapIdx];
-		// Swap sort_order values (handle equal/duplicate orders by reindexing this pair).
-		await client.query("UPDATE trip_stops SET sort_order = $2 WHERE id = $1", [
-			a.id,
-			swapIdx,
-		]);
-		await client.query("UPDATE trip_stops SET sort_order = $2 WHERE id = $1", [
-			b.id,
-			idx,
-		]);
-	});
+  if (!(await assertOwnsTrip(userId, tripId))) return;
+  await withTransaction(async (client) => {
+    const stops = (
+      await client.query<TripStop>(
+        "SELECT id, sort_order FROM trip_stops WHERE trip_id = $1 ORDER BY sort_order, id",
+        [tripId],
+      )
+    ).rows;
+    const idx = stops.findIndex((s) => s.id === stopId);
+    if (idx < 0) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= stops.length) return;
+    const a = stops[idx];
+    const b = stops[swapIdx];
+    // Swap sort_order values (handle equal/duplicate orders by reindexing this pair).
+    await client.query("UPDATE trip_stops SET sort_order = $2 WHERE id = $1", [
+      a.id,
+      swapIdx,
+    ]);
+    await client.query("UPDATE trip_stops SET sort_order = $2 WHERE id = $1", [
+      b.id,
+      idx,
+    ]);
+  });
 }
 
 /**
@@ -285,67 +290,67 @@ export async function moveStop(
  * enhancement that requires the Directions API enabled.)
  */
 export async function optimizeStopOrder(
-	userId: number,
-	tripId: number,
-	origin: { lat: number; lon: number } | null,
+  userId: number,
+  tripId: number,
+  origin: { lat: number; lon: number } | null,
 ): Promise<{ changed: boolean; anchoredAtHome: boolean }> {
-	if (!(await assertOwnsTrip(userId, tripId)))
-		return { changed: false, anchoredAtHome: false };
-	const stops = await getStops(tripId);
-	const located = stops.filter(
-		(s): s is TripStop & { lat: number; lon: number } =>
-			s.lat != null && s.lon != null,
-	);
-	const unlocated = stops.filter((s) => s.lat == null || s.lon == null);
-	if (located.length < 3) return { changed: false, anchoredAtHome: false };
+  if (!(await assertOwnsTrip(userId, tripId)))
+    return { changed: false, anchoredAtHome: false };
+  const stops = await getStops(tripId);
+  const located = stops.filter(
+    (s): s is TripStop & { lat: number; lon: number } =>
+      s.lat != null && s.lon != null,
+  );
+  const unlocated = stops.filter((s) => s.lat == null || s.lon == null);
+  if (located.length < 3) return { changed: false, anchoredAtHome: false };
 
-	const remaining = [...located];
-	const tour: (TripStop & { lat: number; lon: number })[] = [];
-	let curLat: number;
-	let curLon: number;
+  const remaining = [...located];
+  const tour: (TripStop & { lat: number; lon: number })[] = [];
+  let curLat: number;
+  let curLon: number;
 
-	const homeNear =
-		origin != null &&
-		located.some(
-			(s) => haversineKm(origin.lat, origin.lon, s.lat, s.lon) <= 100,
-		);
+  const homeNear =
+    origin != null &&
+    located.some(
+      (s) => haversineKm(origin.lat, origin.lon, s.lat, s.lon) <= 100,
+    );
 
-	if (homeNear && origin) {
-		curLat = origin.lat;
-		curLon = origin.lon;
-	} else {
-		const first = remaining.shift()!; // current first stop (getStops is sort_order-ordered)
-		tour.push(first);
-		curLat = first.lat;
-		curLon = first.lon;
-	}
+  if (homeNear && origin) {
+    curLat = origin.lat;
+    curLon = origin.lon;
+  } else {
+    const first = remaining.shift()!; // current first stop (getStops is sort_order-ordered)
+    tour.push(first);
+    curLat = first.lat;
+    curLon = first.lon;
+  }
 
-	while (remaining.length) {
-		let bestIdx = 0;
-		let bestDist = Infinity;
-		for (let i = 0; i < remaining.length; i++) {
-			const d = haversineKm(curLat, curLon, remaining[i].lat, remaining[i].lon);
-			if (d < bestDist) {
-				bestDist = d;
-				bestIdx = i;
-			}
-		}
-		const next = remaining.splice(bestIdx, 1)[0];
-		tour.push(next);
-		curLat = next.lat;
-		curLon = next.lon;
-	}
+  while (remaining.length) {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = haversineKm(curLat, curLon, remaining[i].lat, remaining[i].lon);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    const next = remaining.splice(bestIdx, 1)[0];
+    tour.push(next);
+    curLat = next.lat;
+    curLon = next.lon;
+  }
 
-	await withTransaction(async (client) => {
-		let order = 0;
-		for (const s of [...tour, ...unlocated]) {
-			await client.query(
-				"UPDATE trip_stops SET sort_order = $2 WHERE id = $1",
-				[s.id, order++],
-			);
-		}
-	});
-	return { changed: true, anchoredAtHome: !!homeNear };
+  await withTransaction(async (client) => {
+    let order = 0;
+    for (const s of [...tour, ...unlocated]) {
+      await client.query(
+        "UPDATE trip_stops SET sort_order = $2 WHERE id = $1",
+        [s.id, order++],
+      );
+    }
+  });
+  return { changed: true, anchoredAtHome: !!homeNear };
 }
 
 /**
@@ -355,33 +360,33 @@ export async function optimizeStopOrder(
  * the client-side driving-route optimizer. Returns false if nothing valid given.
  */
 export async function setStopOrder(
-	userId: number,
-	tripId: number,
-	orderedIds: number[],
+  userId: number,
+  tripId: number,
+  orderedIds: number[],
 ): Promise<boolean> {
-	if (!(await assertOwnsTrip(userId, tripId))) return false;
-	const stops = await getStops(tripId);
-	const validIds = new Set(stops.map((s) => s.id));
-	const seen = new Set<number>();
-	const ids = orderedIds.filter(
-		(id) => validIds.has(id) && !seen.has(id) && seen.add(id),
-	);
-	if (ids.length === 0) return false;
-	const finalOrder = [
-		...ids,
-		...stops.map((s) => s.id).filter((id) => !seen.has(id)),
-	];
+  if (!(await assertOwnsTrip(userId, tripId))) return false;
+  const stops = await getStops(tripId);
+  const validIds = new Set(stops.map((s) => s.id));
+  const seen = new Set<number>();
+  const ids = orderedIds.filter(
+    (id) => validIds.has(id) && !seen.has(id) && seen.add(id),
+  );
+  if (ids.length === 0) return false;
+  const finalOrder = [
+    ...ids,
+    ...stops.map((s) => s.id).filter((id) => !seen.has(id)),
+  ];
 
-	await withTransaction(async (client) => {
-		let order = 0;
-		for (const id of finalOrder) {
-			await client.query(
-				"UPDATE trip_stops SET sort_order = $2 WHERE id = $1 AND trip_id = $3",
-				[id, order++, tripId],
-			);
-		}
-	});
-	return true;
+  await withTransaction(async (client) => {
+    let order = 0;
+    for (const id of finalOrder) {
+      await client.query(
+        "UPDATE trip_stops SET sort_order = $2 WHERE id = $1 AND trip_id = $3",
+        [id, order++, tripId],
+      );
+    }
+  });
+  return true;
 }
 
 const STOP_NEEDS_DIST_KM = 16;
@@ -394,40 +399,40 @@ const STOP_NEEDS_BACK_DAYS = 14;
  * Skips entirely when no API key (returns empty map).
  */
 export async function needsCountForStops(
-	userId: number,
-	apiKey: string | null,
-	stops: TripStop[],
+  userId: number,
+  apiKey: string | null,
+  stops: TripStop[],
 ): Promise<{ counts: Map<number, number>; stale: boolean; error: boolean }> {
-	const counts = new Map<number, number>();
-	if (!apiKey) return { counts, stale: false, error: false };
+  const counts = new Map<number, number>();
+  if (!apiKey) return { counts, stale: false, error: false };
 
-	const seen = await seenSet(userId);
-	let stale = false;
-	let error = false;
+  const seen = await seenSet(userId);
+  let stale = false;
+  let error = false;
 
-	await Promise.all(
-		stops.map(async (s) => {
-			if (s.lat == null || s.lon == null) return;
-			try {
-				const res = await recentNearbyObs(
-					apiKey,
-					s.lat,
-					s.lon,
-					STOP_NEEDS_DIST_KM,
-					STOP_NEEDS_BACK_DAYS,
-				);
-				if (res.stale) stale = true;
-				const needs = new Set<string>();
-				for (const o of res.data) {
-					if (o.speciesCode && !seen.has(o.speciesCode))
-						needs.add(o.speciesCode);
-				}
-				counts.set(s.id, needs.size);
-			} catch {
-				error = true;
-			}
-		}),
-	);
+  await Promise.all(
+    stops.map(async (s) => {
+      if (s.lat == null || s.lon == null) return;
+      try {
+        const res = await recentNearbyObs(
+          apiKey,
+          s.lat,
+          s.lon,
+          STOP_NEEDS_DIST_KM,
+          STOP_NEEDS_BACK_DAYS,
+        );
+        if (res.stale) stale = true;
+        const needs = new Set<string>();
+        for (const o of res.data) {
+          if (o.speciesCode && !seen.has(o.speciesCode))
+            needs.add(o.speciesCode);
+        }
+        counts.set(s.id, needs.size);
+      } catch {
+        error = true;
+      }
+    }),
+  );
 
-	return { counts, stale, error };
+  return { counts, stale, error };
 }
