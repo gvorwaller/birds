@@ -43,17 +43,7 @@
       <div class="place">
         <div class="rank">{i + 1}</div>
         <div class="grow">
-          <div class="name">
-            {#if p.locId}
-              <a
-                href={`https://ebird.org/hotspot/${p.locId}`}
-                target="_blank"
-                rel="noopener">{p.locName}</a
-              >
-            {:else}
-              {p.locName}
-            {/if}
-          </div>
+          <div class="name">{p.locName}</div>
           <div class="meta">{speciesList(p)}</div>
           <MapLink
             lat={p.lat}
@@ -124,13 +114,6 @@
   }
   .name {
     font-weight: 700;
-  }
-  .name a {
-    color: var(--text);
-    text-decoration: none;
-  }
-  .name a:hover {
-    text-decoration: underline;
   }
   .meta {
     color: var(--muted);
