@@ -78,7 +78,7 @@ export interface TargetsView {
  * Rank locations by how many distinct *needs* were reported there. Built from
  * the same recent-obs payload used for the needs list — no extra API calls.
  */
-function rankPlaces(
+export function rankPlaces(
   obs: EbirdObs[],
   seen: Set<string>,
   origin: { lat: number; lon: number } | null,
@@ -431,6 +431,35 @@ export async function geoTargets(
     ...view,
     needs: enriched.needs.sort(sortNeedsByActivity),
     stale: view.stale || enriched.stale || hotspots.stale,
+  };
+}
+
+export async function rankedNeedPlacesNear(
+  userId: number,
+  apiKey: string,
+  lat: number,
+  lng: number,
+  distKm: number,
+  back: number,
+): Promise<{ places: PlaceRanking[]; stale: boolean; fetchedAt: Date }> {
+  const dist = Math.min(Math.max(distKm, 1), 50);
+  const origin = { lat, lon: lng };
+  const [recent, hotspots, seen] = await Promise.all([
+    recentNearbyObs(apiKey, lat, lng, dist, back),
+    verifiedHotspotLocIds(apiKey, lat, lng, dist),
+    seenSet(userId),
+  ]);
+  const locationPlaceIds = await hydrateEbirdLocationPlaceIds(recent.data);
+  return {
+    places: rankPlaces(
+      recent.data,
+      seen,
+      origin,
+      locationPlaceIds,
+      hotspots.locIds,
+    ),
+    stale: recent.stale || hotspots.stale,
+    fetchedAt: recent.fetchedAt,
   };
 }
 

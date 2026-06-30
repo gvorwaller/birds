@@ -7,7 +7,7 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
-  import { normalizeTripStopNote } from "$lib/planner-note";
+  import { normalizeTripStopNote, plannerTargetNote } from "$lib/planner-note";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import type { ActionData, PageData } from "./$types";
@@ -90,6 +90,23 @@
   function fmtTipGeneratedAt(value: string | null): string {
     if (!value) return "AI suggestion — verify in the field";
     return `AI suggestion — generated ${new Date(value).toLocaleString()} — verify in the field`;
+  }
+
+  function suggestedSpeciesList(
+    p: PageData["suggestedHotspots"][number],
+  ): string {
+    const names = p.needSpecies.map((s) => s.comName);
+    const head = names.slice(0, 6).join(", ");
+    return head + (names.length > 6 ? ` +${names.length - 6} more` : "");
+  }
+
+  function suggestedNote(p: PageData["suggestedHotspots"][number]): string {
+    const names = p.needSpecies.slice(0, 4).map((s) => s.comName);
+    return plannerTargetNote(
+      names,
+      p.lastObsDt.slice(0, 10),
+      p.needSpecies.length - names.length,
+    );
   }
 </script>
 
@@ -401,8 +418,75 @@
     <section class="card">
       <h2>Add a stop</h2>
       <p class="muted intro">
-        Search a place to add it directly, or pick a nearby eBird hotspot.
+        Pick a suggested eBird hotspot, or search a place to add it directly.
       </p>
+      {#if data.suggestionsError}<p class="err">{data.suggestionsError}</p>{/if}
+
+      {#if data.suggestedHotspots.length > 0}
+        <h3 class="sub2">
+          Suggested hotspots near {data.suggestionCenter?.label ?? "this trip"}
+        </h3>
+        <p class="muted intro">
+          Ranked by your needs reported in the last {data.suggestionBackDays}
+          days within {formatDistance(data.suggestionDistKm, distanceUnit)}.
+          {#if data.suggestionsStale}<Badge kind="stale" label="cached" />{/if}
+        </p>
+        {#each data.suggestedHotspots as h (h.locId)}
+          <div class="result suggestion">
+            <div class="grow">
+              <div class="name">
+                <a
+                  class="place-link"
+                  href={`https://ebird.org/hotspot/${h.locId}`}
+                  target="_blank"
+                  rel="noopener">{h.locName}</a
+                >
+                <a
+                  class="hotspot-badge"
+                  href={`https://ebird.org/hotspot/${h.locId}`}
+                  target="_blank"
+                  rel="noopener"
+                  title="Verified eBird hotspot">eBird hotspot ↗</a
+                >
+              </div>
+              <div class="meta">{suggestedSpeciesList(h)}</div>
+              <MapLink
+                lat={h.lat}
+                lng={h.lng}
+                name={h.locName}
+                googlePlaceId={h.googlePlaceId}
+              />
+            </div>
+            <div class="suggestion-right">
+              <div class="count">
+                {h.needCount}
+                <span>{h.needCount === 1 ? "need" : "needs"}</span>
+              </div>
+              <div class="when">
+                {#if h.distanceKm != null}{formatDistance(
+                    h.distanceKm,
+                    distanceUnit,
+                  )} ·
+                {/if}{h.lastObsDt.slice(0, 10)}
+              </div>
+              <form method="POST" action="?/add_hotspot" use:enhance>
+                <input type="hidden" name="loc_id" value={h.locId ?? ""} />
+                <input type="hidden" name="name" value={h.locName} />
+                <input type="hidden" name="lat" value={h.lat} />
+                <input type="hidden" name="lon" value={h.lng} />
+                <input
+                  type="hidden"
+                  name="google_place_id"
+                  value={h.googlePlaceId ?? ""}
+                />
+                <input type="hidden" name="notes" value={suggestedNote(h)} />
+                <button type="submit" class="small primary">+ Add</button>
+              </form>
+            </div>
+          </div>
+        {/each}
+      {/if}
+
       <form method="GET" class="search">
         <input
           type="text"
@@ -882,6 +966,31 @@
     flex: 1;
     min-width: 200px;
   }
+  .suggestion {
+    align-items: flex-start;
+  }
+  .suggestion-right {
+    text-align: right;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .count {
+    color: var(--accent);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .count span {
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .when {
+    color: var(--muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
 
   .ok {
     color: var(--seen-text);
@@ -959,6 +1068,16 @@
     }
     h1 {
       font-size: 1.6rem;
+    }
+  }
+  @media (max-width: 639px) {
+    .result.suggestion {
+      flex-direction: column;
+    }
+    .suggestion-right {
+      align-items: flex-start;
+      text-align: left;
+      width: 100%;
     }
   }
 </style>

@@ -8,6 +8,7 @@ import {
   type EbirdHotspot,
 } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
+import { rankedNeedPlacesNear, type PlaceRanking } from "$server/needs";
 import { weatherFor, type WeatherResult } from "$server/weather";
 import { generateFieldTips, GuidanceError } from "$server/ai-guidance";
 import {
@@ -43,11 +44,31 @@ async function homeOf(
 }
 
 const HOTSPOT_SEARCH_DIST_KM = 25;
+const SUGGESTION_DIST_KM = 16;
+const SUGGESTION_BACK_DAYS = 14;
+const SUGGESTION_LIMIT = 8;
 
 function tripIdFrom(params: { id: string }): number {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) throw error(404, "Trip not found");
   return id;
+}
+
+function tripCenter(
+  stops: Array<{ lat: number | null; lon: number | null }>,
+  home: { lat: number; lon: number } | null,
+): { lat: number; lng: number; label: string } | null {
+  const located = stops.filter(
+    (s): s is { lat: number; lon: number } => s.lat != null && s.lon != null,
+  );
+  if (located.length > 0) {
+    return {
+      lat: located.reduce((sum, s) => sum + s.lat, 0) / located.length,
+      lng: located.reduce((sum, s) => sum + s.lon, 0) / located.length,
+      label: located.length === 1 ? "this stop" : "this trip",
+    };
+  }
+  return home ? { lat: home.lat, lng: home.lon, label: "home" } : null;
 }
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
@@ -70,6 +91,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   }));
   const apiKey = await getEbirdApiKey(userId);
   const needs = await needsCountForStops(userId, apiKey, stops);
+  const home = await homeOf(userId);
 
   // Weather for the trip area (first located stop). Supplementary — never blocks
   // the page; null when there's no stop, no US coverage, or the provider fails.
@@ -132,10 +154,36 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     }
   }
 
+  const existingHotspots = new Set(
+    stops.map((s) => s.hotspot_id).filter(Boolean),
+  );
+  const suggestionCenter = tripCenter(stops, home);
+  let suggestedHotspots: PlaceRanking[] = [];
+  let suggestionsStale = false;
+  let suggestionsError: string | null = null;
+  if (apiKey && suggestionCenter) {
+    try {
+      const suggested = await rankedNeedPlacesNear(
+        userId,
+        apiKey,
+        suggestionCenter.lat,
+        suggestionCenter.lng,
+        SUGGESTION_DIST_KM,
+        SUGGESTION_BACK_DAYS,
+      );
+      suggestionsStale = suggested.stale;
+      suggestedHotspots = suggested.places
+        .filter((p) => p.isHotspot && p.locId && !existingHotspots.has(p.locId))
+        .slice(0, SUGGESTION_LIMIT);
+    } catch {
+      suggestionsError = "Could not load suggested hotspots.";
+    }
+  }
+
   return {
     trip,
     stops,
-    home: await homeOf(userId),
+    home,
     canEdit: locals.user!.role !== "viewer",
     needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
     needsStale: needs.stale,
@@ -145,6 +193,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     hotspots,
     hsCenter,
     hsError,
+    suggestionCenter,
+    suggestedHotspots,
+    suggestionsStale,
+    suggestionsError,
+    suggestionBackDays: SUGGESTION_BACK_DAYS,
+    suggestionDistKm: SUGGESTION_DIST_KM,
     weather,
   };
 };
@@ -202,6 +256,7 @@ export const actions: Actions = {
     const name = (form.get("name") ?? "").toString().trim();
     const googlePlaceId =
       (form.get("google_place_id") ?? "").toString().trim() || null;
+    const notes = (form.get("notes") ?? "").toString().trim() || null;
     const lat = Number(form.get("lat"));
     const lon = Number(form.get("lon"));
     if (!locId || !name || !Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -213,6 +268,7 @@ export const actions: Actions = {
       lat,
       lon,
       google_place_id: googlePlaceId,
+      notes,
     });
     return { ok: true as const, message: `Added "${name}".` };
   },
