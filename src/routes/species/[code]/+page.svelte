@@ -3,6 +3,7 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -92,7 +93,7 @@
   <section class="card">
     <div class="card-head">
       <h2>
-        Recent reports near home — last {data.backDays} days
+        Recent reports near home — {windowPhrase(data.backDays)}
         {#if data.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <div class="unit-control">

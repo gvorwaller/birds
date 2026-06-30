@@ -4,6 +4,11 @@ import { getEbirdApiKey, EbirdError } from "$server/ebird";
 import { geoTargets, type TargetsView } from "$server/needs";
 import { geocodePlace } from "$server/geocode";
 import { galleryContext } from "$server/access";
+import {
+  BACK_OPTIONS,
+  DEFAULT_BACK_DAYS,
+  parseBackDays,
+} from "$lib/time-windows";
 
 const DEFAULT_DIST_KM = 50; // eBird geo endpoints cap at 50 km
 const PLACE_SUGGESTIONS = [
@@ -24,10 +29,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     ),
     50,
   );
-  const back = Math.min(
-    Math.max(Number(url.searchParams.get("back") ?? 7) || 7, 1),
-    30,
-  );
+  const back = parseBackDays(url.searchParams.get("back"), DEFAULT_BACK_DAYS);
 
   const userRow = await query<{
     home_lat: number | null;
@@ -69,6 +71,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       location: null,
       dist,
       back,
+      backOptions: BACK_OPTIONS,
       suggestions: PLACE_SUGGESTIONS,
       view: null,
       error,
@@ -102,6 +105,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     location,
     dist,
     back,
+    backOptions: BACK_OPTIONS,
     suggestions: PLACE_SUGGESTIONS,
     view,
     error,

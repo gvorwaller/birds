@@ -60,7 +60,7 @@
 					<li><strong>Radius</strong> — how far out to look (5–25 miles).</li>
 					<li>
 						<strong>Window</strong> — how recently a bird had to be reported
-						(last 7, 14, or 30 days).
+						(last 24 hours, 7 days, 14 days, or 30 days).
 					</li>
 					<li><strong>Stops</strong> — how many hotspots to aim for.</li>
 					<li>

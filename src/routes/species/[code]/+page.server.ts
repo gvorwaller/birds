@@ -16,10 +16,9 @@ import {
 } from "$server/location-placeids";
 import { mergeSpeciesObservations } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
+import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 
 const NEARBY_DIST_KM = 50;
-const NEARBY_BACK_DAYS = 14;
-const BACK_OPTIONS = [7, 14, 30] as const;
 
 function safeReturnTo(raw: string | null): { href: string; label: string } {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
@@ -38,14 +37,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
   const code = params.code;
   const hasGallery = (await ownerGalleryUrl(userId)) != null;
-  const requestedBack = Number(
-    url.searchParams.get("back") ?? NEARBY_BACK_DAYS,
+  const backDays = parseBackDays(
+    url.searchParams.get("back"),
+    SPECIES_DEFAULT_BACK_DAYS,
   );
-  const backDays = BACK_OPTIONS.includes(
-    requestedBack as (typeof BACK_OPTIONS)[number],
-  )
-    ? requestedBack
-    : NEARBY_BACK_DAYS;
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
 
   const taxon = await query<{

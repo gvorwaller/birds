@@ -5,6 +5,7 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { backOptionLabel, windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -145,7 +146,7 @@
   {:else if data.home}
     <section class="card">
       <h2>
-        Your needs reported nearby — last {data.backDays} days
+        Your needs reported nearby — {windowPhrase(data.backDays)}
         {#if data.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <form method="GET" class="window-form">
@@ -161,7 +162,7 @@
           >
             {#each data.backOptions as d (d)}
               <option value={d} selected={data.backDays === d}
-                >Last {d} days</option
+                >{backOptionLabel(d)}</option
               >
             {/each}
           </select>
@@ -172,7 +173,7 @@
           No unseen species reported within {formatDistance(
             data.distKm,
             distanceUnit,
-          )} this week.
+          )} in this window.
           {#if data.seenCount === 0}Import your life list in <a href="/settings"
               >Settings</a
             > first — otherwise everything counts as a need.{/if}

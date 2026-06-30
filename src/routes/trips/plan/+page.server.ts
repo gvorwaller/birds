@@ -4,6 +4,7 @@ import { query } from "$lib/db";
 import { getEbirdApiKey, EbirdError, hotspotsNear } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { milesToKm } from "$lib/geo";
+import { DEFAULT_BACK_DAYS, parseBackDays } from "$lib/time-windows";
 import {
   runQuery,
   assembleTripPreview,
@@ -15,7 +16,12 @@ import {
 } from "$server/query-engine";
 import { savePlannedTrip, type PlannedTripStopInput } from "$server/trips";
 
-const DEFAULTS = { radiusMi: 10, back: 7, stops: 3, minNeeds: 3 };
+const DEFAULTS = {
+  radiusMi: 10,
+  back: DEFAULT_BACK_DAYS,
+  stops: 3,
+  minNeeds: 3,
+};
 
 function numParam(v: string | null, fallback: number): number {
   const n = Number(v);
@@ -47,7 +53,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     placeLat: hasCoord ? latNum : null,
     placeLng: hasCoord ? lngNum : null,
     radiusMi: numParam(p.get("radius"), DEFAULTS.radiusMi),
-    back: numParam(p.get("back"), DEFAULTS.back),
+    back: parseBackDays(p.get("back"), DEFAULTS.back),
     stops: numParam(p.get("stops"), DEFAULTS.stops),
     minNeeds: numParam(p.get("minneeds"), DEFAULTS.minNeeds),
     seenStatus: p.get("seen") === "all" ? ("all" as const) : ("needs" as const),

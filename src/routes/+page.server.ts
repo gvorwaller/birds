@@ -7,21 +7,20 @@ import {
   type SpeciesActivity,
 } from "$server/needs";
 import { galleryContext } from "$server/access";
+import {
+  BACK_OPTIONS,
+  DEFAULT_BACK_DAYS,
+  parseBackDays,
+} from "$lib/time-windows";
 
 const NEARBY_DIST_KM = 40;
-const NEARBY_BACK_DAYS = 7;
-const BACK_OPTIONS = [7, 14, 30] as const;
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
-  const requestedBack = Number(
-    url.searchParams.get("back") ?? NEARBY_BACK_DAYS,
+  const backDays = parseBackDays(
+    url.searchParams.get("back"),
+    DEFAULT_BACK_DAYS,
   );
-  const backDays = BACK_OPTIONS.includes(
-    requestedBack as (typeof BACK_OPTIONS)[number],
-  )
-    ? requestedBack
-    : NEARBY_BACK_DAYS;
 
   const userRow = await query<{
     home_lat: number | null;

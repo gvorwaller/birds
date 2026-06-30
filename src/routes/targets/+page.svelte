@@ -5,6 +5,7 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { backOptionLabel, windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -155,8 +156,10 @@
       <label>
         <span>Window</span>
         <select name="back">
-          {#each [7, 14, 30] as d (d)}
-            <option value={d} selected={data.back === d}>Last {d} days</option>
+          {#each data.backOptions as d (d)}
+            <option value={d} selected={data.back === d}
+              >{backOptionLabel(d)}</option
+            >
           {/each}
         </select>
       </label>
@@ -168,7 +171,9 @@
     </form>
     {#if data.location}
       <p class="muted loc">
-        📍 {data.location.label} · within {data.dist} km · last {data.back} days
+        📍 {data.location.label} · within {data.dist} km · {windowPhrase(
+          data.back,
+        )}
       </p>
     {/if}
   </section>
@@ -227,8 +232,9 @@
         {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <p class="muted intro">
-        eBird notable reports near {data.location?.label ?? "here"} — last {data.back}
-        days, whether or not they're on your needs list.
+        eBird notable reports near {data.location?.label ?? "here"} — {windowPhrase(
+          data.back,
+        )}, whether or not they're on your needs list.
       </p>
       {#if data.view.notable.length === 0}
         <p class="muted">No notable reports in this window.</p>
@@ -314,7 +320,7 @@
 
     <section class="card">
       <h2>
-        {data.view.needs.length} needs reported here — last {data.back} days
+        {data.view.needs.length} needs reported here — {windowPhrase(data.back)}
       </h2>
       {#if data.view.seenCount === 0}
         <p class="muted">

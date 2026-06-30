@@ -11,6 +11,11 @@
     type DistanceUnit,
   } from "$lib/geo";
   import { plannerTargetNote } from "$lib/planner-note";
+  import {
+    BACK_OPTIONS,
+    backOptionLabel,
+    windowPhrase,
+  } from "$lib/time-windows";
   import { untrack } from "svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -221,9 +226,9 @@
       <label>
         <span>Window</span>
         <select name="back">
-          {#each [7, 14, 30] as d (d)}
+          {#each BACK_OPTIONS as d (d)}
             <option value={d} selected={data.inputs.back === d}
-              >Last {d} days</option
+              >{backOptionLabel(d)}</option
             >
           {/each}
         </select>
@@ -298,8 +303,9 @@
     {/if}
     {#if data.anchor}
       <p class="muted loc">
-        📍 {data.anchor.label} · {data.inputs.radiusMi} mi · last {data.inputs
-          .back} days
+        📍 {data.anchor.label} · {data.inputs.radiusMi} mi · {windowPhrase(
+          data.inputs.back,
+        )}
       </p>
     {/if}
     <div class="unit-row">

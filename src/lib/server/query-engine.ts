@@ -14,6 +14,7 @@
  */
 import { nearestNeighborOrder, haversineKm } from "$lib/geo";
 import { plannerTargetNote } from "$lib/planner-note";
+import { windowPhrase } from "$lib/time-windows";
 import {
   notableNearbyObs,
   recentNearbyObs,
@@ -390,7 +391,7 @@ export async function assembleTripPreview(
   const chosen = eligible.slice(0, params.numStops);
   if (chosen.length === 0) {
     warnings.push(
-      `No hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ of your ${params.rareOnly ? "rare " : ""}needs in the last ${params.daysBack} days. Try widening the radius, the window, or lowering the minimum.`,
+      `No hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ of your ${params.rareOnly ? "rare " : ""}needs in the ${windowPhrase(params.daysBack)}. Try widening the radius, the window, or lowering the minimum.`,
     );
   } else if (chosen.length < params.numStops) {
     warnings.push(
