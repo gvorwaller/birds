@@ -2,6 +2,10 @@ import { error, fail, redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import {
+  fieldTipInputsForStops,
+  missingFieldTipStopNames,
+} from "$lib/trip-field-tips";
+import {
   getEbirdApiKey,
   hotspotsNear,
   EbirdError,
@@ -342,42 +346,38 @@ export const actions: Actions = {
     if (!trip) return fail(404, { error: "Trip not found." });
     const stops = await getStops(tripId);
     if (stops.length === 0) return fail(400, { error: "Add a stop first." });
-    const missingTips = stops.filter((s) => !s.field_tip?.trim());
-    if (missingTips.length === 0) {
-      return {
-        ok: true as const,
-        message: "Field tips are already saved for every stop.",
-      };
-    }
 
     const firstLocated = stops.find((s) => s.lat != null && s.lon != null);
     const weather = firstLocated
       ? await weatherFor(firstLocated.lat as number, firstLocated.lon as number)
       : null;
+    const tipStops = fieldTipInputsForStops(stops);
 
     try {
       const tips = await generateFieldTips({
         tripName: trip.name,
-        stops: missingTips.map((s) => ({
-          id: s.id,
-          name: s.custom_name ?? "Stop",
-          notes: s.notes,
-        })),
+        stops: tipStops,
         weather,
         now: new Date(),
       });
+      const missingNames = missingFieldTipStopNames(tipStops, tips);
+      if (missingNames.length > 0) {
+        return fail(400, {
+          error: `AI did not return field tips for ${missingNames.join(", ")} — try again.`,
+        });
+      }
       await updateStopFieldTips(userId, tripId, tips);
       const n = Object.keys(tips).length;
       return {
         ok: true as const,
-        message: `Saved ${n} field ${n === 1 ? "tip" : "tips"}.`,
+        message: `Refreshed ${n} field ${n === 1 ? "tip" : "tips"}.`,
       };
     } catch (err) {
       return fail(400, {
         error:
           err instanceof GuidanceError
             ? err.message
-            : "Could not generate field tips.",
+            : "Could not refresh field tips.",
       });
     }
   },

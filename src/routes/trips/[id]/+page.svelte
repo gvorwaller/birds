@@ -266,7 +266,7 @@
             }}
           >
             <button type="submit" class="small tips-btn" disabled={tipsLoading}>
-              {tipsLoading ? "Thinking…" : "💡 Field tips"}
+              {tipsLoading ? "Refreshing…" : "💡 Refresh field tips"}
             </button>
           </form>
         {/if}
