@@ -6,15 +6,14 @@ import {
   notableNearbyObs,
   recentNearbySpeciesObs,
   EbirdError,
-  type EbirdObs,
 } from "$server/ebird";
-import { haversineKm } from "$lib/geo";
 import { ownerGalleryUrl } from "$server/access";
+import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
-  attachGooglePlaceIds,
-  hydrateEbirdLocationPlaceIds,
-} from "$server/location-placeids";
-import { mergeSpeciesObservations } from "$server/observations";
+  mergeSpeciesObservations,
+  speciesObservationDetails,
+  type SpeciesObservationDetail,
+} from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 
@@ -90,11 +89,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ? { lat: userRow.rows[0].home_lat, lon: userRow.rows[0].home_lon }
       : null;
 
-  let nearby: (EbirdObs & {
-    distanceKm: number | null;
-    googlePlaceId: string | null;
-    isHotspot: boolean;
-  })[] = [];
+  let nearby: SpeciesObservationDetail[] = [];
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
@@ -137,16 +132,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       );
       stale = stale || hotspots.stale;
       const placeIds = await hydrateEbirdLocationPlaceIds(observations);
-      nearby = attachGooglePlaceIds(observations, placeIds)
-        .map((o) => ({
-          ...o,
-          isHotspot: o.locId ? hotspots.locIds.has(o.locId) : false,
-          distanceKm: home
-            ? haversineKm(home.lat, home.lon, o.lat, o.lng)
-            : null,
-        }))
-        .sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9))
-        .slice(0, 15);
+      nearby = speciesObservationDetails(
+        observations,
+        home,
+        placeIds,
+        hotspots.locIds,
+      );
     } catch (err) {
       nearbyError =
         err instanceof EbirdError
