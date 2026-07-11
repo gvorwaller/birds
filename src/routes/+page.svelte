@@ -6,9 +6,9 @@
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { backOptionLabel, windowPhrase } from "$lib/time-windows";
-  import type { PageData } from "./$types";
+  import type { ActionData, PageData } from "./$types";
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
 
   // Client-side species search over the full needs list (the server now sends
@@ -149,25 +149,45 @@
         Your needs reported nearby — {windowPhrase(data.backDays)}
         {#if data.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
-      <form method="GET" class="window-form">
+      <div class="controls">
         <div class="unit-control">
           <span>Units</span>
           <DistanceUnitToggle bind:unit={distanceUnit} />
         </div>
-        <label>
-          <span>Window</span>
-          <select
-            name="back"
-            onchange={(e) => e.currentTarget.form?.requestSubmit()}
-          >
-            {#each data.backOptions as d (d)}
-              <option value={d} selected={data.backDays === d}
-                >{backOptionLabel(d)}</option
-              >
-            {/each}
-          </select>
-        </label>
-      </form>
+        <form method="POST" action={`?back=${data.backDays}`}>
+          <label>
+            <span>Radius</span>
+            <select
+              name="near_me_radius_km"
+              onchange={(e) => e.currentTarget.form?.requestSubmit()}
+            >
+              {#each data.radiusOptionsKm as km (km)}
+                <option value={km} selected={data.distKm === km}
+                  >{formatDistance(km, distanceUnit)}</option
+                >
+              {/each}
+            </select>
+          </label>
+        </form>
+        <form method="GET">
+          <label>
+            <span>Window</span>
+            <select
+              name="back"
+              onchange={(e) => e.currentTarget.form?.requestSubmit()}
+            >
+              {#each data.backOptions as d (d)}
+                <option value={d} selected={data.backDays === d}
+                  >{backOptionLabel(d)}</option
+                >
+              {/each}
+            </select>
+          </label>
+        </form>
+      </div>
+      {#if form?.radiusError}
+        <p class="err" role="alert">{form.radiusError}</p>
+      {/if}
       {#if data.needs.length === 0}
         <p class="muted">
           No unseen species reported within {formatDistance(
@@ -354,14 +374,17 @@
     color: var(--text);
     font-size: 16px;
   }
-  .window-form {
+  .controls {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
     flex-wrap: wrap;
     margin: -4px 0 10px;
   }
-  .window-form label,
+  .controls form {
+    margin: 0;
+  }
+  .controls label,
   .unit-control {
     display: flex;
     align-items: center;
@@ -370,13 +393,19 @@
     font-size: 0.83rem;
     font-weight: 600;
   }
-  .window-form select {
+  .controls select {
     min-height: 40px;
     padding: 6px 10px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--card);
     color: var(--text);
+  }
+  .err {
+    margin: -2px 0 10px;
+    color: #8a1f11;
+    font-weight: 700;
+    font-size: 0.86rem;
   }
   .no-match {
     padding: 8px 0;

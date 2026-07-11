@@ -1,4 +1,5 @@
-import type { PageServerLoad } from "./$types";
+import { fail } from "@sveltejs/kit";
+import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, EbirdError } from "$server/ebird";
 import {
@@ -12,8 +13,11 @@ import {
   DEFAULT_BACK_DAYS,
   parseBackDays,
 } from "$lib/time-windows";
-
-const NEARBY_DIST_KM = 40;
+import {
+  NEAR_ME_RADIUS_OPTIONS_KM,
+  normalizeNearMeRadiusKm,
+  validateNearMeRadiusKm,
+} from "$lib/near-me-radius";
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
@@ -25,11 +29,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const userRow = await query<{
     home_lat: number | null;
     home_lon: number | null;
-  }>("SELECT home_lat, home_lon FROM users WHERE id = $1", [userId]);
+    near_me_radius_km: number | null;
+  }>("SELECT home_lat, home_lon, near_me_radius_km FROM users WHERE id = $1", [
+    userId,
+  ]);
   const home =
     userRow.rows[0]?.home_lat != null && userRow.rows[0]?.home_lon != null
       ? { lat: userRow.rows[0].home_lat, lon: userRow.rows[0].home_lon }
       : null;
+  const distKm = normalizeNearMeRadiusKm(userRow.rows[0]?.near_me_radius_km);
 
   const { hasGallery, photoCounts } = await galleryContext(userId);
 
@@ -62,7 +70,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         userId,
         apiKey,
         home,
-        NEARBY_DIST_KM,
+        distKm,
         backDays,
         photoCounts,
       );
@@ -86,7 +94,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     bestPlaces,
     needsError,
     stale,
-    distKm: NEARBY_DIST_KM,
+    distKm,
+    radiusOptionsKm: NEAR_ME_RADIUS_OPTIONS_KM,
     backDays,
     backOptions: BACK_OPTIONS,
     returnTo: `/${url.search}`,
@@ -96,4 +105,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     lifeListSyncedAt: ebirdState.rows[0]?.life_list_synced_at ?? null,
     lifeListStatus: ebirdState.rows[0]?.life_list_status ?? null,
   };
+};
+
+export const actions: Actions = {
+  default: async ({ locals, request }) => {
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const radius = validateNearMeRadiusKm(form.get("near_me_radius_km"));
+    if (!radius.ok) return fail(400, { radiusError: radius.error });
+
+    await query("UPDATE users SET near_me_radius_km = $2 WHERE id = $1", [
+      userId,
+      radius.value,
+    ]);
+    return { ok: true as const, message: "Near Me radius saved." };
+  },
 };
