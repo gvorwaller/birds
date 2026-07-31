@@ -210,7 +210,7 @@
   <section class="card">
     <h2>Home location</h2>
     <p class="muted">
-      Used for distances and the Near Me view. Search a place or tap the map to
+      Used for distances and the Home view. Search a place or tap the map to
       drop a pin.
       {#if data.home.home_label}
         <br />Current: <strong>{data.home.home_label}</strong>
@@ -262,6 +262,33 @@
           : homePick
             ? `Save: ${homePick.label}`
             : "Save home"}
+      </button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Search radius</h2>
+    <p class="muted">
+      How far around your home (or a searched place) Home looks for reports.
+      eBird caps this at 50 km. Searching a place or opening a link with an
+      explicit radius changes that view only — this saved value is the default.
+    </p>
+    <form
+      method="POST"
+      action="?/save_radius"
+      use:enhance={track("radius")}
+      class="radius-form"
+    >
+      <label>
+        <span>Default radius</span>
+        <select name="near_me_radius_km">
+          {#each data.radiusOptionsKm as km (km)}
+            <option value={km} selected={data.radiusKm === km}>{km} km</option>
+          {/each}
+        </select>
+      </label>
+      <button type="submit" disabled={busy === "radius"}>
+        {busy === "radius" ? "Saving…" : "Save radius"}
       </button>
     </form>
   </section>
@@ -682,6 +709,22 @@
   }
   .saved-as {
     margin-bottom: 10px;
+  }
+  .radius-form label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
+  }
+  .radius-form select {
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
   }
   .savehome {
     margin-top: 12px;

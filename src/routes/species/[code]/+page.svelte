@@ -9,6 +9,10 @@
   let { data }: { data: PageData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
 
+  let isViewer = $derived(data.user?.role === "viewer");
+  // Reports are centered on the place Home was showing, or the saved home.
+  let originName = $derived(data.originLabel ?? "home");
+
   const links = $derived([
     {
       label: "eBird species page ↗",
@@ -93,7 +97,7 @@
   <section class="card">
     <div class="card-head">
       <h2>
-        Recent reports near home — {windowPhrase(data.backDays)}
+        Recent reports near {originName} — {windowPhrase(data.backDays)}
         {#if data.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <div class="unit-control">
@@ -101,11 +105,15 @@
         <DistanceUnitToggle bind:unit={distanceUnit} />
       </div>
     </div>
-    {#if !data.hasApiKey || !data.hasHome}
+    {#if !data.hasApiKey || !data.hasOrigin}
       <p class="muted">
-        Set your eBird API key and home location in <a href="/settings"
-          >Settings</a
-        > to see nearby reports.
+        {#if isViewer}
+          Nearby reports aren't available on this account right now.
+        {:else}
+          Set your eBird API key and home location in <a href="/settings"
+            >Settings</a
+          > to see nearby reports.
+        {/if}
       </p>
     {:else if data.nearbyError}
       <p class="muted">{data.nearbyError}</p>

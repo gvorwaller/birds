@@ -16,21 +16,11 @@ import {
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
-
-const NEARBY_DIST_KM = 50;
-
-function safeReturnTo(raw: string | null): { href: string; label: string } {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
-    return { href: "/targets", label: "Targets" };
-  }
-  const label =
-    raw === "/" || raw.startsWith("/?")
-      ? "Near Me"
-      : raw.startsWith("/targets")
-        ? "Targets"
-        : "Back";
-  return { href: raw, label };
-}
+import { safeReturnTo } from "$lib/return-link";
+import {
+  parseSpeciesLocationContext,
+  SPECIES_DEFAULT_DIST_KM,
+} from "$lib/species-context";
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
@@ -41,6 +31,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     SPECIES_DEFAULT_BACK_DAYS,
   );
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
+  // Home can be centered on a searched place; when it is, the link carries that
+  // origin so this page reports on the same area the user was just looking at.
+  const locationContext = parseSpeciesLocationContext(url.searchParams);
 
   const taxon = await query<{
     species_code: string;
@@ -89,22 +82,29 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ? { lat: userRow.rows[0].home_lat, lon: userRow.rows[0].home_lon }
       : null;
 
+  // A validated searched origin wins; otherwise fall back to the saved home.
+  const origin = locationContext
+    ? { lat: locationContext.lat, lon: locationContext.lng }
+    : home;
+  const distKm = locationContext?.distKm ?? SPECIES_DEFAULT_DIST_KM;
+  const originLabel = locationContext?.label ?? null;
+
   let nearby: SpeciesObservationDetail[] = [];
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
-  if (apiKey && home) {
+  if (apiKey && origin) {
     try {
       const [recentResult, notableResult] = await Promise.allSettled([
         recentNearbySpeciesObs(
           apiKey,
           code,
-          home.lat,
-          home.lon,
-          NEARBY_DIST_KM,
+          origin.lat,
+          origin.lon,
+          distKm,
           backDays,
         ),
-        notableNearbyObs(apiKey, home.lat, home.lon, NEARBY_DIST_KM, backDays),
+        notableNearbyObs(apiKey, origin.lat, origin.lon, distKm, backDays),
       ]);
       if (
         recentResult.status === "rejected" &&
@@ -126,15 +126,15 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       );
       const hotspots = await verifiedHotspotLocIds(
         apiKey,
-        home.lat,
-        home.lon,
-        NEARBY_DIST_KM,
+        origin.lat,
+        origin.lon,
+        distKm,
       );
       stale = stale || hotspots.stale;
       const placeIds = await hydrateEbirdLocationPlaceIds(observations);
       nearby = speciesObservationDetails(
         observations,
-        home,
+        origin,
         placeIds,
         hotspots.locIds,
       );
@@ -155,8 +155,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     nearbyError,
     stale,
     hasApiKey: !!apiKey,
-    hasHome: !!home,
-    distKm: NEARBY_DIST_KM,
+    hasOrigin: !!origin,
+    originLabel,
+    distKm,
     backDays,
     returnLink,
   };

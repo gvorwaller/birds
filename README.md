@@ -15,7 +15,7 @@ Phases 1–3 and most of Phase 4 are shipped and deployed:
 
 - **Auth** — admin owner (argon2id) + a shared read-only `family` viewer login.
 - **eBird** — per-user API key + credentialed life-list sync (Cornell CAS).
-- **Near Me** / **Targets** — needs near home, place search, "rare this week", best-places ranking.
+- **Home** — one screen (`/`) for needs around your saved home or any searched place: place search, saved search radius, "rare this week" notables, map, best-places ranking, and a life-list/photo summary. The former `/targets` route redirects here, query intact.
 - **Gallery** — link-out to the public gaylon.photos birds collection with species matching + overrides.
 - **Trips planner** — place/hotspot search, per-stop live needs counts, the real road route on the map, driving-distance route optimization (Google Directions), and Markdown export.
 - **Maps** — Google Maps throughout; tap any spotting location for Map + Directions; photo GPS map.

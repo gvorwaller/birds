@@ -110,3 +110,25 @@ Only one: `/Users/gaylonvorwaller/birds/docs/birds-app-design.md` (bump to V2, a
 - Confirm every file path cited in References exists (`ls` the madonnahist/giftlist/gaylonphotos paths).
 - Sanity-check the API contract: `curl -s 'https://gaylon.photos/api/photos?collection=birds' | head` returns photos with `species`/`thumbnail` fields as documented.
 - Read-through: doc is internally consistent (V2 header/footer, phases reference `/photos` not `/gallery`, health shape consistent across §4/Quick Start).
+
+## Amendment — 2026-07-30: single Home information architecture
+
+Supersedes the split Near Me (`/`) + Targets (`/targets`) navigation described
+above, including §2's treatment of "Rare this week" as an explicit *Targets*
+feature. The feature is unchanged; only its home is.
+
+- `/` is the single canonical Home. It is the former Targets experience —
+  place search, notable reports, needs, map, species search, best places —
+  plus the old Near Me page's **At a glance** life-list/photo summary.
+- `/targets` remains only as a 303 query-preserving redirect to `/`, so
+  bookmarks and pre-consolidation species `returnTo` links keep working.
+- Primary navigation is Home / Trips / Photos. Settings stays owner-only in the
+  desktop nav and drawer; Help stays drawer-only.
+- `users.near_me_radius_km` is still the saved default radius, now persisted
+  from Settings rather than by an implicit save-on-change control on Home. An
+  explicit `dist` (or a searched place) changes the current view only.
+- The species drilldown reports around the place Home was showing, not
+  unconditionally around the saved home.
+
+Rationale, review findings, and the verification matrix live in
+`docs/2026-07-30-home-targets-consolidation-plan.md`.

@@ -35,7 +35,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	if (!isPublic(path) && !event.locals.user) {
 		if (event.request.method === 'GET') {
-			const returnTo = encodeURIComponent(path);
+			// Path *and* query: a logged-out deep link like
+			// /targets?place=…&dist=…&back=… must survive Login with its full
+			// context, otherwise the /targets compatibility redirect that runs
+			// afterwards has nothing left to preserve.
+			const returnTo = encodeURIComponent(`${path}${event.url.search}`);
 			throw redirect(303, `/login?returnTo=${returnTo}`);
 		}
 		return new Response(JSON.stringify({ error: 'Unauthorized' }), {

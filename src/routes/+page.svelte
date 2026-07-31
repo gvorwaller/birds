@@ -5,33 +5,42 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { speciesLinkHref } from "$lib/species-context";
   import { backOptionLabel, windowPhrase } from "$lib/time-windows";
-  import type { ActionData, PageData } from "./$types";
+  import type { PageData } from "./$types";
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
 
-  // Client-side species search over the full needs list (the server now sends
-  // all needs, not just the top 20). When searching, a matched species expands
-  // to show every place in range it was reported.
+  // Read-only family accounts can't reach Settings, so never point them there.
+  let isViewer = $derived(data.user?.role === "viewer");
+
+  // Client-side species search across both lists (notable + needs). A matched
+  // species expands to show every place in range it was reported.
   let q = $state("");
-  let showAll = $state(false);
+  let showAllNeeds = $state(false);
   let expanded = $state(new Set<string>());
-  const PREVIEW = 20;
+  const NEEDS_PREVIEW = 25;
 
   let ql = $derived(q.trim().toLowerCase());
   let searching = $derived(ql.length > 0);
-  let matched = $derived(
-    searching
-      ? data.needs.filter(
-          (n) =>
-            n.comName.toLowerCase().includes(ql) ||
-            n.sciName.toLowerCase().includes(ql),
-        )
-      : data.needs,
+  function matches(n: { comName: string; sciName: string }): boolean {
+    return (
+      n.comName.toLowerCase().includes(ql) ||
+      n.sciName.toLowerCase().includes(ql)
+    );
+  }
+
+  let notableAll = $derived(data.view?.notable ?? []);
+  let needsAll = $derived(data.view?.needs ?? []);
+  let notableShown = $derived(
+    searching ? notableAll.filter(matches) : notableAll,
   );
+  let needsMatched = $derived(searching ? needsAll.filter(matches) : needsAll);
   let needsShown = $derived(
-    searching || showAll ? matched : matched.slice(0, PREVIEW),
+    searching || showAllNeeds
+      ? needsMatched
+      : needsMatched.slice(0, NEEDS_PREVIEW),
   );
 
   function toggleExpand(code: string) {
@@ -39,94 +48,186 @@
     next.has(code) ? next.delete(code) : next.add(code);
     expanded = next;
   }
+
+  // Carry the selected origin into the species drilldown, but only once the
+  // view has moved off the plain saved-home default — that path keeps its
+  // historical behavior of loading reports around home at the species radius.
+  let speciesContext = $derived(
+    data.location && !data.usingSavedHome
+      ? {
+          lat: data.location.lat,
+          lng: data.location.lng,
+          distKm: data.dist,
+          label: data.location.label,
+        }
+      : null,
+  );
   function speciesHref(code: string): string {
-    return `/species/${code}?back=${data.backDays}&returnTo=${encodeURIComponent(data.returnTo)}`;
+    return speciesLinkHref(code, {
+      backDays: data.back,
+      returnTo: data.returnTo,
+      context: speciesContext,
+    });
   }
   let showPlaces = $derived((code: string) => searching || expanded.has(code));
 
-  let homeCenter = $derived(
-    data.home ? { lat: data.home.lat, lng: data.home.lon } : null,
+  // One-action reset to the saved home *and* the saved radius, keeping only the
+  // chosen report window. Dropping `place` and `dist` is what restores both.
+  let resetHomeHref = $derived(`/?back=${data.back}`);
+
+  let mapCenter = $derived(
+    data.location ? { lat: data.location.lat, lng: data.location.lng } : null,
   );
-  // The map mirrors the visible list: one pin per shown need by default, or
+  // The map mirrors the visible lists: a pin per shown species by default, or
   // every place of each matched species while searching.
   let mapPoints = $derived.by<ObsPoint[]>(() => {
-    const home: ObsPoint[] = data.home
-      ? [
-          {
-            lat: data.home.lat,
-            lng: data.home.lon,
-            title: "Home",
-            kind: "home",
-          },
-        ]
-      : [];
+    if (!data.view || !data.location) return [];
+    const notableCodes = new Set(notableAll.map((n) => n.speciesCode));
+    const pts: ObsPoint[] = [
+      {
+        lat: data.location.lat,
+        lng: data.location.lng,
+        title: data.location.label,
+        kind: "home",
+      },
+    ];
     if (searching) {
-      const pts: ObsPoint[] = [];
-      for (const n of matched) {
+      for (const n of notableShown) {
         for (const pl of n.places) {
           pts.push({
             lat: pl.lat,
             lng: pl.lng,
             title: n.comName,
-            sub: [
-              pl.locName,
-              pl.distanceKm != null
-                ? formatDistance(pl.distanceKm, distanceUnit)
-                : null,
-            ]
-              .filter(Boolean)
-              .join(" · "),
+            sub: ["Notable", pl.locName].filter(Boolean).join(" · "),
+            href: speciesHref(n.speciesCode),
+            kind: "notable",
+          });
+        }
+      }
+      for (const n of needsMatched) {
+        if (notableCodes.has(n.speciesCode)) continue;
+        for (const pl of n.places) {
+          pts.push({
+            lat: pl.lat,
+            lng: pl.lng,
+            title: n.comName,
+            sub: pl.locName,
             href: speciesHref(n.speciesCode),
             kind: "need",
           });
         }
       }
-      return [...home, ...pts];
+      return pts;
     }
-    return [
-      ...home,
-      ...needsShown.map((n) => ({
+    for (const n of notableShown) {
+      pts.push({
         lat: n.lastLat,
         lng: n.lastLng,
         title: n.comName,
-        sub: [
-          n.locations[0],
-          n.distanceKm != null
-            ? formatDistance(n.distanceKm, distanceUnit)
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        sub: ["Notable", n.locations[0]].filter(Boolean).join(" · "),
         href: speciesHref(n.speciesCode),
-        kind: "need" as const,
-      })),
-    ];
+        kind: "notable",
+      });
+    }
+    for (const n of needsShown) {
+      if (notableCodes.has(n.speciesCode)) continue;
+      pts.push({
+        lat: n.lastLat,
+        lng: n.lastLng,
+        title: n.comName,
+        sub: n.locations[0] ?? "",
+        href: speciesHref(n.speciesCode),
+        kind: "need",
+      });
+    }
+    return pts;
   });
 </script>
 
 <svelte:head>
-  <title>Near Me — birds</title>
+  <title>Home — birds</title>
 </svelte:head>
 
 <div class="page">
   <header class="page-head">
-    <h1>Near Me</h1>
+    <h1>Home</h1>
     <p class="sub">
-      {#if data.home}
-        Home: {data.home.lat.toFixed(3)}, {data.home.lon.toFixed(3)} · radius {formatDistance(
-          data.distKm,
-          distanceUnit,
-        )} ·
-        <a href="/settings">change</a>
-      {:else}
-        No home location saved — <a href="/settings">set it in Settings</a>
-      {/if}
+      Find birds you need near home or anywhere you plan to go.
     </p>
   </header>
 
-  {#if data.home && data.hasApiKey && !data.needsError}
-    <section class="card map-card">
-      <ObsMap points={mapPoints} center={homeCenter} />
+  <section class="card">
+    <form method="GET" class="filters">
+      <label class="grow-field">
+        <span>Place</span>
+        <input
+          type="text"
+          name="place"
+          placeholder="Search a city, county, park, or address…"
+          value={data.location?.label ?? ""}
+          list="place-suggestions"
+        />
+        <datalist id="place-suggestions">
+          {#each data.suggestions as s (s)}
+            <option value={s}></option>
+          {/each}
+        </datalist>
+      </label>
+      <label>
+        <span>Within</span>
+        <select name="dist">
+          {#each data.radiusOptionsKm as km (km)}
+            <option value={km} selected={data.dist === km}
+              >{formatDistance(km, distanceUnit)}</option
+            >
+          {/each}
+        </select>
+      </label>
+      <label>
+        <span>Window</span>
+        <select name="back">
+          {#each data.backOptions as d (d)}
+            <option value={d} selected={data.back === d}
+              >{backOptionLabel(d)}</option
+            >
+          {/each}
+        </select>
+      </label>
+      <div class="unit-control">
+        <span>Units</span>
+        <DistanceUnitToggle bind:unit={distanceUnit} />
+      </div>
+      <button type="submit">Search</button>
+    </form>
+    {#if data.location}
+      <div class="loc">
+        <p class="muted loc-text">
+          📍 {data.location.label} · within {formatDistance(
+            data.dist,
+            distanceUnit,
+          )} · {windowPhrase(data.back)}
+        </p>
+        {#if data.hasHome && !data.usingSavedHome}
+          <!-- Clears the searched place *and* the view-only radius, so it is a
+               reset to both saved defaults, not just a re-centering on home. -->
+          <a href={resetHomeHref} class="reset-home">↺ Reset home defaults</a>
+        {/if}
+      </div>
+    {/if}
+  </section>
+
+  {#if data.needsLocation}
+    <section class="card">
+      <h2>Pick a place to start</h2>
+      <p class="muted">
+        {#if isViewer}
+          Search a place above to see needs and notable reports.
+        {:else}
+          Search a place above, or <a href="/settings"
+            >set your home location</a
+          > to default to it.
+        {/if}
+      </p>
     </section>
   {/if}
 
@@ -134,166 +235,241 @@
     <section class="card">
       <h2>Get set up</h2>
       <p class="muted">
-        Add your eBird API key in <a href="/settings">Settings</a> to see your needs
-        reported nearby.
+        {#if isViewer}
+          Live eBird data isn't available on this account right now.
+        {:else}
+          Add your eBird API key in <a href="/settings">Settings</a> to see your
+          needs and notable reports.
+        {/if}
       </p>
-    </section>
-  {:else if data.needsError}
-    <section class="card">
-      <h2>Your needs reported nearby</h2>
-      <p class="muted">{data.needsError}</p>
-    </section>
-  {:else if data.home}
-    <section class="card">
-      <h2>
-        Your needs reported nearby — {windowPhrase(data.backDays)}
-        {#if data.stale}<Badge kind="stale" label="cached" />{/if}
-      </h2>
-      <div class="controls">
-        <div class="unit-control">
-          <span>Units</span>
-          <DistanceUnitToggle bind:unit={distanceUnit} />
-        </div>
-        <form method="POST" action={`?back=${data.backDays}`}>
-          <label>
-            <span>Radius</span>
-            <select
-              name="near_me_radius_km"
-              onchange={(e) => e.currentTarget.form?.requestSubmit()}
-            >
-              {#each data.radiusOptionsKm as km (km)}
-                <option value={km} selected={data.distKm === km}
-                  >{formatDistance(km, distanceUnit)}</option
-                >
-              {/each}
-            </select>
-          </label>
-        </form>
-        <form method="GET">
-          <label>
-            <span>Window</span>
-            <select
-              name="back"
-              onchange={(e) => e.currentTarget.form?.requestSubmit()}
-            >
-              {#each data.backOptions as d (d)}
-                <option value={d} selected={data.backDays === d}
-                  >{backOptionLabel(d)}</option
-                >
-              {/each}
-            </select>
-          </label>
-        </form>
-      </div>
-      {#if form?.radiusError}
-        <p class="err" role="alert">{form.radiusError}</p>
-      {/if}
-      {#if data.needs.length === 0}
-        <p class="muted">
-          No unseen species reported within {formatDistance(
-            data.distKm,
-            distanceUnit,
-          )} in this window.
-          {#if data.seenCount === 0}Import your life list in <a href="/settings"
-              >Settings</a
-            > first — otherwise everything counts as a need.{/if}
-        </p>
-      {:else}
-        <input
-          class="search"
-          type="search"
-          placeholder="Search your {data.needs.length} needs by name…"
-          bind:value={q}
-        />
-        {#if searching && matched.length === 0}
-          <p class="muted no-match">No needs match “{q}”.</p>
-        {/if}
-        {#each needsShown as n (n.speciesCode)}
-          <div class="obs">
-            <div class="grow">
-              <div class="name">
-                <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
-                <Badge kind="need" label="Need" />
-              </div>
-              <div class="meta">
-                <strong
-                  >{n.locationCount}
-                  {n.locationCount === 1 ? "location" : "locations"}</strong
-                >
-                ·
-                <strong
-                  >{n.totalCount}
-                  {n.totalCount === 1 ? "bird" : "birds"}</strong
-                >
-                ·
-                {n.locations.join(" · ")}
-              </div>
-              {#if n.places.length > 1 && !searching}
-                <button
-                  class="places-toggle"
-                  onclick={() => toggleExpand(n.speciesCode)}
-                >
-                  {expanded.has(n.speciesCode)
-                    ? "▾ Hide places"
-                    : `▸ Show all ${n.places.length} places`}
-                </button>
-              {/if}
-              {#if showPlaces(n.speciesCode) && n.places.length > 0}
-                <ul class="places">
-                  {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
-                    <li>
-                      <MapLink
-                        lat={pl.lat}
-                        lng={pl.lng}
-                        name={pl.locName}
-                        googlePlaceId={pl.googlePlaceId}
-                      />
-                      <span class="pl-name">{pl.locName}</span>
-                      <span class="pl-meta"
-                        >{#if pl.distanceKm != null}{formatDistance(
-                            pl.distanceKm,
-                            distanceUnit,
-                          )} ·
-                        {/if}{pl.nReports}
-                        {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
-                        {pl.totalCount === 1 ? "bird" : "birds"} ·
-                        {pl.lastObsDt}</span
-                      >
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <MapLink
-                  lat={n.lastLat}
-                  lng={n.lastLng}
-                  name={n.locations[0] ?? n.comName}
-                  googlePlaceId={n.googlePlaceId}
-                />
-              {/if}
-            </div>
-            <div class="right">
-              {#if n.distanceKm != null}<div class="dist">
-                  {formatDistance(n.distanceKm, distanceUnit)}
-                </div>{/if}
-              <div class="when">{n.lastObsDt}</div>
-            </div>
-          </div>
-        {/each}
-        {#if !searching && matched.length > PREVIEW}
-          <button class="more" onclick={() => (showAll = !showAll)}>
-            {showAll ? "Show fewer" : `Show all ${matched.length} needs`}
-          </button>
-        {/if}
-      {/if}
     </section>
   {/if}
 
-  <BestPlaces
-    places={data.bestPlaces}
-    title="Best places near you"
-    limit={6}
-    {distanceUnit}
-  />
+  {#if data.view && mapCenter}
+    <section class="card map-card">
+      <ObsMap points={mapPoints} center={mapCenter} />
+      <p class="legend">
+        <span class="dot need"></span> need
+        <span class="dot notable"></span> notable
+        <span class="dot home"></span> selected location
+      </p>
+    </section>
+  {/if}
+
+  {#if data.error}
+    <section class="card">
+      <p class="muted">{data.error}</p>
+    </section>
+  {/if}
+
+  {#if data.view}
+    <section class="card search-card">
+      <input
+        class="search"
+        type="search"
+        placeholder="Search species by name…"
+        bind:value={q}
+      />
+      {#if searching}
+        <span class="search-count"
+          >{notableShown.length + needsMatched.length} match{notableShown.length +
+            needsMatched.length ===
+          1
+            ? ""
+            : "es"}</span
+        >
+      {/if}
+    </section>
+
+    <section class="card">
+      <h2>
+        Rare this week <Badge kind="notable" label="Notable" />
+        {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
+      </h2>
+      <p class="muted intro">
+        eBird notable reports near {data.location?.label ?? "here"} — {windowPhrase(
+          data.back,
+        )}, whether or not they're on your needs list.
+      </p>
+      {#if data.view.notable.length === 0}
+        <p class="muted">No notable reports in this window.</p>
+      {:else if searching && notableShown.length === 0}
+        <p class="muted">No notable reports match “{q}”.</p>
+      {/if}
+      {#each notableShown as n (n.speciesCode)}
+        <div class="obs">
+          <div class="grow">
+            <div class="name">
+              <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
+              <Badge kind="notable" label="Notable" />
+              {#if n.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
+                  kind="need"
+                  label="Need"
+                />{/if}
+            </div>
+            <div class="meta">
+              <strong
+                >{n.locationCount}
+                {n.locationCount === 1 ? "location" : "locations"}</strong
+              >
+              ·
+              <strong
+                >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
+              >
+              ·
+              {n.locations.join(" · ")}
+              {#if data.hasGallery && n.photoCount > 0}
+                · 📷 you have {n.photoCount}
+                {n.photoCount === 1 ? "photo" : "photos"}{/if}
+            </div>
+            {#if n.places.length > 1 && !searching}
+              <button
+                class="places-toggle"
+                onclick={() => toggleExpand(n.speciesCode)}
+              >
+                {expanded.has(n.speciesCode)
+                  ? "▾ Hide places"
+                  : `▸ Show all ${n.places.length} places`}
+              </button>
+            {/if}
+            {#if showPlaces(n.speciesCode) && n.places.length > 0}
+              <ul class="places">
+                {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
+                  <li>
+                    <MapLink
+                      lat={pl.lat}
+                      lng={pl.lng}
+                      name={pl.locName}
+                      googlePlaceId={pl.googlePlaceId}
+                    />
+                    <span class="pl-name">{pl.locName}</span>
+                    <span class="pl-meta"
+                      >{#if pl.distanceKm != null}{formatDistance(
+                          pl.distanceKm,
+                          distanceUnit,
+                        )} ·
+                      {/if}{pl.nReports}
+                      {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
+                      {pl.totalCount === 1 ? "bird" : "birds"} ·
+                      {pl.lastObsDt}</span
+                    >
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <MapLink
+                lat={n.lastLat}
+                lng={n.lastLng}
+                name={n.locations[0] ?? n.comName}
+                googlePlaceId={n.googlePlaceId}
+              />
+            {/if}
+          </div>
+          <div class="right">
+            <div class="dist">{n.locationCount} ×</div>
+            <div class="when">{n.lastObsDt}</div>
+          </div>
+        </div>
+      {/each}
+    </section>
+
+    <section class="card">
+      <h2>
+        {data.view.needs.length} needs reported here — {windowPhrase(data.back)}
+        {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
+      </h2>
+      {#if data.seenCount === 0}
+        <p class="muted">
+          Your life list is empty, so every species counts as a need.
+          {#if !isViewer}Sync it in <a href="/settings">Settings</a>.{/if}
+        </p>
+      {/if}
+      {#if searching && needsMatched.length === 0}
+        <p class="muted">No needs match “{q}”.</p>
+      {/if}
+      {#each needsShown as n (n.speciesCode)}
+        <div class="obs">
+          <div class="grow">
+            <div class="name">
+              <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
+              <Badge kind="need" label="Need" />
+            </div>
+            <div class="meta">
+              <strong
+                >{n.locationCount}
+                {n.locationCount === 1 ? "location" : "locations"}</strong
+              >
+              ·
+              <strong
+                >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
+              >
+              ·
+              {n.locations.join(" · ")}
+              {#if data.hasGallery && n.photoCount === 0}
+                · 📷 no photo yet{/if}
+            </div>
+            {#if n.places.length > 1 && !searching}
+              <button
+                class="places-toggle"
+                onclick={() => toggleExpand(n.speciesCode)}
+              >
+                {expanded.has(n.speciesCode)
+                  ? "▾ Hide places"
+                  : `▸ Show all ${n.places.length} places`}
+              </button>
+            {/if}
+            {#if showPlaces(n.speciesCode) && n.places.length > 0}
+              <ul class="places">
+                {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
+                  <li>
+                    <MapLink
+                      lat={pl.lat}
+                      lng={pl.lng}
+                      name={pl.locName}
+                      googlePlaceId={pl.googlePlaceId}
+                    />
+                    <span class="pl-name">{pl.locName}</span>
+                    <span class="pl-meta"
+                      >{#if pl.distanceKm != null}{formatDistance(
+                          pl.distanceKm,
+                          distanceUnit,
+                        )} ·
+                      {/if}{pl.nReports}
+                      {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
+                      {pl.totalCount === 1 ? "bird" : "birds"} ·
+                      {pl.lastObsDt}</span
+                    >
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <MapLink
+                lat={n.lastLat}
+                lng={n.lastLng}
+                name={n.locations[0] ?? n.comName}
+                googlePlaceId={n.googlePlaceId}
+              />
+            {/if}
+          </div>
+          <div class="right">
+            {#if n.distanceKm != null}<div class="dist">
+                {formatDistance(n.distanceKm, distanceUnit)}
+              </div>{/if}
+            <div class="when">{n.lastObsDt}</div>
+          </div>
+        </div>
+      {/each}
+      {#if !searching && needsMatched.length > NEEDS_PREVIEW}
+        <button class="more" onclick={() => (showAllNeeds = !showAllNeeds)}>
+          {showAllNeeds
+            ? "Show fewer"
+            : `Show all ${needsMatched.length} needs`}
+        </button>
+      {/if}
+    </section>
+
+    <BestPlaces places={data.view.bestPlaces} {distanceUnit} />
+  {/if}
 
   <section class="card">
     <h2>At a glance</h2>
@@ -303,10 +479,12 @@
         <div class="meta">
           {#if data.lifeListSyncedAt}
             synced from eBird {new Date(data.lifeListSyncedAt).toLocaleString()}
-            {#if data.lifeListStatus === "error"}<Badge
+            {#if data.lifeListStatus === "error" && !isViewer}<Badge
                 kind="notable"
                 label="sync error"
               />{/if}
+          {:else if isViewer}
+            not synced yet
           {:else}
             not synced yet — <a href="/settings">Settings</a>
           {/if}
@@ -349,6 +527,40 @@
     color: var(--muted);
     font-size: 0.89rem;
   }
+  .intro {
+    margin-bottom: 8px;
+  }
+  .loc {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-top: 10px;
+  }
+  .loc-text {
+    font-weight: 600;
+    margin: 0;
+  }
+  /* A real control, not an inline link: >=48px tall per the tap-target rule,
+	   and allowed to wrap onto its own row on a narrow phone. */
+  .reset-home {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--accent);
+    font-size: 0.83rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .reset-home:hover {
+    background: var(--bg);
+  }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -356,59 +568,100 @@
     padding: 16px;
     margin-bottom: 12px;
   }
-  .map-card {
-    padding: 8px;
-  }
   .card h2 {
     font-size: 1.05rem;
     margin-bottom: 10px;
   }
-  .search {
+  .map-card {
+    padding: 8px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    padding: 8px 4px 2px;
+  }
+  .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+  .dot.need {
+    background: #0a5c43;
+  }
+  .dot.notable {
+    background: #842029;
+  }
+  .dot.home {
+    background: #084298;
+  }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  .filters label,
+  .unit-control {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .filters .grow-field {
+    flex: 1;
+    min-width: 220px;
+  }
+  .filters input,
+  .filters select {
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+  }
+  .filters .grow-field input {
     width: 100%;
+  }
+  .filters button {
+    min-height: 48px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .search-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .search {
+    flex: 1;
+    min-width: 0;
     min-height: 44px;
     padding: 8px 12px;
-    margin-bottom: 8px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--card);
     color: var(--text);
     font-size: 16px;
   }
-  .controls {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin: -4px 0 10px;
-  }
-  .controls form {
-    margin: 0;
-  }
-  .controls label,
-  .unit-control {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .search-count {
     color: var(--muted);
     font-size: 0.83rem;
     font-weight: 600;
-  }
-  .controls select {
-    min-height: 40px;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
-  }
-  .err {
-    margin: -2px 0 10px;
-    color: #8a1f11;
-    font-weight: 700;
-    font-size: 0.86rem;
-  }
-  .no-match {
-    padding: 8px 0;
+    white-space: nowrap;
   }
   .places-toggle {
     margin-top: 4px;
@@ -440,19 +693,6 @@
   .pl-meta {
     color: var(--muted);
     font-size: 0.78rem;
-  }
-  .more {
-    margin-top: 12px;
-    min-height: 48px;
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--card);
-    color: var(--text);
-    font-weight: 600;
-  }
-  .more:hover {
-    background: var(--bg);
   }
   .obs {
     display: flex;
@@ -495,6 +735,19 @@
   .when {
     color: var(--muted);
     font-size: 0.78rem;
+  }
+  .more {
+    margin-top: 12px;
+    min-height: 48px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .more:hover {
+    background: var(--bg);
   }
   .attribution {
     text-align: center;

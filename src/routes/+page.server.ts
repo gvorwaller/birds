@@ -1,12 +1,8 @@
-import { fail } from "@sveltejs/kit";
-import type { Actions, PageServerLoad } from "./$types";
+import type { PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, EbirdError } from "$server/ebird";
-import {
-  nearbyNeeds,
-  type PlaceRanking,
-  type SpeciesActivity,
-} from "$server/needs";
+import { geoTargets, type TargetsView } from "$server/needs";
+import { geocodePlace } from "$server/geocode";
 import { galleryContext } from "$server/access";
 import {
   BACK_OPTIONS,
@@ -14,110 +10,138 @@ import {
   parseBackDays,
 } from "$lib/time-windows";
 import {
-  NEAR_ME_RADIUS_OPTIONS_KM,
   normalizeNearMeRadiusKm,
-  validateNearMeRadiusKm,
+  radiusSelectOptionsKm,
+  selectEffectiveRadiusKm,
 } from "$lib/near-me-radius";
+import { homeUrlWithQuery } from "$lib/return-link";
 
+const PLACE_SUGGESTIONS = [
+  "Jacksonville, FL",
+  "Hancock County, ME",
+  "Bar Harbor, ME",
+  "Merritt Island NWR, FL",
+];
+
+/**
+ * The unified Home loader — the former Targets view merged with the old Near Me
+ * page's at-a-glance summary.
+ *
+ * Every state (no home, no API key, geocode failure, eBird error, stale cache,
+ * empty results) returns the *same* shape. There is deliberately no early
+ * return: a brand-new user with neither a home nor a key still gets the
+ * at-a-glance card and the setup guidance.
+ */
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
-  const backDays = parseBackDays(
-    url.searchParams.get("back"),
-    DEFAULT_BACK_DAYS,
+  const place = (url.searchParams.get("place") ?? "").trim();
+  const back = parseBackDays(url.searchParams.get("back"), DEFAULT_BACK_DAYS);
+
+  // Independent work: the user row, gallery, key, at-a-glance reads and the
+  // geocode all run together. Only the eBird fan-out below depends on them.
+  const [userRow, gallery, apiKey, seenCountRow, ebirdState, geo] =
+    await Promise.all([
+      query<{
+        home_lat: number | null;
+        home_lon: number | null;
+        home_label: string | null;
+        near_me_radius_km: number | null;
+      }>(
+        "SELECT home_lat, home_lon, home_label, near_me_radius_km FROM users WHERE id = $1",
+        [userId],
+      ),
+      galleryContext(userId),
+      getEbirdApiKey(userId),
+      query<{ n: string }>(
+        "SELECT COUNT(*) AS n FROM seen_species WHERE user_id = $1",
+        [userId],
+      ),
+      query<{
+        life_list_synced_at: string | null;
+        life_list_status: string | null;
+      }>(
+        "SELECT life_list_synced_at, life_list_status FROM user_ebird WHERE user_id = $1",
+        [userId],
+      ),
+      place ? geocodePlace(place) : Promise.resolve(null),
+    ]);
+
+  const { hasGallery, photoCounts } = gallery;
+  const u = userRow.rows[0];
+  const savedRadiusKm = normalizeNearMeRadiusKm(u?.near_me_radius_km);
+  // Absent or invalid `dist` falls back to the saved radius — never to a
+  // hard-coded 50 km, which is what the old Targets route did.
+  const distKm = selectEffectiveRadiusKm(
+    url.searchParams.get("dist"),
+    u?.near_me_radius_km,
   );
 
-  const userRow = await query<{
-    home_lat: number | null;
-    home_lon: number | null;
-    near_me_radius_km: number | null;
-  }>("SELECT home_lat, home_lon, near_me_radius_km FROM users WHERE id = $1", [
-    userId,
-  ]);
   const home =
-    userRow.rows[0]?.home_lat != null && userRow.rows[0]?.home_lon != null
-      ? { lat: userRow.rows[0].home_lat, lon: userRow.rows[0].home_lon }
+    u?.home_lat != null && u.home_lon != null
+      ? { lat: u.home_lat, lng: u.home_lon, label: u.home_label ?? "Home" }
       : null;
-  const distKm = normalizeNearMeRadiusKm(userRow.rows[0]?.near_me_radius_km);
 
-  const { hasGallery, photoCounts } = await galleryContext(userId);
+  // Resolve the location: searched place → geocode; else fall back to home.
+  let location: { lat: number; lng: number; label: string } | null = null;
+  let error: string | null = null;
+  if (place) {
+    if (geo) {
+      location = { lat: geo.lat, lng: geo.lng, label: geo.name };
+    } else {
+      error = `Couldn't find "${place}". Try a city, county, park, or address.`;
+    }
+  }
+  if (!location && home) location = home;
 
-  const [seenCount, ebirdState] = await Promise.all([
-    query<{ n: string }>(
-      "SELECT COUNT(*) AS n FROM seen_species WHERE user_id = $1",
-      [userId],
-    ),
-    query<{
-      life_list_synced_at: string | null;
-      life_list_status: string | null;
-    }>(
-      "SELECT life_list_synced_at, life_list_status FROM user_ebird WHERE user_id = $1",
-      [userId],
-    ),
-  ]);
-  const photoCount = hasGallery
-    ? [...photoCounts.values()].reduce((a, b) => a + b, 0)
-    : 0;
-
-  let needs: SpeciesActivity[] = [];
-  let bestPlaces: PlaceRanking[] = [];
-  let needsError: string | null = null;
-  let stale = false;
-  const apiKey = await getEbirdApiKey(userId);
-
-  if (apiKey && home) {
+  let view: TargetsView | null = null;
+  if (location && apiKey) {
     try {
-      const result = await nearbyNeeds(
+      view = await geoTargets(
         userId,
         apiKey,
-        home,
+        location.lat,
+        location.lng,
         distKm,
-        backDays,
+        back,
         photoCounts,
       );
-      // Send the full needs list — the page previews the first 20 but the
-      // client-side species search filters across all of them.
-      needs = result.needs;
-      bestPlaces = result.bestPlaces.slice(0, 6);
-      stale = result.stale;
     } catch (err) {
-      needsError =
+      error =
         err instanceof EbirdError
           ? err.message
-          : "Could not load recent observations.";
+          : `Could not load data for ${location.label}.`;
     }
   }
 
   return {
+    location,
     home,
-    hasApiKey: !!apiKey,
-    needs,
-    bestPlaces,
-    needsError,
-    stale,
-    distKm,
-    radiusOptionsKm: NEAR_ME_RADIUS_OPTIONS_KM,
-    backDays,
+    hasHome: !!home,
+    // True only on the canonical saved-home view, which is what the
+    // "Reset home defaults" action returns to. Derived from the URL rather than
+    // from coordinates so that an explicit `dist` also counts as having
+    // navigated away from it.
+    usingSavedHome: !place && distKm === savedRadiusKm,
+    placeQuery: place,
+    dist: distKm,
+    savedRadiusKm,
+    radiusOptionsKm: radiusSelectOptionsKm(distKm),
+    back,
     backOptions: BACK_OPTIONS,
-    returnTo: `/${url.search}`,
-    seenCount: Number(seenCount.rows[0]?.n ?? 0),
+    suggestions: PLACE_SUGGESTIONS,
+    view,
+    error,
+    needsLocation: !location,
+    hasApiKey: !!apiKey,
     hasGallery,
-    photoCount,
+    returnTo: homeUrlWithQuery(url.search),
+    // One authoritative life-list count for every state. `view.seenCount` is
+    // deliberately not surfaced separately so the two cannot disagree.
+    seenCount: Number(seenCountRow.rows[0]?.n ?? 0),
+    photoCount: hasGallery
+      ? [...photoCounts.values()].reduce((a, b) => a + b, 0)
+      : 0,
     lifeListSyncedAt: ebirdState.rows[0]?.life_list_synced_at ?? null,
     lifeListStatus: ebirdState.rows[0]?.life_list_status ?? null,
   };
-};
-
-export const actions: Actions = {
-  default: async ({ locals, request }) => {
-    const userId = locals.user!.id;
-    const form = await request.formData();
-    const radius = validateNearMeRadiusKm(form.get("near_me_radius_km"));
-    if (!radius.ok) return fail(400, { radiusError: radius.error });
-
-    await query("UPDATE users SET near_me_radius_km = $2 WHERE id = $1", [
-      userId,
-      radius.value,
-    ]);
-    return { ok: true as const, message: "Near Me radius saved." };
-  },
 };

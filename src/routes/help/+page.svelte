@@ -126,24 +126,40 @@
 			aria-expanded={open === 'targets'}
 			onclick={() => toggle('targets')}
 		>
-			<span class="ico">🔭</span>
-			<span class="title">Targets &amp; your needs</span>
+			<span class="ico">🏠</span>
+			<span class="title">Home &amp; your needs</span>
 			<span class="chev">{open === 'targets' ? '▾' : '▸'}</span>
 		</button>
 		{#if open === 'targets'}
 			<div class="body">
 				<ul>
 					<li>
-						<strong>Targets</strong> shows species you still need, based on what's
-						being reported near a place or region you choose.
+						<strong>Home</strong> is the app's main screen. It shows species you still
+						need, based on what's being reported around a place — your saved home by
+						default, or anywhere you search.
 					</li>
 					<li>
 						“Needs” are species not yet on your life list. The app learns your
 						life list from your eBird account (add your API key in Settings).
 					</li>
 					<li>
-						Tap any species to open its page — recent nearby sightings, a map,
-						and your photos of it (if you have a photo gallery configured).
+						<strong>Rare this week</strong> lists eBird's notable reports for the same
+						place and window, whether or not they're on your needs list.
+					</li>
+					<li>
+						<strong>Within</strong> starts at your saved search radius (change the
+						saved default in Settings). Searching a place or changing the radius on
+						the page affects that view only — <strong>Reset home defaults</strong> puts both
+						back.
+					</li>
+					<li>
+						Tap any species to open its page — recent sightings around the place you
+						were looking at, a map, and your photos of it (if you have a photo
+						gallery configured).
+					</li>
+					<li>
+						Older <code>/targets</code> links and bookmarks still work; they land on Home
+						with their search intact.
 					</li>
 				</ul>
 			</div>
@@ -226,8 +242,12 @@
 						a free key from eBird and paste it here.
 					</li>
 					<li>
-						<strong>Home location</strong> — set it once and the planner and
-						targets default to your home area when you don't specify a place.
+						<strong>Home location</strong> — set it once and the planner and Home
+						default to your home area when you don't specify a place.
+					</li>
+					<li>
+						<strong>Search radius</strong> — the saved default distance Home searches
+						around a place. eBird caps it at 50 km.
 					</li>
 					<li>
 						Read-only family accounts don't see Settings — they're along for the

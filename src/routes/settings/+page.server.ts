@@ -13,6 +13,11 @@ import {
 import { rematchPhotoLinks, syncGallery } from "$server/gallery";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
+import {
+  normalizeNearMeRadiusKm,
+  radiusSelectOptionsKm,
+  validateNearMeRadiusKm,
+} from "$lib/near-me-radius";
 
 export const load: PageServerLoad = async ({ locals }) => {
   const userId = locals.user!.id;
@@ -66,8 +71,10 @@ export const load: PageServerLoad = async ({ locals }) => {
       home_lon: number | null;
       home_label: string | null;
       home_google_place_id: string | null;
+      near_me_radius_km: number | null;
     }>(
-      "SELECT home_lat, home_lon, home_label, home_google_place_id FROM users WHERE id = $1",
+      `SELECT home_lat, home_lon, home_label, home_google_place_id, near_me_radius_km
+			   FROM users WHERE id = $1`,
       [userId],
     ),
     query<{ n: string; newest: string | null }>(
@@ -118,7 +125,14 @@ export const load: PageServerLoad = async ({ locals }) => {
       home_lon: null,
       home_label: null,
       home_google_place_id: null,
+      near_me_radius_km: null,
     },
+    // Settings is the single explicit persistence surface for the saved search
+    // radius now that Home's implicit save-on-change action is gone.
+    radiusKm: normalizeNearMeRadiusKm(user.rows[0]?.near_me_radius_km),
+    radiusOptionsKm: radiusSelectOptionsKm(
+      normalizeNearMeRadiusKm(user.rows[0]?.near_me_radius_km),
+    ),
     taxonomyCount: Number(taxCount.rows[0]?.n ?? 0),
     taxonomyNewest: taxCount.rows[0]?.newest ?? null,
     seenBySource: seenBySource.rows.map((r) => ({
@@ -256,6 +270,22 @@ export const actions: Actions = {
     return {
       ok: true as const,
       message: `Home location saved${label ? `: ${label}` : ""}.`,
+    };
+  },
+
+  save_radius: async ({ locals, request }) => {
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const radius = validateNearMeRadiusKm(form.get("near_me_radius_km"));
+    if (!radius.ok) return fail(400, { error: radius.error });
+
+    await query("UPDATE users SET near_me_radius_km = $2 WHERE id = $1", [
+      userId,
+      radius.value,
+    ]);
+    return {
+      ok: true as const,
+      message: `Search radius saved: ${radius.value} km.`,
     };
   },
 

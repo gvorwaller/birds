@@ -8,13 +8,18 @@
 	let menuOpen = $state(false);
 	let isViewer = $derived(data.user?.role === 'viewer');
 
-	const items = [
+	// Explicit collections, not a slice of one array: primary tabs render in the
+	// top nav, the bottom nav and the drawer, while owner-only items appear in
+	// the drawer alone. Slicing a combined list silently promoted whatever sat
+	// at index 3 when an item was removed.
+	const primaryItems = [
 		{ href: '/', label: 'Home', ico: '🏠' },
-		{ href: '/targets', label: 'Targets', ico: '🔭' },
 		{ href: '/trips', label: 'Trips', ico: '🗺️' },
-		{ href: '/photos', label: 'Photos', ico: '📷' },
-		{ href: '/settings', label: 'Settings', ico: '⚙️' }
+		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
+	const ownerMenuItems = [{ href: '/settings', label: 'Settings', ico: '⚙️' }];
+
+	let drawerItems = $derived(isViewer ? primaryItems : [...primaryItems, ...ownerMenuItems]);
 
 	function isActive(href: string, path: string): boolean {
 		return href === '/' ? path === '/' : path.startsWith(href);
@@ -39,7 +44,7 @@
 		</button>
 		<a class="brand" href="/"><span>🪶</span> birds</a>
 		<div class="links">
-			{#each items.slice(0, 4) as item (item.href)}
+			{#each primaryItems as item (item.href)}
 				<a href={item.href} class:active={isActive(item.href, $page.url.pathname)}>{item.label}</a>
 			{/each}
 		</div>
@@ -62,7 +67,7 @@
 				<button class="close" aria-label="Close menu" onclick={() => (menuOpen = false)}>✕</button>
 			</div>
 			<nav class="drawer-links">
-				{#each isViewer ? items.slice(0, 4) : items as item (item.href)}
+				{#each drawerItems as item (item.href)}
 					<a
 						href={item.href}
 						class:active={isActive(item.href, $page.url.pathname)}
@@ -99,7 +104,7 @@
 
 {#if data.user}
 	<nav class="bottom-nav">
-		{#each items.slice(0, 4) as item (item.href)}
+		{#each primaryItems as item (item.href)}
 			<a href={item.href} class:active={isActive(item.href, $page.url.pathname)}>
 				<span class="ico">{item.ico}</span>{item.label}
 			</a>
@@ -233,12 +238,18 @@
 		flex-direction: column;
 		padding-bottom: env(safe-area-inset-bottom);
 		box-shadow: 2px 0 16px rgba(0, 0, 0, 0.15);
+		/* Phone landscape is only ~390px tall, which is shorter than the nav
+		   links plus the account footer — without this the Sign out button sits
+		   below the viewport with no way to reach it. */
+		overflow-y: auto;
+		overscroll-behavior: contain;
 	}
 	.drawer-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		height: var(--nav-h);
+		flex-shrink: 0;
 		padding: 0 12px 0 16px;
 		border-bottom: 1px solid var(--border);
 	}
