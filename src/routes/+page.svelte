@@ -4,13 +4,30 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
+  import PlaceMatches from "$components/PlaceMatches.svelte";
+  import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import {
+    buildPlaceIndex,
+    searchPlaces,
+    speciesAtPlace,
+  } from "$lib/place-search";
+  import { homeUrlWithQuery } from "$lib/return-link";
   import { speciesLinkHref } from "$lib/species-context";
   import { backOptionLabel, windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
+
+  // Minted here, not in the loader. `page.url` is populated under SSR as well
+  // as on the client, and it is the only source that stays correct across a
+  // client-side focus navigation — the loader deliberately never reads
+  // `url.search` (see its INVARIANT note), so a server-built value would go
+  // stale the moment `?loc=` changes and the species round trip would drop the
+  // focused place.
+  let returnTo = $derived(homeUrlWithQuery(page.url.search));
 
   // Read-only family accounts can't reach Settings, so never point them there.
   let isViewer = $derived(data.user?.role === "viewer");
@@ -33,15 +50,88 @@
 
   let notableAll = $derived(data.view?.notable ?? []);
   let needsAll = $derived(data.view?.needs ?? []);
-  let notableShown = $derived(
-    searching ? notableAll.filter(matches) : notableAll,
+
+  // --- Place search + focus -------------------------------------------------
+  // The index inverts the species→places data the loader already ships, so this
+  // costs no extra requests. Rebuilt only when the view changes, never per
+  // keystroke; only `searchPlaces` runs on input.
+  let placeIndex = $derived(buildPlaceIndex(notableAll, needsAll));
+  let placeHits = $derived(searching ? searchPlaces(placeIndex, q) : []);
+
+  // `?loc=` is the single source of truth. It is deliberately untracked by the
+  // loader, so changing it is a client-side navigation that reuses server data.
+  let focusKey = $derived(page.url.searchParams.get("loc"));
+  let focused = $derived(
+    focusKey ? (placeIndex.find((p) => p.key === focusKey) ?? null) : null,
   );
-  let needsMatched = $derived(searching ? needsAll.filter(matches) : needsAll);
+
+  function urlWithFocus(key: string | null): string {
+    const u = new URL(page.url);
+    if (key) u.searchParams.set("loc", key);
+    else u.searchParams.delete("loc");
+    return u.pathname + u.search;
+  }
+
+  function focusPlace(key: string | null, replace = false) {
+    // No-op when nothing would change: a same-URL `goto` without
+    // `replaceState` still pushes a history entry, so re-clicking the focused
+    // row would stack duplicates and make Back look broken.
+    if ((focusKey ?? null) === key) return;
+    // Rapid clicks overtake each other and SvelteKit rejects the loser with
+    // "navigation aborted". The last one still wins, but an unhandled
+    // rejection would surface as a console error.
+    goto(urlWithFocus(key), {
+      keepFocus: true,
+      noScroll: true,
+      replaceState: replace,
+    }).catch(() => {});
+  }
+
+  // Self-heal: a radius/window/place change rebuilds the index, and the focused
+  // key may no longer exist in it — as can a hand-edited or shared stale `loc`.
+  //
+  // No `placeIndex.length > 0` guard: `placeIndex` is derived synchronously from
+  // `data`, so it is never transiently unbuilt, and requiring a non-empty index
+  // meant a stale `loc` survived forever in exactly the states that have no
+  // index at all (eBird error, no key, no home — `view` is null). Idempotent
+  // because the repair drops `loc` from `page.url`, making this condition false.
+  $effect(() => {
+    if (focusKey && !focused) focusPlace(null, true);
+  });
+
+  // Focus REPLACES the species-name predicate rather than ANDing with it: no
+  // species is named "hugenot", so intersecting the two would empty both lists.
+  // The typed text stays put so the Places group and escape hatch remain usable.
+  let notableShown = $derived(
+    focused
+      ? speciesAtPlace(focused, notableAll)
+      : searching
+        ? notableAll.filter(matches)
+        : notableAll,
+  );
+  let needsMatched = $derived(
+    focused
+      ? speciesAtPlace(focused, needsAll)
+      : searching
+        ? needsAll.filter(matches)
+        : needsAll,
+  );
   let needsShown = $derived(
-    searching || showAllNeeds
+    searching || focused || showAllNeeds
       ? needsMatched
       : needsMatched.slice(0, NEEDS_PREVIEW),
   );
+
+  // Escape hatch when nothing in the loaded reports matches: re-run the real
+  // geocoder. Built with URL/URLSearchParams so a query containing `&`, `#` or
+  // existing percent-escapes cannot change the link's meaning.
+  let geocodeHref = $derived.by(() => {
+    const params = new URLSearchParams();
+    params.set("place", q.trim());
+    params.set("dist", String(data.dist));
+    params.set("back", String(data.back));
+    return `/?${params.toString()}`;
+  });
 
   function toggleExpand(code: string) {
     const next = new Set(expanded);
@@ -65,24 +155,65 @@
   function speciesHref(code: string): string {
     return speciesLinkHref(code, {
       backDays: data.back,
-      returnTo: data.returnTo,
+      returnTo,
       context: speciesContext,
     });
   }
-  let showPlaces = $derived((code: string) => searching || expanded.has(code));
+  // `focused` matters independently of `searching`: a cold or shared `?loc=`
+  // URL arrives with an empty query box, and without this the focused cards
+  // would render no place details at all.
+  let showPlaces = $derived(
+    (code: string) => searching || !!focused || expanded.has(code),
+  );
 
   // One-action reset to the saved home *and* the saved radius, keeping only the
   // chosen report window. Dropping `place` and `dist` is what restores both.
   let resetHomeHref = $derived(`/?back=${data.back}`);
 
+  // Null while focused. `ObsMap` always extends its bounds with `center` and
+  // counts entries rather than unique coordinates, so passing the focused
+  // coordinates *and* a marker at those same coordinates would score 2 points
+  // and run `fitBounds` on a zero-area box. With no center, one marker takes
+  // the single-point `setCenter` + `setZoom` path — a predictable focus zoom.
   let mapCenter = $derived(
-    data.location ? { lat: data.location.lat, lng: data.location.lng } : null,
+    focused
+      ? null
+      : data.location
+        ? { lat: data.location.lat, lng: data.location.lng }
+        : null,
   );
   // The map mirrors the visible lists: a pin per shown species by default, or
   // every place of each matched species while searching.
   let mapPoints = $derived.by<ObsPoint[]>(() => {
     if (!data.view || !data.location) return [];
-    const notableCodes = new Set(notableAll.map((n) => n.speciesCode));
+
+    // Focused: one aggregate marker for the place itself. Emitting a pin per
+    // species would stack them all on identical coordinates.
+    if (focused) {
+      const needCount = focused.needCodes.size;
+      const rareCount = focused.notableCodes.size;
+      return [
+        {
+          lat: focused.lat,
+          lng: focused.lng,
+          title: focused.locName,
+          sub: [
+            needCount ? `${needCount} ${needCount === 1 ? "need" : "needs"}` : "",
+            rareCount
+              ? `${rareCount} ${rareCount === 1 ? "rarity" : "rarities"}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          kind: rareCount > 0 ? "notable" : "need",
+        },
+      ];
+    }
+
+    // Dedup against the RENDERED notable list, not every notable species: once
+    // place filtering narrows the two lists independently, a species that is
+    // notable elsewhere but needed here would otherwise lose its need pin.
+    const notableCodes = new Set(notableShown.map((n) => n.speciesCode));
     const pts: ObsPoint[] = [
       {
         lat: data.location.lat,
@@ -245,13 +376,25 @@
     </section>
   {/if}
 
-  {#if data.view && mapCenter}
+  <!-- Guarded on the location, NOT on `mapCenter`: focus mode deliberately
+       passes a null center (see its comment) and the map must stay rendered. -->
+  {#if data.view && data.location}
     <section class="card map-card">
       <ObsMap points={mapPoints} center={mapCenter} />
       <p class="legend">
-        <span class="dot need"></span> need
-        <span class="dot notable"></span> notable
-        <span class="dot home"></span> selected location
+        {#if focused}
+          <!-- Must track the marker kind emitted above, which goes notable
+               (red) when the place has a rarity — a fixed `need` dot here
+               would show green beside a red pin. -->
+          <span
+            class="dot {focused.notableCodes.size > 0 ? 'notable' : 'need'}"
+          ></span>
+          focused place
+        {:else}
+          <span class="dot need"></span> need
+          <span class="dot notable"></span> notable
+          <span class="dot home"></span> selected location
+        {/if}
       </p>
     </section>
   {/if}
@@ -264,22 +407,85 @@
 
   {#if data.view}
     <section class="card search-card">
+      <label class="sr-only" for="home-search">Search birds or places</label>
       <input
+        id="home-search"
         class="search"
         type="search"
-        placeholder="Search species by name…"
+        placeholder="Search birds or places…"
         bind:value={q}
       />
       {#if searching}
+        <!-- While focused the bird lists show the PLACE's birds, not birds
+             matching the query, so only the place count is a match count. -->
         <span class="search-count"
-          >{notableShown.length + needsMatched.length} match{notableShown.length +
-            needsMatched.length ===
-          1
+          >{placeHits.length}
+          {placeHits.length === 1 ? "place" : "places"}{focused
             ? ""
-            : "es"}</span
+            : ` · ${notableShown.length + needsMatched.length} ${
+                notableShown.length + needsMatched.length === 1
+                  ? "bird"
+                  : "birds"
+              }`}</span
         >
       {/if}
     </section>
+
+    <p aria-live="polite" class="sr-only">
+      {#if focused}
+        Showing birds reported at {focused.locName}.
+      {:else if searching}
+        {placeHits.length} places and {notableShown.length + needsMatched.length}
+        birds match {q}.
+      {/if}
+    </p>
+
+    {#if focused}
+      <div class="focus-bar">
+        <span class="focus-chip">
+          📍 {focused.locName}
+        </span>
+        {#if data.view?.enrichPartial}
+          <!-- Absence of a species here is not proof it isn't there: some
+               per-species detail calls failed. Said where focus is visible,
+               since the collapsed Places list may not be showing it. -->
+          <span class="muted partial-note">some locations may be missing</span>
+        {/if}
+        <button
+          type="button"
+          class="focus-clear"
+          onclick={() => focusPlace(null)}
+        >
+          Clear place focus
+        </button>
+      </div>
+    {/if}
+
+    {#if searching}
+      <PlaceMatches
+        places={placeHits}
+        query={q}
+        focusedKey={focusKey}
+        {distanceUnit}
+        partial={data.view.enrichPartial}
+        onfocusplace={(p) => focusPlace(p.key)}
+      />
+      <!-- Shown even while focused: the typed text deliberately survives
+           focusing (§4a), so the user can retype and must still be offered the
+           geocoder when nothing in range matches. Gating this on `!focused`
+           made the escape hatch unreachable exactly when someone was searching
+           for somewhere new. -->
+      {#if placeHits.length === 0}
+        <section class="card">
+          <p class="muted">
+            No place in the loaded reports matches “{q}”{data.view.enrichPartial
+              ? " (and some locations may be missing)"
+              : ""} —
+            <a href={geocodeHref}>search it as a location instead →</a>
+          </p>
+        </section>
+      {/if}
+    {/if}
 
     <section class="card">
       <h2>
@@ -293,8 +499,15 @@
       </p>
       {#if data.view.notable.length === 0}
         <p class="muted">No notable reports in this window.</p>
-      {:else if searching && notableShown.length === 0}
-        <p class="muted">No notable reports match “{q}”.</p>
+      {:else if (searching || focused) && notableShown.length === 0}
+        <p class="muted">
+          {#if focused}
+            No notable reports at {focused.locName} in the reports loaded for
+            this view.
+          {:else}
+            No notable reports match “{q}”.
+          {/if}
+        </p>
       {/if}
       {#each notableShown as n (n.speciesCode)}
         <div class="obs">
@@ -375,7 +588,14 @@
 
     <section class="card">
       <h2>
-        {data.view.needs.length} needs reported here — {windowPhrase(data.back)}
+        {#if focused}
+          {needsMatched.length}
+          {needsMatched.length === 1 ? "need" : "needs"} at {focused.locName} — {windowPhrase(
+            data.back,
+          )}
+        {:else}
+          {data.view.needs.length} needs reported here — {windowPhrase(data.back)}
+        {/if}
         {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       {#if data.seenCount === 0}
@@ -384,8 +604,15 @@
           {#if !isViewer}Sync it in <a href="/settings">Settings</a>.{/if}
         </p>
       {/if}
-      {#if searching && needsMatched.length === 0}
-        <p class="muted">No needs match “{q}”.</p>
+      {#if (searching || focused) && needsMatched.length === 0}
+        <p class="muted">
+          {#if focused}
+            None of your needs were reported at {focused.locName} in the reports
+            loaded for this view.
+          {:else}
+            No needs match “{q}”.
+          {/if}
+        </p>
       {/if}
       {#each needsShown as n (n.speciesCode)}
         <div class="obs">
@@ -459,7 +686,9 @@
           </div>
         </div>
       {/each}
-      {#if !searching && needsMatched.length > NEEDS_PREVIEW}
+      <!-- `needsShown` already returns everything while focused, so without
+           `!focused` this button can appear and then do nothing. -->
+      {#if !searching && !focused && needsMatched.length > NEEDS_PREVIEW}
         <button class="more" onclick={() => (showAllNeeds = !showAllNeeds)}>
           {showAllNeeds
             ? "Show fewer"
@@ -641,6 +870,52 @@
     color: #fff;
     font-weight: 600;
   }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .focus-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 12px;
+  }
+  .focus-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 8px 16px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .partial-note {
+    font-size: 0.83rem;
+  }
+  .focus-clear {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
   .search-card {
     display: flex;
     align-items: center;
@@ -649,7 +924,8 @@
   .search {
     flex: 1;
     min-width: 0;
-    min-height: 44px;
+    /* cs.md:82 — >=48px tap targets. Was 44px. */
+    min-height: 48px;
     padding: 8px 12px;
     border: 1px solid var(--border);
     border-radius: 8px;

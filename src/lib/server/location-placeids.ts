@@ -1,5 +1,6 @@
 import { env } from "$env/dynamic/private";
 import { query } from "$lib/db";
+import { placeNameScore } from "$lib/place-name";
 
 export interface EbirdLocationRef {
   locId?: string | null;
@@ -105,35 +106,13 @@ export async function googlePlaceIdsForLocIds(
   );
 }
 
-function normalizeName(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/\b(usa|us|united states|the|at|of|and)\b/g, " ")
-    .replace(/\b[a-z]{2}-[a-z]{2}\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function tokens(s: string): string[] {
-  return normalizeName(s)
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
-}
-
-export function placeNameScore(query: string, candidate: string): number {
-  const q = tokens(query);
-  const c = tokens(candidate);
-  if (q.length === 0 || c.length === 0) return 0;
-  const cSet = new Set(c);
-  const exact = normalizeName(query) === normalizeName(candidate) ? 1 : 0;
-  const overlap = q.filter(
-    (t) => cSet.has(t) || c.some((ct) => ct.includes(t) || t.includes(ct)),
-  ).length;
-  const coverage = overlap / q.length;
-  const reverse = overlap / c.length;
-  return Math.max(exact, coverage * 0.75 + reverse * 0.25);
-}
+/**
+ * Moved to `$lib/place-name` so the browser can share the matcher — this module
+ * imports `$lib/db` and can never be loaded client-side. Re-exported here
+ * because `placeNameScore` is part of this module's public surface (and its
+ * behavior is pinned by golden cases in this module's test).
+ */
+export { placeNameScore };
 
 export function haversineMeters(
   aLat: number,

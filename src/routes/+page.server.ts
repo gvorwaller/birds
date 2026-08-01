@@ -14,7 +14,6 @@ import {
   radiusSelectOptionsKm,
   selectEffectiveRadiusKm,
 } from "$lib/near-me-radius";
-import { homeUrlWithQuery } from "$lib/return-link";
 
 const PLACE_SUGGESTIONS = [
   "Jacksonville, FL",
@@ -31,6 +30,16 @@ const PLACE_SUGGESTIONS = [
  * empty results) returns the *same* shape. There is deliberately no early
  * return: a brand-new user with neither a home nor a key still gets the
  * at-a-glance card and the setup guidance.
+ *
+ * INVARIANT — read the query ONLY via `url.searchParams.get(...)`, one key at a
+ * time. SvelteKit tracks `searchParams.get/has/getAll` per key, but any read of
+ * `url.search`/`href`/`pathname` marks the *whole* URL as a dependency, so this
+ * loader would then re-run — eBird fan-out and all — on any param change,
+ * including ones it does not use. `?loc=` (the Home place-focus param) is
+ * deliberately untracked so focusing a place is a client-side navigation that
+ * reuses this data. The species `returnTo` is minted in `+page.svelte` from
+ * `page.url` for exactly this reason; it used to be built here from
+ * `url.search`, which is what forced the re-run.
  */
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!; // the data owner this account reads
@@ -134,7 +143,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     needsLocation: !location,
     hasApiKey: !!apiKey,
     hasGallery,
-    returnTo: homeUrlWithQuery(url.search),
     // One authoritative life-list count for every state. `view.seenCount` is
     // deliberately not surfaced separately so the two cannot disagree.
     seenCount: Number(seenCountRow.rows[0]?.n ?? 0),

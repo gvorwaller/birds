@@ -27,6 +27,14 @@ export interface SpeciesPlace {
   totalCount: number;
   distanceKm: number | null;
   googlePlaceId: string | null;
+  /**
+   * Verified eBird hotspot. Annotated here rather than derived on the client
+   * from `bestPlaces`: that list is built from the pre-enrichment *recent needs*
+   * feed only, so it omits notable-only places and places found by per-species
+   * enrichment — a client-side derivation would silently drop the badge from
+   * valid places.
+   */
+  isHotspot: boolean;
 }
 
 export interface SpeciesActivity {
@@ -70,6 +78,13 @@ export interface TargetsView {
   notable: NotableEntry[];
   bestPlaces: PlaceRanking[];
   stale: boolean;
+  /**
+   * At least one per-species detail call failed, so some needs carry only their
+   * base locations. Distinct from `stale` (which means cached data was served):
+   * this view is *incomplete*, and place-based UI must soften its "not found"
+   * copy accordingly rather than asserting a place has no reports.
+   */
+  enrichPartial: boolean;
   fetchedAt: Date;
   seenCount: number;
 }
@@ -149,6 +164,7 @@ export function aggregate(
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number>,
   locationPlaceIds: Map<string, string> = new Map(),
+  hotspotLocIds: Set<string> = new Set(),
 ): Map<string, SpeciesActivity> {
   const bySpecies = new Map<string, SpeciesActivity>();
   // Per-species accumulator of distinct places, keyed by speciesCode → locKey.
@@ -208,6 +224,7 @@ export function aggregate(
         totalCount: 0,
         distanceKm: null,
         googlePlaceId: null,
+        isHotspot: !!o.locId && hotspotLocIds.has(o.locId),
       };
       pmap.set(key, pl);
     }
@@ -279,11 +296,17 @@ async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   distKm: number,
   back: number,
   photoCounts: Map<string, number>,
-): Promise<{ needs: T[]; stale: boolean }> {
-  if (needs.length === 0) return { needs, stale: false };
+  hotspotLocIds: Set<string> = new Set(),
+): Promise<{ needs: T[]; stale: boolean; partial: boolean }> {
+  if (needs.length === 0) return { needs, stale: false, partial: false };
 
   const dist = Math.min(Math.max(distKm, 1), 50);
   let stale = false;
+  // A per-species detail call that fails leaves that need with only its base
+  // locations. The view is then incomplete in a way `stale` does not capture,
+  // so it is reported separately — UI built on `places[]` must not claim a
+  // place is absent when the request for it simply failed.
+  let partial = false;
   const enriched = await mapWithConcurrency(
     needs,
     SPECIES_DETAIL_CONCURRENCY,
@@ -307,15 +330,24 @@ async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
           origin,
           photoCounts,
           detailedPlaceIds,
+          hotspotLocIds,
         ).get(need.speciesCode);
-        return detailed ? ({ ...need, ...detailed } as T) : need;
+        if (!detailed) {
+          // The call succeeded but returned nothing for this species (empty or
+          // cache-skewed payload). The need keeps only its base locations, so
+          // the view is just as incomplete as on a thrown failure.
+          partial = true;
+          return need;
+        }
+        return { ...need, ...detailed } as T;
       } catch {
+        partial = true;
         return need;
       }
     },
   );
 
-  return { needs: enriched, stale };
+  return { needs: enriched, stale, partial };
 }
 
 async function buildView(
@@ -329,7 +361,13 @@ async function buildView(
 ): Promise<TargetsView> {
   const seen = await seenSet(userId);
 
-  const recentAgg = aggregate(recent.data, home, photoCounts, locationPlaceIds);
+  const recentAgg = aggregate(
+    recent.data,
+    home,
+    photoCounts,
+    locationPlaceIds,
+    hotspotLocIds,
+  );
   const needs = [...recentAgg.values()]
     .filter((a) => !seen.has(a.speciesCode))
     .sort(sortNeedsByActivity);
@@ -339,6 +377,7 @@ async function buildView(
     home,
     photoCounts,
     locationPlaceIds,
+    hotspotLocIds,
   );
   const notableList = [...notableAgg.values()]
     .map((a) => ({ ...a, seen: seen.has(a.speciesCode) }))
@@ -355,6 +394,9 @@ async function buildView(
       hotspotLocIds,
     ),
     stale: recent.stale || notable.stale,
+    // The base view runs no per-species detail calls, so nothing can be
+    // partially enriched yet; `geoTargets` overrides this after enrichment.
+    enrichPartial: false,
     fetchedAt: recent.fetchedAt,
     seenCount: seen.size,
   };
@@ -426,11 +468,13 @@ export async function geoTargets(
     dist,
     back,
     photoCounts,
+    hotspots.locIds,
   );
   return {
     ...view,
     needs: enriched.needs.sort(sortNeedsByActivity),
     stale: view.stale || enriched.stale || hotspots.stale,
+    enrichPartial: enriched.partial,
   };
 }
 
