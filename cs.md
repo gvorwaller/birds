@@ -116,6 +116,19 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - `BIRDS_ENV=test` required by guard scripts; scripts refuse reserved ports (5433/5434/5435) and the prod DB name
 - Never seed real eBird credentials into the test DB; gallery sync in tests uses fixture JSON, never live fetches
 - Test dev server: `npx vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test`
+- **Restoring a prod snapshot into `birds_test` 500s every page until you re-key the eBird
+  secrets.** `user_ebird.api_key_enc` (and stored logins) is ciphertext bound to *prod's*
+  `EBIRD_KEY_SECRET`; `.env.test` holds a different one, so `decryptSecret` throws and `GET /`
+  returns a bare `<h1>500</h1>` — it reads like a code regression, not a data problem. Trace:
+  `Unsupported state or unable to authenticate data` → `decryptSecret` (`src/lib/server/crypto.ts`)
+  → `getEbirdApiKey` (`src/lib/server/ebird.ts`). To confirm it isn't your diff: `git stash` and
+  reload — if HEAD 500s too, it's this. Fix by re-encrypting a placeholder key per user under the
+  test secret and clearing stored logins (lists then come from the `ebird_cache` fail-soft path, so
+  **no live eBird traffic** — fine for UI work, useless for real latency or data-shape work). Using
+  prod's real secret instead does exercise live eBird, but then the sacred rules above apply to
+  every page load.
+- **Snapshot fixtures age.** Anything freshness-dependent (the `cached` badge, stale-vs-fresh
+  windows) flips as wall-clock passes the captured data. Re-seed rather than trusting those states.
 
 ### Migrations
 - DDL changes go in `backend/db/migrations/`, never inline in app code
