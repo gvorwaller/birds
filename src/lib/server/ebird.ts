@@ -194,6 +194,8 @@ export interface EbirdHotspot {
 	lng: number;
 	numSpeciesAllTime?: number;
 	latestObsDt?: string;
+	/** State/province region code, e.g. 'US-ME' (present in the API payload). */
+	subnational1Code?: string;
 }
 
 const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely
@@ -211,6 +213,28 @@ export async function hotspotsNear(
 	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, () =>
 		ebirdFetch<EbirdHotspot[]>(
 			`/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`,
+			apiKey
+		)
+	);
+}
+
+export interface EbirdRegion {
+	code: string; // e.g. 'US-FL' (subnational1), 'US-FL-057' (subnational2)
+	name: string;
+}
+
+const REGION_TTL_MIN = 43_200; // 30 days — political subdivisions barely change
+
+/** Child regions of a parent (ref/region/list): states of a country, counties of a state. */
+export async function subregions(
+	apiKey: string,
+	parentRegion: string,
+	level: 'subnational1' | 'subnational2'
+): Promise<CachedResult<EbirdRegion[]>> {
+	const parent = parentRegion.trim();
+	return cachedFetch(`regions:${level}:${parent}`, REGION_TTL_MIN, () =>
+		ebirdFetch<EbirdRegion[]>(
+			`/ref/region/list/${level}/${encodeURIComponent(parent)}?fmt=json`,
 			apiKey
 		)
 	);

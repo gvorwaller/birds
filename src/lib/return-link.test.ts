@@ -62,9 +62,29 @@ describe("safeReturnTo", () => {
     });
   });
 
-  it("labels other local routes generically", () => {
+  it("names known origin pages on the back link", () => {
+    expect(safeReturnTo("/forecast?place=Blue+Hill%2C+ME&month=8")).toEqual({
+      href: "/forecast?place=Blue+Hill%2C+ME&month=8",
+      label: "Forecast",
+    });
+    // Most-specific prefix wins: /forecast/species is not labeled "Forecast".
+    expect(safeReturnTo("/forecast/species?species=y00678&region=US-FL")).toEqual({
+      href: "/forecast/species?species=y00678&region=US-FL",
+      label: "Species forecast",
+    });
+    expect(safeReturnTo("/forecast/data")).toEqual({
+      href: "/forecast/data",
+      label: "Forecast data",
+    });
     expect(safeReturnTo("/trips/4")).toEqual({
       href: "/trips/4",
+      label: "Trips",
+    });
+  });
+
+  it("labels unknown local routes generically", () => {
+    expect(safeReturnTo("/settings")).toEqual({
+      href: "/settings",
       label: "Back",
     });
   });

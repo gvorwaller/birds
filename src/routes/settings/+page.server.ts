@@ -8,6 +8,7 @@ import {
   parseLifeListCsv,
   syncLifeListFromEbird,
   testEbirdLogin,
+  invalidateEbirdSession,
   EbirdLoginError,
 } from "$server/ebird-account";
 import { rematchPhotoLinks, syncGallery } from "$server/gallery";
@@ -200,6 +201,7 @@ export const actions: Actions = {
 			  WHERE user_id = $1`,
       [userId, encryptSecret(username), encryptSecret(password)],
     );
+    invalidateEbirdSession(userId);
     return {
       ok: true as const,
       message: "eBird account credentials saved (encrypted).",
@@ -230,6 +232,7 @@ export const actions: Actions = {
 			  WHERE user_id = $1`,
       [userId],
     );
+    invalidateEbirdSession(userId);
     return { ok: true as const, message: "eBird account credentials removed." };
   },
 

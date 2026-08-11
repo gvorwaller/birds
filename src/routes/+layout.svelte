@@ -15,6 +15,7 @@
 	const primaryItems = [
 		{ href: '/', label: 'Home', ico: '🏠' },
 		{ href: '/trips', label: 'Trips', ico: '🗺️' },
+		{ href: '/forecast', label: 'Forecast', ico: '📅' },
 		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
 	const ownerMenuItems = [{ href: '/settings', label: 'Settings', ico: '⚙️' }];

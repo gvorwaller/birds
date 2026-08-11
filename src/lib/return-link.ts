@@ -37,6 +37,15 @@ export interface ReturnLink {
  * still honored verbatim so old links land where the user expects, but it is
  * presented as "Home" because that is what the route is now called.
  */
+/** Known origin pages get a real name on the back link instead of "Back". */
+const LABELED_PATHS: [path: string, label: string][] = [
+  ["/forecast/species", "Species forecast"],
+  ["/forecast/data", "Forecast data"],
+  ["/forecast", "Forecast"],
+  ["/trips", "Trips"],
+  ["/photos", "Photos"],
+];
+
 export function safeReturnTo(raw: string | null | undefined): ReturnLink {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
     return { href: HOME_PATH, label: HOME_LABEL };
@@ -46,5 +55,12 @@ export function safeReturnTo(raw: string | null | undefined): ReturnLink {
     raw.startsWith("/?") ||
     raw === LEGACY_HOME_PATH ||
     raw.startsWith(`${LEGACY_HOME_PATH}?`);
-  return { href: raw, label: isHome ? HOME_LABEL : "Back" };
+  if (isHome) return { href: raw, label: HOME_LABEL };
+  // Most-specific prefix first (the list is ordered that way).
+  for (const [path, label] of LABELED_PATHS) {
+    if (raw === path || raw.startsWith(`${path}?`) || raw.startsWith(`${path}/`)) {
+      return { href: raw, label };
+    }
+  }
+  return { href: raw, label: "Back" };
 }

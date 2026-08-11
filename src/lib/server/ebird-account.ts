@@ -152,6 +152,112 @@ export async function testEbirdLogin(userId: number): Promise<void> {
 	await casLogin(decryptSecret(row.login_username_enc), decryptSecret(row.login_password_enc));
 }
 
+// ---------------------------------------------------------------------------
+// Authenticated ebird.org fetch service (used by barchart.ts). The cookie jar
+// and CAS internals stay module-private on purpose — callers get exactly one
+// narrow capability: "GET this ebird.org URL as the user's logged-in session."
+// ---------------------------------------------------------------------------
+
+const SESSION_MEMO_MS = 15 * 60_000;
+const sessionMemo = new Map<number, { jar: CookieJar; at: number }>();
+// Single-flight: concurrent callers share one CAS login instead of stacking them.
+const sessionInFlight = new Map<number, Promise<CookieJar>>();
+
+const AUTH_FETCH_ALLOWED_HOSTS = new Set(['ebird.org', 'www.ebird.org']);
+
+async function loginFromStoredCreds(userId: number): Promise<CookieJar> {
+	const creds = await query<{ login_username_enc: string | null; login_password_enc: string | null }>(
+		'SELECT login_username_enc, login_password_enc FROM user_ebird WHERE user_id = $1',
+		[userId]
+	);
+	const row = creds.rows[0];
+	if (!row?.login_username_enc || !row.login_password_enc) {
+		throw new EbirdLoginError('No eBird account credentials saved — add them in Settings.');
+	}
+	return casLogin(decryptSecret(row.login_username_enc), decryptSecret(row.login_password_enc));
+}
+
+function getSession(userId: number, forceFresh = false): Promise<CookieJar> {
+	if (!forceFresh) {
+		const memo = sessionMemo.get(userId);
+		if (memo && Date.now() - memo.at < SESSION_MEMO_MS) return Promise.resolve(memo.jar);
+		const inFlight = sessionInFlight.get(userId);
+		if (inFlight) return inFlight;
+	}
+	const p = loginFromStoredCreds(userId)
+		.then((jar) => {
+			sessionMemo.set(userId, { jar, at: Date.now() });
+			return jar;
+		})
+		.finally(() => {
+			sessionInFlight.delete(userId);
+		});
+	sessionInFlight.set(userId, p);
+	return p;
+}
+
+/** Drop the memoized session. Call on auth failure and when credentials change. */
+export function invalidateEbirdSession(userId: number): void {
+	sessionMemo.delete(userId);
+}
+
+/**
+ * eBird answered on the right host but with an HTTP failure (429, 5xx, …).
+ * NOT an authentication problem — callers must not blame credentials or
+ * trigger a re-login for these (CODEX8 #3).
+ */
+export class EbirdUpstreamError extends Error {
+	constructor(
+		message: string,
+		public status: number
+	) {
+		super(message);
+		this.name = 'EbirdUpstreamError';
+	}
+}
+
+/**
+ * Fetch an ebird.org URL as the user's logged-in web session and return the
+ * body text. Detects the session landing on the CAS login page (redirect off
+ * the ebird.org host), evicts the memoized session, and retries with a fresh
+ * login exactly once before failing with EbirdLoginError. An HTTP failure on
+ * the requested host throws EbirdUpstreamError immediately — no re-login, no
+ * credential blame.
+ */
+export async function fetchAuthenticatedEbird(userId: number, url: string): Promise<string> {
+	const target = new URL(url);
+	if (!AUTH_FETCH_ALLOWED_HOSTS.has(target.host)) {
+		throw new Error(`fetchAuthenticatedEbird refuses non-eBird host: ${target.host}`);
+	}
+
+	const attempt = async (jar: CookieJar): Promise<string | null> => {
+		const res = await followRedirects(await fetchWithJar(url, jar), jar);
+		// An expired/invalid session 302s to secure.birds.cornell.edu — a final
+		// landing off the requested host means "not authenticated".
+		if (new URL(res.url).host !== target.host) return null;
+		// Right host, HTTP failure: an upstream problem, not an auth problem.
+		if (!res.ok) {
+			throw new EbirdUpstreamError(
+				`eBird returned HTTP ${res.status} for this request${res.status === 429 ? ' (rate limited) — try again later' : ''}.`,
+				res.status
+			);
+		}
+		return res.text();
+	};
+
+	let body = await attempt(await getSession(userId));
+	if (body == null) {
+		invalidateEbirdSession(userId);
+		body = await attempt(await getSession(userId, true));
+	}
+	if (body == null) {
+		throw new EbirdLoginError(
+			'eBird session could not authenticate this request — check the saved eBird login in Settings.'
+		);
+	}
+	return body;
+}
+
 interface ParsedLifeList {
 	rows: { comName: string; sciName: string | null; firstSeen: string | null }[];
 }
