@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  COUNTY_BATCH,
   FORECAST_HOTSPOT_LIMIT,
   MIN_MONTH_N,
   bestMonth,
   buildForecastSpecies,
+  coverageFromMeta,
   monthCurve,
   monthWeeks,
   monthlyStat,
+  nextUncachedCounties,
   selectForecastHotspots,
   type MonthStat,
 } from "./forecast";
@@ -267,6 +270,62 @@ describe("buildForecastSpecies", () => {
     );
     expect(out[0].lowSample).toBe(true);
     expect(out[0].topHotspots[0].lowSample).toBe(true);
+  });
+
+  it("annual rollover: stale rows count as remaining, never as complete", () => {
+    // CODEX8 P1: after a year rollover every stored row is stale — coverage
+    // must re-enable the refresh path, and a stale-plus-failed code must not
+    // be double counted (current + failed can never exceed total).
+    const codes = ["A", "B", "C", "D"];
+    const meta = new Map([
+      ["A", { endYear: 2025 }], // current
+      ["B", { endYear: 2024 }], // stale
+      ["C", { endYear: 2024 }], // stale AND recently failed refresh
+    ]); // D: missing
+    const cov = coverageFromMeta(codes, meta, new Set(["C", "D"]), 2025);
+    expect(cov.current).toEqual(["A"]);
+    expect(cov.stale).toEqual(["B", "C"]);
+    expect(cov.missing).toEqual(["D"]);
+    expect(cov.failed).toEqual(["C", "D"]);
+    // B is the only refreshable code not sitting out a cooldown.
+    expect(cov.remaining).toBe(1);
+    expect(cov.current.length + cov.failed.length).toBeLessThanOrEqual(
+      codes.length,
+    );
+    // All-stale world (the rollover moment): everything is remaining.
+    const allStale = coverageFromMeta(
+      ["A", "B"],
+      new Map([
+        ["A", { endYear: 2024 }],
+        ["B", { endYear: 2024 }],
+      ]),
+      new Set(),
+      2025,
+    );
+    expect(allStale.current).toEqual([]);
+    expect(allStale.remaining).toBe(2);
+  });
+
+  it("resumable county batching excludes cached AND failed, so the loop terminates", () => {
+    const counties = Array.from({ length: 30 }, (_, i) => ({
+      code: `US-FL-${String(i).padStart(3, "0")}`,
+      name: `County ${i}`,
+    }));
+    const cached = new Set(counties.slice(0, 10).map((c) => c.code));
+    const failed = new Set(counties.slice(10, 14).map((c) => c.code));
+    const batch = nextUncachedCounties(counties, cached, failed, COUNTY_BATCH);
+    expect(batch).toHaveLength(COUNTY_BATCH);
+    for (const c of batch) {
+      expect(cached.has(c.code)).toBe(false);
+      expect(failed.has(c.code)).toBe(false);
+    }
+    // All covered or failed → empty batch, i.e. the loop's terminal state.
+    const allDone = new Set(counties.map((c) => c.code));
+    expect(nextUncachedCounties(counties, allDone, new Set(), 12)).toEqual([]);
+    const allButFailed = new Set(counties.slice(0, 26).map((c) => c.code));
+    expect(
+      nextUncachedCounties(counties, allButFailed, failed, 12),
+    ).toEqual(counties.slice(26));
   });
 
   it("drops species with zero area frequency and handles empty input", () => {

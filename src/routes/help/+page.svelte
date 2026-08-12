@@ -119,6 +119,74 @@
 			</div>
 		{/if}
 
+		<!-- Forecast -->
+		<button
+			class="toggle"
+			class:open={open === 'forecast'}
+			aria-expanded={open === 'forecast'}
+			onclick={() => toggle('forecast')}
+		>
+			<span class="ico">📅</span>
+			<span class="title">Forecast (best months &amp; places)</span>
+			<span class="chev">{open === 'forecast' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'forecast'}
+			<div class="body">
+				<p class="lead">
+					Forecast answers two planning questions from <em>prior years'</em>
+					eBird checklists (roughly the last ten complete years), not just the
+					last 30 days: <em>which of my needed birds are likely near a place in
+					a given month</em>, and <em>where and when is a particular species
+					most findable in a state</em>.
+				</p>
+				<h3>Forecast (place + month)</h3>
+				<ul>
+					<li>
+						Pick a place and a month — it ranks your needed species by how
+						often they appeared on checklists at nearby hotspots in that month,
+						with each species' best specific hotspots.
+					</li>
+					<li>
+						The first visit to a new area needs a one-time
+						<strong>Load data</strong> (a handful of eBird requests); after
+						that it's instant and only refreshes about once a year.
+					</li>
+				</ul>
+				<h3>Species forecast (species + state)</h3>
+				<ul>
+					<li>
+						Pick a species and a state for a month-by-month chart and a best
+						month. <strong>Analyze counties</strong> then ranks every county
+						(one eBird request each, resumable), and tapping a county ranks its
+						top hotspots on a map.
+					</li>
+				</ul>
+				<h3>Reading the numbers</h3>
+				<ul>
+					<li>
+						"34% of checklists (n=1,240)" means the species appeared on 34% of
+						the 1,240 checklists submitted there in that month across the
+						years — observed frequency, never a fabricated probability.
+					</li>
+					<li>
+						A <strong>†</strong> marks small samples (fewer than 40
+						checklists) — treat those numbers loosely; they never decide a
+						"best month".
+					</li>
+					<li>
+						<strong>Forecast data</strong> (linked from both pages) lists every
+						loaded state and hotspot with load dates, plus failed loads with a
+						retry. Note: eBird's bar-chart export can't tell provisional or
+						escaped-exotic records apart, so those are included in frequencies.
+					</li>
+					<li>
+						Loading data signs in to eBird as you, so each user needs their own
+						eBird login saved in Settings.
+					</li>
+				</ul>
+			</div>
+		{/if}
+
 		<!-- Targets -->
 		<button
 			class="toggle"

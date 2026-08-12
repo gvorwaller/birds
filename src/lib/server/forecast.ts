@@ -384,6 +384,134 @@ export async function forecastNeedsNear(
 	};
 }
 
+// ---------------------------------------------------------------------------
+// Mode B "where": county ranking + hotspot drill-down (td-854207 Phase 3)
+// ---------------------------------------------------------------------------
+
+/** Counties fetched per analyzeCounties invocation (matches FETCH_BATCH_MAX). */
+export const COUNTY_BATCH = 12;
+/** Hotspots analyzed per county drill-down. */
+export const COUNTY_HOTSPOT_LIMIT = 6;
+
+/**
+ * Coverage of a code list against stored metadata, with ANNUAL-WINDOW
+ * semantics shared by loaders and actions (CODEX8 P1): a row is only
+ * "current" when its endYear reaches the newest complete year; older rows
+ * are "stale" — usable for fail-soft ranking but still needing a refresh, so
+ * they count toward `remaining` and re-enable the analyze/refresh actions
+ * after a year rollover. `failed` only counts non-current codes, so a
+ * stale-row-plus-failed-refresh is never double-counted and
+ * current + failed never exceeds the total. Pure.
+ */
+export interface LocCoverage {
+	current: string[];
+	stale: string[];
+	missing: string[];
+	/** Recent failures among non-current codes (subset of stale ∪ missing). */
+	failed: string[];
+	/** Codes needing a fetch and not sitting out a failure cooldown. */
+	remaining: number;
+}
+
+export function coverageFromMeta(
+	codes: readonly string[],
+	meta: ReadonlyMap<string, { endYear: number }>,
+	recentFailed: ReadonlySet<string>,
+	newestCompleteYear: number
+): LocCoverage {
+	const current: string[] = [];
+	const stale: string[] = [];
+	const missing: string[] = [];
+	const failed: string[] = [];
+	for (const c of codes) {
+		const m = meta.get(c);
+		if (m && m.endYear >= newestCompleteYear) {
+			current.push(c);
+			continue;
+		}
+		if (recentFailed.has(c)) failed.push(c);
+		if (m) stale.push(c);
+		else missing.push(c);
+	}
+	return {
+		current,
+		stale,
+		missing,
+		failed,
+		remaining: stale.length + missing.length - failed.length
+	};
+}
+
+/**
+ * Next batch of counties to fetch: not stored yet and not recently failed —
+ * failed counties must not re-enter every round or the resumable loop never
+ * reaches remaining === 0 (CODEX1 #7). Pure.
+ */
+export function nextUncachedCounties(
+	all: readonly { code: string; name: string }[],
+	cached: ReadonlySet<string>,
+	excludedFailed: ReadonlySet<string>,
+	batch: number
+): { code: string; name: string }[] {
+	return all
+		.filter((c) => !cached.has(c.code) && !excludedFailed.has(c.code))
+		.slice(0, batch);
+}
+
+/** One location's checklist-weighted stat for a species in a month. */
+export interface RankedLoc {
+	code: string;
+	name: string;
+	/** Fraction of the location's month checklists reporting the species. */
+	freq: number;
+	/** Month checklist count at the location. */
+	n: number;
+	lowSample: boolean;
+}
+
+/**
+ * Checklist-weighted month frequency of ONE species across many stored
+ * locations (counties or hotspots), ranked. The weighting unnests each
+ * location's weekly sample sizes so a 1-checklist week never counts like a
+ * 10,000-checklist week, and absent sparse rows still contribute their
+ * checklists to the denominator (CODEX1 #2). Locations without stored data
+ * simply don't appear — callers report coverage separately.
+ */
+export async function rankLocsForSpeciesMonth(
+	locCodes: readonly string[],
+	speciesCode: string,
+	month: number
+): Promise<RankedLoc[]> {
+	if (locCodes.length === 0) return [];
+	const { from, to } = monthWeeks(month);
+	const r = await query<{ loc_code: string; loc_name: string; freq: number | null; n: number }>(
+		`SELECT ff.loc_code, ff.loc_name,
+		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
+		        SUM(ss.n)::float8 AS n
+		   FROM frequency_fetch ff
+		   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+		     ON ss.week BETWEEN $2 AND $3
+		   LEFT JOIN species_frequency sf
+		     ON sf.loc_code = ff.loc_code AND sf.species_code = $4 AND sf.week = ss.week
+		  WHERE ff.loc_code = ANY($1)
+		  GROUP BY ff.loc_code, ff.loc_name`,
+		[locCodes, from, to, speciesCode]
+	);
+	return r.rows
+		.map((row) => ({
+			code: row.loc_code,
+			name: row.loc_name,
+			freq: Number(row.freq ?? 0),
+			n: Number(row.n),
+			lowSample: Number(row.n) < MIN_MONTH_N
+		}))
+		.sort((a, b) => {
+			if (a.lowSample !== b.lowSample) return a.lowSample ? 1 : -1;
+			if (b.freq !== a.freq) return b.freq - a.freq;
+			return a.name.localeCompare(b.name);
+		});
+}
+
 /**
  * Month curve for one species at one stored location (region or hotspot).
  * Returns null when no barchart data has been fetched for the location at all

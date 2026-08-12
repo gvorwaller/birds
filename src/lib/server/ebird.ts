@@ -200,6 +200,17 @@ export interface EbirdHotspot {
 
 const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely
 
+/** All eBird hotspots in a region (ref/hotspot/{regionCode}) — e.g. one county. */
+export async function hotspotsInRegion(
+	apiKey: string,
+	regionCode: string
+): Promise<CachedResult<EbirdHotspot[]>> {
+	const region = regionCode.trim();
+	return cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN, () =>
+		ebirdFetch<EbirdHotspot[]>(`/ref/hotspot/${encodeURIComponent(region)}?fmt=json`, apiKey)
+	);
+}
+
 /** eBird hotspots within distKm of a point (ref/hotspot/geo). */
 export async function hotspotsNear(
 	apiKey: string,

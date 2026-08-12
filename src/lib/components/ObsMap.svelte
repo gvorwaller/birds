@@ -150,7 +150,10 @@
         center: { lat: start.lat, lng: start.lng },
         zoom: startPts.length ? 10 : 6,
         mapId: MAP_ID || undefined,
-        gestureHandling: "greedy",
+        // "cooperative": two-finger pan on touch, ctrl/cmd+scroll zoom on
+        // desktop — the map stays contained and never hijacks page scrolling
+        // (7/30 plan verification matrix; CODEX8 #7).
+        gestureHandling: "cooperative",
         zoomControlOptions: { position: gmaps.ControlPosition.RIGHT_BOTTOM },
         streetViewControl: false,
         mapTypeControl: false,
@@ -203,8 +206,8 @@
     top: 8px;
     left: 8px;
     z-index: 2;
-    min-height: 0;
-    padding: 6px 10px;
+    min-height: 48px;
+    padding: 6px 12px;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 6px;
