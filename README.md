@@ -1,7 +1,8 @@
 # birds
 
-Personal birding app — life-list **needs/targets**, a **trip planner** with
-road-aware route optimization, and a link-out **photo gallery** — live at
+Personal birding app — life-list **needs/targets**, a multi-year **forecast**
+("which birds, where, and in what month"), a **trip planner** with road-aware
+route optimization, and a link-out **photo gallery** — live at
 **https://birds.gaylon.photos**.
 
 Built with SvelteKit 2 (Svelte 5 runes) + adapter-node + TypeScript, PostgreSQL 17,
@@ -15,12 +16,13 @@ Phases 1–3 and most of Phase 4 are shipped and deployed:
 
 - **Auth** — admin owner (argon2id) + a shared read-only `family` viewer login.
 - **eBird** — per-user API key + credentialed life-list sync (Cornell CAS).
-- **Home** — one screen (`/`) for needs around your saved home or any searched place: place search, saved search radius, "rare this week" notables, map, best-places ranking, and a life-list/photo summary. The former `/targets` route redirects here, query intact.
+- **Home** — one screen (`/`) for needs around your saved home or any searched place: place search, saved search radius, notable reports, map, best-places ranking, and a life-list/photo summary. The former `/targets` route redirects here, query intact.
+- **Forecast** (`/forecast`, td-854207) — trip planning from ~10 complete years of eBird checklist frequencies, stored locally after owner-triggered loads of eBird's bar-chart export (fetched via the same credentialed CAS session as life-list sync; politely throttled, cached ~a year). Two modes in one tabbed workspace: **"What can I see?"** (place + month → needed species banded Likely / Possible / long shots, with each species' best hotspots) and **"Where can I find this bird?"** (species + state → month curve, county ranking, hotspot drill-down on a map). `/forecast/data` inventories what's loaded (state → county → hotspot, collapsible) with refresh/retry. Frequency data is a global cache; the needs overlay is per user, and every non-viewer user needs their own eBird credentials to load new areas.
 - **Gallery** — link-out to the public gaylon.photos birds collection with species matching + overrides.
 - **Trips planner** — place/hotspot search, per-stop live needs counts, the real road route on the map, driving-distance route optimization (Google Directions), and Markdown export.
 - **Maps** — Google Maps throughout; tap any spotting location for Map + Directions; photo GPS map.
 - **Trips export API** — authenticated read-only JSON endpoint for importing Birds trip stops into the Trips app.
-- **Ops** — admin/tools (cache flush, counts), PWA (installable/offline shell), DB backup script.
+- **Ops** — admin/tools (cache flush, counts), installable PWA (the offline shell was deliberately neutralized — see commit 3de8665; the service worker is inert), `Cache-Control: private, no-store` on all dynamic responses, DB backup script.
 
 Remaining/future work is tracked in `td` (P3) and the plan's "Future items."
 

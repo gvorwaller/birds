@@ -135,16 +135,21 @@
 				<p class="lead">
 					Forecast answers two planning questions from <em>prior years'</em>
 					eBird checklists (roughly the last ten complete years), not just the
-					last 30 days: <em>which of my needed birds are likely near a place in
-					a given month</em>, and <em>where and when is a particular species
-					most findable in a state</em>.
+					last 30 days. The two tabs at the top are the two questions —
+					<strong>"What can I see?"</strong> and
+					<strong>"Where can I find this bird?"</strong> — and switching tabs
+					keeps your month and remembers each side's last place or species.
 				</p>
-				<h3>Forecast (place + month)</h3>
+				<h3>What can I see? (place + month)</h3>
 				<ul>
 					<li>
-						Pick a place and a month — it ranks your needed species by how
-						often they appeared on checklists at nearby hotspots in that month,
-						with each species' best specific hotspots.
+						Pick a place — type anything ("Nome, Alaska", a park, an address),
+						tap <strong>📍 Pick on map</strong>, or leave it blank to use your
+						saved home — plus a month. Needed species group into
+						<strong>Likely</strong> (on ≥20% of checklists),
+						<strong>Possible</strong> (5–19%), and collapsed
+						<strong>long shots</strong> (&lt;5%), each with its best specific
+						hotspots and a "Where in the state" jump.
 					</li>
 					<li>
 						The first visit to a new area needs a one-time
@@ -152,13 +157,26 @@
 						that it's instant and only refreshes about once a year.
 					</li>
 				</ul>
-				<h3>Species forecast (species + state)</h3>
+				<h3>Where can I find this bird? (species + state)</h3>
 				<ul>
 					<li>
-						Pick a species and a state for a month-by-month chart and a best
-						month. <strong>Analyze counties</strong> then ranks every county
-						(one eBird request each, resumable), and tapping a county ranks its
-						top hotspots on a map.
+						Species search is bounded to birds actually reported in the
+						selected state, most frequent first — type "storm petrel" and you
+						get the four Florida ones, not the world's twenty-odd.
+					</li>
+					<li>
+						You get a month-by-month chart with the best month called out.
+						<strong>Analyze first counties</strong> shows useful results after
+						one quick batch (~15 s); "Analyze all remaining" finishes the state
+						(one eBird request per county, resumable, cached for the year).
+					</li>
+					<li>
+						Tapping a county ranks its top hotspots (picked by species count +
+						recent activity, expandable with "analyze 6 more") on a map — gray
+						pins are candidates with no data loaded yet. Every hotspot row has
+						Map, Directions, its eBird page, <strong>My needs here</strong>
+						(jumps to the other tab at that spot), and
+						<strong>Add to trip</strong>.
 					</li>
 				</ul>
 				<h3>Reading the numbers</h3>
@@ -171,17 +189,26 @@
 					<li>
 						A <strong>†</strong> marks small samples (fewer than 40
 						checklists) — treat those numbers loosely; they never decide a
-						"best month".
+						"best month" or a ranking.
 					</li>
 					<li>
-						<strong>Forecast data</strong> (linked from both pages) lists every
-						loaded state and hotspot with load dates, plus failed loads with a
-						retry. Note: eBird's bar-chart export can't tell provisional or
-						escaped-exotic records apart, so those are included in frequencies.
+						<strong>Forecast data</strong> (linked from both tabs) is the
+						inventory: states expand to counties, counties expand to their
+						hotspots, each row showing its year span, species count, load date,
+						and a Refresh; failed loads keep a Retry. Load new states and
+						analyze counties from here too. Note: eBird's bar-chart export
+						can't tell provisional or escaped-exotic records apart, so those
+						are included in frequencies.
+					</li>
+					<li>
+						Species pages show a <strong>Best time of year</strong> chart with
+						a "Where should I go?" link, and trip stops link straight to the
+						forecast for the trip's month.
 					</li>
 					<li>
 						Loading data signs in to eBird as you, so each user needs their own
-						eBird login saved in Settings.
+						eBird login saved in Settings. Browsing loaded data never contacts
+						eBird.
 					</li>
 				</ul>
 			</div>
