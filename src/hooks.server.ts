@@ -59,5 +59,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (path.startsWith('/settings')) throw redirect(303, '/');
 	}
 
-	return resolve(event);
+	const response = await resolve(event);
+	// SSR responses previously carried NO Cache-Control, which let browsers
+	// (Safari especially) reuse them heuristically from disk cache — stale
+	// pages after data changed, and authenticated content on shared disks.
+	// Every dynamic response is per-user and must never be cached; the hashed
+	// /_app/immutable assets are served outside this hook and keep their
+	// long-lived caching. Routes that explicitly set a policy win.
+	if (!response.headers.has('cache-control')) {
+		response.headers.set('cache-control', 'private, no-store');
+	}
+	return response;
 };
