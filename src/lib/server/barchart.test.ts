@@ -478,6 +478,55 @@ describe("ensureFrequencies", () => {
     expect(result.notAttempted).toEqual(["US-C2", "US-C3"]);
   });
 
+  it("a stale lease expires: a wedged batch cannot lock the owner out", async () => {
+    queryHandler = taxonomyHandler;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const wedged = vi.fn(async () => {
+      await gate;
+      return makeValidTsv([["Great Blue Heron", 0.25]]);
+    });
+    // Batch A acquires the lease and hangs (owner 42).
+    const first = ensureFrequencies(42, [loc("US-Z0")], {
+      fetcher: wedged,
+      sleep: noSleep,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    // 8 minutes later (> LEASE_MAX_MS), a new batch may take over.
+    const later = () => new Date(Date.now() + 8 * 60_000);
+    const second = await ensureFrequencies(42, [loc("US-Z1")], {
+      fetcher: vi.fn(async () => makeValidTsv([["Great Blue Heron", 0.25]])),
+      sleep: noSleep,
+      now: later,
+    });
+    expect(second.busy).toBe(false);
+    expect(second.refreshed).toEqual(["US-Z1"]);
+    // The zombie finishing later must not have freed the successor's lease
+    // (third call within the successor's window still sees busy=false only
+    // because the successor completed; just unwedge and settle A cleanly).
+    release();
+    await first;
+  });
+
+  it("stops starting fetches once the batch time budget is spent", async () => {
+    queryHandler = taxonomyHandler;
+    // Deterministic clock that advances 3 minutes per FETCH (a slow eBird
+    // evening): budget check passes at 0 and 3 min, fails at 6 min.
+    let elapsed = 0;
+    const fakeNow = () => new Date(1_700_000_000_000 + elapsed);
+    const fetcher = vi.fn(async () => {
+      elapsed += 3 * 60_000;
+      return makeValidTsv([["Great Blue Heron", 0.25]]);
+    });
+    const result = await ensureFrequencies(
+      1,
+      [loc("US-B0"), loc("US-B1"), loc("US-B2")],
+      { fetcher, sleep: noSleep, now: fakeNow },
+    );
+    expect(result.refreshed).toEqual(["US-B0", "US-B1"]);
+    expect(result.notAttempted).toEqual(["US-B2"]);
+  });
+
   it("returns busy instead of running a second concurrent batch per owner", async () => {
     queryHandler = taxonomyHandler;
     let release!: () => void;

@@ -471,7 +471,13 @@ interface EnsureOptions {
 // Per-owner single-flight lease: one active barchart batch per data owner,
 // process-wide. Overlapping invocations (second tab, double-submit, the client
 // auto-loop racing itself) return busy instead of fanning out in parallel.
-const activeBatch = new Set<number>();
+// The lease self-expires: with request timeouts and the batch time budget a
+// batch is bounded well under this, so an entry older than the maximum can
+// only be wreckage — never let it lock the owner out until a restart.
+const LEASE_MAX_MS = 7 * 60_000;
+/** Stop starting new fetches once a batch has run this long (resumable). */
+export const BATCH_TIME_BUDGET_MS = 4 * 60_000;
+const activeBatch = new Map<number, number>(); // userId → startedAt epoch ms
 // Soft daily ceiling per owner (resets on UTC day change or process restart).
 const dailySpend = new Map<number, { day: string; count: number }>();
 
@@ -544,12 +550,14 @@ export async function ensureFrequencies(
 	result.ready = locs.filter((l) => current(l.code)).map((l) => l.code);
 	if (toFetch.length === 0) return result;
 
-	if (activeBatch.has(userId)) {
+	const leaseHeldAt = activeBatch.get(userId);
+	if (leaseHeldAt != null && now().getTime() - leaseHeldAt < LEASE_MAX_MS) {
 		result.busy = true;
 		result.notAttempted = toFetch.map((l) => l.code);
 		return result;
 	}
-	activeBatch.add(userId);
+	const batchStart = now().getTime();
+	activeBatch.set(userId, batchStart);
 	try {
 		// One taxonomy load per invocation, not per location; lazy so a batch
 		// that aborts before its first fetch never pays for it.
@@ -559,7 +567,13 @@ export async function ensureFrequencies(
 		let lastStart = 0;
 		let rateLimited = false;
 		for (const loc of toFetch) {
-			if (attempted >= maxFetches || !underDailyCap(userId, now())) {
+			if (
+				attempted >= maxFetches ||
+				!underDailyCap(userId, now()) ||
+				// Batch time budget: a slow eBird evening must not hold the lease
+				// for long — leave the rest for the next (resumable) invocation.
+				now().getTime() - batchStart > BATCH_TIME_BUDGET_MS
+			) {
 				result.notAttempted.push(loc.code);
 				continue;
 			}
@@ -628,7 +642,9 @@ export async function ensureFrequencies(
 			}
 		}
 	} finally {
-		activeBatch.delete(userId);
+		// Release only OUR lease: a zombie batch whose lease already expired and
+		// was taken over must not free the successor's.
+		if (activeBatch.get(userId) === batchStart) activeBatch.delete(userId);
 	}
 	return result;
 }

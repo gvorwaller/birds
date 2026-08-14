@@ -52,10 +52,19 @@ class CookieJar {
 	}
 }
 
+/**
+ * Every eBird web request is time-bounded. Without this, one crawling
+ * response held a forecast batch (and its single-flight lease) for 5+
+ * minutes on prod (2026-08-14) — a slow response must become a fast,
+ * retryable failure instead.
+ */
+const EBIRD_FETCH_TIMEOUT_MS = 30_000;
+
 async function fetchWithJar(url: string, jar: CookieJar, init?: RequestInit): Promise<Response> {
 	const res = await fetch(url, {
 		...init,
 		redirect: 'manual',
+		signal: AbortSignal.timeout(EBIRD_FETCH_TIMEOUT_MS),
 		headers: { ...(init?.headers ?? {}), Cookie: jar.header(), 'User-Agent': UA }
 	});
 	jar.absorb(res);
@@ -231,7 +240,17 @@ export async function fetchAuthenticatedEbird(userId: number, url: string): Prom
 	}
 
 	const attempt = async (jar: CookieJar): Promise<string | null> => {
-		const res = await followRedirects(await fetchWithJar(url, jar), jar);
+		let res: Response;
+		try {
+			res = await followRedirects(await fetchWithJar(url, jar), jar);
+		} catch (err) {
+			// A timed-out request is an upstream problem with retry-once
+			// semantics (like a 5xx), never a credential problem.
+			if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+				throw new EbirdUpstreamError('eBird did not respond within 30 seconds.', 504);
+			}
+			throw err;
+		}
 		// An expired/invalid session 302s to secure.birds.cornell.edu — a final
 		// landing off the requested host means "not authenticated".
 		if (new URL(res.url).host !== target.host) return null;
