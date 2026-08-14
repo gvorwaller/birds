@@ -29,6 +29,8 @@ export const WEEKS = 48; // 4 pseudo-weeks x 12 months
 export const YEARS_BACK = 10; // begin_year = lastCompleteYear - YEARS_BACK + 1
 export const FETCH_BATCH_MAX = 12;
 export const FETCH_SPACING_MS = 500;
+/** Pause before the single automatic retry of an eBird 5xx response. */
+export const FETCH_5XX_RETRY_DELAY_MS = 4000;
 export const DAILY_FETCH_CAP = 200;
 /** Sanity gate: a refetch keeping under this fraction of prior species count is rejected. */
 const MIN_SPECIES_RETENTION = 0.25;
@@ -576,7 +578,22 @@ export async function ensureFrequencies(
 			recordSpend(userId, now());
 
 			try {
-				const tsv = await fetcher(userId, loc.code, beginYear, endYear);
+				let tsv: string;
+				try {
+					tsv = await fetcher(userId, loc.code, beginYear, endYear);
+				} catch (err) {
+					// eBird's export throws one-off 5xxs (seen live on prod,
+					// 2026-08-14: a lone 500 that succeeded seconds later). One
+					// automatic retry after a short pause absorbs the hiccup; a
+					// second failure is treated as real. 429 is excluded — backing
+					// off harder, not retrying, is the polite response there.
+					if (err instanceof EbirdUpstreamError && err.status >= 500) {
+						await sleep(FETCH_5XX_RETRY_DELAY_MS);
+						tsv = await fetcher(userId, loc.code, beginYear, endYear);
+					} else {
+						throw err;
+					}
+				}
 				const parsed = parseBarchartTsv(tsv);
 				const matcher = await getMatcher();
 				const matched = matchBarchartRows(parsed, {

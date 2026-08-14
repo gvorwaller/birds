@@ -417,7 +417,28 @@ describe("ensureFrequencies", () => {
     expect(result.notAttempted).toEqual(["US-R2"]);
   });
 
-  it("keeps a 5xx as a per-location failure and continues", async () => {
+  it("retries a transient 5xx once and recovers without recording a failure", async () => {
+    queryHandler = taxonomyHandler;
+    // First call 500s (the live prod hiccup of 2026-08-14), retry succeeds.
+    let calls = 0;
+    const fetcher = vi.fn(async (_u: number, code: string) => {
+      if (code === "US-T1" && ++calls === 1)
+        throw new EbirdUpstreamError("eBird returned HTTP 500.", 500);
+      return makeValidTsv([["Great Blue Heron", 0.25]]);
+    });
+    const sleep = vi.fn(async (_ms: number) => {});
+    const result = await ensureFrequencies(1, [loc("US-T1")], {
+      fetcher,
+      sleep,
+    });
+    expect(result.refreshed).toEqual(["US-T1"]);
+    expect(result.failed).toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The retry waited the 5xx backoff, not the normal request spacing.
+    expect(sleep.mock.calls.some(([ms]) => ms === 4000)).toBe(true);
+  });
+
+  it("keeps a PERSISTENT 5xx as a per-location failure and continues", async () => {
     queryHandler = taxonomyHandler;
     const fetcher = vi.fn(async (_u: number, code: string) => {
       if (code === "US-S1")
@@ -432,6 +453,10 @@ describe("ensureFrequencies", () => {
     expect(result.refreshed).toEqual(["US-S0", "US-S2"]);
     expect(result.credentialProblem).toBeNull();
     expect(result.failed[0].code).toBe("US-S1");
+    // Failing loc fetched twice (initial + one retry), never more.
+    expect(
+      fetcher.mock.calls.filter(([, code]) => code === "US-S1"),
+    ).toHaveLength(2);
   });
 
   it("aborts the whole batch on an authentication failure", async () => {
