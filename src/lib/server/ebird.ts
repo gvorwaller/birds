@@ -196,6 +196,8 @@ export interface EbirdHotspot {
 	latestObsDt?: string;
 	/** State/province region code, e.g. 'US-ME' (present in the API payload). */
 	subnational1Code?: string;
+	/** County region code, e.g. 'US-ME-009' (present in the API payload). */
+	subnational2Code?: string;
 }
 
 const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely

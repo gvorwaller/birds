@@ -206,7 +206,12 @@ export const actions: Actions = {
         code: h.locId,
         kind: "hotspot" as const,
         name: h.locName,
-        regionCode: h.subnational1Code ?? majorityRegionCode(selected),
+        // Most specific containing region: county when eBird provides it, so
+        // /forecast/data can nest the hotspot under its county.
+        regionCode:
+          h.subnational2Code ??
+          h.subnational1Code ??
+          majorityRegionCode(selected),
       })),
       { force },
     );

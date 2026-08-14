@@ -36,13 +36,26 @@ export interface DataRow {
   current: boolean;
 }
 
+/** One county's row plus the hotspots nested inside it (GBV 2026-08-14). */
+export interface CountyBlock {
+  countyCode: string;
+  countyName: string;
+  /** The county's own frequency row — null when hotspots loaded first. */
+  county: DataRow | null;
+  hotspots: DataRow[];
+}
+
 /** One state's data grouped for the collapsible display (GBV request). */
 export interface StateGroup {
   stateCode: string;
   stateName: string;
   state: DataRow | null;
-  counties: DataRow[];
-  hotspots: DataRow[];
+  /** Counties (with their nested hotspots), sorted by name. */
+  countyBlocks: CountyBlock[];
+  /** Hotspots whose county isn't recorded (pre-0014 rows never re-cached). */
+  stateHotspots: DataRow[];
+  countiesLoaded: number;
+  hotspotCount: number;
   /** How many counties the state has in total (null when unknown). */
   countyTotal: number | null;
   /** Counties still fetchable (not current, not in failure cooldown). */
@@ -120,10 +133,12 @@ export const load: PageServerLoad = async ({ locals }) => {
     regionCode: r.region_code,
   }));
 
-  // Group by state: the state's own row (if loaded), its counties, and its
-  // hotspots nest under one collapsible section (GBV request 2026-08-12).
+  // Group by state; within a state, hotspots nest under their county block
+  // (GBV 2026-08-14 — region_code holds the county for hotspots since 0014).
   const STATE_RE = /^US-[A-Z]{2}$/;
+  const COUNTY_RE = /^US-[A-Z]{2}-\d{3}$/;
   const groups = new Map<string, StateGroup>();
+  const blocks = new Map<string, CountyBlock>(); // by county code
   const orphanHotspots: DataRow[] = [];
   const groupFor = (code: string): StateGroup => {
     let g = groups.get(code);
@@ -132,8 +147,10 @@ export const load: PageServerLoad = async ({ locals }) => {
         stateCode: code,
         stateName: stateName.get(code) ?? code,
         state: null,
-        counties: [],
-        hotspots: [],
+        countyBlocks: [],
+        stateHotspots: [],
+        countiesLoaded: 0,
+        hotspotCount: 0,
         countyTotal: null,
         countyRemaining: null,
       };
@@ -141,19 +158,38 @@ export const load: PageServerLoad = async ({ locals }) => {
     }
     return g;
   };
+  const blockFor = (countyCode: string): CountyBlock => {
+    let b = blocks.get(countyCode);
+    if (!b) {
+      b = { countyCode, countyName: countyCode, county: null, hotspots: [] };
+      blocks.set(countyCode, b);
+      groupFor(countyCode.slice(0, 5)).countyBlocks.push(b);
+    }
+    return b;
+  };
   for (const { row, regionCode } of rows) {
     if (row.locKind === "region" && STATE_RE.test(row.locCode)) {
       groupFor(row.locCode).state = row;
+    } else if (row.locKind === "region" && COUNTY_RE.test(row.locCode)) {
+      const b = blockFor(row.locCode);
+      b.county = row;
+      b.countyName = row.locName;
     } else if (row.locKind === "region") {
-      const derived =
-        regionCode ?? row.locCode.match(/^(US-[A-Z]{2})-/)?.[1] ?? null;
-      if (derived) groupFor(derived).counties.push(row);
-      else orphanHotspots.push(row);
-    } else if (regionCode) {
-      groupFor(regionCode).hotspots.push(row);
+      orphanHotspots.push(row); // unrecognized region shape — surface, don't hide
+    } else if (regionCode && COUNTY_RE.test(regionCode)) {
+      blockFor(regionCode).hotspots.push(row);
+    } else if (regionCode && STATE_RE.test(regionCode)) {
+      groupFor(regionCode).stateHotspots.push(row);
     } else {
       orphanHotspots.push(row);
     }
+  }
+  for (const g of groups.values()) {
+    g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
+    g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
+    g.hotspotCount =
+      g.stateHotspots.length +
+      g.countyBlocks.reduce((n, b) => n + b.hotspots.length, 0);
   }
   const stateGroups = [...groups.values()].sort((a, b) =>
     a.stateName.localeCompare(b.stateName),
@@ -161,6 +197,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   // County totals per loaded state (cache-first region lists) so each group
   // can say "1 of 16 counties" and offer the analyze action (GBV: Maine had
   // zero counties and no way to populate them from this page).
+  const countyNames = new Map<string, string>();
   if (apiKey) {
     await Promise.all(
       stateGroups.map(async (g) => {
@@ -168,6 +205,14 @@ export const load: PageServerLoad = async ({ locals }) => {
           const list = (await subregions(apiKey, g.stateCode, "subnational2"))
             .data;
           g.countyTotal = list.length;
+          for (const c of list) countyNames.set(c.code, c.name);
+          // Blocks created from hotspots alone get their county's real name.
+          for (const b of g.countyBlocks) {
+            if (!b.county) b.countyName = countyNames.get(b.countyCode) ?? b.countyCode;
+          }
+          g.countyBlocks.sort((a, b) =>
+            a.countyName.localeCompare(b.countyName),
+          );
           const codes = list.map((c) => c.code);
           const [meta, attempts] = await Promise.all([
             frequencyMeta(codes),
@@ -198,9 +243,11 @@ export const load: PageServerLoad = async ({ locals }) => {
       lastAttemptAt: r.last_attempt_at,
       error: r.error,
       locName: r.loc_name,
-      // "Sears Island · Maine" beats "L602509 · US-ME" when we have the names.
+      // "Sears Island · Hancock, Maine" beats "L602509 · US-ME-009".
       regionName: r.region_code
-        ? (stateName.get(r.region_code) ?? r.region_code)
+        ? r.region_code.match(/^US-[A-Z]{2}-\d{3}$/)
+          ? `${countyNames.get(r.region_code) ?? r.region_code}, ${stateName.get(r.region_code.slice(0, 5)) ?? r.region_code.slice(0, 5)}`
+          : (stateName.get(r.region_code) ?? r.region_code)
         : null,
     })),
     states: states.filter((s) => !loadedRegionCodes.has(s.code)),

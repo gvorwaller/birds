@@ -44,7 +44,52 @@
   }
 </script>
 
-{#snippet dataTable(label: string, rows: PageData["stateGroups"][number]["counties"])}
+{#snippet dataRowCells(
+  r: PageData["stateGroups"][number]["stateHotspots"][number],
+  indent: boolean,
+)}
+  <tr class:indent>
+    <td>
+      {#if indent}<span class="twig" aria-hidden="true">↳</span>{/if}
+      <strong>{r.locName}</strong>
+      <span class="code">{r.locCode}</span>
+    </td>
+    <td>
+      {r.beginYear}–{r.endYear}
+      {#if !r.current}
+        <span class="outdated">outdated</span>
+      {/if}
+    </td>
+    <td>{r.nSpecies.toLocaleString()}</td>
+    <td>{fmtDate(r.fetchedAt)}</td>
+    {#if !data.isViewer}
+      <td>
+        <form
+          method="POST"
+          action="?/refresh"
+          use:enhance={() => {
+            refreshing = r.locCode;
+            return async ({ update }) => {
+              refreshing = null;
+              await update();
+            };
+          }}
+        >
+          <input type="hidden" name="loc" value={r.locCode} />
+          <button
+            type="submit"
+            class="secondary"
+            disabled={refreshing !== null}
+          >
+            {refreshing === r.locCode ? "Refreshing…" : "Refresh"}
+          </button>
+        </form>
+      </td>
+    {/if}
+  </tr>
+{/snippet}
+
+{#snippet dataTable(label: string, rows: PageData["stateGroups"][number]["stateHotspots"])}
   <div class="tablewrap">
     <table>
       <thead>
@@ -58,44 +103,7 @@
       </thead>
       <tbody>
         {#each rows as r (r.locCode)}
-          <tr>
-            <td>
-              <strong>{r.locName}</strong>
-              <span class="code">{r.locCode}</span>
-            </td>
-            <td>
-              {r.beginYear}–{r.endYear}
-              {#if !r.current}
-                <span class="outdated">outdated</span>
-              {/if}
-            </td>
-            <td>{r.nSpecies.toLocaleString()}</td>
-            <td>{fmtDate(r.fetchedAt)}</td>
-            {#if !data.isViewer}
-              <td>
-                <form
-                  method="POST"
-                  action="?/refresh"
-                  use:enhance={() => {
-                    refreshing = r.locCode;
-                    return async ({ update }) => {
-                      refreshing = null;
-                      await update();
-                    };
-                  }}
-                >
-                  <input type="hidden" name="loc" value={r.locCode} />
-                  <button
-                    type="submit"
-                    class="secondary"
-                    disabled={refreshing !== null}
-                  >
-                    {refreshing === r.locCode ? "Refreshing…" : "Refresh"}
-                  </button>
-                </form>
-              </td>
-            {/if}
-          </tr>
+          {@render dataRowCells(r, false)}
         {/each}
       </tbody>
     </table>
@@ -204,12 +212,12 @@
               {#if g.state}
                 statewide{g.state.current ? "" : " (outdated)"} ·
               {/if}
-              {g.counties.length}{g.countyTotal != null
+              {g.countiesLoaded}{g.countyTotal != null
                 ? ` of ${g.countyTotal}`
-                : ""} count{g.counties.length === 1 && g.countyTotal == null
+                : ""} count{g.countiesLoaded === 1 && g.countyTotal == null
                 ? "y"
                 : "ies"}
-              · {g.hotspots.length} hotspot{g.hotspots.length === 1 ? "" : "s"}
+              · {g.hotspotCount} hotspot{g.hotspotCount === 1 ? "" : "s"}
             </span>
           </summary>
           {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
@@ -244,11 +252,48 @@
           {#if g.state}
             {@render dataTable("Statewide", [g.state])}
           {/if}
-          {#if g.counties.length > 0}
-            {@render dataTable("County", g.counties)}
+          {#if g.countyBlocks.length > 0}
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>County · hotspots</th>
+                    <th>Years</th>
+                    <th>Species</th>
+                    <th>Loaded</th>
+                    {#if !data.isViewer}<th></th>{/if}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each g.countyBlocks as b (b.countyCode)}
+                    {#if b.county}
+                      {@render dataRowCells(b.county, false)}
+                    {:else}
+                      <!-- Hotspots loaded before their county was analyzed -->
+                      <tr>
+                        <td>
+                          <strong>{b.countyName}</strong>
+                          <span class="code">{b.countyCode}</span>
+                        </td>
+                        <td colspan={data.isViewer ? 3 : 4} class="muted"
+                          >county not analyzed yet</td
+                        >
+                      </tr>
+                    {/if}
+                    {#each b.hotspots as h (h.locCode)}
+                      {@render dataRowCells(h, true)}
+                    {/each}
+                  {/each}
+                </tbody>
+              </table>
+            </div>
           {/if}
-          {#if g.hotspots.length > 0}
-            {@render dataTable("Hotspot", g.hotspots)}
+          {#if g.stateHotspots.length > 0}
+            <p class="notice">
+              Hotspots below have no recorded county — refreshing them (or the
+              next area load) files them correctly.
+            </p>
+            {@render dataTable("Hotspot", g.stateHotspots)}
           {/if}
         </details>
       {/each}
@@ -374,6 +419,19 @@
   }
   .groupaction {
     margin: 4px 0 12px 12px;
+  }
+  tr.indent td:first-child {
+    padding-left: 22px;
+  }
+  tr.indent strong {
+    font-weight: 500;
+  }
+  .twig {
+    color: var(--muted);
+    margin-right: 4px;
+  }
+  .muted {
+    color: var(--muted);
   }
   .groupaction button {
     min-height: 48px;

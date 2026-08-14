@@ -540,7 +540,9 @@ export const actions: Actions = {
         code: h.locId,
         kind: "hotspot" as const,
         name: h.locName,
-        regionCode: h.subnational1Code ?? regionCode,
+        // Most specific containing region: the drilled county (all these
+        // hotspots belong to it) so /forecast/data nests them under it.
+        regionCode: h.subnational2Code ?? countyCode,
       })),
     );
     return { ensure };
