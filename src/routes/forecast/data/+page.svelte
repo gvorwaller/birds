@@ -35,6 +35,35 @@
     }
   }
 
+  // Hotspot rows collapse under their county row (GBV: dozens of hotspots
+  // per county get unwieldy). Collapsed by default; remembered like states.
+  const OPEN_COUNTIES_KEY = "forecast-data-open-counties";
+  let openCounties = $state<string[]>([]);
+  $effect(() => {
+    if (!browser) return;
+    try {
+      const v = JSON.parse(localStorage.getItem(OPEN_COUNTIES_KEY) ?? "[]");
+      openCounties = Array.isArray(v)
+        ? v.filter((x) => typeof x === "string")
+        : [];
+    } catch {
+      openCounties = [];
+    }
+  });
+  function toggleCounty(code: string) {
+    const open = !openCounties.includes(code);
+    const next = openCounties.filter((c) => c !== code);
+    if (open) next.push(code);
+    openCounties = next;
+    if (browser) {
+      try {
+        localStorage.setItem(OPEN_COUNTIES_KEY, JSON.stringify(next));
+      } catch {
+        // private mode
+      }
+    }
+  }
+
   function fmtDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, {
       year: "numeric",
@@ -43,6 +72,41 @@
     });
   }
 </script>
+
+{#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number])}
+  <td>
+    {r.beginYear}–{r.endYear}
+    {#if !r.current}
+      <span class="outdated">outdated</span>
+    {/if}
+  </td>
+  <td>{r.nSpecies.toLocaleString()}</td>
+  <td>{fmtDate(r.fetchedAt)}</td>
+  {#if !data.isViewer}
+    <td>
+      <form
+        method="POST"
+        action="?/refresh"
+        use:enhance={() => {
+          refreshing = r.locCode;
+          return async ({ update }) => {
+            refreshing = null;
+            await update();
+          };
+        }}
+      >
+        <input type="hidden" name="loc" value={r.locCode} />
+        <button
+          type="submit"
+          class="secondary"
+          disabled={refreshing !== null}
+        >
+          {refreshing === r.locCode ? "Refreshing…" : "Refresh"}
+        </button>
+      </form>
+    </td>
+  {/if}
+{/snippet}
 
 {#snippet dataRowCells(
   r: PageData["stateGroups"][number]["stateHotspots"][number],
@@ -54,38 +118,7 @@
       <strong>{r.locName}</strong>
       <span class="code">{r.locCode}</span>
     </td>
-    <td>
-      {r.beginYear}–{r.endYear}
-      {#if !r.current}
-        <span class="outdated">outdated</span>
-      {/if}
-    </td>
-    <td>{r.nSpecies.toLocaleString()}</td>
-    <td>{fmtDate(r.fetchedAt)}</td>
-    {#if !data.isViewer}
-      <td>
-        <form
-          method="POST"
-          action="?/refresh"
-          use:enhance={() => {
-            refreshing = r.locCode;
-            return async ({ update }) => {
-              refreshing = null;
-              await update();
-            };
-          }}
-        >
-          <input type="hidden" name="loc" value={r.locCode} />
-          <button
-            type="submit"
-            class="secondary"
-            disabled={refreshing !== null}
-          >
-            {refreshing === r.locCode ? "Refreshing…" : "Refresh"}
-          </button>
-        </form>
-      </td>
-    {/if}
+    {@render metaCells(r)}
   </tr>
 {/snippet}
 
@@ -266,23 +299,46 @@
                 </thead>
                 <tbody>
                   {#each g.countyBlocks as b (b.countyCode)}
-                    {#if b.county}
-                      {@render dataRowCells(b.county, false)}
-                    {:else}
-                      <!-- Hotspots loaded before their county was analyzed -->
-                      <tr>
-                        <td>
+                    {@const open = openCounties.includes(b.countyCode)}
+                    <tr>
+                      <td>
+                        {#if b.hotspots.length > 0}
+                          <button
+                            type="button"
+                            class="ctoggle"
+                            aria-expanded={open}
+                            onclick={() => toggleCounty(b.countyCode)}
+                          >
+                            <span class="chev" aria-hidden="true"
+                              >{open ? "▾" : "▸"}</span
+                            >
+                            <strong>{b.countyName}</strong>
+                            <span class="hscount"
+                              >{b.hotspots.length} hotspot{b.hotspots.length ===
+                              1
+                                ? ""
+                                : "s"}</span
+                            >
+                          </button>
+                        {:else}
                           <strong>{b.countyName}</strong>
-                          <span class="code">{b.countyCode}</span>
-                        </td>
+                        {/if}
+                        <span class="code">{b.countyCode}</span>
+                      </td>
+                      {#if b.county}
+                        {@render metaCells(b.county)}
+                      {:else}
+                        <!-- Hotspots loaded before their county was analyzed -->
                         <td colspan={data.isViewer ? 3 : 4} class="muted"
                           >county not analyzed yet</td
                         >
-                      </tr>
+                      {/if}
+                    </tr>
+                    {#if open}
+                      {#each b.hotspots as h (h.locCode)}
+                        {@render dataRowCells(h, true)}
+                      {/each}
                     {/if}
-                    {#each b.hotspots as h (h.locCode)}
-                      {@render dataRowCells(h, true)}
-                    {/each}
                   {/each}
                 </tbody>
               </table>
@@ -421,7 +477,32 @@
     margin: 4px 0 12px 12px;
   }
   tr.indent td:first-child {
-    padding-left: 22px;
+    padding-left: 34px;
+  }
+  .ctoggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    padding: 6px 4px 6px 0;
+    min-height: 48px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: inherit;
+    text-align: left;
+  }
+  .ctoggle:hover .hscount {
+    text-decoration: underline;
+  }
+  .chev {
+    color: var(--accent);
+    width: 12px;
+  }
+  .hscount {
+    color: var(--accent);
+    font-size: 0.82rem;
+    white-space: nowrap;
   }
   tr.indent strong {
     font-weight: 500;
