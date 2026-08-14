@@ -7,7 +7,7 @@
     href?: string;
     linkText?: string;
     img?: string;
-    kind?: "need" | "notable" | "home" | "photo";
+    kind?: "need" | "notable" | "home" | "photo" | "pending";
   }
 </script>
 
@@ -34,6 +34,12 @@
       glyphColor: "#fff",
     },
     home: { background: "#084298", borderColor: "#052c65", glyphColor: "#fff" },
+    // No data loaded yet — a muted gray so candidates read as "not yet".
+    pending: {
+      background: "#868e96",
+      borderColor: "#495057",
+      glyphColor: "#fff",
+    },
     photo: {
       background: "#6f42c1",
       borderColor: "#4d2d89",

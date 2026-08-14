@@ -65,7 +65,7 @@
     color: var(--link);
     text-decoration: none;
     white-space: nowrap;
-    min-height: 32px;
+    min-height: 48px;
     display: inline-flex;
     align-items: center;
   }

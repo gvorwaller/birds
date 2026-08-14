@@ -22,7 +22,7 @@
   let {
     places = [],
     title = "Best places for your needs",
-    limit = 10,
+    limit = 5,
     distanceUnit = "mi",
   }: {
     places?: Place[];
@@ -31,7 +31,15 @@
     distanceUnit?: DistanceUnit;
   } = $props();
 
-  let shown = $derived(places.slice(0, limit));
+  // Collapse state is owned here, not passed down from the page: `places`
+  // already carries every ranked place, and a fixed `limit` prop would force
+  // every caller to plumb its own "show all" toggle for the same behavior.
+  let showAll = $state(false);
+  $effect(() => {
+    places;
+    showAll = false;
+  });
+  let shown = $derived(showAll ? places : places.slice(0, limit));
 
   function speciesList(p: Place): string {
     const names = p.needSpecies.map((s) => s.comName);
@@ -92,6 +100,15 @@
         </div>
       </div>
     {/each}
+    {#if places.length > limit}
+      <button
+        type="button"
+        class="more"
+        onclick={() => (showAll = !showAll)}
+      >
+        {showAll ? "Show fewer" : `Show all ${places.length}`}
+      </button>
+    {/if}
   </section>
 {/if}
 
@@ -186,5 +203,18 @@
   .when {
     color: var(--muted);
     font-size: 0.78rem;
+  }
+  .more {
+    margin-top: 12px;
+    min-height: 48px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .more:hover {
+    background: var(--bg);
   }
 </style>

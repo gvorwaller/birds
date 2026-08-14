@@ -37,7 +37,8 @@ for (const k of ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]) {
 process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 
 const { query } = await import("$lib/db");
-const { rankLocsForSpeciesMonth, MIN_MONTH_N } = await import("./forecast");
+const { rankLocsForSpeciesMonth, rankCountiesForNeeds, MIN_MONTH_N } =
+  await import("./forecast");
 const { storeFrequencies, WEEKS } = await import("./barchart");
 
 let dbUp = false;
@@ -75,8 +76,12 @@ async function insertFreq(code: string, week: number, freq: number) {
 
 const cleanup = async () => {
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'TESTX-%'");
+  await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'US-QQ-%'");
   await query(
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'TESTX-%'",
+  );
+  await query(
+    "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'US-QQ-%'",
   );
 };
 
@@ -211,6 +216,19 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       "SELECT sample_sizes[1] AS w1 FROM frequency_fetch WHERE loc_code = 'TESTX-STORE'",
     );
     expect(Number(sizesAfter.rows[0].w1)).toBe(100);
+  });
+
+  it("rankCountiesForNeeds counts absent sparse weeks in the denominator", async () => {
+    // January: 40% of week 1, absent weeks 2–4 (100 checklists each) → 10%,
+    // not 40%. Must not count as "likely".
+    await insertLoc("US-QQ-001", janSamples(100, 100, 100, 100));
+    await insertFreq("US-QQ-001", 1, 0.4);
+    const ranks = await rankCountiesForNeeds(0, "US-QQ", 1);
+    expect(ranks).toHaveLength(1);
+    // 10% is "possible" (5–19%), not "likely" (≥20%).
+    expect(ranks[0].likely).toBe(0);
+    expect(ranks[0].possible).toBe(1);
+    expect(ranks[0].n).toBe(400);
   });
 });
 

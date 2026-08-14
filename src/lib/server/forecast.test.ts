@@ -340,4 +340,266 @@ describe("buildForecastSpecies", () => {
     );
     expect(out).toEqual([]);
   });
+
+  it("marks a one-site species as local and a 3-site even split as widespread", () => {
+    const denom = new Map([
+      ["L1", 1000],
+      ["L2", 1000],
+    ]);
+    const local = buildForecastSpecies(
+      [agg("onlyl1", "L1", 400)],
+      denom,
+      locNames,
+      new Set(),
+    );
+    expect(local[0].concentration).toBe("local");
+  });
+});
+
+describe("reliability and concentration", () => {
+  it("bands frequencies at the documented cutoffs", async () => {
+    const { reliabilityOf, FREQ_LIKELY, FREQ_POSSIBLE } = await import("./forecast");
+    expect(reliabilityOf(FREQ_LIKELY)).toBe("likely");
+    expect(reliabilityOf(FREQ_LIKELY - 0.001)).toBe("possible");
+    expect(reliabilityOf(FREQ_POSSIBLE)).toBe("possible");
+    expect(reliabilityOf(FREQ_POSSIBLE - 0.001)).toBe("longshot");
+    expect(reliabilityOf(0)).toBe("longshot");
+  });
+
+  it("classifies local vs widespread vs mixed", async () => {
+    const { concentrationOf } = await import("./forecast");
+    expect(concentrationOf([{ freq: 0.4 }])).toBe("local");
+    expect(
+      concentrationOf([{ freq: 0.5 }, { freq: 0.1 }, { freq: 0.05 }]),
+    ).toBe("local");
+    expect(
+      concentrationOf([{ freq: 0.4 }, { freq: 0.35 }, { freq: 0.3 }]),
+    ).toBe("widespread");
+    expect(
+      concentrationOf([{ freq: 0.3 }, { freq: 0.2 }]),
+    ).toBe("mixed");
+  });
+
+  it("downranks vague eBird location names in topHotspots", () => {
+    const denom = new Map([
+      ["L1", 1000],
+      ["L2", 1000],
+    ]);
+    const names = new Map([
+      ["L1", "Mount Desert Island (please use more specific location if possible)"],
+      ["L2", "Sears Island"],
+    ]);
+    const out = buildForecastSpecies(
+      [
+        { code: "x", comName: "X", sciName: "X", locId: "L1", num: 500 },
+        { code: "x", comName: "X", sciName: "X", locId: "L2", num: 400 },
+      ],
+      denom,
+      names,
+      new Set(),
+    );
+    expect(out[0].topHotspots[0].locName).toBe("Sears Island");
+    expect(out[0].topHotspots.every((h) => !/please use more specific/i.test(h.locName))).toBe(
+      true,
+    );
+  });
+
+  it("does not claim 'mostly at' when the true leader was a vague name", () => {
+    const denom = new Map([
+      ["L1", 1000],
+      ["L2", 1000],
+    ]);
+    const names = new Map([
+      ["L1", "Mount Desert Island (please use more specific location if possible)"],
+      ["L2", "Sears Island"],
+    ]);
+    // Vague site 50%, specific 10% — local, but the leader is hidden.
+    const out = buildForecastSpecies(
+      [
+        { code: "x", comName: "X", sciName: "X", locId: "L1", num: 500 },
+        { code: "x", comName: "X", sciName: "X", locId: "L2", num: 100 },
+      ],
+      denom,
+      names,
+      new Set(),
+    );
+    expect(out[0].concentration).toBe("local");
+    expect(out[0].localClaim).toBe(false);
+    expect(out[0].topHotspots[0].locName).toBe("Sears Island");
+  });
+});
+
+describe("year richness and good window", () => {
+  it("counts likely / possible / longshot per month and picks the richest", async () => {
+    const { richnessFromSpecies, richestMonth } = await import("./forecast");
+    const byMonth = new Map([
+      [
+        1,
+        [
+          { areaFreq: 0.4, lowSample: false },
+          { areaFreq: 0.25, lowSample: false },
+          { areaFreq: 0.08, lowSample: false },
+          { areaFreq: 0.01, lowSample: false },
+        ],
+      ],
+      [
+        7,
+        [
+          { areaFreq: 0.3, lowSample: false },
+          { areaFreq: 0.01, lowSample: false },
+        ],
+      ],
+      [8, [{ areaFreq: 0.9, lowSample: true }]],
+    ]);
+    const year = richnessFromSpecies(byMonth);
+    expect(year[0]).toEqual({ month: 1, likely: 2, possible: 1, longshot: 1 });
+    expect(year[6]).toEqual({ month: 7, likely: 1, possible: 0, longshot: 1 });
+    expect(year[7]).toEqual({ month: 8, likely: 0, possible: 0, longshot: 0 });
+    expect(richestMonth(year)?.month).toBe(1);
+  });
+
+  it("goodMonths keeps months within 80% of the sampled peak", async () => {
+    const { goodMonths } = await import("./forecast");
+    const curve = [
+      { month: 1, freq: 0.4, n: 200 },
+      { month: 2, freq: 0.35, n: 200 },
+      { month: 3, freq: 0.2, n: 200 },
+      ...Array.from({ length: 9 }, (_, i) => ({
+        month: i + 4,
+        freq: 0.05,
+        n: 200,
+      })),
+    ];
+    expect(goodMonths(curve)).toEqual([1, 2]);
+  });
+
+  it("peakWeekPhrase names the week slot and month", async () => {
+    const { peakWeekPhrase } = await import("./forecast");
+    const sizes = Array(48).fill(100);
+    // Week 4 = late January; week 13 = early April
+    expect(peakWeekPhrase(new Map([[4, 0.5]]), sizes)).toBe("late January");
+    expect(peakWeekPhrase(new Map([[13, 0.8]]), sizes)).toBe("early April");
+    expect(peakWeekPhrase(new Map(), sizes)).toBeNull();
+  });
+
+  it("peakWeekPhrase ignores a 100% week with n=1 when a well-sampled week exists", async () => {
+    const { peakWeekPhrase, MIN_WEEK_N } = await import("./forecast");
+    const sizes = Array(48).fill(0);
+    sizes[0] = 1; // week 1: 100% of 1 checklist
+    sizes[3] = 80; // week 4: 30% of 80
+    expect(MIN_WEEK_N).toBeGreaterThan(1);
+    expect(
+      peakWeekPhrase(
+        new Map([
+          [1, 1.0],
+          [4, 0.3],
+        ]),
+        sizes,
+      ),
+    ).toBe("late January");
+  });
+
+  it("peakWeekPhrase returns null when every positive week is low-n", async () => {
+    const { peakWeekPhrase } = await import("./forecast");
+    const sizes = Array(48).fill(1);
+    expect(peakWeekPhrase(new Map([[4, 1.0]]), sizes)).toBeNull();
+  });
+});
+
+describe("majorityRegionCode", () => {
+  it("returns the majority subnational1 code", async () => {
+    const { majorityRegionCode } = await import("./forecast");
+    expect(
+      majorityRegionCode([
+        { locId: "a", locName: "A", lat: 0, lng: 0, subnational1Code: "US-ME" },
+        { locId: "b", locName: "B", lat: 0, lng: 0, subnational1Code: "US-ME" },
+        { locId: "c", locName: "C", lat: 0, lng: 0, subnational1Code: "US-NH" },
+      ]),
+    ).toBe("US-ME");
+    expect(majorityRegionCode([])).toBeNull();
+  });
+
+  it("returns null on a tie or mere plurality", async () => {
+    const { majorityRegionCode } = await import("./forecast");
+    const hs = (id: string, state: string) => ({
+      locId: id,
+      locName: id,
+      lat: 0,
+      lng: 0,
+      subnational1Code: state,
+    });
+    expect(majorityRegionCode([hs("a", "US-ME"), hs("b", "US-NH")])).toBeNull();
+    expect(
+      majorityRegionCode([
+        hs("a", "US-ME"),
+        hs("b", "US-ME"),
+        hs("c", "US-NH"),
+        hs("d", "US-VT"),
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("pickTeaserCandidate", () => {
+  it("prefers an adequately sampled state over a 100% n=1 state", async () => {
+    const { pickTeaserCandidate } = await import("./forecast");
+    const pick = pickTeaserCandidate([
+      {
+        locCode: "US-FL",
+        locName: "Florida",
+        neverReported: false,
+        best: { month: 1, freq: 1, n: 1, lowSample: true },
+      },
+      {
+        locCode: "US-ME",
+        locName: "Maine",
+        neverReported: false,
+        best: { month: 10, freq: 0.5, n: 2000, lowSample: false },
+      },
+    ]);
+    expect(pick).toEqual({ locCode: "US-ME", locName: "Maine" });
+  });
+
+  it("falls back to low-n only when no sampled state exists", async () => {
+    const { pickTeaserCandidate } = await import("./forecast");
+    const pick = pickTeaserCandidate([
+      {
+        locCode: "US-FL",
+        locName: "Florida",
+        neverReported: false,
+        best: { month: 1, freq: 1, n: 1, lowSample: true },
+      },
+    ]);
+    expect(pick?.locCode).toBe("US-FL");
+  });
+
+  it("breaks equal freq+n ties on locCode", async () => {
+    const { pickTeaserCandidate } = await import("./forecast");
+    const pick = pickTeaserCandidate([
+      {
+        locCode: "US-WA",
+        locName: "Washington",
+        neverReported: false,
+        best: { month: 6, freq: 0.2, n: 100, lowSample: false },
+      },
+      {
+        locCode: "US-ME",
+        locName: "Maine",
+        neverReported: false,
+        best: { month: 6, freq: 0.2, n: 100, lowSample: false },
+      },
+    ]);
+    expect(pick?.locCode).toBe("US-ME");
+  });
+});
+
+describe("calendarMonth", () => {
+  it("uses America/New_York, not UTC, so late-evening ET is still that calendar month", async () => {
+    const { calendarMonth, FORECAST_CALENDAR_TZ } = await import("./forecast");
+    expect(FORECAST_CALENDAR_TZ).toBe("America/New_York");
+    // 2026-08-31 23:30 EDT = 2026-09-01 03:30 UTC — UTC month is September.
+    const lateEt = new Date("2026-09-01T03:30:00.000Z");
+    expect(lateEt.getUTCMonth() + 1).toBe(9);
+    expect(calendarMonth(lateEt)).toBe(8);
+  });
 });

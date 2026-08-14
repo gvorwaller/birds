@@ -15,6 +15,7 @@ import {
   type SpeciesObservationDetail,
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
+import { pickSpeciesTeaserState } from "$server/forecast";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -93,6 +94,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
+  const teaserP = pickSpeciesTeaserState(code);
   if (apiKey && origin) {
     try {
       const [recentResult, notableResult] = await Promise.allSettled([
@@ -146,9 +148,30 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     }
   }
 
+  // Forecast teaser: the loaded state where this species is most findable
+  // (highest peak month), not the state with the most checklists overall.
+  let forecastTeaser: {
+    regionCode: string;
+    regionName: string;
+    curve: { month: number; freq: number; n: number }[];
+    best: { month: number; freq: number; lowSample: boolean } | null;
+    peakPhrase: string | null;
+  } | null = null;
+  const teaserState = await teaserP;
+  if (teaserState && teaserState.best) {
+    forecastTeaser = {
+      regionCode: teaserState.locCode,
+      regionName: teaserState.locName,
+      curve: teaserState.curve,
+      best: teaserState.best,
+      peakPhrase: teaserState.peakPhrase,
+    };
+  }
+
   return {
     taxon: t,
     seen: seen.rows[0] ?? null,
+    forecastTeaser,
     photos: photos.rows,
     hasGallery,
     nearby,

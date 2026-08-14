@@ -12,8 +12,16 @@
  * month's 4 weeks — Σ(freqᵢ·nᵢ)/Σnᵢ — NEVER an unweighted mean (CODEX1 #2).
  */
 import { query } from '$lib/db';
-import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
-import { hotspotsNear, type EbirdHotspot } from '$server/ebird';
+import {
+	attemptMeta,
+	ensureFrequencies,
+	frequencyMeta,
+	lastCompleteYear,
+	WEEKS,
+	type EnsureResult,
+	type FrequencyMeta
+} from '$server/barchart';
+import { EbirdError, hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
 
@@ -23,6 +31,8 @@ import { haversineKm } from '$lib/geo';
  * (a 100% week with n=1 must not beat 30% with n=2,000).
  */
 export const MIN_MONTH_N = 40;
+
+export { calendarMonth, FORECAST_CALENDAR_TZ } from '$lib/forecast-calendar';
 
 export const MONTH_NAMES = [
 	'January',
@@ -97,6 +107,132 @@ export function monthCurve(
 }
 
 /**
+ * Reliability bands for a single observed frequency. These are display
+ * groupings, not a fabricated probability: "likely" means the species showed
+ * up on at least 1 in 5 historical checklists.
+ */
+export const FREQ_LIKELY = 0.2;
+export const FREQ_POSSIBLE = 0.05;
+
+export type Reliability = 'likely' | 'possible' | 'longshot';
+
+export function reliabilityOf(freq: number): Reliability {
+	if (freq >= FREQ_LIKELY) return 'likely';
+	if (freq >= FREQ_POSSIBLE) return 'possible';
+	return 'longshot';
+}
+
+/**
+ * How concentrated a species is across the analyzed hotspots.
+ * - local: one site is ≥2.5× the next, or only one site reports it
+ * - widespread: ≥3 sites within 50% of the top site's frequency
+ * - mixed: everything else (don't call it out in the UI)
+ */
+export type Concentration = 'local' | 'widespread' | 'mixed';
+
+export function concentrationOf(
+	hotspots: readonly { freq: number }[]
+): Concentration {
+	const positive = hotspots.filter((h) => h.freq > 0).sort((a, b) => b.freq - a.freq);
+	if (positive.length <= 1) return 'local';
+	const top = positive[0].freq;
+	const close = positive.filter((h) => h.freq >= top * 0.5).length;
+	if (close >= 3) return 'widespread';
+	if (top >= positive[1].freq * 2.5) return 'local';
+	return 'mixed';
+}
+
+/** eBird personal/broad locations that shouldn't win a "best hotspot" slot. */
+export function vagueLocName(name: string): boolean {
+	return /please use more specific/i.test(name);
+}
+
+/** Months within `ratio` of the adequately-sampled peak (inclusive). */
+export function goodMonths(curve: readonly MonthStat[], ratio = 0.8): number[] {
+	const peak = bestMonth(curve);
+	if (!peak || peak.freq <= 0) return [];
+	const floor = peak.freq * ratio;
+	return curve
+		.filter((s) => s.freq >= floor && (peak.lowSample || s.n >= MIN_MONTH_N))
+		.map((s) => s.month);
+}
+
+const WEEK_SLOT = ['early', 'mid', 'mid-to-late', 'late'] as const;
+
+/**
+ * A single week must reach this many checklists before it can decide
+ * "peaks late January". Below that we suppress week-level precision
+ * rather than let n=1 beat a well-sampled neighboring week.
+ */
+export const MIN_WEEK_N = 10;
+
+/**
+ * "late January" from a 1–48 eBird week. Returns null when no week is
+ * both positive-frequency and adequately sampled.
+ */
+export function peakWeekPhrase(
+	freqByWeek: ReadonlyMap<number, number>,
+	sampleSizes: readonly number[]
+): string | null {
+	let bestWeek = 0;
+	let bestFreq = 0;
+	for (const [week, freq] of freqByWeek) {
+		if (week < 1 || week > WEEKS || freq <= 0) continue;
+		const n = sampleSizes[week - 1] ?? 0;
+		if (n < MIN_WEEK_N) continue;
+		if (freq > bestFreq) {
+			bestFreq = freq;
+			bestWeek = week;
+		}
+	}
+	if (bestWeek === 0) return null;
+	const month = Math.ceil(bestWeek / 4);
+	const slot = WEEK_SLOT[(bestWeek - 1) % 4];
+	return `${slot} ${MONTH_NAMES[month - 1]}`;
+}
+
+export interface MonthRichness {
+	month: number;
+	likely: number;
+	possible: number;
+	longshot: number;
+}
+
+/** Count reliability bands per month from already-ranked species lists. */
+export function richnessFromSpecies(
+	byMonth: ReadonlyMap<number, readonly { areaFreq: number; lowSample: boolean }[]>
+): MonthRichness[] {
+	const out: MonthRichness[] = [];
+	for (let m = 1; m <= 12; m++) {
+		const usable = (byMonth.get(m) ?? []).filter((s) => !s.lowSample && s.areaFreq > 0);
+		out.push({
+			month: m,
+			likely: usable.filter((s) => s.areaFreq >= FREQ_LIKELY).length,
+			possible: usable.filter((s) => s.areaFreq >= FREQ_POSSIBLE && s.areaFreq < FREQ_LIKELY)
+				.length,
+			longshot: usable.filter((s) => s.areaFreq > 0 && s.areaFreq < FREQ_POSSIBLE).length
+		});
+	}
+	return out;
+}
+
+/** Argmax of likely, then possible. Null when every month is empty. */
+export function richestMonth(year: readonly MonthRichness[]): MonthRichness | null {
+	let best: MonthRichness | null = null;
+	for (const m of year) {
+		if (m.likely + m.possible === 0) continue;
+		if (
+			!best ||
+			m.likely > best.likely ||
+			(m.likely === best.likely && m.possible > best.possible)
+		) {
+			best = m;
+		}
+	}
+	return best;
+}
+
+/**
  * Best month = argmax frequency over adequately-sampled months (n >= MIN_MONTH_N).
  * Falls back to low-n months (flagged lowSample) only when no month qualifies.
  * Returns null when the species was never reported (all freqs 0).
@@ -123,6 +259,8 @@ export interface SpeciesLocForecast {
 	meta: FrequencyMeta;
 	curve: MonthStat[];
 	best: BestMonth | null;
+	/** "late January" from the peak weekly bin, when one exists. */
+	peakPhrase: string | null;
 	/** True when the species has a stored fetch but zero reported weeks. */
 	neverReported: boolean;
 }
@@ -188,6 +326,13 @@ export interface ForecastSpecies {
 	lowSample: boolean;
 	/** Best individual hotspots for this species (freq desc, top 3). */
 	topHotspots: ForecastHotspotStat[];
+	/** How site-specific this species is across the analyzed set. */
+	concentration: Concentration;
+	/**
+	 * True only when "mostly at {topHotspots[0]}" is honest — the displayed
+	 * top site is also the true frequency leader (not a vague name we hid).
+	 */
+	localClaim: boolean;
 }
 
 export interface AnalyzedHotspot {
@@ -216,6 +361,11 @@ export interface ForecastNeedsView {
 	outdatedCount: number;
 	/** Actual year span of the stored data used (never a hardcoded label). */
 	dataYears: { begin: number; end: number } | null;
+	/** Needed-species richness for every month at the same analyzed set. */
+	year: MonthRichness[];
+	/** Majority state of the analyzed hotspots, when they agree. */
+	regionCode: string | null;
+	regionName: string | null;
 }
 
 interface SpeciesLocAgg {
@@ -268,6 +418,11 @@ export function buildForecastSpecies(
 		const areaFreq = areaN > 0 ? e.num / areaN : 0;
 		if (areaFreq <= 0) continue;
 		e.hotspots.sort((a, b) => b.freq - a.freq);
+		const specific = e.hotspots.filter((h) => !vagueLocName(h.locName));
+		const forDisplay = specific.length > 0 ? specific : e.hotspots;
+		const concentration = concentrationOf(e.hotspots);
+		const trueTop = e.hotspots[0];
+		const shownTop = forDisplay[0];
 		species.push({
 			code,
 			comName: e.comName,
@@ -275,7 +430,13 @@ export function buildForecastSpecies(
 			areaFreq,
 			areaN,
 			lowSample: areaN < MIN_MONTH_N,
-			topHotspots: e.hotspots.slice(0, 3)
+			topHotspots: forDisplay.slice(0, 3),
+			concentration,
+			localClaim:
+				concentration === 'local' &&
+				!!trueTop &&
+				!!shownTop &&
+				trueTop.locId === shownTop.locId
 		});
 	}
 	// Adequately-sampled block first, each block by frequency descending.
@@ -299,9 +460,9 @@ export async function forecastNeedsNear(
 	lat: number,
 	lng: number,
 	distKm: number,
-	month: number
+	month: number,
+	seen?: ReadonlySet<string>
 ): Promise<ForecastNeedsView> {
-	const { from, to } = monthWeeks(month);
 	const hotspots = await hotspotsNear(apiKey, lat, lng, distKm);
 	const selected = selectForecastHotspots(hotspots.data, { lat, lng });
 	const locIds = selected.map((h) => h.locId);
@@ -310,44 +471,65 @@ export async function forecastNeedsNear(
 	const withData = locIds.filter((id) => meta.has(id));
 
 	let species: ForecastSpecies[] = [];
+	let year: MonthRichness[] = richnessFromSpecies(new Map());
 	if (withData.length > 0) {
-		const [aggRes, denomRes, seen] = await Promise.all([
-			query<{ species_code: string; com_name: string; sci_name: string; loc_code: string; num: number }>(
+		const [aggRes, denomRes, seenResolved] = await Promise.all([
+			query<{
+				species_code: string;
+				com_name: string;
+				sci_name: string;
+				loc_code: string;
+				month: number;
+				num: number;
+			}>(
 				`SELECT sf.species_code, tc.com_name, tc.sci_name, sf.loc_code,
+				        ((sf.week - 1) / 4 + 1)::int AS month,
 				        SUM(sf.freq * ss.n)::float8 AS num
 				   FROM species_frequency sf
 				   JOIN frequency_fetch ff ON ff.loc_code = sf.loc_code
 				   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
 				     ON ss.week = sf.week
 				   JOIN taxonomy_cache tc ON tc.species_code = sf.species_code
-				  WHERE sf.loc_code = ANY($1) AND sf.week BETWEEN $2 AND $3
-				  GROUP BY sf.species_code, tc.com_name, tc.sci_name, sf.loc_code`,
-				[withData, from, to]
+				  WHERE sf.loc_code = ANY($1)
+				  GROUP BY sf.species_code, tc.com_name, tc.sci_name, sf.loc_code, month`,
+				[withData]
 			),
-			query<{ loc_code: string; n: number }>(
-				`SELECT ff.loc_code, SUM(ss.n)::float8 AS n
+			query<{ loc_code: string; month: number; n: number }>(
+				`SELECT ff.loc_code, ((ss.week - 1) / 4 + 1)::int AS month, SUM(ss.n)::float8 AS n
 				   FROM frequency_fetch ff,
 				        LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
-				  WHERE ff.loc_code = ANY($1) AND ss.week BETWEEN $2 AND $3
-				  GROUP BY ff.loc_code`,
-				[withData, from, to]
+				  WHERE ff.loc_code = ANY($1)
+				  GROUP BY ff.loc_code, month`,
+				[withData]
 			),
-			seenSet(userId)
+			seen ?? seenSet(userId)
 		]);
-		const denomByLoc = new Map(denomRes.rows.map((r) => [r.loc_code, Number(r.n)]));
 		const locNames = new Map(selected.map((h) => [h.locId, h.locName]));
-		species = buildForecastSpecies(
-			aggRes.rows.map((r) => ({
-				code: r.species_code,
-				comName: r.com_name,
-				sciName: r.sci_name,
-				locId: r.loc_code,
-				num: Number(r.num)
-			})),
-			denomByLoc,
-			locNames,
-			seen
-		);
+		const byMonth = new Map<number, ForecastSpecies[]>();
+		for (let m = 1; m <= 12; m++) {
+			const denomByLoc = new Map(
+				denomRes.rows.filter((r) => Number(r.month) === m).map((r) => [r.loc_code, Number(r.n)])
+			);
+			byMonth.set(
+				m,
+				buildForecastSpecies(
+					aggRes.rows
+						.filter((r) => Number(r.month) === m)
+						.map((r) => ({
+							code: r.species_code,
+							comName: r.com_name,
+							sciName: r.sci_name,
+							locId: r.loc_code,
+							num: Number(r.num)
+						})),
+					denomByLoc,
+					locNames,
+					seenResolved
+				)
+			);
+		}
+		species = byMonth.get(month) ?? [];
+		year = richnessFromSpecies(byMonth);
 	}
 
 	const newestCompleteYear = lastCompleteYear();
@@ -366,6 +548,21 @@ export async function forecastNeedsNear(
 	});
 	const fetchDates = analyzed.filter((a) => a.fetchedAt).map((a) => a.fetchedAt!);
 	const usedMetas = withData.map((id) => meta.get(id)!);
+	const rawRegion = majorityRegionCode(selected);
+	const regionCode = rawRegion && /^US-[A-Z]{2}$/.test(rawRegion) ? rawRegion : null;
+	let regionName: string | null = null;
+	if (regionCode) {
+		try {
+			const states = (await subregions(apiKey, 'US', 'subnational1')).data;
+			regionName = states.find((s) => s.code === regionCode)?.name ?? null;
+		} catch {
+			regionName = null;
+		}
+		if (!regionName) {
+			const named = (await frequencyMeta([regionCode])).get(regionCode);
+			regionName = named?.locName && named.locName !== regionCode ? named.locName : regionCode;
+		}
+	}
 
 	return {
 		month,
@@ -380,8 +577,38 @@ export async function forecastNeedsNear(
 					begin: Math.min(...usedMetas.map((m) => m.beginYear)),
 					end: Math.max(...usedMetas.map((m) => m.endYear))
 				}
-			: null
+			: null,
+		year,
+		regionCode,
+		regionName
 	};
+}
+
+/**
+ * Strict majority subnational1 among hotspots that carry one.
+ * A mere plurality or a tie returns null — "Where in …" and county-needs
+ * must not pick an arbitrary border state.
+ */
+export function majorityRegionCode(hotspots: readonly EbirdHotspot[]): string | null {
+	const counts = new Map<string, number>();
+	let tagged = 0;
+	for (const h of hotspots) {
+		const code = h.subnational1Code;
+		if (!code) continue;
+		tagged += 1;
+		counts.set(code, (counts.get(code) ?? 0) + 1);
+	}
+	if (tagged === 0) return null;
+	let best: string | null = null;
+	let n = 0;
+	for (const [code, k] of counts) {
+		if (k > n) {
+			best = code;
+			n = k;
+		}
+	}
+	if (!best || n * 2 <= tagged) return null;
+	return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +666,113 @@ export function coverageFromMeta(
 		missing,
 		failed,
 		remaining: stale.length + missing.length - failed.length
+	};
+}
+
+/** A failed location sits out of resumable batch loops for this long. */
+export const FAILED_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+/** Failed-and-cooling-down loc codes (excluded from batch loops). */
+export function recentFailures(
+	attempts: ReadonlyMap<string, { status: string; lastAttemptAt: Date }>,
+	now: Date
+): Set<string> {
+	const out = new Set<string>();
+	for (const [code, a] of attempts) {
+		if (
+			a.status === 'error' &&
+			now.getTime() - a.lastAttemptAt.getTime() < FAILED_RETRY_COOLDOWN_MS
+		) {
+			out.add(code);
+		}
+	}
+	return out;
+}
+
+export interface CountyProgress {
+	total: number;
+	current: number;
+	stale: number;
+	failed: number;
+	remaining: number;
+}
+
+export type CountyBatchOutcome =
+	| { ok: true; ensure: EnsureResult; progress: CountyProgress }
+	| { ok: false; status: number; message: string };
+
+/**
+ * Analyze the next batch of a state's counties (≤ COUNTY_BATCH eBird
+ * requests) — shared by the species page and /forecast/data so county data
+ * (which is species-agnostic) can be populated from either. Validates the
+ * state against the official region list; progress is recomputed from the DB
+ * after the batch so restarts and concurrent tabs stay truthful.
+ */
+export async function analyzeCountyBatch(
+	userId: number,
+	apiKey: string,
+	regionCode: string
+): Promise<CountyBatchOutcome> {
+	let counties: { code: string; name: string }[];
+	try {
+		const states = (await subregions(apiKey, 'US', 'subnational1')).data;
+		if (!states.some((s) => s.code === regionCode)) {
+			return { ok: false, status: 400, message: 'That region is not a US state.' };
+		}
+		counties = (await subregions(apiKey, regionCode, 'subnational2')).data;
+	} catch (err) {
+		return {
+			ok: false,
+			status: 502,
+			message:
+				err instanceof EbirdError ? err.message : 'Could not list counties for that state.'
+		};
+	}
+	if (counties.length === 0) {
+		return { ok: false, status: 404, message: 'eBird lists no counties for that state.' };
+	}
+
+	const codes = counties.map((c) => c.code);
+	const newestYear = lastCompleteYear();
+	const [meta, attempts] = await Promise.all([frequencyMeta(codes), attemptMeta(codes)]);
+	const before = coverageFromMeta(codes, meta, recentFailures(attempts, new Date()), newestYear);
+	const batch = nextUncachedCounties(
+		counties,
+		new Set(before.current),
+		new Set(before.failed),
+		COUNTY_BATCH
+	);
+
+	const ensure = await ensureFrequencies(
+		userId,
+		batch.map((c) => ({
+			code: c.code,
+			kind: 'region' as const,
+			name: c.name,
+			regionCode
+		}))
+	);
+
+	const [metaAfter, attemptsAfter] = await Promise.all([
+		frequencyMeta(codes),
+		attemptMeta(codes)
+	]);
+	const after = coverageFromMeta(
+		codes,
+		metaAfter,
+		recentFailures(attemptsAfter, new Date()),
+		newestYear
+	);
+	return {
+		ok: true,
+		ensure,
+		progress: {
+			total: counties.length,
+			current: after.current.length,
+			stale: after.stale.length,
+			failed: after.failed.length,
+			remaining: after.remaining
+		}
 	};
 }
 
@@ -512,6 +846,246 @@ export async function rankLocsForSpeciesMonth(
 		});
 }
 
+export interface CountyNeedsRank {
+	code: string;
+	name: string;
+	likely: number;
+	possible: number;
+	longshot: number;
+	/** Month checklist count at this county (area n). */
+	n: number;
+}
+
+/**
+ * Rank a state's stored counties by how many of the user's needs are
+ * likely/possible there in `month`. Counties without stored data are omitted.
+ */
+export async function rankCountiesForNeeds(
+	userId: number,
+	regionCode: string,
+	month: number,
+	seen?: ReadonlySet<string>
+): Promise<CountyNeedsRank[]> {
+	if (!/^US-[A-Z]{2}$/.test(regionCode)) return [];
+	const { from, to } = monthWeeks(month);
+	const [counties, seenResolved] = await Promise.all([
+		query<{ loc_code: string; loc_name: string }>(
+			`SELECT loc_code, loc_name FROM frequency_fetch
+			  WHERE loc_kind = 'region' AND loc_code LIKE $1`,
+			[`${regionCode}-___`]
+		),
+		seen ?? seenSet(userId)
+	]);
+	if (counties.rows.length === 0) return [];
+	const codes = counties.rows.map((c) => c.loc_code);
+	const names = new Map(counties.rows.map((c) => [c.loc_code, c.loc_name]));
+	const r = await query<{ loc_code: string; species_code: string; freq: number | null; n: number }>(
+		`SELECT ff.loc_code, sp.species_code,
+		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
+		        SUM(ss.n)::float8 AS n
+		   FROM frequency_fetch ff
+		   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+		     ON ss.week BETWEEN $2 AND $3
+		   JOIN (
+		        SELECT DISTINCT loc_code, species_code
+		          FROM species_frequency
+		         WHERE loc_code = ANY($1) AND week BETWEEN $2 AND $3
+		   ) sp ON sp.loc_code = ff.loc_code
+		   LEFT JOIN species_frequency sf
+		     ON sf.loc_code = ff.loc_code
+		    AND sf.species_code = sp.species_code
+		    AND sf.week = ss.week
+		  WHERE ff.loc_code = ANY($1)
+		  GROUP BY ff.loc_code, sp.species_code`,
+		[codes, from, to]
+	);
+	const byLoc = new Map<string, { likely: number; possible: number; longshot: number; n: number }>();
+	for (const row of r.rows) {
+		if (seenResolved.has(row.species_code)) continue;
+		const freq = Number(row.freq ?? 0);
+		const n = Number(row.n);
+		if (freq <= 0 || n < MIN_MONTH_N) continue;
+		let entry = byLoc.get(row.loc_code);
+		if (!entry) {
+			entry = { likely: 0, possible: 0, longshot: 0, n };
+			byLoc.set(row.loc_code, entry);
+		}
+		const band = reliabilityOf(freq);
+		entry[band] += 1;
+	}
+	return [...byLoc.entries()]
+		.map(([code, e]) => ({
+			code,
+			name: names.get(code) ?? code,
+			likely: e.likely,
+			possible: e.possible,
+			longshot: e.longshot,
+			n: e.n
+		}))
+		.filter((c) => c.likely + c.possible > 0)
+		.sort((a, b) => {
+			if (b.likely !== a.likely) return b.likely - a.likely;
+			if (b.possible !== a.possible) return b.possible - a.possible;
+			return a.name.localeCompare(b.name);
+		});
+}
+
+/**
+ * Best adequately-sampled month for one species at each stored location.
+ * Locations with no qualifying month are omitted.
+ */
+export async function bestMonthsByLoc(
+	locCodes: readonly string[],
+	speciesCode: string
+): Promise<Map<string, BestMonth>> {
+	const out = new Map<string, BestMonth>();
+	if (locCodes.length === 0) return out;
+	const r = await query<{ loc_code: string; month: number; freq: number | null; n: number }>(
+		`SELECT ff.loc_code,
+		        ((ss.week - 1) / 4 + 1)::int AS month,
+		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
+		        SUM(ss.n)::float8 AS n
+		   FROM frequency_fetch ff
+		   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week) ON TRUE
+		   LEFT JOIN species_frequency sf
+		     ON sf.loc_code = ff.loc_code AND sf.species_code = $2 AND sf.week = ss.week
+		  WHERE ff.loc_code = ANY($1)
+		  GROUP BY ff.loc_code, month`,
+		[locCodes, speciesCode]
+	);
+	const byLoc = new Map<string, MonthStat[]>();
+	for (const row of r.rows) {
+		const list = byLoc.get(row.loc_code) ?? [];
+		list.push({ month: Number(row.month), freq: Number(row.freq ?? 0), n: Number(row.n) });
+		byLoc.set(row.loc_code, list);
+	}
+	for (const [code, curve] of byLoc) {
+		const best = bestMonth(curve);
+		if (best) out.set(code, best);
+	}
+	return out;
+}
+
+export interface TeaserCandidate {
+	locCode: string;
+	locName: string;
+	best: BestMonth | null;
+	neverReported: boolean;
+}
+
+/**
+ * Pure picker: adequately-sampled peak wins; low-n is only a fallback when
+ * no sampled state exists. Ties break toward more checklists.
+ */
+export function pickTeaserCandidate(
+	states: readonly TeaserCandidate[]
+): { locCode: string; locName: string } | null {
+	const usable = states.filter((s) => !s.neverReported && s.best && s.best.freq > 0);
+	const sampled = usable.filter((s) => s.best && !s.best.lowSample);
+	const pool = sampled.length > 0 ? sampled : usable;
+	let best: TeaserCandidate | null = null;
+	for (const s of pool) {
+		const b = s.best!;
+		if (
+			!best ||
+			!best.best ||
+			b.freq > best.best.freq ||
+			(b.freq === best.best.freq && b.n > best.best.n) ||
+			(b.freq === best.best.freq &&
+				b.n === best.best.n &&
+				s.locCode.localeCompare(best.locCode) < 0)
+		) {
+			best = s;
+		}
+	}
+	return best ? { locCode: best.locCode, locName: best.locName } : null;
+}
+
+export interface SpeciesTeaserPick {
+	locCode: string;
+	locName: string;
+	curve: MonthStat[];
+	best: BestMonth | null;
+	peakPhrase: string | null;
+}
+
+/**
+ * Among loaded US states, pick the one where this species is most findable.
+ * One query for every stored US-XX row — no N+1.
+ */
+export async function pickSpeciesTeaserState(
+	speciesCode: string
+): Promise<SpeciesTeaserPick | null> {
+	const r = await query<{
+		loc_code: string;
+		loc_name: string;
+		sample_sizes: number[];
+		week: number | null;
+		freq: number | null;
+	}>(
+		`SELECT ff.loc_code, ff.loc_name, ff.sample_sizes, sf.week, sf.freq
+		   FROM frequency_fetch ff
+		   LEFT JOIN species_frequency sf
+		     ON sf.loc_code = ff.loc_code AND sf.species_code = $1
+		  WHERE ff.loc_kind = 'region' AND ff.loc_code ~ '^US-[A-Z]{2}$'`,
+		[speciesCode]
+	);
+	if (r.rows.length === 0) return null;
+
+	const byLoc = new Map<
+		string,
+		{ locName: string; sampleSizes: number[]; freqByWeek: Map<number, number> }
+	>();
+	for (const row of r.rows) {
+		let entry = byLoc.get(row.loc_code);
+		if (!entry) {
+			const sizes = Array.isArray(row.sample_sizes)
+				? row.sample_sizes.map((n) => Number(n))
+				: [];
+			entry = { locName: row.loc_name, sampleSizes: sizes, freqByWeek: new Map() };
+			byLoc.set(row.loc_code, entry);
+		}
+		if (row.week != null && row.freq != null) {
+			const week = Number(row.week);
+			if (week >= 1 && week <= WEEKS) entry.freqByWeek.set(week, Number(row.freq));
+		}
+	}
+
+	const built: {
+		candidate: TeaserCandidate;
+		curve: MonthStat[];
+		peakPhrase: string | null;
+	}[] = [];
+	for (const [locCode, e] of byLoc) {
+		const curve = monthCurve(e.freqByWeek, e.sampleSizes);
+		const best = bestMonth(curve);
+		const rawPeak = peakWeekPhrase(e.freqByWeek, e.sampleSizes);
+		const peakPhrase =
+			best && rawPeak && rawPeak.endsWith(MONTH_NAMES[best.month - 1]) ? rawPeak : null;
+		built.push({
+			candidate: {
+				locCode,
+				locName: e.locName,
+				best,
+				neverReported: e.freqByWeek.size === 0
+			},
+			curve,
+			peakPhrase
+		});
+	}
+	const pick = pickTeaserCandidate(built.map((b) => b.candidate));
+	if (!pick) return null;
+	const win = built.find((b) => b.candidate.locCode === pick.locCode);
+	if (!win) return null;
+	return {
+		locCode: pick.locCode,
+		locName: pick.locName,
+		curve: win.curve,
+		best: win.candidate.best,
+		peakPhrase: win.peakPhrase
+	};
+}
+
 /**
  * Month curve for one species at one stored location (region or hotspot).
  * Returns null when no barchart data has been fetched for the location at all
@@ -534,10 +1108,17 @@ export async function speciesLocForecast(
 		if (week >= 1 && week <= WEEKS) freqByWeek.set(week, Number(row.freq));
 	}
 	const curve = monthCurve(freqByWeek, meta.sampleSizes);
+	const best = bestMonth(curve);
+	const rawPeak = peakWeekPhrase(freqByWeek, meta.sampleSizes);
+	// Only keep weekly timing when it refines the best month ("late January"),
+	// never when a single noisy week in another month would contradict it.
+	const peakPhrase =
+		best && rawPeak && rawPeak.endsWith(MONTH_NAMES[best.month - 1]) ? rawPeak : null;
 	return {
 		meta,
 		curve,
-		best: bestMonth(curve),
+		best,
+		peakPhrase,
 		neverReported: freqByWeek.size === 0
 	};
 }

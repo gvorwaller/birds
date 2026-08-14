@@ -19,5 +19,5 @@ build/
 .claude/worktrees/
 .svelte-kit/
 
-# Local DB/secret snapshots
-data/
+# Local DB/secret snapshots (repo-root only — do not ignore src/**/data/)
+/data/

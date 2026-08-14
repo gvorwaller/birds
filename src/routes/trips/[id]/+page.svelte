@@ -10,6 +10,7 @@
   import { normalizeTripStopNote, plannerTargetNote } from "$lib/planner-note";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
+  import { calendarMonth } from "$lib/forecast-calendar";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -17,6 +18,44 @@
   let editing = $state(false);
   let deleteOpen = $state(false);
   let distanceUnit = $state<DistanceUnit>("mi");
+
+  const MONTH_ABBR = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  // Forecast links carry the TRIP's month (from its start date) so a stop
+  // opens the needs forecast for when you'll actually be there (UX doc #1).
+  const tripMonth = $derived.by(() => {
+    const sd = data.trip?.start_date;
+    if (sd) {
+      const d = new Date(`${sd}T12:00:00`);
+      if (!Number.isNaN(d.getTime())) return d.getMonth() + 1;
+    }
+    return calendarMonth();
+  });
+  function stopForecastHref(s: {
+    lat: number | null;
+    lon: number | null;
+    custom_name: string | null;
+    hotspot_id: string | null;
+  }): string {
+    const p = new URLSearchParams();
+    p.set("lat", s.lat!.toFixed(5));
+    p.set("lng", s.lon!.toFixed(5));
+    p.set("loc", s.custom_name ?? s.hotspot_id ?? "Trip stop");
+    p.set("month", String(tripMonth));
+    return `/forecast?${p.toString()}`;
+  }
 
   const MAPS_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
@@ -353,6 +392,11 @@
             name={s.custom_name ?? s.hotspot_id ?? "Stop"}
             googlePlaceId={s.google_place_id}
           />
+          {#if s.lat != null && s.lon != null}
+            <a class="stop-forecast" href={stopForecastHref(s)}
+              >📅 Forecast for {MONTH_ABBR[tripMonth - 1]}</a
+            >
+          {/if}
           {#if s.notes}<div class="stopnote">
               {normalizeTripStopNote(s.notes)}
             </div>{/if}
@@ -902,6 +946,13 @@
     margin-top: 4px;
     font-style: italic;
     color: var(--text);
+  }
+  .stop-forecast {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    font-size: 0.85rem;
+    margin-top: 4px;
   }
   .noteedit {
     margin-top: 6px;

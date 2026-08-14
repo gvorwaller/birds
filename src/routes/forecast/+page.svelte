@@ -1,13 +1,42 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import ForecastTabs from "$components/ForecastTabs.svelte";
+  import MapLink from "$components/MapLink.svelte";
+  import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
+  import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance } from "$lib/geo";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  let showPicker = $state(false);
+  let picked = $state<PickedLocation | null>(null);
+
+  function usePicked() {
+    if (!picked) return;
+    const p = new URLSearchParams();
+    p.set("lat", picked.lat.toFixed(5));
+    p.set("lng", picked.lng.toFixed(5));
+    p.set("loc", picked.label);
+    p.set("month", String(data.month));
+    p.set("dist", String(data.dist));
+    showPicker = false;
+    picked = null;
+    goto(`/forecast?${p.toString()}`);
+  }
+
+  const nearPlaceholder = $derived(
+    data.location && !data.placeQuery
+      ? data.originKind === "home"
+        ? `${data.location.label} (saved home)`
+        : data.location.label
+      : "City, county, park, or address — anywhere",
+  );
 
   // Species links carry a returnTo (so "← Forecast" comes back here with the
   // same place/month) plus the forecast origin as location context, so the
@@ -54,9 +83,57 @@
   const wellSampled = $derived(
     data.view ? data.view.species.filter((s) => !s.lowSample) : [],
   );
+  const likely = $derived(wellSampled.filter((s) => s.areaFreq >= 0.2));
+  const possible = $derived(
+    wellSampled.filter((s) => s.areaFreq >= 0.05 && s.areaFreq < 0.2),
+  );
+  const longshots = $derived(
+    wellSampled.filter((s) => s.areaFreq > 0 && s.areaFreq < 0.05),
+  );
   const lowSampled = $derived(
     data.view ? data.view.species.filter((s) => s.lowSample) : [],
   );
+  const richest = $derived.by(() => {
+    const year = data.view?.year ?? [];
+    let best = year[0] ?? null;
+    for (const m of year) {
+      if (!best || m.likely > best.likely || (m.likely === best.likely && m.possible > best.possible)) {
+        best = m;
+      }
+    }
+    return best && best.likely + best.possible > 0 ? best : null;
+  });
+  const hotspotPoints = $derived.by((): ObsPoint[] => {
+    if (!data.view) return [];
+    return data.view.analyzed.map((h) => ({
+      lat: h.lat,
+      lng: h.lng,
+      title: h.locName,
+      sub: h.hasData
+        ? h.fetchedAt
+          ? `data from ${fmtDate(h.fetchedAt)}`
+          : "loaded"
+        : "no data yet",
+      kind: h.hasData ? ("need" as const) : ("pending" as const),
+    }));
+  });
+
+  function speciesWhereHref(code: string): string | null {
+    if (!data.view?.regionCode) return null;
+    const p = new URLSearchParams();
+    p.set("species", code);
+    p.set("region", data.view.regionCode);
+    p.set("month", String(data.month));
+    return `/forecast/species?${p.toString()}`;
+  }
+
+  function addToTripHref(h: { lat: number; lng: number; locName: string }) {
+    const p = new URLSearchParams();
+    p.set("place", h.locName);
+    p.set("lat", h.lat.toFixed(5));
+    p.set("lng", h.lng.toFixed(5));
+    return `/trips/plan?${p.toString()}`;
+  }
 
   function pct(freq: number): string {
     if (freq === 0) return "0%";
@@ -79,26 +156,42 @@
 
 <div class="page">
   <h1>Forecast</h1>
+  <ForecastTabs
+    mode="area"
+    params={page.url.search.slice(1)}
+    month={data.month}
+  />
   <p class="intro">
     Which species you still need are likely near a place in a given month,
-    from prior years' eBird checklist frequencies. Looking for one species?
-    <a href="/forecast/species">Species forecast</a> · What's loaded?
-    <a href="/forecast/data">Forecast data</a>.
+    from prior years' eBird checklist frequencies.
+    <a href="/forecast/data">Forecast data</a> shows what's loaded.
   </p>
 
   <section class="card">
     <form method="GET" class="filters">
+      {#if data.originKind === "pin" && data.location}
+        <input type="hidden" name="lat" value={data.location.lat.toFixed(5)} />
+        <input type="hidden" name="lng" value={data.location.lng.toFixed(5)} />
+        <input type="hidden" name="loc" value={data.location.label} />
+      {/if}
       <div class="row">
         <label for="place">Near</label>
-        <input
-          id="place"
-          name="place"
-          type="search"
-          placeholder={data.location && !data.placeQuery
-            ? `${data.location.label} (saved home)`
-            : "City, county, park, or address…"}
-          value={data.placeQuery}
-        />
+        <div class="nearrow">
+          <input
+            id="place"
+            name="place"
+            type="search"
+            placeholder={nearPlaceholder}
+            value={data.placeQuery}
+          />
+          <button
+            type="button"
+            class="secondary"
+            onclick={() => (showPicker = !showPicker)}
+          >
+            📍 Pick on map
+          </button>
+        </div>
       </div>
       <div class="row">
         <label for="dist">Within</label>
@@ -124,8 +217,32 @@
         <span class="label">Month</span>
         <MonthPicker value={data.month} />
       </div>
-      <noscript><button type="submit">Update</button></noscript>
+      <div class="row">
+        <button type="submit" name="month" value={data.month}>Update</button>
+      </div>
     </form>
+    {#if showPicker}
+      <div class="picker-wrap">
+        <MapPicker
+          bind:selected={picked}
+          initialLat={data.location?.lat ?? null}
+          initialLng={data.location?.lng ?? null}
+        />
+        <div class="picker-actions">
+          <button type="button" onclick={usePicked} disabled={!picked}>
+            {picked ? `Forecast near ${picked.label}` : "Tap the map to drop a pin"}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            onclick={() => {
+              showPicker = false;
+              picked = null;
+            }}>Cancel</button
+          >
+        </div>
+      </div>
+    {/if}
     {#if data.error}
       <p class="error">{data.error}</p>
     {/if}
@@ -149,17 +266,16 @@
         {MONTH_NAMES[v.month - 1]} near {data.location.label}
       </h2>
       <p class="coverage">
-        Analyzed {v.analyzed.length} of {v.totalNearby} hotspots in range
-        · {covered} with frequency data
+        {#if v.dataYears}{v.dataYears.begin}–{v.dataYears.end} ·
+        {/if}{v.analyzed.length} of {v.totalNearby} hotspots analyzed ·
+        {covered} loaded
         {#if v.outdatedCount > 0}
           · <span class="stale">{v.outdatedCount} outdated</span>
-        {/if}
-        {#if v.oldestFetchedAt}
-          · oldest data {fmtDate(v.oldestFetchedAt)}
         {/if}
         {#if v.hotspotListStale}
           · <span class="stale">hotspot list from cache</span>
         {/if}
+        · <a href="/forecast/data">details</a>
       </p>
 
       {#if (uncovered > 0 || v.outdatedCount > 0) && !data.isViewer}
@@ -227,6 +343,52 @@
         {/if}
       {/if}
 
+      {#if covered > 0 && v.year.some((m) => m.likely + m.possible + m.longshot > 0)}
+        <form method="GET" class="yearform">
+          {#if data.originKind === "pin" && data.location}
+            <input type="hidden" name="lat" value={data.location.lat.toFixed(5)} />
+            <input type="hidden" name="lng" value={data.location.lng.toFixed(5)} />
+            <input type="hidden" name="loc" value={data.location.label} />
+          {:else if data.placeQuery}
+            <input type="hidden" name="place" value={data.placeQuery} />
+          {/if}
+          <input type="hidden" name="dist" value={data.dist} />
+          <p class="label">Best month for your needs here</p>
+          {#if richest}
+            <p class="yearlead">
+              {MONTH_NAMES[richest.month - 1]} is richest —
+              {richest.likely} likely
+              {#if richest.possible > 0}
+                · {richest.possible} possible
+              {/if}
+              {#if richest.month !== v.month}
+                <span class="yearhint"
+                  >(you’re looking at {MONTH_NAMES[v.month - 1]})</span
+                >
+              {/if}
+            </p>
+          {/if}
+          <div class="yeargrid" role="group" aria-label="Needed species by month">
+            {#each v.year as m (m.month)}
+              {@const score = m.likely + m.possible}
+              <button
+                type="submit"
+                name="month"
+                value={m.month}
+                class:active={m.month === v.month}
+                class:peak={richest && m.month === richest.month}
+              >
+                <span class="ym">{MONTH_NAMES[m.month - 1].slice(0, 3)}</span>
+                <span class="ys">{score}</span>
+                <span class="yl"
+                  >{m.likely > 0 ? `${m.likely} likely` : score > 0 ? "possible" : "—"}</span
+                >
+              </button>
+            {/each}
+          </div>
+        </form>
+      {/if}
+
       {#if covered > 0}
         {#if v.species.length === 0}
           <p>
@@ -235,70 +397,146 @@
           </p>
         {:else}
           <p class="summary">
-            <strong>{v.species.length}</strong> needed species reported here in
-            {MONTH_NAMES[v.month - 1]}{#if v.dataYears}
-              ({v.dataYears.begin}–{v.dataYears.end} checklists){/if}.
+            <strong>{likely.length}</strong> likely
+            {#if possible.length > 0}
+              · {possible.length} possible
+            {/if}
+            needed species in {MONTH_NAMES[v.month - 1]}
+            {#if longshots.length + lowSampled.length > 0}
+              <span class="muted">
+                · {longshots.length + lowSampled.length} long shots below</span
+              >
+            {/if}
           </p>
-          <ol class="needs">
-            {#each wellSampled as s (s.code)}
-              <li>
-                <div class="sp">
-                  <a href={speciesHref(s.code)} class="name">{s.comName}</a>
-                  <span class="freq"
-                    >{pct(s.areaFreq)} of checklists (n={s.areaN.toLocaleString()})</span
-                  >
-                </div>
-                {#if s.topHotspots.length > 0}
-                  <div class="best">
-                    best: {#each s.topHotspots as h, i (h.locId)}{i > 0
-                        ? " · "
-                        : ""}{h.locName} ({pct(h.freq)}{h.lowSample
-                        ? " †"
-                        : ""}){/each}
+          {#snippet speciesList(items: typeof wellSampled)}
+            <ol class="needs">
+              {#each items as s (s.code)}
+                {@const where = speciesWhereHref(s.code)}
+                <li>
+                  <div class="sp">
+                    <a href={speciesHref(s.code)} class="name">{s.comName}</a>
+                    <span class="freq"
+                      >{pct(s.areaFreq)} of checklists (n={s.areaN.toLocaleString()})</span
+                    >
                   </div>
-                {/if}
-              </li>
-            {/each}
-          </ol>
+                  {#if s.topHotspots.length > 0}
+                    <div class="best">
+                      {#if s.concentration === "local" && s.localClaim && s.topHotspots[0]}
+                        mostly at {s.topHotspots[0].locName} ({pct(s.topHotspots[0].freq)}{s.topHotspots[0].lowSample ? " †" : ""})
+                      {:else if s.concentration === "widespread"}
+                        widespread
+                        {#each s.topHotspots as h, i (h.locId)}{i > 0 ? " · " : " — "}{h.locName} ({pct(h.freq)}{h.lowSample ? " †" : ""}){/each}
+                      {:else}
+                        best: {#each s.topHotspots as h, i (h.locId)}{i > 0
+                            ? " · "
+                            : ""}{h.locName} ({pct(h.freq)}{h.lowSample
+                            ? " †"
+                            : ""}){/each}
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if where}
+                    <div class="actions">
+                      <a href={where}
+                        >Where in {v.regionName ?? "this state"}</a
+                      >
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ol>
+          {/snippet}
+          {#if likely.length > 0}
+            <h3 class="band">Likely — on at least 20% of checklists</h3>
+            {@render speciesList(likely)}
+          {/if}
+          {#if possible.length > 0}
+            <h3 class="band">Possible — 5–19% of checklists</h3>
+            {@render speciesList(possible)}
+          {/if}
+          {#if longshots.length > 0}
+            <details class="lown">
+              <summary>
+                {longshots.length} long shot{longshots.length === 1 ? "" : "s"}
+                (under 5% of checklists)
+              </summary>
+              {@render speciesList(longshots)}
+            </details>
+          {/if}
           {#if lowSampled.length > 0}
             <details class="lown">
               <summary>
                 {lowSampled.length} more with small samples (fewer than 40
                 checklists)
               </summary>
-              <ol class="needs">
-                {#each lowSampled as s (s.code)}
-                  <li>
-                    <div class="sp">
-                      <a href={speciesHref(s.code)} class="name">{s.comName}</a>
-                      <span class="freq"
-                        >{pct(s.areaFreq)} (n={s.areaN.toLocaleString()})</span
-                      >
-                    </div>
-                  </li>
-                {/each}
-              </ol>
+              {@render speciesList(lowSampled)}
             </details>
           {/if}
         {/if}
       {/if}
 
+      {#if data.countyNeeds.length > 0 && v.regionName}
+        <div class="counties">
+          <h3 class="band">
+            Best counties in {v.regionName} for your needs —
+            {MONTH_NAMES[v.month - 1]}
+          </h3>
+          <p class="muted">
+            From statewide county data already loaded. Ranked by how many of
+            your needs are likely there.
+          </p>
+          <ol class="needs">
+            {#each data.countyNeeds.slice(0, 10) as c (c.code)}
+              <li>
+                <div class="sp">
+                  <span class="name">{c.name}</span>
+                  <span class="freq"
+                    >{c.likely} likely{#if c.possible > 0}&nbsp;· {c.possible} possible{/if}</span
+                  >
+                </div>
+              </li>
+            {/each}
+          </ol>
+        </div>
+      {/if}
+
       <details class="analyzed">
-        <summary>Analyzed hotspots</summary>
+        <summary>Analyzed hotspots ({v.analyzed.length} of {v.totalNearby})</summary>
         <ul>
           {#each v.analyzed as h (h.locId)}
             <li>
-              {h.locName}
-              <span class="meta">
-                {formatDistance(h.distanceKm, "mi")} ·
-                {h.hasData && h.fetchedAt
-                  ? `data from ${fmtDate(h.fetchedAt)}`
-                  : "no data yet"}
-              </span>
+              <div class="sp">
+                <span class="name">{h.locName}</span>
+                <span class="meta">
+                  {formatDistance(h.distanceKm, "mi")} ·
+                  {h.hasData && h.fetchedAt
+                    ? `data from ${fmtDate(h.fetchedAt)}`
+                    : "no data yet"}
+                </span>
+              </div>
+              <div class="actions">
+                <MapLink lat={h.lat} lng={h.lng} name={h.locName} />
+                <a
+                  href="https://ebird.org/hotspot/{h.locId}"
+                  target="_blank"
+                  rel="noopener">eBird ↗</a
+                >
+                <a href={addToTripHref(h)}>Add to trip</a>
+              </div>
             </li>
           {/each}
         </ul>
       </details>
+      {#if hotspotPoints.length > 0}
+        <div class="map">
+          <ObsMap
+            points={hotspotPoints}
+            center={data.location
+              ? { lat: data.location.lat, lng: data.location.lng }
+              : null}
+          />
+        </div>
+      {/if}
     </section>
   {/if}
 
@@ -354,6 +592,7 @@
     background: var(--card);
     color: var(--text);
     min-height: 48px;
+    height: 48px;
   }
   button {
     min-height: 48px;
@@ -379,6 +618,29 @@
     clip: rect(0 0 0 0);
     overflow: hidden;
   }
+  .nearrow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .nearrow input {
+    flex: 1;
+    min-width: 200px;
+  }
+  button.secondary {
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .picker-wrap {
+    margin-top: 12px;
+  }
+  .picker-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
   .coverage {
     color: var(--muted);
     font-size: 0.85rem;
@@ -389,6 +651,86 @@
   }
   .summary {
     margin: 14px 0 8px;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .yearform {
+    margin: 12px 0 16px;
+  }
+  .yearlead {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+  }
+  .yearhint {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .yeargrid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .yeargrid button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-height: 64px;
+    padding: 6px 2px;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .yeargrid button:hover {
+    background: var(--bg);
+  }
+  .yeargrid button.active {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .yeargrid button.peak .ys {
+    color: var(--accent);
+  }
+  .yeargrid .ym {
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .yeargrid .ys {
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .yeargrid .yl {
+    font-size: 0.68rem;
+    color: var(--muted);
+  }
+  .band {
+    font-size: 0.92rem;
+    margin: 16px 0 6px;
+  }
+  .counties {
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 4px;
+    font-size: 0.85rem;
+    align-items: center;
+  }
+  .actions a {
+    min-height: 48px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .map {
+    margin-top: 14px;
   }
   .needs {
     margin: 0;
@@ -410,6 +752,9 @@
   }
   .name {
     font-weight: 600;
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
   }
   .freq {
     color: var(--muted);
@@ -489,6 +834,11 @@
     }
     .month-row {
       grid-column: 1 / -1;
+    }
+  }
+  @media (min-width: 1024px) {
+    .yeargrid {
+      grid-template-columns: repeat(12, 1fr);
     }
   }
 </style>

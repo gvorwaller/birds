@@ -102,7 +102,13 @@ export interface EnsureResult {
 
 /** The last complete calendar year — the newest year we ever request. */
 export function lastCompleteYear(now = new Date()): number {
-	return now.getFullYear() - 1;
+	const y = Number(
+		new Intl.DateTimeFormat('en-US', {
+			timeZone: 'America/New_York',
+			year: 'numeric'
+		}).format(now)
+	);
+	return (Number.isInteger(y) ? y : now.getUTCFullYear()) - 1;
 }
 
 export function barchartUrl(locCode: string, beginYear: number, endYear: number): string {
@@ -295,6 +301,8 @@ export interface StoreParams {
 	locName: string;
 	beginYear: number;
 	endYear: number;
+	/** State this location belongs to (e.g. 'US-ME'); groups /forecast/data. */
+	regionCode?: string | null;
 	parsed: ParsedBarchart;
 	matched: MatchedBarchart;
 }
@@ -305,13 +313,14 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 		await client.query(
 			`INSERT INTO frequency_fetch
 			   (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes,
-			    n_species, n_unmatched, unmatched_names, fetched_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+			    n_species, n_unmatched, unmatched_names, region_code, fetched_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 			 ON CONFLICT (loc_code) DO UPDATE SET
 			   loc_kind = EXCLUDED.loc_kind, loc_name = EXCLUDED.loc_name,
 			   begin_year = EXCLUDED.begin_year, end_year = EXCLUDED.end_year,
 			   sample_sizes = EXCLUDED.sample_sizes, n_species = EXCLUDED.n_species,
 			   n_unmatched = EXCLUDED.n_unmatched, unmatched_names = EXCLUDED.unmatched_names,
+			   region_code = COALESCE(EXCLUDED.region_code, frequency_fetch.region_code),
 			   fetched_at = NOW()`,
 			[
 				p.locCode,
@@ -322,7 +331,8 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 				p.parsed.sampleSizes,
 				p.matched.bySpecies.size,
 				p.matched.unmatched.length,
-				p.matched.unmatched.slice(0, UNMATCHED_SAMPLE_LIMIT)
+				p.matched.unmatched.slice(0, UNMATCHED_SAMPLE_LIMIT),
+				p.regionCode ?? null
 			]
 		);
 		await client.query('DELETE FROM species_frequency WHERE loc_code = $1', [p.locCode]);
@@ -579,6 +589,7 @@ export async function ensureFrequencies(
 					locName: loc.name,
 					beginYear,
 					endYear,
+					regionCode: loc.regionCode ?? null,
 					parsed,
 					matched
 				});

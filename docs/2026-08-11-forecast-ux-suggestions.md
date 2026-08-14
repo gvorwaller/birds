@@ -11,6 +11,13 @@ Status of the feature as of this doc: Phases 1–3 shipped to the test app
 drill-down + map, data-status page). Deferred already: trips/species-page
 integration (`td-ee00e8`).
 
+### GBV BEGIN
+* For forecast data, show states with counties collapsed on initial display, allow uncollapse, and remember state across sessions
+* ? also on forecast data page, why are hotspots shown separately? what additional forecast data does that imply? If they add value, they should be shown in state/county ?? (or otherwise aggregated by location)
+
+
+### GBV END
+
 ---
 
 ## 1. Make Forecast contextual, not an isolated destination
@@ -21,7 +28,7 @@ month; on a species detail page, show the best-month sparkline and a
 "Where should I go?" action. These are the shortest paths from data to an
 actual decision.
 
-- [ ] do / modify / skip — notes:
+- [x ] GBV do 
 
 ## 2. Merge the two forecast modes into one workspace
 
@@ -33,7 +40,7 @@ One page with two clearly named questions instead of two separate tools:
 Preserve the selected species/place/month when switching modes. Today the
 cross-links restart the other mode from blank.
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do 
 
 ## 3. Deliver value before a full-state batch completes
 
@@ -43,7 +50,7 @@ data; or run the first batch of 12 and show useful partial results
 immediately with an optional "Continue analyzing all counties". The current
 copy is implementation-oriented and intimidating.
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do
 
 ## 4. Rethink top-6 hotspot selection within a county
 
@@ -53,7 +60,7 @@ caracara ranch pasture will lose to a diverse wetland). Use a deterministic
 activity/geography mix (as Mode A already does), add an "Analyze 6 more"
 expansion, and explain the selection rule in the UI.
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do 
 
 ## 5. Show candidate hotspots on the map before their data loads
 
@@ -62,7 +69,7 @@ candidate hotspots as pins immediately (from the official hotspot list),
 visually distinguishing loaded vs not-yet-loaded, so the user sees the
 geography before deciding what to load.
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do
 
 ## 6. Turn results into actions
 
@@ -72,7 +79,7 @@ here"** (jump to Mode A centered on that hotspot). Frequency alone is
 interesting; a next action makes it useful. (Hotspot rows already have
 Map/Directions; the rest are missing.)
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do
 
 ## 7. Reduce Home density (items from the 7/30 plan, still unbuilt)
 
@@ -86,7 +93,7 @@ Map/Directions; the rest are missing.)
 - Clarify the two search boxes: "Move Home to a new location" vs "Filter
   loaded birds or places" — both currently read as place search.
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do
 
 ## 8. Compact provenance panel instead of fetch-mechanics copy
 
@@ -96,12 +103,6 @@ action button. Keep request counts and pacing explanations in Help, not in
 primary workflow copy. (The `/forecast/data` page stays as the full
 inventory; this is the inline summary.)
 
-- [ ] do / modify / skip — notes:
+- [x] GBV do
 
----
 
-## Gaylon's additions
-
-(Add your own items here after testing.)
-
--

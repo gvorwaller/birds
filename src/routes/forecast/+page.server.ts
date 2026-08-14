@@ -5,15 +5,21 @@ import { getEbirdApiKey, hotspotsNear, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { ensureFrequencies, type EnsureResult } from "$server/barchart";
 import {
+  calendarMonth,
   forecastNeedsNear,
+  majorityRegionCode,
+  rankCountiesForNeeds,
   selectForecastHotspots,
+  type CountyNeedsRank,
   type ForecastNeedsView,
 } from "$server/forecast";
+import { seenSet } from "$server/needs";
 import {
   normalizeNearMeRadiusKm,
   radiusSelectOptionsKm,
   selectEffectiveRadiusKm,
 } from "$lib/near-me-radius";
+import { parsePin } from "$lib/pin-params";
 
 function parseMonth(raw: string | null, fallback: number): number {
   const n = Number(raw);
@@ -30,7 +36,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // Defaults to the CURRENT month — a real, visible value, not a hidden one.
   const month = parseMonth(
     url.searchParams.get("month"),
-    new Date().getMonth() + 1,
+    calendarMonth(),
+  );
+  // Pinned-coordinate origin ("Forecast my needs here" links, trip stops,
+  // the map picker). A typed place always wins over a pin. parsePin treats
+  // absent/empty params as NO pin (see its regression test).
+  const pin = parsePin(
+    url.searchParams.get("lat"),
+    url.searchParams.get("lng"),
+    url.searchParams.get("loc"),
   );
 
   const [userRow, apiKey, credsRow, geo] = await Promise.all([
@@ -63,17 +77,33 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       : null;
 
   let location: { lat: number; lng: number; label: string } | null = null;
+  let originKind: "place" | "pin" | "home" | null = null;
   let error: string | null = null;
   if (place) {
-    if (geo) location = { lat: geo.lat, lng: geo.lng, label: geo.name };
-    else
+    if (geo) {
+      location = { lat: geo.lat, lng: geo.lng, label: geo.name };
+      originKind = "place";
+    } else {
       error = `Couldn't find "${place}". Try a city, county, park, or address.`;
+    }
   }
-  if (!location && home) location = home;
+  // A typed place is authoritative: geocode failure must not silently
+  // forecast the leftover pin or saved home under the error banner.
+  const placeFailed = !!place && !geo;
+  if (!location && !placeFailed && pin) {
+    location = pin;
+    originKind = "pin";
+  }
+  if (!location && !placeFailed && home) {
+    location = home;
+    originKind = "home";
+  }
 
   let view: ForecastNeedsView | null = null;
+  let countyNeeds: CountyNeedsRank[] = [];
   if (location && apiKey) {
     try {
+      const seen = await seenSet(userId);
       view = await forecastNeedsNear(
         userId,
         apiKey,
@@ -81,7 +111,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         location.lng,
         distKm,
         month,
+        seen,
       );
+      if (view.regionCode) {
+        countyNeeds = await rankCountiesForNeeds(
+          userId,
+          view.regionCode,
+          month,
+          seen,
+        );
+      }
     } catch (err) {
       error =
         err instanceof EbirdError
@@ -92,12 +131,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   return {
     location,
+    originKind,
     placeQuery: place,
     month,
     dist: distKm,
     savedRadiusKm: normalizeNearMeRadiusKm(u?.near_me_radius_km),
     radiusOptionsKm: radiusSelectOptionsKm(distKm),
     view,
+    countyNeeds,
     error,
     needsLocation: !location,
     hasApiKey: !!apiKey,
@@ -116,8 +157,12 @@ export const actions: Actions = {
   loadData: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const lat = Number(form.get("lat"));
-    const lng = Number(form.get("lng"));
+    // Same absent-vs-zero guard as the loader: Number(null/"") is 0, and a
+    // missing field must fail loudly, never silently mean the Gulf of Guinea.
+    const latRaw = (form.get("lat") ?? "").toString().trim();
+    const lngRaw = (form.get("lng") ?? "").toString().trim();
+    const lat = latRaw === "" ? NaN : Number(latRaw);
+    const lng = lngRaw === "" ? NaN : Number(lngRaw);
     const dist = Number(form.get("dist"));
     const force = form.get("force") === "1";
 
@@ -161,7 +206,7 @@ export const actions: Actions = {
         code: h.locId,
         kind: "hotspot" as const,
         name: h.locName,
-        regionCode: h.subnational1Code ?? null,
+        regionCode: h.subnational1Code ?? majorityRegionCode(selected),
       })),
       { force },
     );

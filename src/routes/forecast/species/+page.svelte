@@ -1,5 +1,8 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
+  import { tick } from "svelte";
+  import { page } from "$app/state";
+  import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
   import MapLink from "$components/MapLink.svelte";
@@ -21,11 +24,22 @@
 
   const progress = $derived(liveProgress ?? data.countyCoverage);
 
-  // Resumable county analysis: each action invocation fetches ≤12 counties;
-  // keep resubmitting while there is progress and more to do. The server's
+  $effect(() => {
+    data.region?.code;
+    data.taxon?.species_code;
+    liveProgress = null;
+  });
+
+  let analyzeAllBtn = $state<HTMLButtonElement | undefined>();
+  let autoLoop = false;
+
+  // Resumable county analysis. One batch (≤12 counties) per invocation shows
+  // useful partial results fast (UX doc #3); the "analyze all" button keeps
+  // resubmitting while there is progress and more to do. The server's
   // per-owner single-flight lease makes overlapping loops harmless.
-  function analyzeEnhance() {
+  function analyzeEnhance({ submitter }: { submitter: HTMLElement | null }) {
     analyzing = true;
+    autoLoop = (submitter as HTMLButtonElement | null)?.value === "all";
     return async ({
       result,
       update,
@@ -46,13 +60,18 @@
         const madeProgress =
           (ens?.refreshed.length ?? 0) + (ens?.failed.length ?? 0) > 0;
         if (
+          autoLoop &&
           prog &&
           prog.remaining > 0 &&
           madeProgress &&
           !ens?.credentialProblem &&
           !ens?.busy
         ) {
-          analyzeForm?.requestSubmit();
+          // requestSubmit(disabled submitter) throws InvalidStateError.
+          // Drop the disabled flag first, then re-submit.
+          analyzing = false;
+          await tick();
+          analyzeForm?.requestSubmit(analyzeAllBtn);
           return;
         }
       }
@@ -60,35 +79,62 @@
     };
   }
 
-  function countyHref(countyCode: string | null): string {
+  function countyHref(
+    countyCode: string | null,
+    hs: number | null = null,
+  ): string {
     const p = new URLSearchParams();
     if (data.taxon) p.set("species", data.taxon.species_code);
     if (data.region) p.set("region", data.region.code);
     p.set("month", String(data.month));
     if (countyCode) p.set("county", countyCode);
-    return `?${p.toString()}`;
+    if (hs) p.set("hs", String(hs));
+    // Jump to the hotspot section — it renders below the county list, and
+    // without the anchor a "Hotspots" click looks like a dead link.
+    return `?${p.toString()}${countyCode ? "#county-hotspots" : ""}`;
   }
 
+  /** Mode A prefilled at a hotspot's coordinates ("Forecast my needs here"). */
+  function needsHereHref(h: { lat: number; lng: number; locName: string }) {
+    const p = new URLSearchParams();
+    p.set("lat", h.lat.toFixed(5));
+    p.set("lng", h.lng.toFixed(5));
+    p.set("loc", h.locName);
+    p.set("month", String(data.month));
+    return `/forecast?${p.toString()}`;
+  }
+
+  /** Trip planner prefilled at a hotspot (trips/plan reads these params). */
+  function addToTripHref(h: { lat: number; lng: number; locName: string }) {
+    const p = new URLSearchParams();
+    p.set("place", h.locName);
+    p.set("lat", h.lat.toFixed(5));
+    p.set("lng", h.lng.toFixed(5));
+    return `/trips/plan?${p.toString()}`;
+  }
+
+  // All selected hotspots go on the map — loaded ones as green "need" pins,
+  // not-yet-loaded candidates as gray "pending" pins (UX doc #5).
   const hotspotPoints = $derived.by((): ObsPoint[] => {
     if (!data.countyHotspots) return [];
     const byCode = new Map(
       data.countyHotspots.ranking.map((r) => [r.code, r]),
     );
-    return data.countyHotspots.selected
-      .filter((h) => h.hasData)
-      .map((h) => {
-        const r = byCode.get(h.locId);
-        return {
-          lat: h.lat,
-          lng: h.lng,
-          // Low-sample marker travels onto the map pin too (CODEX8 #3).
-          title: r?.lowSample ? `${h.locName} †` : h.locName,
-          sub: r
-            ? `${pct(r.freq)} of checklists (n=${r.n.toLocaleString()})${r.lowSample ? " — small sample" : ""}`
-            : undefined,
-          kind: "need" as const,
-        };
-      });
+    return data.countyHotspots.selected.map((h) => {
+      const r = h.hasData ? byCode.get(h.locId) : undefined;
+      return {
+        lat: h.lat,
+        lng: h.lng,
+        // Low-sample marker travels onto the map pin too (CODEX8 #3).
+        title: r?.lowSample ? `${h.locName} †` : h.locName,
+        sub: r
+          ? `${pct(r.freq)} of checklists (n=${r.n.toLocaleString()})${r.lowSample ? " — small sample" : ""}`
+          : h.hasData
+            ? undefined
+            : "no data loaded yet",
+        kind: h.hasData ? ("need" as const) : ("pending" as const),
+      };
+    });
   });
 
   const MONTH_NAMES = [
@@ -130,11 +176,15 @@
 
 <div class="page">
   <h1>Species forecast</h1>
+  <ForecastTabs
+    mode="species"
+    params={page.url.search.slice(1)}
+    month={data.month}
+  />
   <p class="intro">
-    Best months for a species in a state, from prior years' eBird checklist
-    frequencies. Area needs by month?
-    <a href="/forecast">Forecast</a> · What's loaded?
-    <a href="/forecast/data">Forecast data</a>.
+    Best months and places for a species, from prior years' eBird checklist
+    frequencies. <a href="/forecast/data">Forecast data</a> shows what's
+    loaded.
   </p>
 
   <section class="card">
@@ -173,6 +223,10 @@
           {/each}
         </select>
       </div>
+      <input type="hidden" name="month" value={data.month} />
+      {#if data.county && data.region && data.county.code.startsWith(`${data.region.code}-`)}
+        <input type="hidden" name="county" value={data.county.code} />
+      {/if}
       <div class="row">
         <button type="submit">{data.taxon ? "View" : "Search"}</button>
       </div>
@@ -199,6 +253,16 @@
       {#if data.speciesMatches.length === 0}
         <p class="notice">No species matched "{data.q}".</p>
       {:else}
+        {#if data.searchScope === "state" && data.region}
+          <p class="notice">
+            Species reported in {data.region.name}, most frequent first.
+          </p>
+        {:else if data.searchFellBack && data.region}
+          <p class="notice">
+            None of these are reported in {data.region.name} — showing all
+            matches.
+          </p>
+        {/if}
         <ul class="matches">
           {#each data.speciesMatches as m (m.species_code)}
             <li>
@@ -232,6 +296,9 @@
             <p class="best">
               Best month: <strong>{MONTH_NAMES[best.month - 1]}</strong> —
               reported on {pct(best.freq)} of checklists (n={best.n.toLocaleString()})
+              {#if f.peakPhrase}
+                · peaks {f.peakPhrase}
+              {/if}
               {#if best.lowSample}
                 <span class="lowflag"
                   >— small sample; no month reached the reliable-checklist
@@ -340,7 +407,7 @@
       {/if}
     </section>
 
-    {#if data.forecast && !data.forecast.neverReported}
+    {#if data.taxon && data.region}
       <section class="card">
         <h2>Where in {data.region.name}</h2>
         <form method="GET" class="monthform">
@@ -363,13 +430,16 @@
 
         {#if progress}
           <p class="coverage">
-            {progress.current} of {progress.total} counties analyzed
+            {#if data.countyDataYears}{data.countyDataYears.begin}–{data
+                .countyDataYears.end} ·
+            {/if}{#if data.hasApiKey}{progress.current}/{progress.total} counties{:else}{progress.current} counties loaded{/if}
             {#if progress.stale > 0}
               · <span class="lowflag">{progress.stale} outdated</span>
             {/if}
             {#if progress.failed > 0}
-              · {progress.failed} failed (will retry after a day)
+              · {progress.failed} failed
             {/if}
+            · <a href="/forecast/data">details</a>
           </p>
           {#if analyzing || (progress.current > 0 && progress.remaining > 0)}
             <div
@@ -393,20 +463,29 @@
                 action="?/analyzeCounties"
                 bind:this={analyzeForm}
                 use:enhance={analyzeEnhance}
+                class="analyze"
               >
                 <input type="hidden" name="region" value={data.region.code} />
-                <button type="submit" disabled={analyzing}>
+                <button type="submit" value="one" disabled={analyzing}>
                   {analyzing
                     ? `Analyzing… ${progress.current}/${progress.total}`
-                    : progress.stale > 0 && progress.current + progress.stale === progress.total
-                      ? `Refresh ${progress.stale} outdated counties`
-                      : `Analyze ${progress.remaining} remaining counties`}
+                    : progress.current === 0
+                      ? "Analyze first counties (~15 s)"
+                      : progress.stale > 0 &&
+                          progress.current + progress.stale === progress.total
+                        ? `Refresh next outdated batch`
+                        : `Analyze next batch (${progress.remaining} left)`}
+                </button>
+                <button
+                  type="submit"
+                  value="all"
+                  class="secondary"
+                  bind:this={analyzeAllBtn}
+                  disabled={analyzing}
+                >
+                  Analyze all remaining
                 </button>
               </form>
-              <p class="notice">
-                One eBird request per county, politely spaced — a full state takes
-                a few minutes the first time and then only refreshes yearly.
-              </p>
             {:else}
               <p class="notice">
                 Analyzing counties uses your eBird sign-in — add it in
@@ -440,11 +519,25 @@
               </p>
               <ol class="ranked">
                 {#each adequate.slice(0, 15) as c (c.code)}
+                  {@const peak = data.countyPeaks[c.code]}
                   <li>
                     <div class="sp">
                       <a href={countyHref(c.code)} class="name">{c.name}</a>
                       <span class="freq"
                         >{pct(c.freq)} of checklists (n={c.n.toLocaleString()})</span
+                      >
+                    </div>
+                    {#if peak && peak.month !== data.month}
+                      <div class="peakmonth">
+                        peaks in {MONTH_NAMES[peak.month - 1]} ({pct(peak.freq)})
+                      </div>
+                    {/if}
+                    <div class="actions">
+                      <a href={countyHref(c.code)}>Hotspots</a>
+                      <a
+                        href="https://ebird.org/region/{c.code}"
+                        target="_blank"
+                        rel="noopener">eBird ↗</a
                       >
                     </div>
                   </li>
@@ -481,13 +574,11 @@
                   : "ies"} that month.
               </p>
             {/if}
-            {#if data.countyDataYears}
+            {#if progress && progress.stale > 0}
               <p class="meta">
-                County data: {data.countyDataYears.begin}–{data.countyDataYears
-                  .end} checklists{#if progress && progress.stale > 0}
-                  · includes {progress.stale} count{progress.stale === 1
-                    ? "y"
-                    : "ies"} from an older year window{/if}
+                Includes {progress.stale} count{progress.stale === 1
+                  ? "y"
+                  : "ies"} from an older year window.
               </p>
             {/if}
           {/if}
@@ -496,7 +587,8 @@
     {/if}
 
     {#if data.hotspotError}
-      <section class="card">
+      <!-- Mutually exclusive with the drill section, so the anchor is safe. -->
+      <section class="card" id="county-hotspots">
         <h2>Hotspots</h2>
         <p class="error">{data.hotspotError}</p>
       </section>
@@ -505,14 +597,21 @@
     {#if data.county && data.countyHotspots}
       {@const ch = data.countyHotspots}
       {@const uncovered = ch.selected.filter((h) => !h.current).length}
-      <section class="card">
+      <section class="card" id="county-hotspots">
         <h2>
           Hotspots in {data.county.name} — {MONTH_NAMES[data.month - 1]}
         </h2>
         <p class="coverage">
-          Top {ch.selected.length} hotspots by all-time species
+          {#if ch.dataYears}{ch.dataYears.begin}–{ch.dataYears.end} ·
+          {/if}{ch.selected.length} of {ch.totalInCounty} hotspots — picked by
+          species count + recent activity
           {#if ch.hotspotListStale}
-            · <span class="lowflag">hotspot list from cache</span>
+            · <span class="lowflag">list from cache</span>
+          {/if}
+          {#if ch.limit < ch.maxLimit && ch.selected.length < ch.totalInCounty}
+            · <a href={countyHref(data.county.code, ch.limit + 6)}
+              >analyze 6 more</a
+            >
           {/if}
           · <a href={countyHref(null)}>close county</a>
         </p>
@@ -532,6 +631,7 @@
             >
               <input type="hidden" name="region" value={data.region.code} />
               <input type="hidden" name="county" value={data.county.code} />
+              <input type="hidden" name="limit" value={ch.limit} />
               <button type="submit" disabled={loading}>
                 {loading
                   ? "Loading from eBird…"
@@ -573,7 +673,20 @@
                       >
                     </div>
                     {#if sel}
-                      <MapLink lat={sel.lat} lng={sel.lng} name={h.name} />
+                      <div class="actions">
+                        <MapLink lat={sel.lat} lng={sel.lng} name={h.name} />
+                        <a
+                          href="https://ebird.org/hotspot/{h.code}"
+                          target="_blank"
+                          rel="noopener">eBird ↗</a
+                        >
+                        <a href={needsHereHref({ ...sel, locName: h.name })}
+                          >My needs here</a
+                        >
+                        <a href={addToTripHref({ ...sel, locName: h.name })}
+                          >Add to trip</a
+                        >
+                      </div>
                     {/if}
                   </li>
                 {/each}
@@ -596,17 +709,25 @@
                         >
                       </div>
                       {#if sel}
-                        <MapLink lat={sel.lat} lng={sel.lng} name={h.name} />
+                        <div class="actions">
+                          <MapLink lat={sel.lat} lng={sel.lng} name={h.name} />
+                          <a
+                            href="https://ebird.org/hotspot/{h.code}"
+                            target="_blank"
+                            rel="noopener">eBird ↗</a
+                          >
+                          <a href={needsHereHref({ ...sel, locName: h.name })}
+                            >My needs here</a
+                          >
+                          <a href={addToTripHref({ ...sel, locName: h.name })}
+                            >Add to trip</a
+                          >
+                        </div>
                       {/if}
                     </li>
                   {/each}
                 </ul>
               </details>
-            {/if}
-            {#if ch.dataYears}
-              <p class="meta">
-                Hotspot data: {ch.dataYears.begin}–{ch.dataYears.end} checklists
-              </p>
             {/if}
           {/if}
         {/if}
@@ -725,6 +846,11 @@
   .best {
     font-size: 1rem;
   }
+  .peakmonth {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 2px;
+  }
   .lowflag {
     color: var(--muted);
     font-size: 0.88rem;
@@ -783,6 +909,9 @@
   }
   .name {
     font-weight: 600;
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
   }
   .freq {
     color: var(--muted);
@@ -805,6 +934,31 @@
   .lown ul {
     list-style: none;
     padding-left: 0;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 4px;
+    font-size: 0.85rem;
+    align-items: center;
+  }
+  .actions a {
+    min-height: 48px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .analyze {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  button.secondary {
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
   }
   .error {
     color: var(--danger);

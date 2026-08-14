@@ -100,7 +100,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       error = `Couldn't find "${place}". Try a city, county, park, or address.`;
     }
   }
-  if (!location && home) location = home;
+  // Typed place is authoritative — don't silently show saved-home birds
+  // under a "Couldn't find …" banner.
+  if (!location && !place && home) location = home;
 
   let view: TargetsView | null = null;
   if (location && apiKey) {

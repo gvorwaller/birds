@@ -14,6 +14,7 @@
     speciesAtPlace,
   } from "$lib/place-search";
   import { homeUrlWithQuery } from "$lib/return-link";
+  import { nearestDistanceKm, sortNeedsByNearest } from "$lib/needs-sort";
   import { speciesLinkHref } from "$lib/species-context";
   import { backOptionLabel, windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
@@ -37,6 +38,7 @@
   let q = $state("");
   let showAllNeeds = $state(false);
   let expanded = $state(new Set<string>());
+  let needsSort = $state<"activity" | "nearest">("activity");
   const NEEDS_PREVIEW = 25;
 
   let ql = $derived(q.trim().toLowerCase());
@@ -50,6 +52,22 @@
 
   let notableAll = $derived(data.view?.notable ?? []);
   let needsAll = $derived(data.view?.needs ?? []);
+
+  // No species may render in both the Notable and Needs lists (item 2 of
+  // 2026-08-11-forecast-ux-suggestions.md #7): a species that is both notable
+  // and still needed stays in Needs, gains an extra "Notable" badge there, and
+  // is dropped from the Notable list rather than shown twice. `allNotableCodes`
+  // is built from the RAW list (before dropping) since that is what the Needs
+  // badge below must test against; named apart from `mapPoints`' own
+  // `notableCodes` local below, which dedups against the RENDERED list for a
+  // different reason (see its comment) and must not be confused with this one.
+  let needsCodes = $derived(new Set(needsAll.map((n) => n.speciesCode)));
+  let allNotableCodes = $derived(
+    new Set(notableAll.map((n) => n.speciesCode)),
+  );
+  let notableDeduped = $derived(
+    notableAll.filter((n) => !needsCodes.has(n.speciesCode)),
+  );
 
   // --- Place search + focus -------------------------------------------------
   // The index inverts the species→places data the loader already ships, so this
@@ -104,10 +122,10 @@
   // The typed text stays put so the Places group and escape hatch remain usable.
   let notableShown = $derived(
     focused
-      ? speciesAtPlace(focused, notableAll)
+      ? speciesAtPlace(focused, notableDeduped)
       : searching
-        ? notableAll.filter(matches)
-        : notableAll,
+        ? notableDeduped.filter(matches)
+        : notableDeduped,
   );
   let needsMatched = $derived(
     focused
@@ -116,10 +134,33 @@
         ? needsAll.filter(matches)
         : needsAll,
   );
+  // "Activity" is a no-op (needsMatched already arrives in that order from the
+  // loader); "Nearest" is the only client-side reorder. Applied before the
+  // preview slice so the sort choice also governs which 25 are shown by
+  // default, not just their order once expanded.
+  let needsSorted = $derived.by(() => {
+    const sorted =
+      needsSort === "nearest"
+        ? sortNeedsByNearest(needsMatched)
+        : needsMatched;
+    // Notable needs stay above the 25-row fold so they don't vanish from
+    // both lists after the Notable→Needs dedup.
+    if (
+      needsSort !== "activity" ||
+      searching ||
+      focused ||
+      showAllNeeds
+    ) {
+      return sorted;
+    }
+    const notable = sorted.filter((n) => allNotableCodes.has(n.speciesCode));
+    const rest = sorted.filter((n) => !allNotableCodes.has(n.speciesCode));
+    return [...notable, ...rest];
+  });
   let needsShown = $derived(
     searching || focused || showAllNeeds
-      ? needsMatched
-      : needsMatched.slice(0, NEEDS_PREVIEW),
+      ? needsSorted
+      : needsSorted.slice(0, NEEDS_PREVIEW),
   );
 
   // Escape hatch when nothing in the loaded reports matches: re-run the real
@@ -210,10 +251,6 @@
       ];
     }
 
-    // Dedup against the RENDERED notable list, not every notable species: once
-    // place filtering narrows the two lists independently, a species that is
-    // notable elsewhere but needed here would otherwise lose its need pin.
-    const notableCodes = new Set(notableShown.map((n) => n.speciesCode));
     const pts: ObsPoint[] = [
       {
         lat: data.location.lat,
@@ -236,7 +273,6 @@
         }
       }
       for (const n of needsMatched) {
-        if (notableCodes.has(n.speciesCode)) continue;
         for (const pl of n.places) {
           pts.push({
             lat: pl.lat,
@@ -261,7 +297,6 @@
       });
     }
     for (const n of needsShown) {
-      if (notableCodes.has(n.speciesCode)) continue;
       pts.push({
         lat: n.lastLat,
         lng: n.lastLng,
@@ -287,14 +322,49 @@
     </p>
   </header>
 
+  <!-- Moved up from the bottom of the page (item 5): a compact strip so it
+       stays out of the way of the Needs/Notable content on a mobile screen,
+       rather than a full "card" of rows the user has to scroll past to reach
+       it. -->
+  <section class="card glance">
+    <div class="glance-item">
+      <span class="glance-label">Life list</span>
+      <span class="glance-value">{data.seenCount}</span>
+    </div>
+    {#if data.hasGallery}
+      <div class="glance-item">
+        <span class="glance-label"><a href="/photos">Photos</a></span>
+        <span class="glance-value">{data.photoCount}</span>
+      </div>
+    {/if}
+    <div class="glance-item">
+      <span class="glance-label">Sync</span>
+      <span class="glance-value">
+        {#if data.lifeListSyncedAt}
+          <span title={new Date(data.lifeListSyncedAt).toLocaleString()}
+            >{new Date(data.lifeListSyncedAt).toLocaleDateString()}</span
+          >
+          {#if data.lifeListStatus === "error" && !isViewer}<Badge
+              kind="notable"
+              label="sync error"
+            />{/if}
+        {:else if isViewer}
+          not synced
+        {:else}
+          <a href="/settings">not synced</a>
+        {/if}
+      </span>
+    </div>
+  </section>
+
   <section class="card">
     <form method="GET" class="filters">
       <label class="grow-field">
-        <span>Place</span>
+        <span>View a different area</span>
         <input
           type="text"
           name="place"
-          placeholder="Search a city, county, park, or address…"
+          placeholder="View a different area…"
           value={data.location?.label ?? ""}
           list="place-suggestions"
         />
@@ -407,12 +477,14 @@
 
   {#if data.view}
     <section class="card search-card">
-      <label class="sr-only" for="home-search">Search birds or places</label>
+      <label class="sr-only" for="home-search"
+        >Filter these birds and places</label
+      >
       <input
         id="home-search"
         class="search"
         type="search"
-        placeholder="Search birds or places…"
+        placeholder="Filter these birds and places…"
         bind:value={q}
       />
       {#if searching}
@@ -489,23 +561,31 @@
 
     <section class="card">
       <h2>
-        Rare this week <Badge kind="notable" label="Notable" />
+        Notable reports — {windowPhrase(data.back)}
+        <Badge kind="notable" label="Notable" />
         {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
       </h2>
       <p class="muted intro">
-        eBird notable reports near {data.location?.label ?? "here"} — {windowPhrase(
-          data.back,
-        )}, whether or not they're on your needs list.
+        eBird notable reports near {data.location?.label ?? "here"} —
+        {windowPhrase(data.back)}. Species you still need appear in Needs below
+        with a Notable badge.
       </p>
       {#if data.view.notable.length === 0}
         <p class="muted">No notable reports in this window.</p>
-      {:else if (searching || focused) && notableShown.length === 0}
+      {:else if notableShown.length === 0}
         <p class="muted">
-          {#if focused}
+          {#if focused && focused.notableCodes.size > 0}
+            Notable reports at {focused.locName} are in your needs list below.
+          {:else if focused}
             No notable reports at {focused.locName} in the reports loaded for
             this view.
-          {:else}
+          {:else if searching}
             No notable reports match “{q}”.
+          {:else}
+            <!-- Every notable report this window is also one of your needs —
+                 see it there instead, badged "Notable" (item 2). -->
+            All notable reports in this window are already in your needs list
+            below.
           {/if}
         </p>
       {/if}
@@ -587,17 +667,30 @@
     </section>
 
     <section class="card">
-      <h2>
-        {#if focused}
-          {needsMatched.length}
-          {needsMatched.length === 1 ? "need" : "needs"} at {focused.locName} — {windowPhrase(
-            data.back,
-          )}
-        {:else}
-          {data.view.needs.length} needs reported here — {windowPhrase(data.back)}
+      <div class="needs-head">
+        <h2>
+          {#if focused}
+            {needsMatched.length}
+            {needsMatched.length === 1 ? "need" : "needs"} at {focused.locName} — {windowPhrase(
+              data.back,
+            )}
+          {:else}
+            {data.view.needs.length} needs reported here — {windowPhrase(
+              data.back,
+            )}
+          {/if}
+          {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
+        </h2>
+        {#if needsAll.length > 1}
+          <label class="sort-control">
+            <span>Sort</span>
+            <select bind:value={needsSort}>
+              <option value="activity">Activity</option>
+              <option value="nearest">Nearest</option>
+            </select>
+          </label>
         {/if}
-        {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
-      </h2>
+      </div>
       {#if data.seenCount === 0}
         <p class="muted">
           Your life list is empty, so every species counts as a need.
@@ -620,6 +713,10 @@
             <div class="name">
               <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
               <Badge kind="need" label="Need" />
+              {#if allNotableCodes.has(n.speciesCode)}<Badge
+                  kind="notable"
+                  label="Notable"
+                />{/if}
             </div>
             <div class="meta">
               <strong
@@ -679,8 +776,14 @@
             {/if}
           </div>
           <div class="right">
-            {#if n.distanceKm != null}<div class="dist">
-                {formatDistance(n.distanceKm, distanceUnit)}
+            {#if (needsSort === "nearest" ? nearestDistanceKm(n) : n.distanceKm) !=
+              null}<div class="dist">
+                {formatDistance(
+                  (needsSort === "nearest"
+                    ? nearestDistanceKm(n)
+                    : n.distanceKm)!,
+                  distanceUnit,
+                )}
               </div>{/if}
             <div class="when">{n.lastObsDt}</div>
           </div>
@@ -699,38 +802,6 @@
 
     <BestPlaces places={data.view.bestPlaces} {distanceUnit} />
   {/if}
-
-  <section class="card">
-    <h2>At a glance</h2>
-    <div class="obs">
-      <div class="grow">
-        <div class="name">Life list</div>
-        <div class="meta">
-          {#if data.lifeListSyncedAt}
-            synced from eBird {new Date(data.lifeListSyncedAt).toLocaleString()}
-            {#if data.lifeListStatus === "error" && !isViewer}<Badge
-                kind="notable"
-                label="sync error"
-              />{/if}
-          {:else if isViewer}
-            not synced yet
-          {:else}
-            not synced yet — <a href="/settings">Settings</a>
-          {/if}
-        </div>
-      </div>
-      <div class="right"><div class="dist">{data.seenCount}</div></div>
-    </div>
-    {#if data.hasGallery}
-      <div class="obs">
-        <div class="grow">
-          <div class="name">Photos on gaylon.photos</div>
-          <div class="meta"><a href="/photos">My Photos</a></div>
-        </div>
-        <div class="right"><div class="dist">{data.photoCount}</div></div>
-      </div>
-    {/if}
-  </section>
 
   <p class="attribution">
     Data from <a href="https://ebird.org" target="_blank" rel="noopener"
@@ -801,6 +872,36 @@
     font-size: 1.05rem;
     margin-bottom: 10px;
   }
+  /* Item 5: a single compact strip rather than a full card of `.obs` rows, so
+     it reads at a glance and does not push the Needs card below the fold on a
+     mobile screen. */
+  .glance {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+    align-items: baseline;
+    padding: 12px 16px;
+  }
+  .glance-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .glance-label {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .glance-label a {
+    color: inherit;
+  }
+  .glance-value {
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
   .map-card {
     padding: 8px;
   }
@@ -829,6 +930,35 @@
   }
   .dot.home {
     background: #084298;
+  }
+  .needs-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    margin-bottom: 10px;
+  }
+  .needs-head h2 {
+    margin-bottom: 0;
+  }
+  .sort-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .sort-control select {
+    min-height: 48px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 16px;
   }
   .filters {
     display: flex;
@@ -942,6 +1072,7 @@
   .places-toggle {
     margin-top: 4px;
     padding: 2px 0;
+    min-height: 48px;
     background: none;
     border: none;
     color: var(--accent);

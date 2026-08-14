@@ -16,11 +16,13 @@ import {
   type EnsureResult,
 } from "$server/barchart";
 import {
-  COUNTY_BATCH,
+  analyzeCountyBatch,
+  calendarMonth,
   COUNTY_HOTSPOT_LIMIT,
   coverageFromMeta,
-  nextUncachedCounties,
+  bestMonthsByLoc,
   rankLocsForSpeciesMonth,
+  recentFailures,
   speciesLocForecast,
   type RankedLoc,
 } from "$server/forecast";
@@ -28,8 +30,6 @@ import {
 const STATE_CODE_RE = /^US-[A-Z]{2}$/;
 const COUNTY_CODE_RE = /^US-[A-Z]{2}-\d{3}$/;
 const SPECIES_CODE_RE = /^[a-z0-9]{4,12}$/;
-/** A failed county sits out of the resumable loop for this long. */
-const FAILED_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 interface SpeciesMatch {
   species_code: string;
@@ -42,28 +42,45 @@ function parseMonth(raw: string | null): number | null {
   return Number.isInteger(n) && n >= 1 && n <= 12 ? n : null;
 }
 
-/** Failed-and-cooling-down county codes (excluded from the batch loop). */
-function recentFailures(
-  attempts: Map<string, { status: string; lastAttemptAt: Date }>,
-  now: Date,
-): Set<string> {
-  const out = new Set<string>();
-  for (const [code, a] of attempts) {
-    if (
-      a.status === "error" &&
-      now.getTime() - a.lastAttemptAt.getTime() < FAILED_RETRY_COOLDOWN_MS
-    ) {
-      out.add(code);
-    }
-  }
-  return out;
+/** The county drill can expand its hotspot pool in steps up to this cap. */
+const COUNTY_HOTSPOT_MAX = 24;
+
+function parseHotspotLimit(raw: string | null): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= COUNTY_HOTSPOT_LIMIT && n <= COUNTY_HOTSPOT_MAX
+    ? n
+    : COUNTY_HOTSPOT_LIMIT;
 }
 
-/** Deterministic county drill selection: top hotspots by all-time species. */
-function selectCountyHotspots(hotspots: EbirdHotspot[]): EbirdHotspot[] {
-  return [...hotspots]
-    .sort((a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0))
-    .slice(0, COUNTY_HOTSPOT_LIMIT);
+/**
+ * Deterministic county drill selection: half by all-time species count, half
+ * by most recent activity, deduped, remainder by species count. Pure species
+ * count alone favors famous biodiversity hotspots and misses habitat
+ * specialists' sites (UX doc #4); recent activity pulls in currently-birded
+ * spots regardless of their all-time list length.
+ */
+function selectCountyHotspots(
+  hotspots: EbirdHotspot[],
+  limit = COUNTY_HOTSPOT_LIMIT,
+): EbirdHotspot[] {
+  const bySpecies = [...hotspots].sort(
+    (a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0),
+  );
+  const byRecency = [...hotspots].sort((a, b) =>
+    (b.latestObsDt ?? "").localeCompare(a.latestObsDt ?? ""),
+  );
+  const chosen = new Map<string, EbirdHotspot>();
+  for (const h of bySpecies.slice(0, Math.ceil(limit / 2)))
+    chosen.set(h.locId, h);
+  for (const h of byRecency) {
+    if (chosen.size >= limit) break;
+    chosen.set(h.locId, h);
+  }
+  for (const h of bySpecies) {
+    if (chosen.size >= limit) break;
+    chosen.set(h.locId, h);
+  }
+  return bySpecies.filter((h) => chosen.has(h.locId));
 }
 
 // IMPORTANT (loader invariant, see src/routes/+page.server.ts): read query
@@ -78,6 +95,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const regionParam = (url.searchParams.get("region") ?? "").trim();
   const monthParam = parseMonth(url.searchParams.get("month"));
   const countyParam = (url.searchParams.get("county") ?? "").trim();
+  const hotspotLimit = parseHotspotLimit(url.searchParams.get("hs"));
 
   const apiKey = await getEbirdApiKey(userId);
   const credsRow = await query<{ login_set: boolean }>(
@@ -102,20 +120,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
           ? err.message
           : "Could not load the state list.";
     }
-  }
-
-  // Species search (server-side, taxonomy cache only).
-  let speciesMatches: SpeciesMatch[] = [];
-  if (q) {
-    const like = `%${q}%`;
-    const r = await query<SpeciesMatch>(
-      `SELECT species_code, com_name, sci_name FROM taxonomy_cache
-        WHERE category = 'species' AND (com_name ILIKE $1 OR sci_name ILIKE $1)
-        ORDER BY (com_name ILIKE $2) DESC, com_name
-        LIMIT 12`,
-      [like, `${q}%`],
-    );
-    speciesMatches = r.rows;
   }
 
   // Selected species (validated against the taxonomy — never echoed blindly).
@@ -152,6 +156,62 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
+  // Species search (server-side, taxonomy cache only). Word gaps become
+  // wildcards so "storm petrel" finds "Wilson's Storm-Petrel", "screech owl"
+  // finds "Eastern Screech-Owl", etc. When the selected state's data is
+  // loaded, results are BOUNDED to species actually reported there, ordered
+  // by how frequently they occur — "which storm-petrel?" answers itself.
+  // Falls back to the full taxonomy (flagged) when nothing matches in-state.
+  let speciesMatches: SpeciesMatch[] = [];
+  let searchScope: "state" | "all" = "all";
+  let searchFellBack = false;
+  if (q) {
+    const fuzzy = q
+      .replace(/[\\%_]/g, "\\$&")
+      .replace(/[^a-zA-Z0-9\\%_]+/g, "%");
+    const stateWithData = region
+      ? ((await frequencyMeta([region.code])).has(region.code) ? region.code : null)
+      : null;
+    if (stateWithData) {
+      const r = await query<SpeciesMatch>(
+        `SELECT tc.species_code, tc.com_name, tc.sci_name
+           FROM taxonomy_cache tc
+          WHERE tc.category = 'species'
+            AND (tc.com_name ILIKE $1 OR tc.sci_name ILIKE $1)
+            AND EXISTS (SELECT 1 FROM species_frequency sf
+                         WHERE sf.loc_code = $2 AND sf.species_code = tc.species_code)
+          ORDER BY (
+            SELECT SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0)
+              FROM frequency_fetch ff
+              JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+                ON TRUE
+              LEFT JOIN species_frequency sf
+                ON sf.loc_code = ff.loc_code
+               AND sf.species_code = tc.species_code
+               AND sf.week = ss.week
+             WHERE ff.loc_code = $2
+          ) DESC NULLS LAST,
+                   tc.com_name
+          LIMIT 12`,
+        [`%${fuzzy}%`, stateWithData],
+      );
+      speciesMatches = r.rows;
+      searchScope = "state";
+    }
+    if (speciesMatches.length === 0) {
+      const r = await query<SpeciesMatch>(
+        `SELECT species_code, com_name, sci_name FROM taxonomy_cache
+          WHERE category = 'species' AND (com_name ILIKE $1 OR sci_name ILIKE $1)
+          ORDER BY (com_name ILIKE $2) DESC, com_name
+          LIMIT 12`,
+        [`%${fuzzy}%`, `${fuzzy}%`],
+      );
+      searchFellBack = searchScope === "state" && r.rows.length > 0;
+      speciesMatches = r.rows;
+      searchScope = "all";
+    }
+  }
+
   const forecast =
     taxon && region
       ? await speciesLocForecast(region.code, taxon.species_code)
@@ -162,7 +222,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // The month the "where" sections use: explicit choice > best month > current.
   const month =
-    monthParam ?? forecast?.best?.month ?? new Date().getMonth() + 1;
+    monthParam ?? forecast?.best?.month ?? calendarMonth();
 
   // ---- County analysis (cached reads only) ------------------------------
   const newestYear = lastCompleteYear();
@@ -176,15 +236,30 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     remaining: number;
   } | null = null;
   let countyRanking: RankedLoc[] = [];
+  let countyPeaks: Record<string, { month: number; freq: number }> = {};
   let countyDataYears: { begin: number; end: number } | null = null;
-  if (taxon && region && apiKey) {
-    try {
-      counties = (await subregions(apiKey, region.code, "subnational2")).data;
-    } catch (err) {
-      countyError =
-        err instanceof EbirdError
-          ? err.message
-          : "Could not load the county list from eBird — try again shortly.";
+  if (taxon && region) {
+    if (apiKey) {
+      try {
+        counties = (await subregions(apiKey, region.code, "subnational2")).data;
+      } catch (err) {
+        countyError =
+          err instanceof EbirdError
+            ? err.message
+            : "Could not load the county list from eBird — try again shortly.";
+      }
+    }
+    if (counties.length === 0) {
+      const stored = await query<{ loc_code: string; loc_name: string }>(
+        `SELECT loc_code, loc_name FROM frequency_fetch
+          WHERE loc_kind = 'region' AND loc_code LIKE $1
+          ORDER BY loc_name`,
+        [`${region.code}-___`],
+      );
+      counties = stored.rows.map((r) => ({
+        code: r.loc_code,
+        name: r.loc_name,
+      }));
     }
     if (counties.length > 0) {
       const codes = counties.map((c) => c.code);
@@ -214,6 +289,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         taxon.species_code,
         month,
       );
+      const peaks = await bestMonthsByLoc(usable, taxon.species_code);
+      countyPeaks = Object.fromEntries(
+        [...peaks.entries()].map(([code, b]) => [
+          code,
+          { month: b.month, freq: b.freq },
+        ]),
+      );
       const usedMetas = usable.map((c) => meta.get(c)!);
       countyDataYears = usedMetas.length
         ? {
@@ -239,13 +321,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     ranking: RankedLoc[];
     hotspotListStale: boolean;
     dataYears: { begin: number; end: number } | null;
+    limit: number;
+    maxLimit: number;
+    totalInCounty: number;
   } | null = null;
-  if (countyParam && COUNTY_CODE_RE.test(countyParam) && region && apiKey) {
+  if (countyParam && COUNTY_CODE_RE.test(countyParam) && region) {
     county = counties.find((c) => c.code === countyParam) ?? null;
     if (county && taxon) {
       try {
-        const hs = await hotspotsInRegion(apiKey, county.code);
-        const selected = selectCountyHotspots(hs.data);
+        // Cache-first: a fresh ebird_cache hit does not use the key.
+        const hs = await hotspotsInRegion(apiKey ?? "", county.code);
+        const selected = selectCountyHotspots(hs.data, hotspotLimit);
         const meta = await frequencyMeta(selected.map((h) => h.locId));
         const stored = selected.filter((h) => meta.has(h.locId));
         const storedMetas = stored.map((h) => meta.get(h.locId)!);
@@ -270,6 +356,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
                 end: Math.max(...storedMetas.map((m) => m.endYear)),
               }
             : null,
+          limit: hotspotLimit,
+          maxLimit: COUNTY_HOTSPOT_MAX,
+          totalInCounty: hs.data.length,
         };
       } catch (err) {
         countyHotspots = null;
@@ -284,6 +373,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   return {
     q,
     speciesMatches,
+    searchScope,
+    searchFellBack,
     taxon,
     speciesError,
     region,
@@ -297,6 +388,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     countyError,
     countyCoverage,
     countyRanking,
+    countyPeaks,
     countyDataYears,
     county,
     hotspotError,
@@ -382,77 +474,11 @@ export const actions: Actions = {
       });
     }
 
-    let counties: { code: string; name: string }[];
-    try {
-      const stateName = await validateState(apiKey, regionCode);
-      if (!stateName) {
-        return fail(400, { error: "That region is not a US state." });
-      }
-      counties = (await subregions(apiKey, regionCode, "subnational2")).data;
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : "Could not list counties for that state.",
-      });
+    const outcome = await analyzeCountyBatch(userId, apiKey, regionCode);
+    if (!outcome.ok) {
+      return fail(outcome.status, { error: outcome.message });
     }
-    if (counties.length === 0) {
-      return fail(404, { error: "eBird lists no counties for that state." });
-    }
-
-    const codes = counties.map((c) => c.code);
-    const newestYear = lastCompleteYear();
-    const [meta, attempts] = await Promise.all([
-      frequencyMeta(codes),
-      attemptMeta(codes),
-    ]);
-    const before = coverageFromMeta(
-      codes,
-      meta,
-      recentFailures(attempts, new Date()),
-      newestYear,
-    );
-    const batch = nextUncachedCounties(
-      counties,
-      new Set(before.current),
-      new Set(before.failed),
-      COUNTY_BATCH,
-    );
-
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      batch.map((c) => ({
-        code: c.code,
-        kind: "region" as const,
-        name: c.name,
-        regionCode,
-      })),
-    );
-
-    // Progress from the DB after the batch, not from arithmetic on the
-    // result — restarts, other tabs, and partial batches all stay truthful.
-    // Same annual-window coverage semantics as the loader (CODEX8 P1).
-    const [metaAfter, attemptsAfter] = await Promise.all([
-      frequencyMeta(codes),
-      attemptMeta(codes),
-    ]);
-    const after = coverageFromMeta(
-      codes,
-      metaAfter,
-      recentFailures(attemptsAfter, new Date()),
-      newestYear,
-    );
-    return {
-      ensure,
-      progress: {
-        total: counties.length,
-        current: after.current.length,
-        stale: after.stale.length,
-        failed: after.failed.length,
-        remaining: after.remaining,
-      },
-    };
+    return { ensure: outcome.ensure, progress: outcome.progress };
   },
 
   /**
@@ -466,6 +492,7 @@ export const actions: Actions = {
     const form = await request.formData();
     const regionCode = (form.get("region") ?? "").toString().trim();
     const countyCode = (form.get("county") ?? "").toString().trim();
+    const limit = parseHotspotLimit((form.get("limit") ?? "").toString());
 
     if (!STATE_CODE_RE.test(regionCode)) {
       return fail(400, { error: "Unrecognized region code." });
@@ -493,6 +520,7 @@ export const actions: Actions = {
       }
       selected = selectCountyHotspots(
         (await hotspotsInRegion(apiKey, countyCode)).data,
+        limit,
       );
     } catch (err) {
       return fail(502, {

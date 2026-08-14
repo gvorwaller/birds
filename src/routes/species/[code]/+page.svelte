@@ -1,10 +1,26 @@
 <script lang="ts">
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
+  import FrequencyChart from "$components/FrequencyChart.svelte";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
+
+  const MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
 
   let { data }: { data: PageData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
@@ -91,6 +107,35 @@
           {/each}
         </div>
       {/if}
+    </section>
+  {/if}
+
+  {#if data.forecastTeaser}
+    {@const ft = data.forecastTeaser}
+    <section class="card">
+      <h2>
+        Best time of year — {ft.regionName}
+        <span class="muted">among loaded states</span>
+        {#if ft.peakPhrase}
+          <span class="muted">peaks {ft.peakPhrase}</span>
+        {:else if ft.best}
+          <span class="muted">peak {MONTH_NAMES[ft.best.month - 1]}</span>
+        {/if}
+      </h2>
+      <FrequencyChart
+        months={ft.curve}
+        highlightMonth={ft.best?.month ?? null}
+        caption="Share of {ft.regionName} eBird checklists reporting {data.taxon
+          .com_name}, by month"
+      />
+      <p class="muted">
+        <a
+          href="/forecast/species?species={data.taxon
+            .species_code}&region={ft.regionCode}"
+        >
+          Where should I go? — county &amp; hotspot forecast →
+        </a>
+      </p>
     </section>
   {/if}
 
