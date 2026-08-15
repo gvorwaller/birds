@@ -31,6 +31,8 @@ export const FETCH_BATCH_MAX = 12;
 export const FETCH_SPACING_MS = 500;
 /** Pause before the single automatic retry of an eBird 5xx response. */
 export const FETCH_5XX_RETRY_DELAY_MS = 4000;
+/** A failed hotspot sits out of non-forced batches this long. */
+export const HOTSPOT_FAILURE_COOLDOWN_MS = 15 * 60_000;
 export const DAILY_FETCH_CAP = 200;
 /** Sanity gate: a refetch keeping under this fraction of prior species count is rejected. */
 const MIN_SPECIES_RETENTION = 0.25;
@@ -100,6 +102,8 @@ export interface EnsureResult {
 	credentialProblem: string | null;
 	/** True when another batch for this owner was already running. */
 	busy: boolean;
+	/** True when the per-owner daily fetch ceiling blocked further attempts. */
+	capExhausted: boolean;
 }
 
 /** The last complete calendar year — the newest year we ever request. */
@@ -528,7 +532,8 @@ export async function ensureFrequencies(
 		failed: [],
 		notAttempted: [],
 		credentialProblem: null,
-		busy: false
+		busy: false,
+		capExhausted: false
 	};
 	if (locs.length === 0) return result;
 
@@ -563,13 +568,36 @@ export async function ensureFrequencies(
 		// that aborts before its first fetch never pays for it.
 		let matcherPromise: ReturnType<typeof buildMatcher> | null = null;
 		const getMatcher = () => (matcherPromise ??= buildMatcher());
+		// Recently failed locations sit out a short cooldown instead of being
+		// re-attempted (and re-billed against the daily cap) EVERY loop round —
+		// the spend inflation that silently exhausted the cap on prod
+		// (2026-08-15). Reported as failed with their stored error so batch
+		// loops account for them and terminate. Explicit force retries bypass.
+		const priorAttempts = opts.force
+			? new Map<string, AttemptMeta>()
+			: await attemptMeta(toFetch.map((l) => l.code));
 		let attempted = 0;
 		let lastStart = 0;
 		let rateLimited = false;
 		for (const loc of toFetch) {
+			const prior = priorAttempts.get(loc.code);
+			if (
+				prior?.status === 'error' &&
+				now().getTime() - prior.lastAttemptAt.getTime() < HOTSPOT_FAILURE_COOLDOWN_MS
+			) {
+				result.failed.push({
+					code: loc.code,
+					error: `${prior.error ?? 'failed recently'} (waiting before retrying)`
+				});
+				continue;
+			}
+			if (!underDailyCap(userId, now())) {
+				result.capExhausted = true;
+				result.notAttempted.push(loc.code);
+				continue;
+			}
 			if (
 				attempted >= maxFetches ||
-				!underDailyCap(userId, now()) ||
 				// Batch time budget: a slow eBird evening must not hold the lease
 				// for long — leave the rest for the next (resumable) invocation.
 				now().getTime() - batchStart > BATCH_TIME_BUDGET_MS

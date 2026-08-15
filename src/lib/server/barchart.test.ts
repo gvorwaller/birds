@@ -527,6 +527,71 @@ describe("ensureFrequencies", () => {
     expect(result.notAttempted).toEqual(["US-B2"]);
   });
 
+  it("flags capExhausted when the daily ceiling blocks attempts", async () => {
+    queryHandler = taxonomyHandler;
+    const fetcher = vi.fn(async () =>
+      makeValidTsv([["Great Blue Heron", 0.25]]),
+    );
+    // Owner 91: burn the daily cap with many tiny invocations (12 per call).
+    const locsFor = (n: number, tag: string) =>
+      Array.from({ length: n }, (_, i) => loc(`US-${tag}${i}`));
+    for (let round = 0; round < 17; round++) {
+      await ensureFrequencies(91, locsFor(12, `Q${round}-`), {
+        fetcher,
+        sleep: noSleep,
+      });
+    }
+    // 17*12 = 204 > 200: the next invocation must attempt nothing and say why.
+    const result = await ensureFrequencies(91, locsFor(3, "R"), {
+      fetcher,
+      sleep: noSleep,
+    });
+    expect(result.refreshed).toEqual([]);
+    expect(result.notAttempted).toHaveLength(3);
+    expect(result.capExhausted).toBe(true);
+    expect(result.credentialProblem).toBeNull();
+  });
+
+  it("recently failed locations sit out non-forced batches (no spend)", async () => {
+    queryHandler = (text, params) => {
+      if (text.includes("FROM frequency_fetch_attempts")) {
+        return {
+          rows: [
+            {
+              loc_code: "US-CD1",
+              last_attempt_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+              status: "error",
+              error: "eBird returned HTTP 500 for this request.",
+            },
+          ],
+        };
+      }
+      return taxonomyHandler(text) ?? undefined;
+    };
+    const fetcher = vi.fn(async (_u: number, _code: string) =>
+      makeValidTsv([["Great Blue Heron", 0.25]]),
+    );
+    const result = await ensureFrequencies(
+      92,
+      [loc("US-CD1"), loc("US-CD2")],
+      { fetcher, sleep: noSleep },
+    );
+    // Cooldown loc reported failed WITHOUT a fetch; the other proceeds.
+    expect(result.refreshed).toEqual(["US-CD2"]);
+    expect(result.failed[0].code).toBe("US-CD1");
+    expect(result.failed[0].error).toMatch(/waiting before retrying/);
+    expect(fetcher.mock.calls.every(([, code]) => code !== "US-CD1")).toBe(
+      true,
+    );
+    // force bypasses the cooldown (explicit Retry buttons).
+    const forced = await ensureFrequencies(92, [loc("US-CD1")], {
+      fetcher,
+      sleep: noSleep,
+      force: true,
+    });
+    expect(forced.refreshed).toEqual(["US-CD1"]);
+  });
+
   it("returns busy instead of running a second concurrent batch per owner", async () => {
     queryHandler = taxonomyHandler;
     let release!: () => void;

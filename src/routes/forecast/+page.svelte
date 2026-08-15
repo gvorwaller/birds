@@ -666,6 +666,18 @@
                   Another data load was already running — try again in a
                   moment.
                 </p>
+              {:else if bulk.capReached}
+                <p class="error">
+                  Daily eBird request limit reached ({DAILY_FETCH_CAP}/day) —
+                  {bulk.done} of {bulk.total} loaded this run; the rest can
+                  load tomorrow.
+                </p>
+              {:else if bulk.stalled}
+                <p class="notice">
+                  Nothing could load this run — the remaining selections are
+                  waiting out a failure cooldown or a limit. Try again in ~15
+                  minutes.
+                </p>
               {:else if bulk.failed.length > 0}
                 <p class="error">
                   {bulk.failed.length} hotspot{bulk.failed.length === 1

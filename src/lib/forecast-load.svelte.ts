@@ -36,6 +36,7 @@ class ForecastBulkLoad {
 	credentialProblem = $state<string | null>(null);
 	busyConflict = $state(false);
 	stalled = $state(false);
+	capReached = $state(false);
 	/** Where the current/last run is loading ("St. Petersburg, FL"). */
 	label = $state('');
 
@@ -45,7 +46,11 @@ class ForecastBulkLoad {
 	get hasResult(): boolean {
 		return (
 			!this.running &&
-			(this.failed.length > 0 || this.credentialProblem != null || this.busyConflict)
+			(this.failed.length > 0 ||
+				this.credentialProblem != null ||
+				this.busyConflict ||
+				this.capReached ||
+				this.stalled)
 		);
 	}
 
@@ -58,6 +63,7 @@ class ForecastBulkLoad {
 		this.credentialProblem = null;
 		this.busyConflict = false;
 		this.stalled = false;
+		this.capReached = false;
 		this.label = origin.label;
 
 		try {
@@ -105,7 +111,10 @@ class ForecastBulkLoad {
 
 				const verdict = loopVerdict(ensure);
 				if (verdict.next === 'continue') continue;
-				if (verdict.next === 'stop' && verdict.reason === 'stalled') this.stalled = true;
+				if (verdict.next === 'stop') {
+					if (verdict.reason === 'stalled') this.stalled = true;
+					if (verdict.reason === 'cap') this.capReached = true;
+				}
 				break;
 			}
 		} finally {
@@ -119,6 +128,7 @@ class ForecastBulkLoad {
 		this.credentialProblem = null;
 		this.busyConflict = false;
 		this.stalled = false;
+		this.capReached = false;
 		this.total = 0;
 		this.remaining = 0;
 	}

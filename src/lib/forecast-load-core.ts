@@ -15,12 +15,13 @@ export interface EnsureShape {
   notAttempted: string[];
   credentialProblem: string | null;
   busy: boolean;
+  capExhausted?: boolean;
 }
 
 export type LoopVerdict =
   | { next: "continue" }
   | { next: "done" }
-  | { next: "stop"; reason: "credential" | "busy" | "stalled" };
+  | { next: "stop"; reason: "credential" | "busy" | "cap" | "stalled" };
 
 /**
  * Decide what the loop does after one batch. Mirrors the page-bound loop's
@@ -34,8 +35,16 @@ export function loopVerdict(ensure: EnsureShape): LoopVerdict {
   if (ensure.busy) return { next: "stop", reason: "busy" };
   if (ensure.notAttempted.length === 0) return { next: "done" };
   if (ensure.refreshed.length + ensure.failed.length === 0) {
-    return { next: "stop", reason: "stalled" };
+    // The daily ceiling gets its own reason — the silent prod pop-back of
+    // 2026-08-15 was a capped round with no UI for it.
+    return {
+      next: "stop",
+      reason: ensure.capExhausted ? "cap" : "stalled",
+    };
   }
+  // Progress was made this round; if the cap ALSO closed mid-round, the next
+  // round would attempt nothing — stop now with the honest reason.
+  if (ensure.capExhausted) return { next: "stop", reason: "cap" };
   return { next: "continue" };
 }
 
