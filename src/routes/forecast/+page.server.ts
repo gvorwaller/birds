@@ -3,13 +3,18 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, hotspotsNear, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
-import { ensureFrequencies, type EnsureResult } from "$server/barchart";
 import {
+  ensureFrequencies,
+  frequencyMeta,
+  lastCompleteYear,
+  type EnsureResult,
+} from "$server/barchart";
+import {
+  areaLoadTargets,
   calendarMonth,
   forecastNeedsNear,
   majorityRegionCode,
   rankCountiesForNeeds,
-  selectForecastHotspots,
   type CountyNeedsRank,
   type ForecastNeedsView,
 } from "$server/forecast";
@@ -200,7 +205,13 @@ export const actions: Actions = {
         }
         selected = [one];
       } else {
-        selected = selectForecastHotspots(hotspots.data, { lat, lng });
+        // Bulk load = suggested unloaded + ALL outdated loaded in range —
+        // the same sets the page's button counts promise (CODEX1 #2).
+        const meta = await frequencyMeta(hotspots.data.map((h) => h.locId));
+        selected = areaLoadTargets(hotspots.data, meta, lastCompleteYear(), {
+          lat,
+          lng,
+        });
       }
     } catch (err) {
       return fail(502, {

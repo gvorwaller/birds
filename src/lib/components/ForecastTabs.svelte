@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 
 	/**
 	 * The two forecast modes presented as one workspace (UX doc #2): tabs named
@@ -24,7 +25,11 @@
 	} = $props();
 
 	const ROUTES = { area: '/forecast', species: '/forecast/species' } as const;
-	const KEY = (m: 'area' | 'species') => `forecast-params-${m}`;
+	// Keys are scoped by the LOGIN identity (not the viewed data owner): on a
+	// shared browser profile, one account's remembered search must neither
+	// leak into nor be overwritten by another's (CODEX1 2026-08-15 #3).
+	const KEY = (m: 'area' | 'species') =>
+		`forecast-params-${m}-u${page.data.user?.id ?? 'anon'}`;
 
 	let remembered = $state('');
 	const other = $derived<'area' | 'species'>(mode === 'area' ? 'species' : 'area');

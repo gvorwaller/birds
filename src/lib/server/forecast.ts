@@ -281,32 +281,33 @@ export const FORECAST_HOTSPOT_LIMIT = 8;
  * (CODEX1 #9). Pure. Returned nearest-first for stable display.
  */
 /**
- * Prefer properly named hotspots for analysis slots: eBird's catch-all
- * personal locations ("… (please use more specific location if possible)")
- * only occupy a slot when there aren't enough specific candidates. Display
- * code already hides them from "best" claims; this keeps them from consuming
- * loads in the first place. Pure.
+ * Split a candidate pool into properly named hotspots and eBird's vague
+ * catch-alls ("… (please use more specific location if possible)"). Selection
+ * fills from specific sites first and dips into vague ones ONLY for the
+ * shortfall — never all-or-nothing (CODEX1 2026-08-15 #5: with 7 specific of
+ * a limit of 8, exactly one vague site may enter, not several).
  */
-export function preferSpecificHotspots(
-	hotspots: readonly EbirdHotspot[],
-	limit: number
-): readonly EbirdHotspot[] {
-	const specific = hotspots.filter((h) => !vagueLocName(h.locName));
-	return specific.length >= limit ? specific : hotspots;
+function splitByNameQuality(hotspots: readonly EbirdHotspot[]): {
+	specific: EbirdHotspot[];
+	vague: EbirdHotspot[];
+} {
+	const specific: EbirdHotspot[] = [];
+	const vague: EbirdHotspot[] = [];
+	for (const h of hotspots) (vagueLocName(h.locName) ? vague : specific).push(h);
+	return { specific, vague };
 }
 
-export function selectForecastHotspots(
-	hotspots: readonly EbirdHotspot[],
+function mixByDistanceActivity(
+	pool: readonly EbirdHotspot[],
 	origin: { lat: number; lng: number },
-	limit = FORECAST_HOTSPOT_LIMIT
+	limit: number
 ): EbirdHotspot[] {
-	hotspots = preferSpecificHotspots(hotspots, limit);
-	const byDistance = [...hotspots].sort(
+	const byDistance = [...pool].sort(
 		(a, b) =>
 			haversineKm(origin.lat, origin.lng, a.lat, a.lng) -
 			haversineKm(origin.lat, origin.lng, b.lat, b.lng)
 	);
-	const byActivity = [...hotspots].sort(
+	const byActivity = [...pool].sort(
 		(a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0)
 	);
 	const chosen = new Map<string, EbirdHotspot>();
@@ -321,6 +322,48 @@ export function selectForecastHotspots(
 		chosen.set(h.locId, h);
 	}
 	return byDistance.filter((h) => chosen.has(h.locId));
+}
+
+export function selectForecastHotspots(
+	hotspots: readonly EbirdHotspot[],
+	origin: { lat: number; lng: number },
+	limit = FORECAST_HOTSPOT_LIMIT
+): EbirdHotspot[] {
+	const { specific, vague } = splitByNameQuality(hotspots);
+	const picked = mixByDistanceActivity(specific, origin, limit);
+	if (picked.length < limit) {
+		picked.push(...mixByDistanceActivity(vague, origin, limit - picked.length));
+	}
+	return picked.sort(
+		(a, b) =>
+			haversineKm(origin.lat, origin.lng, a.lat, a.lng) -
+			haversineKm(origin.lat, origin.lng, b.lat, b.lng)
+	);
+}
+
+/**
+ * Fetch targets for a bulk area load: the auto-suggested unloaded hotspots
+ * PLUS every loaded-but-outdated hotspot in range, deduped. Previously the
+ * bulk POST re-derived only the suggested mix, so "Refresh outdated data (N)"
+ * could refresh none of the N when the stale sites sat outside the suggestion
+ * (CODEX1 2026-08-15 #2). ensureFrequencies caps per batch and skips
+ * already-current rows, so passing the full set stays polite and resumable.
+ * Pure.
+ */
+export function areaLoadTargets(
+	inRange: readonly EbirdHotspot[],
+	meta: ReadonlyMap<string, { endYear: number }>,
+	newestCompleteYear: number,
+	origin: { lat: number; lng: number }
+): EbirdHotspot[] {
+	const suggested = selectForecastHotspots(inRange, origin).filter((h) => !meta.has(h.locId));
+	const stale = inRange.filter((h) => {
+		const m = meta.get(h.locId);
+		return m != null && m.endYear < newestCompleteYear;
+	});
+	const out = new Map<string, EbirdHotspot>();
+	for (const h of [...suggested, ...stale]) out.set(h.locId, h);
+	return [...out.values()];
 }
 
 export interface ForecastHotspotStat {
@@ -688,15 +731,14 @@ export const COUNTY_HOTSPOT_LIMIT = 6;
  * Pure; lives in the engine so it's testable (was module-private in the
  * species route).
  */
-export function selectCountyHotspots(
-	hotspots: readonly EbirdHotspot[],
-	limit = COUNTY_HOTSPOT_LIMIT
+function mixBySpeciesRecency(
+	pool: readonly EbirdHotspot[],
+	limit: number
 ): EbirdHotspot[] {
-	hotspots = preferSpecificHotspots(hotspots, limit);
-	const bySpecies = [...hotspots].sort(
+	const bySpecies = [...pool].sort(
 		(a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0)
 	);
-	const byRecency = [...hotspots].sort((a, b) =>
+	const byRecency = [...pool].sort((a, b) =>
 		(b.latestObsDt ?? '').localeCompare(a.latestObsDt ?? '')
 	);
 	const chosen = new Map<string, EbirdHotspot>();
@@ -710,6 +752,18 @@ export function selectCountyHotspots(
 		chosen.set(h.locId, h);
 	}
 	return bySpecies.filter((h) => chosen.has(h.locId));
+}
+
+export function selectCountyHotspots(
+	hotspots: readonly EbirdHotspot[],
+	limit = COUNTY_HOTSPOT_LIMIT
+): EbirdHotspot[] {
+	const { specific, vague } = splitByNameQuality(hotspots);
+	const picked = mixBySpeciesRecency(specific, limit);
+	if (picked.length < limit) {
+		picked.push(...mixBySpeciesRecency(vague, limit - picked.length));
+	}
+	return picked.sort((a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0));
 }
 
 /**

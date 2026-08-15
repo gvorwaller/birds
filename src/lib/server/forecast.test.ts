@@ -207,6 +207,56 @@ describe("hotspot selection avoids vague catch-all locations", () => {
     expect(picked.some((h) => h.locId === "V1")).toBe(false);
     expect(picked).toHaveLength(6);
   });
+
+  it("fills only the SHORTFALL from vague sites, never the whole pool", async () => {
+    // CODEX1 2026-08-15 #5: 7 specific + many vague at limit 8 must yield all
+    // 7 specific plus exactly ONE vague — the old all-or-nothing fallback
+    // could let several vague sites displace specific ones.
+    const { selectForecastHotspots } = await import("./forecast");
+    const hotspots = [
+      vague("V1", 0, 900),
+      vague("V2", 0.5, 800),
+      vague("V3", 0.7, 700),
+      ...Array.from({ length: 7 }, (_, i) => hs(`S${i}`, i + 1, 100)),
+    ];
+    const picked = selectForecastHotspots(hotspots, ORIGIN, 8);
+    expect(picked).toHaveLength(8);
+    const vaguePicked = picked.filter((h) => h.locId.startsWith("V"));
+    expect(vaguePicked).toHaveLength(1);
+    for (let i = 0; i < 7; i++)
+      expect(picked.some((h) => h.locId === `S${i}`)).toBe(true);
+  });
+});
+
+describe("areaLoadTargets", () => {
+  it("includes stale loaded hotspots OUTSIDE the suggestion set", async () => {
+    // CODEX1 2026-08-15 #2: "Refresh outdated data (N)" must actually target
+    // the N outdated sites, not re-derive the suggested mix and refresh none.
+    const { areaLoadTargets } = await import("./forecast");
+    const inRange = Array.from({ length: 20 }, (_, i) =>
+      hs(`H${i}`, i, 100 + i),
+    );
+    const meta = new Map<string, { endYear: number }>();
+    // H15..H19 (far, outside any 8-slot mix of nearest+active) loaded but stale.
+    for (let i = 15; i < 20; i++) meta.set(`H${i}`, { endYear: 2024 });
+    // H0 loaded and current — must NOT be a target.
+    meta.set("H0", { endYear: 2025 });
+    const targets = areaLoadTargets(inRange, meta, 2025, ORIGIN);
+    const ids = targets.map((h) => h.locId);
+    for (let i = 15; i < 20; i++) expect(ids).toContain(`H${i}`);
+    expect(ids).not.toContain("H0");
+    // Suggested unloaded sites are included too (bulk first-load path).
+    expect(ids.some((id) => !id.match(/^H1[5-9]$/) && id !== "H0")).toBe(true);
+  });
+
+  it("dedupes when a suggested site is also stale", async () => {
+    const { areaLoadTargets } = await import("./forecast");
+    const inRange = Array.from({ length: 10 }, (_, i) => hs(`H${i}`, i, 100));
+    const meta = new Map([["H1", { endYear: 2024 }]]); // near → suggested AND stale
+    const targets = areaLoadTargets(inRange, meta, 2025, ORIGIN);
+    const ids = targets.map((h) => h.locId);
+    expect(ids.filter((id) => id === "H1")).toHaveLength(1);
+  });
 });
 
 describe("selectForecastHotspots", () => {
