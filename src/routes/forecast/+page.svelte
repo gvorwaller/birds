@@ -8,6 +8,7 @@
   import MonthPicker from "$components/MonthPicker.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance } from "$lib/geo";
+  import { forecastBulkLoad } from "$lib/forecast-load.svelte";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
   import type { ActionData, PageData } from "./$types";
@@ -70,19 +71,27 @@
   );
 
   // Multi-select loading (td-8a6f97): checkbox selection is client state;
-  // the bulk form posts the selected ids as repeated `loc` fields and
-  // auto-loops (ensureFrequencies fetches ≤12/invocation and skips rows that
-  // became current, so resubmitting the same selection is progress-safe).
+  // the loop itself lives in the app-level forecastBulkLoad manager so a run
+  // SURVIVES in-app navigation — leave for /help mid-run and come back to a
+  // live progress bar. ensureFrequencies fetches ≤12/invocation and skips
+  // rows that became current, so resubmitting the selection is progress-safe.
   let selectedLocs = $state<string[]>([]);
-  let bulkForm = $state<HTMLFormElement | undefined>();
-  let bulkLoading = $state(false);
-  let bulkTotal = $state(0);
-  let bulkRemaining = $state(0);
-  // Failures surfaced AT the bulk bar — the shared banner up top is out of
-  // view while watching the progress area (GROK td-8a6f97 pass, Pallanza
-  // Drive residual).
-  let bulkFailed = $state<{ code: string; error: string }[]>([]);
+  const bulk = forecastBulkLoad;
   const DAILY_FETCH_CAP = 200;
+
+  function startBulk(e: SubmitEvent) {
+    e.preventDefault();
+    if (!data.location || selectedLocs.length === 0) return;
+    void bulk.start(
+      {
+        lat: data.location.lat,
+        lng: data.location.lng,
+        dist: data.dist,
+        label: data.location.label,
+      },
+      [...selectedLocs],
+    );
+  }
 
   // Loaded rows leave unloadedNearby on re-render; prune them from the
   // selection so counts stay honest mid-loop.
@@ -94,49 +103,6 @@
       selectedLocs = selectedLocs.filter((id) => available.has(id));
     }
   });
-
-  function bulkEnhance() {
-    bulkLoading = true;
-    if (bulkTotal === 0) {
-      bulkTotal = selectedLocs.length;
-      bulkRemaining = selectedLocs.length;
-      bulkFailed = [];
-    }
-    return async ({
-      result,
-      update,
-    }: {
-      result: { type: string; data?: Record<string, unknown> };
-      update: (opts?: { reset?: boolean }) => Promise<void>;
-    }) => {
-      await update({ reset: false });
-      if (result.type === "success" && result.data) {
-        const ens = result.data.ensure as {
-          refreshed: string[];
-          failed: { code: string; error: string }[];
-          notAttempted: string[];
-          credentialProblem: string | null;
-          busy: boolean;
-        } | null;
-        if (ens?.failed.length) bulkFailed = [...bulkFailed, ...ens.failed];
-        const remaining = ens?.notAttempted.length ?? 0;
-        bulkRemaining = remaining;
-        const madeProgress =
-          (ens?.refreshed.length ?? 0) + (ens?.failed.length ?? 0) > 0;
-        if (
-          remaining > 0 &&
-          madeProgress &&
-          !ens?.credentialProblem &&
-          !ens?.busy
-        ) {
-          bulkForm?.requestSubmit();
-          return;
-        }
-      }
-      bulkLoading = false;
-      bulkTotal = 0;
-    };
-  }
 
   function selectAllShown() {
     selectedLocs = [...new Set([...selectedLocs, ...unloadedShown.map((h) => h.locId)])];
@@ -650,38 +616,39 @@
                   Clear ({selectedLocs.length})
                 </button>
               {/if}
-              {#if selectedLocs.length > 0}
-                <form
-                  method="POST"
-                  action="?/loadData"
-                  bind:this={bulkForm}
-                  use:enhance={bulkEnhance}
-                >
+              {#if selectedLocs.length > 0 && !bulk.running}
+                <!-- Plain no-JS fallback posts once (≤12); with JS the
+                     app-level manager drives the loop so it survives
+                     navigating away and back. -->
+                <form method="POST" action="?/loadData" onsubmit={startBulk}>
                   <input type="hidden" name="lat" value={data.location.lat} />
                   <input type="hidden" name="lng" value={data.location.lng} />
                   <input type="hidden" name="dist" value={data.dist} />
                   {#each selectedLocs as id (id)}
                     <input type="hidden" name="loc" value={id} />
                   {/each}
-                  <button type="submit" disabled={bulkLoading || loadingLoc !== null}>
-                    {bulkLoading
-                      ? `Loading… ${bulkTotal - bulkRemaining} of ${bulkTotal}`
-                      : `Load selected (${selectedLocs.length})`}
+                  <button type="submit" disabled={loadingLoc !== null}>
+                    Load selected ({selectedLocs.length})
                   </button>
                 </form>
               {/if}
+              {#if bulk.running}
+                <span class="bulkstatus"
+                  >Loading {bulk.label}… {bulk.done} of {bulk.total}</span
+                >
+              {/if}
             </div>
-            {#if bulkLoading && bulkTotal > 0}
+            {#if bulk.running && bulk.total > 0}
               <div
                 class="progressbar"
                 role="progressbar"
-                aria-valuenow={bulkTotal - bulkRemaining}
+                aria-valuenow={bulk.done}
                 aria-valuemin={0}
-                aria-valuemax={bulkTotal}
+                aria-valuemax={bulk.total}
               >
                 <div
                   class="fill"
-                  style="width: {((bulkTotal - bulkRemaining) / bulkTotal) * 100}%"
+                  style="width: {(bulk.done / bulk.total) * 100}%"
                 ></div>
               </div>
             {/if}
@@ -691,13 +658,25 @@
                 request ceiling — the rest will wait for tomorrow.
               </p>
             {/if}
-            {#if !bulkLoading && bulkFailed.length > 0}
-              <p class="error">
-                {bulkFailed.length} hotspot{bulkFailed.length === 1
-                  ? ""
-                  : "s"} didn't load — {bulkFailed[0].error} (eBird's export
-                errors on some locations; retry later from Forecast data).
-              </p>
+            {#if bulk.hasResult}
+              {#if bulk.credentialProblem}
+                <p class="error">{bulk.credentialProblem}</p>
+              {:else if bulk.busyConflict}
+                <p class="notice">
+                  Another data load was already running — try again in a
+                  moment.
+                </p>
+              {:else if bulk.failed.length > 0}
+                <p class="error">
+                  {bulk.failed.length} hotspot{bulk.failed.length === 1
+                    ? ""
+                    : "s"} didn't load — {bulk.failed[0].error} (eBird's export
+                  errors on some locations; retry later from Forecast data).
+                </p>
+              {/if}
+              <button type="button" class="rowload" onclick={() => bulk.dismiss()}>
+                Dismiss
+              </button>
             {/if}
           {/if}
           <ul>
@@ -710,7 +689,7 @@
                         type="checkbox"
                         bind:group={selectedLocs}
                         value={h.locId}
-                        disabled={bulkLoading}
+                        disabled={bulk.running}
                       />
                       <span class="name">{h.locName}</span>
                     </label>
@@ -752,7 +731,7 @@
                       <button
                         type="submit"
                         class="rowload"
-                        disabled={loadingLoc !== null || bulkLoading}
+                        disabled={loadingLoc !== null || bulk.running}
                       >
                         {loadingLoc === h.locId ? "Loading…" : "Load"}
                       </button>
@@ -891,6 +870,11 @@
     width: 22px;
     height: 22px;
     accent-color: var(--accent);
+  }
+  .bulkstatus {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.9rem;
   }
   .partial {
     background: var(--need-bg);
