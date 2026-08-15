@@ -408,9 +408,6 @@ export interface AnalyzedHotspot {
 	fetchedAt: string | null; // ISO
 }
 
-/** How many unloaded in-range hotspots the pick list serializes. */
-export const UNLOADED_LIST_LIMIT = 60;
-
 export interface UnloadedHotspot {
 	locId: string;
 	locName: string;
@@ -428,7 +425,7 @@ export interface ForecastNeedsView {
 	analyzed: AnalyzedHotspot[];
 	/** The auto-mix suggestion, minus already-loaded (bulk-load button). */
 	suggested: AnalyzedHotspot[];
-	/** In-range hotspots without data, nearest first (individual Load). */
+	/** ALL in-range hotspots without data, nearest first (individual Load). */
 	unloadedNearby: UnloadedHotspot[];
 	/** Total hotspots eBird lists within range (analyzed is a subset). */
 	totalNearby: number;
@@ -634,8 +631,9 @@ export async function forecastNeedsNear(
 		.map(toAnalyzed)
 		.sort((a, b) => a.distanceKm - b.distanceKm);
 	const suggested = suggestedPick.map(toAnalyzed);
-	// Everything in range without data, nearest first — the user's pick list.
-	// Serialization is capped; totalNearby still reports the full count.
+	// EVERYTHING in range without data, nearest first — the user's pick list.
+	// No cap (GBV 2026-08-15): every local hotspot must be offerable for load;
+	// the page handles progressive disclosure client-side.
 	const unloadedNearby = inRange
 		.filter((h) => !meta.has(h.locId))
 		.map((h) => ({
@@ -646,8 +644,7 @@ export async function forecastNeedsNear(
 			distanceKm: haversineKm(lat, lng, h.lat, h.lng),
 			numSpeciesAllTime: h.numSpeciesAllTime ?? null
 		}))
-		.sort((a, b) => a.distanceKm - b.distanceKm)
-		.slice(0, UNLOADED_LIST_LIMIT);
+		.sort((a, b) => a.distanceKm - b.distanceKm);
 	const fetchDates = analyzed.filter((a) => a.fetchedAt).map((a) => a.fetchedAt!);
 	const usedMetas = withData.map((id) => meta.get(id)!);
 	const rawRegion = majorityRegionCode(loaded.length > 0 ? loaded : inRange);

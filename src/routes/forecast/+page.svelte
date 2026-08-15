@@ -59,6 +59,15 @@
 
   let loading = $state(false);
   let loadingLoc = $state<string | null>(null);
+  let showAllUnloaded = $state(false);
+  const UNLOADED_PREVIEW = 30;
+  const unloadedShown = $derived(
+    data.view
+      ? showAllUnloaded
+        ? data.view.unloadedNearby
+        : data.view.unloadedNearby.slice(0, UNLOADED_PREVIEW)
+      : [],
+  );
 
   const MONTH_NAMES = [
     "January",
@@ -320,6 +329,14 @@
           {/if}
         {/if}
       {/if}
+
+      {#if v.analyzed.length > 0 && v.unloadedNearby.length > 0}
+        <p class="partial">
+          ⚠ Based on {v.analyzed.length} of {v.totalNearby} hotspots in range —
+          species concentrated at unloaded hotspots may be missing or
+          underestimated.
+        </p>
+      {/if}
       {#if v.analyzed.length === 0 && data.isViewer}
         <p class="notice">
           The account owner hasn't loaded forecast data for this area yet.
@@ -539,14 +556,11 @@
       {#if v.unloadedNearby.length > 0}
         <details class="analyzed">
           <summary>
-            More hotspots in range ({v.unloadedNearby.length}{v.totalNearby -
-              v.analyzed.length >
-            v.unloadedNearby.length
-              ? ` nearest of ${v.totalNearby - v.analyzed.length}`
-              : ""}) — pick what to load
+            More hotspots in range ({v.unloadedNearby.length}) — pick what to
+            load
           </summary>
           <ul>
-            {#each v.unloadedNearby as h (h.locId)}
+            {#each unloadedShown as h (h.locId)}
               <li>
                 <div class="sp">
                   <span class="name">{h.locName}</span>
@@ -600,6 +614,17 @@
               </li>
             {/each}
           </ul>
+          {#if v.unloadedNearby.length > UNLOADED_PREVIEW}
+            <button
+              type="button"
+              class="rowload"
+              onclick={() => (showAllUnloaded = !showAllUnloaded)}
+            >
+              {showAllUnloaded
+                ? "Show fewer"
+                : `Show all ${v.unloadedNearby.length}`}
+            </button>
+          {/if}
         </details>
       {/if}
       {#if hotspotPoints.length > 0}
@@ -682,6 +707,14 @@
   button:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  .partial {
+    background: var(--need-bg);
+    color: var(--need-text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.88rem;
+    margin: 10px 0 0;
   }
   button.rowload {
     min-height: 48px;
