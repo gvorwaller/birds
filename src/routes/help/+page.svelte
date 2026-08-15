@@ -159,9 +159,28 @@
 						month around the place instead of the other way round.
 					</li>
 					<li>
-						The first visit to a new area needs a one-time
-						<strong>Load data</strong> (a handful of eBird requests); after
-						that it's instant and only refreshes about once a year.
+						The forecast uses <em>every</em> loaded hotspot in range —
+						loading is your choice, and a shared pool: what any user of this
+						app loads, everyone benefits from. A first visit to a new area
+						needs a one-time <strong>Load data</strong>; after that it's
+						instant and only refreshes about once a year.
+					</li>
+					<li>
+						Three ways to load: the suggested-mix button (nearest +
+						most-active), a single row's <strong>Load</strong>, or — under
+						<strong>"More hotspots in range — pick what to load"</strong> —
+						check any set of hotspots (or <strong>Select all shown</strong>)
+						and hit <strong>Load selected (N)</strong>. Big selections run in
+						polite batches with a live progress bar; hotspots move into the
+						results as each one lands, and any that fail (eBird's export
+						errors on the odd location) are reported right there with a
+						later-retry path on Forecast data.
+					</li>
+					<li>
+						Until an area is fully loaded, an amber note states exactly what
+						the numbers rest on — "frequencies reflect only the N loaded of M
+						hotspots in range" — so partial coverage is never mistaken for
+						the full picture.
 					</li>
 				</ul>
 				<h3>Where can I find this bird? (species + state)</h3>
