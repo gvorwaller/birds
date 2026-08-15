@@ -51,23 +51,6 @@ describe("loopVerdict", () => {
     });
   });
 
-  it("names the daily cap explicitly (the silent prod pop-back)", () => {
-    // Cap closed before anything was attempted — the exact prod symptom.
-    expect(
-      loopVerdict(ensure({ notAttempted: ["L2"], capExhausted: true })),
-    ).toEqual({ next: "stop", reason: "cap" });
-    // Cap closed MID-round after some progress: stop with the honest reason
-    // rather than burning a no-op round.
-    expect(
-      loopVerdict(
-        ensure({
-          refreshed: ["L1"],
-          notAttempted: ["L2"],
-          capExhausted: true,
-        }),
-      ),
-    ).toEqual({ next: "stop", reason: "cap" });
-  });
 });
 
 describe("mergeFailures", () => {

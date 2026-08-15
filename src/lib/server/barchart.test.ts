@@ -527,30 +527,6 @@ describe("ensureFrequencies", () => {
     expect(result.notAttempted).toEqual(["US-B2"]);
   });
 
-  it("flags capExhausted when the daily ceiling blocks attempts", async () => {
-    queryHandler = taxonomyHandler;
-    const fetcher = vi.fn(async () =>
-      makeValidTsv([["Great Blue Heron", 0.25]]),
-    );
-    // Owner 91: burn the daily cap with many tiny invocations (12 per call).
-    const locsFor = (n: number, tag: string) =>
-      Array.from({ length: n }, (_, i) => loc(`US-${tag}${i}`));
-    for (let round = 0; round < 17; round++) {
-      await ensureFrequencies(91, locsFor(12, `Q${round}-`), {
-        fetcher,
-        sleep: noSleep,
-      });
-    }
-    // 17*12 = 204 > 200: the next invocation must attempt nothing and say why.
-    const result = await ensureFrequencies(91, locsFor(3, "R"), {
-      fetcher,
-      sleep: noSleep,
-    });
-    expect(result.refreshed).toEqual([]);
-    expect(result.notAttempted).toHaveLength(3);
-    expect(result.capExhausted).toBe(true);
-    expect(result.credentialProblem).toBeNull();
-  });
 
   it("recently failed locations sit out non-forced batches (no spend)", async () => {
     queryHandler = (text, params) => {

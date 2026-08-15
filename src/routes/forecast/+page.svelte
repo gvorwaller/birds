@@ -77,7 +77,6 @@
   // rows that became current, so resubmitting the selection is progress-safe.
   let selectedLocs = $state<string[]>([]);
   const bulk = forecastBulkLoad;
-  const DAILY_FETCH_CAP = 200;
 
   function startBulk(e: SubmitEvent) {
     e.preventDefault();
@@ -652,12 +651,6 @@
                 ></div>
               </div>
             {/if}
-            {#if selectedLocs.length > DAILY_FETCH_CAP}
-              <p class="notice">
-                {selectedLocs.length} selected exceeds the {DAILY_FETCH_CAP}/day
-                request ceiling — the rest will wait for tomorrow.
-              </p>
-            {/if}
             {#if bulk.hasResult}
               {#if bulk.credentialProblem}
                 <p class="error">{bulk.credentialProblem}</p>
@@ -666,17 +659,12 @@
                   Another data load was already running — try again in a
                   moment.
                 </p>
-              {:else if bulk.capReached}
-                <p class="error">
-                  Daily eBird request limit reached ({DAILY_FETCH_CAP}/day) —
-                  {bulk.done} of {bulk.total} loaded this run; the rest can
-                  load tomorrow.
-                </p>
+
               {:else if bulk.stalled}
                 <p class="notice">
-                  Nothing could load this run — the remaining selections are
-                  waiting out a failure cooldown or a limit. Try again in ~15
-                  minutes.
+                  Nothing could load this run — the remaining selections
+                  failed recently and are waiting out a ~15 minute cooldown
+                  before retrying.
                 </p>
               {:else if bulk.failed.length > 0}
                 <p class="error">

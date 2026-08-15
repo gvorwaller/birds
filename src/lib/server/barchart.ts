@@ -14,8 +14,8 @@
  * Politeness rules (plan 2026-08-06, CODEX1 review): fetching happens only in
  * owner-triggered form actions, sequentially (concurrency 1) with >=500 ms
  * start-to-start spacing, at most FETCH_BATCH_MAX per invocation, under a
- * per-owner single-flight lease, with a soft daily ceiling. An authentication
- * failure aborts the whole batch immediately.
+ * per-owner single-flight lease. An authentication failure aborts the whole
+ * batch immediately.
  */
 import { query, withTransaction } from '$lib/db';
 import { buildMatcher } from '$server/species-match';
@@ -33,7 +33,6 @@ export const FETCH_SPACING_MS = 500;
 export const FETCH_5XX_RETRY_DELAY_MS = 4000;
 /** A failed hotspot sits out of non-forced batches this long. */
 export const HOTSPOT_FAILURE_COOLDOWN_MS = 15 * 60_000;
-export const DAILY_FETCH_CAP = 200;
 /** Sanity gate: a refetch keeping under this fraction of prior species count is rejected. */
 const MIN_SPECIES_RETENTION = 0.25;
 const UNMATCHED_SAMPLE_LIMIT = 20;
@@ -102,8 +101,6 @@ export interface EnsureResult {
 	credentialProblem: string | null;
 	/** True when another batch for this owner was already running. */
 	busy: boolean;
-	/** True when the per-owner daily fetch ceiling blocked further attempts. */
-	capExhausted: boolean;
 }
 
 /** The last complete calendar year — the newest year we ever request. */
@@ -482,25 +479,13 @@ const LEASE_MAX_MS = 7 * 60_000;
 /** Stop starting new fetches once a batch has run this long (resumable). */
 export const BATCH_TIME_BUDGET_MS = 4 * 60_000;
 const activeBatch = new Map<number, number>(); // userId → startedAt epoch ms
-// Soft daily ceiling per owner (resets on UTC day change or process restart).
-const dailySpend = new Map<number, { day: string; count: number }>();
-
-function underDailyCap(userId: number, now: Date): boolean {
-	const day = now.toISOString().slice(0, 10);
-	const spend = dailySpend.get(userId);
-	if (!spend || spend.day !== day) {
-		dailySpend.set(userId, { day, count: 0 });
-		return true;
-	}
-	return spend.count < DAILY_FETCH_CAP;
-}
-
-function recordSpend(userId: number, now: Date): void {
-	const day = now.toISOString().slice(0, 10);
-	const spend = dailySpend.get(userId);
-	if (spend && spend.day === day) spend.count++;
-	else dailySpend.set(userId, { day, count: 1 });
-}
+// NOTE: there is deliberately NO daily fetch ceiling (removed 2026-08-15,
+// GBV: "WTF is the logic behind that false ceiling"). It was an arbitrary
+// runaway-bug backstop that became a real obstacle to legitimate bulk
+// loading, was in-memory (reset by every deploy), and double-billed retries.
+// Runaway protection comes from the guards that matter: owner-triggered
+// only, FETCH_BATCH_MAX per invocation, sequential spacing, the lease, the
+// batch time budget, and the failure cooldown.
 
 async function defaultFetcher(
 	userId: number,
@@ -532,8 +517,7 @@ export async function ensureFrequencies(
 		failed: [],
 		notAttempted: [],
 		credentialProblem: null,
-		busy: false,
-		capExhausted: false
+		busy: false
 	};
 	if (locs.length === 0) return result;
 
@@ -591,11 +575,6 @@ export async function ensureFrequencies(
 				});
 				continue;
 			}
-			if (!underDailyCap(userId, now())) {
-				result.capExhausted = true;
-				result.notAttempted.push(loc.code);
-				continue;
-			}
 			if (
 				attempted >= maxFetches ||
 				// Batch time budget: a slow eBird evening must not hold the lease
@@ -617,7 +596,6 @@ export async function ensureFrequencies(
 			}
 			lastStart = Date.now();
 			attempted++;
-			recordSpend(userId, now());
 
 			try {
 				let tsv: string;
