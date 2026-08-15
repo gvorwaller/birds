@@ -184,10 +184,24 @@ export const actions: Actions = {
       });
     }
 
+    // Optional single-hotspot target (the per-row Load buttons). Still
+    // validated against the official in-range list — never a free-form id.
+    const locParam = (form.get("loc") ?? "").toString().trim();
+
     let selected;
     try {
       const hotspots = await hotspotsNear(apiKey, lat, lng, dist);
-      selected = selectForecastHotspots(hotspots.data, { lat, lng });
+      if (locParam) {
+        const one = hotspots.data.find((h) => h.locId === locParam);
+        if (!one) {
+          return fail(400, {
+            error: "That hotspot is not in the current search radius.",
+          });
+        }
+        selected = [one];
+      } else {
+        selected = selectForecastHotspots(hotspots.data, { lat, lng });
+      }
     } catch (err) {
       return fail(502, {
         error:

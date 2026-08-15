@@ -58,6 +58,7 @@
   }
 
   let loading = $state(false);
+  let loadingLoc = $state<string | null>(null);
 
   const MONTH_NAMES = [
     "January",
@@ -74,12 +75,8 @@
     "December",
   ];
 
-  const covered = $derived(
-    data.view ? data.view.analyzed.filter((a) => a.hasData).length : 0,
-  );
-  const uncovered = $derived(
-    data.view ? data.view.analyzed.length - covered : 0,
-  );
+  // `analyzed` is now every loaded hotspot in range — all rows have data.
+  const covered = $derived(data.view ? data.view.analyzed.length : 0);
   const wellSampled = $derived(
     data.view ? data.view.species.filter((s) => !s.lowSample) : [],
   );
@@ -105,17 +102,24 @@
   });
   const hotspotPoints = $derived.by((): ObsPoint[] => {
     if (!data.view) return [];
-    return data.view.analyzed.map((h) => ({
-      lat: h.lat,
-      lng: h.lng,
-      title: h.locName,
-      sub: h.hasData
-        ? h.fetchedAt
-          ? `data from ${fmtDate(h.fetchedAt)}`
-          : "loaded"
-        : "no data yet",
-      kind: h.hasData ? ("need" as const) : ("pending" as const),
-    }));
+    // Green pins: loaded hotspots feeding the numbers. Gray pins: the
+    // nearest unloaded candidates, so the pick list has a map to point at.
+    return [
+      ...data.view.analyzed.map((h) => ({
+        lat: h.lat,
+        lng: h.lng,
+        title: h.locName,
+        sub: h.fetchedAt ? `data from ${fmtDate(h.fetchedAt)}` : "loaded",
+        kind: "need" as const,
+      })),
+      ...data.view.unloadedNearby.slice(0, 25).map((h) => ({
+        lat: h.lat,
+        lng: h.lng,
+        title: h.locName,
+        sub: "no data loaded yet",
+        kind: "pending" as const,
+      })),
+    ];
   });
 
   function speciesWhereHref(code: string): string | null {
@@ -267,8 +271,9 @@
       </h2>
       <p class="coverage">
         {#if v.dataYears}{v.dataYears.begin}–{v.dataYears.end} ·
-        {/if}{v.analyzed.length} of {v.totalNearby} hotspots analyzed ·
-        {covered} loaded
+        {/if}using {v.analyzed.length} loaded hotspot{v.analyzed.length === 1
+          ? ""
+          : "s"} · {v.totalNearby} in range
         {#if v.outdatedCount > 0}
           · <span class="stale">{v.outdatedCount} outdated</span>
         {/if}
@@ -278,7 +283,7 @@
         · <a href="/forecast/data">details</a>
       </p>
 
-      {#if (uncovered > 0 || v.outdatedCount > 0) && !data.isViewer}
+      {#if (v.suggested.length > 0 || v.outdatedCount > 0) && !data.isViewer}
         {#if !data.hasLogin}
           <p class="notice">
             Loading frequency data uses your eBird sign-in — add it in
@@ -302,18 +307,22 @@
             <button type="submit" disabled={loading}>
               {loading
                 ? "Loading from eBird…"
-                : uncovered > 0
-                  ? `Load data for ${uncovered} hotspot${uncovered === 1 ? "" : "s"}`
+                : v.suggested.length > 0
+                  ? `Load ${v.suggested.length} suggested hotspot${v.suggested.length === 1 ? "" : "s"}`
                   : `Refresh outdated data (${v.outdatedCount} hotspot${v.outdatedCount === 1 ? "" : "s"})`}
             </button>
           </form>
+          {#if v.suggested.length > 0 && v.analyzed.length > 0}
+            <p class="notice">
+              Suggestions mix nearest + most-active — or pick exact hotspots
+              under "More hotspots in range" below.
+            </p>
+          {/if}
         {/if}
       {/if}
-      {#if uncovered > 0 && data.isViewer}
+      {#if v.analyzed.length === 0 && data.isViewer}
         <p class="notice">
-          {covered === 0
-            ? "The account owner hasn't loaded forecast data for this area yet."
-            : "Some hotspots here have no data yet — the account owner can load it."}
+          The account owner hasn't loaded forecast data for this area yet.
         </p>
       {/if}
 
@@ -501,7 +510,7 @@
       {/if}
 
       <details class="analyzed">
-        <summary>Analyzed hotspots ({v.analyzed.length} of {v.totalNearby})</summary>
+        <summary>Loaded hotspots in use ({v.analyzed.length})</summary>
         <ul>
           {#each v.analyzed as h (h.locId)}
             <li>
@@ -509,9 +518,8 @@
                 <span class="name">{h.locName}</span>
                 <span class="meta">
                   {formatDistance(h.distanceKm, "mi")} ·
-                  {h.hasData && h.fetchedAt
-                    ? `data from ${fmtDate(h.fetchedAt)}`
-                    : "no data yet"}
+                  {h.fetchedAt ? `data from ${fmtDate(h.fetchedAt)}` : ""}
+                  {#if !h.current}· outdated{/if}
                 </span>
               </div>
               <div class="actions">
@@ -527,6 +535,73 @@
           {/each}
         </ul>
       </details>
+
+      {#if v.unloadedNearby.length > 0}
+        <details class="analyzed">
+          <summary>
+            More hotspots in range ({v.unloadedNearby.length}{v.totalNearby -
+              v.analyzed.length >
+            v.unloadedNearby.length
+              ? ` nearest of ${v.totalNearby - v.analyzed.length}`
+              : ""}) — pick what to load
+          </summary>
+          <ul>
+            {#each v.unloadedNearby as h (h.locId)}
+              <li>
+                <div class="sp">
+                  <span class="name">{h.locName}</span>
+                  <span class="meta">
+                    {formatDistance(h.distanceKm, "mi")}
+                    {#if h.numSpeciesAllTime != null}
+                      · {h.numSpeciesAllTime} species all-time
+                    {/if}
+                  </span>
+                </div>
+                <div class="actions">
+                  {#if !data.isViewer && data.hasLogin && data.location}
+                    <form
+                      method="POST"
+                      action="?/loadData"
+                      use:enhance={() => {
+                        loadingLoc = h.locId;
+                        return async ({ update }) => {
+                          loadingLoc = null;
+                          await update();
+                        };
+                      }}
+                    >
+                      <input
+                        type="hidden"
+                        name="lat"
+                        value={data.location.lat}
+                      />
+                      <input
+                        type="hidden"
+                        name="lng"
+                        value={data.location.lng}
+                      />
+                      <input type="hidden" name="dist" value={data.dist} />
+                      <input type="hidden" name="loc" value={h.locId} />
+                      <button
+                        type="submit"
+                        class="rowload"
+                        disabled={loadingLoc !== null}
+                      >
+                        {loadingLoc === h.locId ? "Loading…" : "Load"}
+                      </button>
+                    </form>
+                  {/if}
+                  <a
+                    href="https://ebird.org/hotspot/{h.locId}"
+                    target="_blank"
+                    rel="noopener">eBird ↗</a
+                  >
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
       {#if hotspotPoints.length > 0}
         <div class="map">
           <ObsMap
@@ -607,6 +682,14 @@
   button:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  button.rowload {
+    min-height: 48px;
+    padding: 6px 16px;
+    font-size: 0.88rem;
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
   }
   .default-submit {
     position: absolute;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 
 	/**
 	 * The two forecast modes presented as one workspace (UX doc #2): tabs named
@@ -44,6 +45,44 @@
 			remembered = localStorage.getItem(KEY(other)) ?? '';
 		} catch {
 			// Safari private mode / blocked storage
+		}
+	});
+
+	// Restore the last real search on BARE arrivals (nav link, back from
+	// /forecast/data, fresh tab): reverting to the saved-home default every
+	// time was maddening mid-research (GBV 2026-08-15). An explicit cleared
+	// search is different — its keys are PRESENT (empty), so it wins.
+	let lastRestoreCheck: string | null = null;
+	$effect(() => {
+		if (!browser || params === lastRestoreCheck) return;
+		lastRestoreCheck = params;
+		try {
+			const sp = new URLSearchParams(params);
+			const IDENTITY_KEYS = [
+				'place',
+				'lat',
+				'loc',
+				'species',
+				'q',
+				'region',
+				'county',
+				'dist',
+				'month'
+			];
+			if (IDENTITY_KEYS.some((k) => sp.has(k))) return;
+			const saved = localStorage.getItem(KEY(mode)) ?? '';
+			const ssp = new URLSearchParams(saved);
+			const savedIdentity = !!(
+				ssp.get('place') ||
+				ssp.get('lat') ||
+				ssp.get('species') ||
+				ssp.get('q') ||
+				ssp.get('region')
+			);
+			if (!savedIdentity) return;
+			goto(`${ROUTES[mode]}?${ssp.toString()}`, { replaceState: true });
+		} catch {
+			// storage unavailable — bare default stands
 		}
 	});
 

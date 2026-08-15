@@ -365,11 +365,28 @@ export interface AnalyzedHotspot {
 	fetchedAt: string | null; // ISO
 }
 
+/** How many unloaded in-range hotspots the pick list serializes. */
+export const UNLOADED_LIST_LIMIT = 60;
+
+export interface UnloadedHotspot {
+	locId: string;
+	locName: string;
+	lat: number;
+	lng: number;
+	distanceKm: number;
+	numSpeciesAllTime: number | null;
+}
+
 export interface ForecastNeedsView {
 	month: number;
 	/** Ranked: adequately-sampled first (by areaFreq), then low-sample. */
 	species: ForecastSpecies[];
+	/** ALL loaded hotspots in range — the set the numbers are computed from. */
 	analyzed: AnalyzedHotspot[];
+	/** The auto-mix suggestion, minus already-loaded (bulk-load button). */
+	suggested: AnalyzedHotspot[];
+	/** In-range hotspots without data, nearest first (individual Load). */
+	unloadedNearby: UnloadedHotspot[];
 	/** Total hotspots eBird lists within range (analyzed is a subset). */
 	totalNearby: number;
 	/** From the official hotspot-list cache, not the barchart data. */
@@ -482,11 +499,17 @@ export async function forecastNeedsNear(
 	seen?: ReadonlySet<string>
 ): Promise<ForecastNeedsView> {
 	const hotspots = await hotspotsNear(apiKey, lat, lng, distKm);
-	const selected = selectForecastHotspots(hotspots.data, { lat, lng });
-	const locIds = selected.map((h) => h.locId);
-
-	const meta = await frequencyMeta(locIds);
-	const withData = locIds.filter((id) => meta.has(id));
+	const inRange = hotspots.data;
+	// EVERY loaded hotspot in range counts (GBV 2026-08-15): which hotspots the
+	// auto-mix would suggest must never gate which loaded data gets used —
+	// loading is the user's choice, and analysis honors all of it.
+	const meta = await frequencyMeta(inRange.map((h) => h.locId));
+	const loaded = inRange.filter((h) => meta.has(h.locId));
+	const withData = loaded.map((h) => h.locId);
+	// The deterministic mix is now only a SUGGESTION for the bulk-load button.
+	const suggestedPick = selectForecastHotspots(inRange, { lat, lng }).filter(
+		(h) => !meta.has(h.locId)
+	);
 
 	let species: ForecastSpecies[] = [];
 	let year: MonthRichness[] = richnessFromSpecies(new Map());
@@ -522,7 +545,7 @@ export async function forecastNeedsNear(
 			),
 			seen ?? seenSet(userId)
 		]);
-		const locNames = new Map(selected.map((h) => [h.locId, h.locName]));
+		const locNames = new Map(loaded.map((h) => [h.locId, h.locName]));
 		const byMonth = new Map<number, ForecastSpecies[]>();
 		for (let m = 1; m <= 12; m++) {
 			const denomByLoc = new Map(
@@ -551,7 +574,7 @@ export async function forecastNeedsNear(
 	}
 
 	const newestCompleteYear = lastCompleteYear();
-	const analyzed: AnalyzedHotspot[] = selected.map((h) => {
+	const toAnalyzed = (h: EbirdHotspot): AnalyzedHotspot => {
 		const m = meta.get(h.locId);
 		return {
 			locId: h.locId,
@@ -563,10 +586,28 @@ export async function forecastNeedsNear(
 			current: m != null && m.endYear >= newestCompleteYear,
 			fetchedAt: m?.fetchedAt.toISOString() ?? null
 		};
-	});
+	};
+	const analyzed = loaded
+		.map(toAnalyzed)
+		.sort((a, b) => a.distanceKm - b.distanceKm);
+	const suggested = suggestedPick.map(toAnalyzed);
+	// Everything in range without data, nearest first — the user's pick list.
+	// Serialization is capped; totalNearby still reports the full count.
+	const unloadedNearby = inRange
+		.filter((h) => !meta.has(h.locId))
+		.map((h) => ({
+			locId: h.locId,
+			locName: h.locName,
+			lat: h.lat,
+			lng: h.lng,
+			distanceKm: haversineKm(lat, lng, h.lat, h.lng),
+			numSpeciesAllTime: h.numSpeciesAllTime ?? null
+		}))
+		.sort((a, b) => a.distanceKm - b.distanceKm)
+		.slice(0, UNLOADED_LIST_LIMIT);
 	const fetchDates = analyzed.filter((a) => a.fetchedAt).map((a) => a.fetchedAt!);
 	const usedMetas = withData.map((id) => meta.get(id)!);
-	const rawRegion = majorityRegionCode(selected);
+	const rawRegion = majorityRegionCode(loaded.length > 0 ? loaded : inRange);
 	const regionCode = rawRegion && /^US-[A-Z]{2}$/.test(rawRegion) ? rawRegion : null;
 	let regionName: string | null = null;
 	if (regionCode) {
@@ -586,6 +627,8 @@ export async function forecastNeedsNear(
 		month,
 		species,
 		analyzed,
+		suggested,
+		unloadedNearby,
 		totalNearby: hotspots.data.length,
 		hotspotListStale: hotspots.stale,
 		oldestFetchedAt: fetchDates.length ? fetchDates.sort()[0] : null,
