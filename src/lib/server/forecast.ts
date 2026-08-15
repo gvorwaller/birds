@@ -366,6 +366,32 @@ export function areaLoadTargets(
 	return [...out.values()];
 }
 
+/**
+ * Validate a user's multi-select of hotspot ids against the official
+ * in-range list. Policy (td-8a6f97): ANY unknown id rejects the whole
+ * request — stricter boundary, same rule as the single-loc path; a stale
+ * selection (radius changed mid-session) legitimately re-picks after the
+ * page re-renders. Pure.
+ */
+export function validateLocSelection(
+	inRange: readonly EbirdHotspot[],
+	requested: readonly string[]
+): { ok: true; selected: EbirdHotspot[] } | { ok: false; missing: string[] } {
+	const byId = new Map(inRange.map((h) => [h.locId, h]));
+	const missing = requested.filter((id) => !byId.has(id));
+	if (missing.length > 0) return { ok: false, missing };
+	// Dedupe while preserving the caller's order.
+	const seen = new Set<string>();
+	const selected: EbirdHotspot[] = [];
+	for (const id of requested) {
+		if (!seen.has(id)) {
+			seen.add(id);
+			selected.push(byId.get(id)!);
+		}
+	}
+	return { ok: true, selected };
+}
+
 export interface ForecastHotspotStat {
 	locId: string;
 	locName: string;

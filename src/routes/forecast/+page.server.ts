@@ -15,6 +15,7 @@ import {
   forecastNeedsNear,
   majorityRegionCode,
   rankCountiesForNeeds,
+  validateLocSelection,
   type CountyNeedsRank,
   type ForecastNeedsView,
 } from "$server/forecast";
@@ -189,21 +190,25 @@ export const actions: Actions = {
       });
     }
 
-    // Optional single-hotspot target (the per-row Load buttons). Still
-    // validated against the official in-range list — never a free-form id.
-    const locParam = (form.get("loc") ?? "").toString().trim();
+    // Optional hotspot targets (single-row Load OR the multi-select's
+    // repeated `loc` fields). Every id must appear in the official in-range
+    // list — one unknown id rejects the whole request (td-8a6f97 policy).
+    const locParams = form
+      .getAll("loc")
+      .map((v) => v.toString().trim())
+      .filter((v) => v !== "");
 
     let selected;
     try {
       const hotspots = await hotspotsNear(apiKey, lat, lng, dist);
-      if (locParam) {
-        const one = hotspots.data.find((h) => h.locId === locParam);
-        if (!one) {
+      if (locParams.length > 0) {
+        const validated = validateLocSelection(hotspots.data, locParams);
+        if (!validated.ok) {
           return fail(400, {
-            error: "That hotspot is not in the current search radius.",
+            error: `${validated.missing.length} selected hotspot${validated.missing.length === 1 ? " is" : "s are"} not in the current search radius — refresh and reselect.`,
           });
         }
-        selected = [one];
+        selected = validated.selected;
       } else {
         // Bulk load = suggested unloaded + ALL outdated loaded in range —
         // the same sets the page's button counts promise (CODEX1 #2).

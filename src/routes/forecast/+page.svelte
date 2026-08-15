@@ -69,6 +69,73 @@
       : [],
   );
 
+  // Multi-select loading (td-8a6f97): checkbox selection is client state;
+  // the bulk form posts the selected ids as repeated `loc` fields and
+  // auto-loops (ensureFrequencies fetches ≤12/invocation and skips rows that
+  // became current, so resubmitting the same selection is progress-safe).
+  let selectedLocs = $state<string[]>([]);
+  let bulkForm = $state<HTMLFormElement | undefined>();
+  let bulkLoading = $state(false);
+  let bulkTotal = $state(0);
+  let bulkRemaining = $state(0);
+  const DAILY_FETCH_CAP = 200;
+
+  // Loaded rows leave unloadedNearby on re-render; prune them from the
+  // selection so counts stay honest mid-loop.
+  $effect(() => {
+    const available = new Set(
+      (data.view?.unloadedNearby ?? []).map((h) => h.locId),
+    );
+    if (selectedLocs.some((id) => !available.has(id))) {
+      selectedLocs = selectedLocs.filter((id) => available.has(id));
+    }
+  });
+
+  function bulkEnhance() {
+    bulkLoading = true;
+    if (bulkTotal === 0) {
+      bulkTotal = selectedLocs.length;
+      bulkRemaining = selectedLocs.length;
+    }
+    return async ({
+      result,
+      update,
+    }: {
+      result: { type: string; data?: Record<string, unknown> };
+      update: (opts?: { reset?: boolean }) => Promise<void>;
+    }) => {
+      await update({ reset: false });
+      if (result.type === "success" && result.data) {
+        const ens = result.data.ensure as {
+          refreshed: string[];
+          failed: unknown[];
+          notAttempted: string[];
+          credentialProblem: string | null;
+          busy: boolean;
+        } | null;
+        const remaining = ens?.notAttempted.length ?? 0;
+        bulkRemaining = remaining;
+        const madeProgress =
+          (ens?.refreshed.length ?? 0) + (ens?.failed.length ?? 0) > 0;
+        if (
+          remaining > 0 &&
+          madeProgress &&
+          !ens?.credentialProblem &&
+          !ens?.busy
+        ) {
+          bulkForm?.requestSubmit();
+          return;
+        }
+      }
+      bulkLoading = false;
+      bulkTotal = 0;
+    };
+  }
+
+  function selectAllShown() {
+    selectedLocs = [...new Set([...selectedLocs, ...unloadedShown.map((h) => h.locId)])];
+  }
+
   const MONTH_NAMES = [
     "January",
     "February",
@@ -563,11 +630,79 @@
             More hotspots in range ({v.unloadedNearby.length}) — pick what to
             load
           </summary>
+          {#if !data.isViewer && data.hasLogin && data.location}
+            <div class="bulkbar">
+              <button type="button" class="rowload" onclick={selectAllShown}>
+                Select all shown
+              </button>
+              {#if selectedLocs.length > 0}
+                <button
+                  type="button"
+                  class="rowload"
+                  onclick={() => (selectedLocs = [])}
+                >
+                  Clear ({selectedLocs.length})
+                </button>
+              {/if}
+              {#if selectedLocs.length > 0}
+                <form
+                  method="POST"
+                  action="?/loadData"
+                  bind:this={bulkForm}
+                  use:enhance={bulkEnhance}
+                >
+                  <input type="hidden" name="lat" value={data.location.lat} />
+                  <input type="hidden" name="lng" value={data.location.lng} />
+                  <input type="hidden" name="dist" value={data.dist} />
+                  {#each selectedLocs as id (id)}
+                    <input type="hidden" name="loc" value={id} />
+                  {/each}
+                  <button type="submit" disabled={bulkLoading || loadingLoc !== null}>
+                    {bulkLoading
+                      ? `Loading… ${bulkTotal - bulkRemaining} of ${bulkTotal}`
+                      : `Load selected (${selectedLocs.length})`}
+                  </button>
+                </form>
+              {/if}
+            </div>
+            {#if bulkLoading && bulkTotal > 0}
+              <div
+                class="progressbar"
+                role="progressbar"
+                aria-valuenow={bulkTotal - bulkRemaining}
+                aria-valuemin={0}
+                aria-valuemax={bulkTotal}
+              >
+                <div
+                  class="fill"
+                  style="width: {((bulkTotal - bulkRemaining) / bulkTotal) * 100}%"
+                ></div>
+              </div>
+            {/if}
+            {#if selectedLocs.length > DAILY_FETCH_CAP}
+              <p class="notice">
+                {selectedLocs.length} selected exceeds the {DAILY_FETCH_CAP}/day
+                request ceiling — the rest will wait for tomorrow.
+              </p>
+            {/if}
+          {/if}
           <ul>
             {#each unloadedShown as h (h.locId)}
               <li>
                 <div class="sp">
-                  <span class="name">{h.locName}</span>
+                  {#if !data.isViewer && data.hasLogin}
+                    <label class="pick">
+                      <input
+                        type="checkbox"
+                        bind:group={selectedLocs}
+                        value={h.locId}
+                        disabled={bulkLoading}
+                      />
+                      <span class="name">{h.locName}</span>
+                    </label>
+                  {:else}
+                    <span class="name">{h.locName}</span>
+                  {/if}
                   <span class="meta">
                     {formatDistance(h.distanceKm, "mi")}
                     {#if h.numSpeciesAllTime != null}
@@ -711,6 +846,37 @@
   button:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  .bulkbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 8px 0;
+  }
+  .progressbar {
+    height: 8px;
+    background: var(--accent-soft);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 8px 0;
+  }
+  .progressbar .fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.4s ease;
+  }
+  .pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    min-height: 48px;
+  }
+  .pick input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--accent);
   }
   .partial {
     background: var(--need-bg);

@@ -228,6 +228,31 @@ describe("hotspot selection avoids vague catch-all locations", () => {
   });
 });
 
+describe("validateLocSelection", () => {
+  it("accepts ids from the in-range list, deduped in caller order", async () => {
+    const { validateLocSelection } = await import("./forecast");
+    const inRange = [hs("A", 1), hs("B", 2), hs("C", 3)];
+    const r = validateLocSelection(inRange, ["C", "A", "C"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.selected.map((h) => h.locId)).toEqual(["C", "A"]);
+  });
+
+  it("rejects the WHOLE request on any unknown id (documented policy)", async () => {
+    const { validateLocSelection } = await import("./forecast");
+    const inRange = [hs("A", 1), hs("B", 2)];
+    const r = validateLocSelection(inRange, ["A", "L9999999", "B"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.missing).toEqual(["L9999999"]);
+  });
+
+  it("empty request is trivially valid and selects nothing", async () => {
+    const { validateLocSelection } = await import("./forecast");
+    const r = validateLocSelection([hs("A", 1)], []);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.selected).toEqual([]);
+  });
+});
+
 describe("areaLoadTargets", () => {
   it("includes stale loaded hotspots OUTSIDE the suggestion set", async () => {
     // CODEX1 2026-08-15 #2: "Refresh outdated data (N)" must actually target
