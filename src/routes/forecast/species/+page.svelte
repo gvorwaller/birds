@@ -7,6 +7,7 @@
   import MonthPicker from "$components/MonthPicker.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
+  import { formatMonthWindow } from "$lib/forecast-calendar";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -298,6 +299,9 @@
               reported on {pct(best.freq)} of checklists (n={best.n.toLocaleString()})
               {#if f.peakPhrase}
                 · peaks {f.peakPhrase}
+              {/if}
+              {#if f.good.length > 1}
+                · good {formatMonthWindow(f.good)}
               {/if}
               {#if best.lowSample}
                 <span class="lowflag"

@@ -17,6 +17,7 @@ import {
 } from "$server/barchart";
 import {
   analyzeCountyBatch,
+  selectCountyHotspots,
   calendarMonth,
   COUNTY_HOTSPOT_LIMIT,
   coverageFromMeta,
@@ -52,36 +53,6 @@ function parseHotspotLimit(raw: string | null): number {
     : COUNTY_HOTSPOT_LIMIT;
 }
 
-/**
- * Deterministic county drill selection: half by all-time species count, half
- * by most recent activity, deduped, remainder by species count. Pure species
- * count alone favors famous biodiversity hotspots and misses habitat
- * specialists' sites (UX doc #4); recent activity pulls in currently-birded
- * spots regardless of their all-time list length.
- */
-function selectCountyHotspots(
-  hotspots: EbirdHotspot[],
-  limit = COUNTY_HOTSPOT_LIMIT,
-): EbirdHotspot[] {
-  const bySpecies = [...hotspots].sort(
-    (a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0),
-  );
-  const byRecency = [...hotspots].sort((a, b) =>
-    (b.latestObsDt ?? "").localeCompare(a.latestObsDt ?? ""),
-  );
-  const chosen = new Map<string, EbirdHotspot>();
-  for (const h of bySpecies.slice(0, Math.ceil(limit / 2)))
-    chosen.set(h.locId, h);
-  for (const h of byRecency) {
-    if (chosen.size >= limit) break;
-    chosen.set(h.locId, h);
-  }
-  for (const h of bySpecies) {
-    if (chosen.size >= limit) break;
-    chosen.set(h.locId, h);
-  }
-  return bySpecies.filter((h) => chosen.has(h.locId));
-}
 
 // IMPORTANT (loader invariant, see src/routes/+page.server.ts): read query
 // params ONLY via url.searchParams.get(key). This loader reads cached data

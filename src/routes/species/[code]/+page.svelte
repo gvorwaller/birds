@@ -2,6 +2,7 @@
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
+  import { formatMonthWindow } from "$lib/forecast-calendar";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { windowPhrase } from "$lib/time-windows";
@@ -120,6 +121,9 @@
           <span class="muted">peaks {ft.peakPhrase}</span>
         {:else if ft.best}
           <span class="muted">peak {MONTH_NAMES[ft.best.month - 1]}</span>
+        {/if}
+        {#if ft.good.length > 1}
+          <span class="muted">· good {formatMonthWindow(ft.good)}</span>
         {/if}
       </h2>
       <FrequencyChart

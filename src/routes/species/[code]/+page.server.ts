@@ -15,7 +15,7 @@ import {
   type SpeciesObservationDetail,
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
-import { pickSpeciesTeaserState } from "$server/forecast";
+import { goodMonths, pickSpeciesTeaserState } from "$server/forecast";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -156,6 +156,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     curve: { month: number; freq: number; n: number }[];
     best: { month: number; freq: number; lowSample: boolean } | null;
     peakPhrase: string | null;
+    /** Months within 80% of the peak — the "good window". */
+    good: number[];
   } | null = null;
   const teaserState = await teaserP;
   if (teaserState && teaserState.best) {
@@ -165,6 +167,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       curve: teaserState.curve,
       best: teaserState.best,
       peakPhrase: teaserState.peakPhrase,
+      good: goodMonths(teaserState.curve),
     };
   }
 

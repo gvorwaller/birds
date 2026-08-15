@@ -152,6 +152,13 @@
 						hotspots and a "Where in the state" jump.
 					</li>
 					<li>
+						Species that concentrate at one site say
+						<strong>"mostly at …"</strong>; ones you'll bump into anywhere say
+						<strong>"widespread"</strong>. A year strip shows which month is
+						<strong>richest</strong> in needs at this spot, so you can pick the
+						month around the place instead of the other way round.
+					</li>
+					<li>
 						The first visit to a new area needs a one-time
 						<strong>Load data</strong> (a handful of eBird requests); after
 						that it's instant and only refreshes about once a year.
@@ -165,7 +172,11 @@
 						get the four Florida ones, not the world's twenty-odd.
 					</li>
 					<li>
-						You get a month-by-month chart with the best month called out.
+						You get a month-by-month chart with the best month called out —
+						plus week-level timing when the data supports it ("peaks late
+						April") and the <strong>good window</strong> ("good Dec–Mar"):
+						every month within 80% of the peak, since trips rarely land on the
+						single best month.
 						<strong>Analyze first counties</strong> shows useful results after
 						one quick batch (~15 s); "Analyze all remaining" finishes the state
 						(one eBird request per county, resumable, cached for the year).

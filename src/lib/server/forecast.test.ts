@@ -172,6 +172,43 @@ function hs(
 }
 const ORIGIN = { lat: 27, lng: -82 };
 
+describe("hotspot selection avoids vague catch-all locations", () => {
+  const vague = (locId: string, kmNorth: number, n?: number) => ({
+    ...hs(locId, kmNorth, n),
+    locName: `Mount Desert Island (please use more specific location if possible)`,
+  });
+
+  it("selectForecastHotspots skips vague names when enough specific exist", async () => {
+    const { selectForecastHotspots } = await import("./forecast");
+    // Vague location is NEAREST and MOST ACTIVE — previously a guaranteed slot.
+    const hotspots = [
+      vague("V1", 0, 900),
+      ...Array.from({ length: 10 }, (_, i) => hs(`S${i}`, i + 1, 100 + i)),
+    ];
+    const picked = selectForecastHotspots(hotspots, ORIGIN);
+    expect(picked.some((h) => h.locId === "V1")).toBe(false);
+    expect(picked).toHaveLength(8);
+  });
+
+  it("falls back to vague names when there aren't enough candidates", async () => {
+    const { selectForecastHotspots } = await import("./forecast");
+    const hotspots = [vague("V1", 0, 900), hs("S0", 1, 100)];
+    const picked = selectForecastHotspots(hotspots, ORIGIN, 2);
+    expect(picked.map((h) => h.locId).sort()).toEqual(["S0", "V1"]);
+  });
+
+  it("selectCountyHotspots (engine) applies the same preference", async () => {
+    const { selectCountyHotspots } = await import("./forecast");
+    const hotspots = [
+      vague("V1", 0, 900),
+      ...Array.from({ length: 8 }, (_, i) => hs(`C${i}`, i + 1, 200 - i)),
+    ];
+    const picked = selectCountyHotspots(hotspots, 6);
+    expect(picked.some((h) => h.locId === "V1")).toBe(false);
+    expect(picked).toHaveLength(6);
+  });
+});
+
 describe("selectForecastHotspots", () => {
   it("mixes nearest and most-active, deduped, nearest-first order", () => {
     // 12 hotspots: A0..A11 by increasing distance; activity is inverted so the

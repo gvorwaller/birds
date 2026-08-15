@@ -261,6 +261,8 @@ export interface SpeciesLocForecast {
 	best: BestMonth | null;
 	/** "late January" from the peak weekly bin, when one exists. */
 	peakPhrase: string | null;
+	/** Months within 80% of the adequately-sampled peak (the "good window"). */
+	good: number[];
 	/** True when the species has a stored fetch but zero reported weeks. */
 	neverReported: boolean;
 }
@@ -278,11 +280,27 @@ export const FORECAST_HOTSPOT_LIMIT = 8;
  * counters famous-hotspot selection bias without ignoring high-signal sites
  * (CODEX1 #9). Pure. Returned nearest-first for stable display.
  */
+/**
+ * Prefer properly named hotspots for analysis slots: eBird's catch-all
+ * personal locations ("… (please use more specific location if possible)")
+ * only occupy a slot when there aren't enough specific candidates. Display
+ * code already hides them from "best" claims; this keeps them from consuming
+ * loads in the first place. Pure.
+ */
+export function preferSpecificHotspots(
+	hotspots: readonly EbirdHotspot[],
+	limit: number
+): readonly EbirdHotspot[] {
+	const specific = hotspots.filter((h) => !vagueLocName(h.locName));
+	return specific.length >= limit ? specific : hotspots;
+}
+
 export function selectForecastHotspots(
 	hotspots: readonly EbirdHotspot[],
 	origin: { lat: number; lng: number },
 	limit = FORECAST_HOTSPOT_LIMIT
 ): EbirdHotspot[] {
+	hotspots = preferSpecificHotspots(hotspots, limit);
 	const byDistance = [...hotspots].sort(
 		(a, b) =>
 			haversineKm(origin.lat, origin.lng, a.lat, a.lng) -
@@ -619,6 +637,37 @@ export function majorityRegionCode(hotspots: readonly EbirdHotspot[]): string | 
 export const COUNTY_BATCH = 12;
 /** Hotspots analyzed per county drill-down. */
 export const COUNTY_HOTSPOT_LIMIT = 6;
+
+/**
+ * Deterministic county drill selection: half by all-time species count, half
+ * by most recent activity, deduped, remainder by species count — with vague
+ * catch-all locations excluded whenever enough specific candidates exist.
+ * Pure; lives in the engine so it's testable (was module-private in the
+ * species route).
+ */
+export function selectCountyHotspots(
+	hotspots: readonly EbirdHotspot[],
+	limit = COUNTY_HOTSPOT_LIMIT
+): EbirdHotspot[] {
+	hotspots = preferSpecificHotspots(hotspots, limit);
+	const bySpecies = [...hotspots].sort(
+		(a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0)
+	);
+	const byRecency = [...hotspots].sort((a, b) =>
+		(b.latestObsDt ?? '').localeCompare(a.latestObsDt ?? '')
+	);
+	const chosen = new Map<string, EbirdHotspot>();
+	for (const h of bySpecies.slice(0, Math.ceil(limit / 2))) chosen.set(h.locId, h);
+	for (const h of byRecency) {
+		if (chosen.size >= limit) break;
+		chosen.set(h.locId, h);
+	}
+	for (const h of bySpecies) {
+		if (chosen.size >= limit) break;
+		chosen.set(h.locId, h);
+	}
+	return bySpecies.filter((h) => chosen.has(h.locId));
+}
 
 /**
  * Coverage of a code list against stored metadata, with ANNUAL-WINDOW
@@ -1119,6 +1168,9 @@ export async function speciesLocForecast(
 		curve,
 		best,
 		peakPhrase,
+		// The window, not just the peak: months within 80% of the best —
+		// trip planning rarely controls the exact month.
+		good: goodMonths(curve),
 		neverReported: freqByWeek.size === 0
 	};
 }
