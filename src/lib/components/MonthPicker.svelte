@@ -41,7 +41,9 @@
 <style>
 	.months {
 		display: grid;
-		grid-template-columns: repeat(6, 1fr);
+		/* 4 columns at phone width: 6 columns measured 46px wide at 390px
+		   (GROK Safari pass 2026-08-15) — 2px under the 48px tap target. */
+		grid-template-columns: repeat(4, 1fr);
 		gap: 6px;
 	}
 	button {
