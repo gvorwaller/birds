@@ -78,6 +78,10 @@
   let bulkLoading = $state(false);
   let bulkTotal = $state(0);
   let bulkRemaining = $state(0);
+  // Failures surfaced AT the bulk bar — the shared banner up top is out of
+  // view while watching the progress area (GROK td-8a6f97 pass, Pallanza
+  // Drive residual).
+  let bulkFailed = $state<{ code: string; error: string }[]>([]);
   const DAILY_FETCH_CAP = 200;
 
   // Loaded rows leave unloadedNearby on re-render; prune them from the
@@ -96,6 +100,7 @@
     if (bulkTotal === 0) {
       bulkTotal = selectedLocs.length;
       bulkRemaining = selectedLocs.length;
+      bulkFailed = [];
     }
     return async ({
       result,
@@ -108,11 +113,12 @@
       if (result.type === "success" && result.data) {
         const ens = result.data.ensure as {
           refreshed: string[];
-          failed: unknown[];
+          failed: { code: string; error: string }[];
           notAttempted: string[];
           credentialProblem: string | null;
           busy: boolean;
         } | null;
+        if (ens?.failed.length) bulkFailed = [...bulkFailed, ...ens.failed];
         const remaining = ens?.notAttempted.length ?? 0;
         bulkRemaining = remaining;
         const madeProgress =
@@ -685,6 +691,14 @@
                 request ceiling — the rest will wait for tomorrow.
               </p>
             {/if}
+            {#if !bulkLoading && bulkFailed.length > 0}
+              <p class="error">
+                {bulkFailed.length} hotspot{bulkFailed.length === 1
+                  ? ""
+                  : "s"} didn't load — {bulkFailed[0].error} (eBird's export
+                errors on some locations; retry later from Forecast data).
+              </p>
+            {/if}
           {/if}
           <ul>
             {#each unloadedShown as h (h.locId)}
@@ -738,7 +752,7 @@
                       <button
                         type="submit"
                         class="rowload"
-                        disabled={loadingLoc !== null}
+                        disabled={loadingLoc !== null || bulkLoading}
                       >
                         {loadingLoc === h.locId ? "Loading…" : "Load"}
                       </button>
