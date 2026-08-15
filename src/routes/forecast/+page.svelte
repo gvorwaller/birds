@@ -318,7 +318,9 @@
                 ? "Loading from eBird…"
                 : v.suggested.length > 0
                   ? `Load ${v.suggested.length} suggested hotspot${v.suggested.length === 1 ? "" : "s"}`
-                  : `Refresh outdated data (${v.outdatedCount} hotspot${v.outdatedCount === 1 ? "" : "s"})`}
+                  : v.outdatedCount > 12
+                    ? `Refresh outdated data (12 of ${v.outdatedCount} per click)`
+                    : `Refresh outdated data (${v.outdatedCount} hotspot${v.outdatedCount === 1 ? "" : "s"})`}
             </button>
           </form>
           {#if v.suggested.length > 0 && v.analyzed.length > 0}
@@ -331,10 +333,12 @@
       {/if}
 
       {#if v.analyzed.length > 0 && v.unloadedNearby.length > 0}
+        <!-- Symmetric phrasing (GROK #2): partial coverage can under- OR
+             over-state a species for the area, so state the fact, not one
+             direction. -->
         <p class="partial">
-          ⚠ Based on {v.analyzed.length} of {v.totalNearby} hotspots in range —
-          species concentrated at unloaded hotspots may be missing or
-          underestimated.
+          ⚠ Frequencies reflect only the {v.analyzed.length} loaded of
+          {v.totalNearby} hotspots in range — unloaded sites aren't counted.
         </p>
       {/if}
       {#if v.analyzed.length === 0 && data.isViewer}

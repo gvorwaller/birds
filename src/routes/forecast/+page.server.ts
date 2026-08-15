@@ -154,10 +154,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 export const actions: Actions = {
   /**
-   * Fetch/refresh barchart data for the analyzed hotspots near a point.
-   * Owner-only (viewer POSTs are 403'd in hooks.server.ts). The hotspot list
-   * is re-derived server-side from the official eBird API — the form supplies
-   * only coordinates, never fetch targets.
+   * Fetch/refresh barchart data for hotspots near a point. Owner-only
+   * (viewer POSTs are 403'd in hooks.server.ts). Targets derive from the
+   * official eBird in-range list: either the bulk areaLoadTargets set, or a
+   * single `loc` id that must appear in that list — never a free-form id.
    */
   loadData: async ({ locals, request }) => {
     const userId = locals.scopeId!;

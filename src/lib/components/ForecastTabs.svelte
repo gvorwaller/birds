@@ -63,17 +63,11 @@
 		lastRestoreCheck = params;
 		try {
 			const sp = new URLSearchParams(params);
-			const IDENTITY_KEYS = [
-				'place',
-				'lat',
-				'loc',
-				'species',
-				'q',
-				'region',
-				'county',
-				'dist',
-				'month'
-			];
+			// Identity = an actual place/species selection. month/dist alone are
+			// NOT identity (GROK #5): a month-only URL (tab self-link, month
+			// click on a bare page) still deserves its remembered search — the
+			// current month/dist are merged over the restored params below.
+			const IDENTITY_KEYS = ['place', 'lat', 'loc', 'species', 'q', 'region', 'county'];
 			if (IDENTITY_KEYS.some((k) => sp.has(k))) return;
 			const saved = localStorage.getItem(KEY(mode)) ?? '';
 			const ssp = new URLSearchParams(saved);
@@ -85,7 +79,15 @@
 				ssp.get('region')
 			);
 			if (!savedIdentity) return;
-			goto(`${ROUTES[mode]}?${ssp.toString()}`, { replaceState: true });
+			for (const k of ['month', 'dist']) {
+				const cur = sp.get(k);
+				if (cur) ssp.set(k, cur);
+			}
+			// Not awaited by design, but a rejected goto (rapid nav) must allow
+			// a retry on the next bare arrival with the same params (GROK #1).
+			goto(`${ROUTES[mode]}?${ssp.toString()}`, { replaceState: true }).catch(() => {
+				lastRestoreCheck = null;
+			});
 		} catch {
 			// storage unavailable — bare default stands
 		}
