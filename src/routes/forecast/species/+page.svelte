@@ -553,7 +553,7 @@
                             href={mapsPlaceUrl({ name: c.mapQuery })}
                             target="_blank"
                             rel="noopener"
-                            title="Show {c.name} on Google Maps">📍</a
+                            title="Show {c.name} on Google Maps">📍 Map</a
                           >
                         </span>
                         <span class="freq"
@@ -870,7 +870,11 @@
     font-size: 0.85rem;
     font-weight: 600;
     white-space: nowrap;
-    padding: 4px 6px;
+    padding: 0 6px;
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
   }
   .seatmap:hover {
     text-decoration: underline;

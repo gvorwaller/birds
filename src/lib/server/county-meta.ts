@@ -33,14 +33,16 @@ export function countySeat(code: string): string | null {
 
 /**
  * Google-Maps search text that OUTLINES the county on the map — "Alachua
- * County, Florida". Falls back to eBird's bare name + "County" when the code
- * is unknown (imperfect for Louisiana parishes, but Maps resolves it).
+ * County, Florida". When the code is unknown, the eBird-provided name is
+ * used UNCHANGED ("Acadia, Louisiana") — never with an invented "County"
+ * suffix, which would fabricate the equivalent type for parishes/boroughs/
+ * independent cities, exactly the drift the fallback exists for (CODEX1).
  */
 export function countyMapQuery(
 	code: string,
 	fallbackName: string,
 	stateName: string
 ): string {
-	const official = META[code]?.name ?? `${fallbackName} County`;
+	const official = META[code]?.name ?? fallbackName;
 	return `${official}, ${stateName}`;
 }

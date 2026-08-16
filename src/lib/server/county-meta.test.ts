@@ -46,8 +46,9 @@ describe("county-meta dataset", () => {
     expect(countyMapQuery("US-LA-071", "Orleans", "Louisiana")).toBe(
       "Orleans Parish, Louisiana",
     );
+    // Unknown code → eBird's name UNCHANGED; no invented "County" suffix.
     expect(countyMapQuery("US-XX-999", "Nowhere", "Atlantis")).toBe(
-      "Nowhere County, Atlantis",
+      "Nowhere, Atlantis",
     );
   });
 });
