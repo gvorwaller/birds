@@ -933,6 +933,8 @@
     flex-wrap: wrap;
     gap: 10px;
     margin-top: 10px;
+    /* Align with the alerts form's field column (GROK post-accept nit). */
+    max-width: 480px;
   }
   /* The nested test_push form is layout-transparent so both buttons sit as
      siblings in the one flex row. */
