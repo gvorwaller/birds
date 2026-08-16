@@ -46,7 +46,12 @@ const SUFFIX =
 const METRO = /metropolitan|micropolitan|statistical area|greater |, [A-Z]{2} |combined/i;
 // Verifiable public facts patching broken upstream data:
 // - Hillsborough County, FL: Wikidata P36 resolves to an unlabeled node.
-const OVERRIDES = { "US-FL-057": { seat: "Tampa" } };
+const OVERRIDES = {
+  "US-FL-057": { seat: "Tampa" }, // Wikidata P36 resolves to an unlabeled node
+  // Vieques' seat is Isabel II; a sibling item self-references the municipio
+  // as its own "seat", which no normalization can recognize as a duplicate.
+  "US-PR-147": { seat: "Isabel II" },
+};
 // Exact county-equivalent counts; generation aborts on mismatch.
 const EXPECT = { FL: 67, ME: 16, GA: 159, CA: 58 };
 
@@ -129,6 +134,7 @@ const SEAT_EXPECT = {
   "US-NC-081": "Greensboro", // Guilford County — Martinsville long defunct
   "US-FL-057": "Tampa",
   "US-MS-049": "Jackson / Raymond", // Hinds County — genuinely two seats
+  "US-PR-147": "Isabel II", // Vieques — the municipio is not its own seat
 };
 for (const [code, want] of Object.entries(SEAT_EXPECT)) {
   const have = final[code]?.seat ?? null;

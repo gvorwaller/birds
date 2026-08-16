@@ -26,6 +26,8 @@ describe("county-meta dataset", () => {
     expect(countySeat("US-NC-081")).toBe("Greensboro");
     // Hinds County MS genuinely has two judicial seats.
     expect(countySeat("US-MS-049")).toBe("Jackson / Raymond");
+    // Vieques PR: Isabel II is the seat; the municipio is not its own seat.
+    expect(countySeat("US-PR-147")).toBe("Isabel II");
   });
 
   it("covers every Florida and Maine county eBird can emit", () => {
