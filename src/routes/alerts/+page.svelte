@@ -104,6 +104,11 @@
       <p class="muted trunc">Showing the most recent 200 alerts.</p>
     {/if}
   {/if}
+
+  <p class="attribution">
+    Data from
+    <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a>
+  </p>
 </div>
 
 <style>
@@ -173,8 +178,11 @@
   .row + .row {
     border-top: 1px solid var(--border);
   }
-  .row:hover .title {
-    color: var(--accent);
+  /* Hover-capable pointers only — iOS tap-hover must not stick (GROK). */
+  @media (hover: hover) {
+    .row:hover .title {
+      color: var(--accent);
+    }
   }
   .row-main {
     display: flex;
@@ -194,5 +202,14 @@
   .trunc {
     text-align: center;
     margin: 4px 0 16px;
+  }
+  .attribution {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.78rem;
+    padding: 20px 0 8px;
+  }
+  .attribution a {
+    color: var(--muted);
   }
 </style>

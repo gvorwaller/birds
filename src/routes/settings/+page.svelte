@@ -415,6 +415,7 @@
     <form
       method="POST"
       action="?/save_alerts"
+      id="save-alerts-form"
       use:enhance={track("alerts", { reset: false })}
       class="alerts-form"
     >
@@ -438,18 +439,21 @@
         <input type="checkbox" name="enabled" value="1" checked={data.alerts.enabled} />
         <span>Enable need alerts</span>
       </label>
-      <button type="submit" disabled={busy === "alerts"}>
+    </form>
+    <!-- One visual actions row (GROK), two REAL forms: the save button
+         submits the alerts form via form=, while test_push stays its own
+         form so it can't inherit the alerts form's reset:false — a test
+         click must not leave unsaved pref edits looking saved (CODEX1). -->
+    <div class="alerts-actions">
+      <button type="submit" form="save-alerts-form" disabled={busy === "alerts"}>
         {busy === "alerts" ? "Saving…" : "Save alerts"}
       </button>
-    </form>
-    <!-- Separate form: test_push ignores the pref fields, and it must NOT
-         inherit the alerts form's reset:false — otherwise a test click
-         would leave unsaved pref edits on screen looking saved (CODEX1). -->
-    <form method="POST" action="?/test_push" use:enhance={track("testpush")}>
-      <button type="submit" class="secondary" disabled={busy === "testpush"}>
-        {busy === "testpush" ? "Sending…" : "Send test notification"}
-      </button>
-    </form>
+      <form method="POST" action="?/test_push" use:enhance={track("testpush")}>
+        <button type="submit" class="secondary" disabled={busy === "testpush"}>
+          {busy === "testpush" ? "Sending…" : "Send test notification"}
+        </button>
+      </form>
+    </div>
   </section>
 
   <section class="card">
@@ -923,6 +927,22 @@
     background: var(--card);
     color: var(--accent);
     border: 1px solid var(--accent);
+  }
+  .alerts-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  /* The nested test_push form is layout-transparent so both buttons sit as
+     siblings in the one flex row. */
+  .alerts-actions form {
+    display: contents;
+  }
+  /* Equal-weight group: share the row where it fits, matching full-width
+     when wrapped (390px) — never shrink-to-content mismatch (GROK). */
+  .alerts-actions button {
+    flex: 1 1 160px;
   }
   .radius-form label {
     display: flex;
