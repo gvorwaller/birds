@@ -32,6 +32,25 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 }
 
 /**
+ * Query with a client-side timeout (node-postgres query_timeout): the call
+ * REJECTS within ~timeoutMs even through pool/lock stalls, and the client is
+ * discarded rather than reused in an unknown state. For deadline-bounded
+ * writes (need-alert scan budget) where an unbounded await would wedge the
+ * caller's wall-clock guarantee.
+ */
+export async function queryTimed<T extends pg.QueryResultRow = pg.QueryResultRow>(
+	text: string,
+	params: unknown[] | undefined,
+	timeoutMs: number
+): Promise<pg.QueryResult<T>> {
+	return getPool().query<T>({
+		text,
+		values: params as never,
+		query_timeout: Math.max(1, Math.round(timeoutMs))
+	} as never);
+}
+
+/**
  * Run `fn` inside a single transaction on a dedicated pooled client.
  * Commits on success, rolls back and rethrows on any error, always releasing
  * the client. Use for multi-statement atomic writes (imports, photo-link sync).

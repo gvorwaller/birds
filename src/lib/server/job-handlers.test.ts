@@ -90,6 +90,11 @@ vi.mock("$lib/db", () => ({
     db.calls.push({ text, params: params ?? [] });
     return db.handler?.(text, params) ?? { rows: [] };
   }),
+  queryTimed: vi.fn(async (text: string, params: unknown[] | undefined, timeoutMs: number) => {
+    db.calls.push({ text, params: params ?? [] });
+    void timeoutMs;
+    return db.handler?.(text, params) ?? { rows: [] };
+  }),
   withTransaction: vi.fn(),
 }));
 
@@ -779,6 +784,44 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       // The healthy user still ran and alerted — no starvation.
       expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
       expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a NEVER-SETTLING signal-unaware DB read detaches at the deadline: next user runs, scan terminalizes, zero publishes for the wedged user (CODEX1 re-re-review)", async () => {
+    vi.useFakeTimers();
+    try {
+      scanDb([PREF_ROW, { ...PREF_ROW, user_id: 4 }]);
+      // User 3's seenSet hangs forever and knows nothing about signals —
+      // the pool-stall shape. raceRead must detach it at the wall.
+      syncMocks.seenSet
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValueOnce(new Set());
+      syncMocks.notableNearbyObs.mockResolvedValue({
+        data: [NOTABLE],
+        fetchedAt: new Date(),
+        stale: false,
+      });
+      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await p;
+      // User 3 budget-failed; user 4 alerted; the scan terminalized.
+      const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+      expect(fails).toHaveLength(1);
+      expect((fails[0][2] as { budget?: boolean; userId: number })).toMatchObject({
+        budget: true,
+        userId: 3,
+      });
+      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1); // user 4 only
+      expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+      // Advance far past — the detached read never produces side effects:
+      // still exactly one send, and only user 4's upsert.
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
+      const upserts = db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"));
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0].params?.[0]).toBe(4);
     } finally {
       vi.useRealTimers();
     }

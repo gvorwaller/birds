@@ -17,7 +17,7 @@ import {
 import { coverageFromMeta, recentFailures } from '$server/forecast';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
 import { env } from '$env/dynamic/private';
-import { query } from '$lib/db';
+import { query, queryTimed } from '$lib/db';
 import { decryptSecret } from '$server/crypto';
 import { getEbirdApiKey, notableNearbyObs, syncTaxonomy, EbirdError } from '$server/ebird';
 import { seenSet } from '$server/needs';
@@ -313,32 +313,61 @@ class ScanBudgetExceeded extends Error {
 }
 
 /**
- * Cooperative, ABORTABLE, fully-awaited per-user deadline (CODEX1 re-review:
- * a raced-and-abandoned pipeline could keep publishing/upserting after the
- * job terminalized). Shape:
- * - an AbortController fires at the budget; the signal propagates into the
- *   network legs (notableNearbyObs → ebirdFetch, sendNtfy), so hung fetches
- *   actually STOP instead of resolving later;
- * - checkpoint() throws before every subsequent side effect, so nothing new
- *   starts past the deadline even where a signal can't reach (fast local DB
- *   work);
- * - the pipeline promise is AWAITED to settlement either way — runNeedAlertScan
- *   never records the unit outcome, moves to the next user, or terminalizes
- *   while cancelled work is still in flight. A send that was already
- *   in flight at expiry settles (and records its sent-row) BEFORE the unit
- *   is classified, so events/summary stay truthful.
+ * HARD per-user wall deadline with no abandoned side effects (CODEX1
+ * re-re-review). Every awaited leg inside the budget is bounded:
+ * - network legs carry the AbortSignal (notableNearbyObs → ebirdFetch,
+ *   sendNtfy via AbortSignal.any) — hung fetches STOP;
+ * - side-effect-FREE reads (API-key lookup, seenSet, sent-rows SELECT) go
+ *   through raceRead: on deadline the AWAIT rejects and the underlying read
+ *   is detached — provably safe, a SELECT/decrypt that settles later mutates
+ *   nothing and its result is discarded;
+ * - the one budgeted WRITE (the sent-row upsert) is never detached — it is
+ *   bounded by a client-side query timeout (queryTimed) sized to the
+ *   remaining budget, so it terminates within the deadline WITHOUT leaving
+ *   live write work behind;
+ * - checkpoint() throws before every new side effect past the deadline; an
+ *   in-flight send settles (abort-bounded) before the unit is classified.
+ * The scan's OWN infra writes (skip/unit events, progress) are outside the
+ * budget by design: they hit the same DB as the queue's heartbeat and
+ * claims — if those stall, the worker itself is stalled and worker-level
+ * recovery (heartbeat staleness + startup reclaim) is the correct layer,
+ * not a per-user budget.
  */
 async function withBudget<T>(
-	fn: (signal: AbortSignal, checkpoint: () => void) => Promise<T>,
+	fn: (tools: {
+		signal: AbortSignal;
+		checkpoint: () => void;
+		raceRead: <R>(p: Promise<R>) => Promise<R>;
+		remainingMs: () => number;
+	}) => Promise<T>,
 	budgetMs: number
 ): Promise<T> {
 	const controller = new AbortController();
+	const deadlineAt = Date.now() + budgetMs;
 	const timer = setTimeout(() => controller.abort(new ScanBudgetExceeded()), budgetMs);
 	const checkpoint = () => {
 		if (controller.signal.aborted) throw new ScanBudgetExceeded();
 	};
+	const raceRead = <R>(p: Promise<R>): Promise<R> => {
+		if (controller.signal.aborted) return Promise.reject(new ScanBudgetExceeded());
+		return new Promise<R>((resolve, reject) => {
+			const onAbort = () => reject(new ScanBudgetExceeded());
+			controller.signal.addEventListener('abort', onAbort, { once: true });
+			p.then(
+				(v) => {
+					controller.signal.removeEventListener('abort', onAbort);
+					resolve(v);
+				},
+				(e) => {
+					controller.signal.removeEventListener('abort', onAbort);
+					reject(e);
+				}
+			);
+		});
+	};
+	const remainingMs = () => Math.max(1, deadlineAt - Date.now());
 	try {
-		return await fn(controller.signal, checkpoint);
+		return await fn({ signal: controller.signal, checkpoint, raceRead, remainingMs });
 	} catch (err) {
 		if (controller.signal.aborted) throw new ScanBudgetExceeded();
 		throw err;
@@ -426,16 +455,19 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			await recordEvent(job.id, 'unit_skipped', { userId: u.user_id, reason });
 			await updateProgress(job.id, progress);
 		};
-		const processUser = async (
-			signal: AbortSignal,
-			checkpoint: () => void
-		): Promise<'done' | 'skipped'> => {
+		const processUser = async (tools: {
+			signal: AbortSignal;
+			checkpoint: () => void;
+			raceRead: <R>(p: Promise<R>) => Promise<R>;
+			remainingMs: () => number;
+		}): Promise<'done' | 'skipped'> => {
+			const { signal, checkpoint, raceRead, remainingMs } = tools;
 			if (u.home_lat == null || u.home_lon == null) {
 				await skip('no-home');
 				return 'skipped';
 			}
-			const apiKey = await getEbirdApiKey(u.user_id);
-			checkpoint();
+			// Side-effect-free read — detachable on deadline.
+			const apiKey = await raceRead(getEbirdApiKey(u.user_id));
 			if (!apiKey) {
 				await skip('no-api-key');
 				return 'skipped';
@@ -450,14 +482,16 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				await skip('stale-cache');
 				return 'skipped';
 			}
-			const [seen, sentRows] = await Promise.all([
-				seenSet(u.user_id),
-				query<{ species_code: string; sent_at: string }>(
-					`SELECT species_code, sent_at FROM need_alerts_sent WHERE user_id = $1`,
-					[u.user_id]
-				)
-			]);
-			checkpoint();
+			// Side-effect-free reads — detachable on deadline.
+			const [seen, sentRows] = await raceRead(
+				Promise.all([
+					seenSet(u.user_id),
+					query<{ species_code: string; sent_at: string }>(
+						`SELECT species_code, sent_at FROM need_alerts_sent WHERE user_id = $1`,
+						[u.user_id]
+					)
+				])
+			);
 			const sentAt = new Map(
 				sentRows.rows.map((r) => [r.species_code, new Date(r.sent_at).getTime()])
 			);
@@ -483,12 +517,16 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					tags: ['bird'],
 					signal
 				});
-				await query(
+				// A delivered push MUST record its sent-row (or the next scan
+				// re-pings) — never detached; bounded by the remaining budget
+				// via a client-side query timeout instead.
+				await queryTimed(
 					`INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
 					 VALUES ($1, $2, $3, $4, $5, NOW())
 					 ON CONFLICT (user_id, species_code)
 					 DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()`,
-					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId]
+					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId],
+					remainingMs() + 5_000
 				);
 				tally.sent++;
 			}
