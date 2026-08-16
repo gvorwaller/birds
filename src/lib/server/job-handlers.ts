@@ -426,10 +426,9 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 		realert_days: number;
 		home_lat: number | null;
 		home_lon: number | null;
-		home_state: string | null;
 	}>(
 		`SELECT p.user_id, p.ntfy_topic_enc, p.radius_km, p.realert_days,
-		        u.home_lat, u.home_lon, NULL AS home_state
+		        u.home_lat, u.home_lon
 		   FROM user_alert_prefs p JOIN users u ON u.id = p.user_id
 		  WHERE p.enabled ORDER BY p.user_id`
 	);

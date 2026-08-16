@@ -819,12 +819,22 @@
     font-size: 16px;
   }
   .alerts-form select {
+    /* Safari ignores min-height on NATIVE selects (measured 26px, GROK) —
+       appearance:none makes the box honor it; the chevron is re-added
+       inline since appearance:none strips the native arrow. 16px font also
+       prevents iOS zoom-on-focus. */
+    appearance: none;
+    -webkit-appearance: none;
     min-height: 48px;
-    padding: 8px 12px;
+    padding: 8px 32px 8px 12px;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: var(--bg);
+    background-color: var(--bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23495057' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
     color: var(--text);
+    font-size: 16px;
   }
   .alerts-form label.inline {
     min-height: 48px;
@@ -853,12 +863,19 @@
     font-weight: 600;
   }
   .radius-form select {
+    /* Same Safari native-select fix as .alerts-form select. */
+    appearance: none;
+    -webkit-appearance: none;
     min-height: 48px;
-    padding: 8px 12px;
+    padding: 8px 32px 8px 12px;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: var(--bg);
+    background-color: var(--bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23495057' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
     color: var(--text);
+    font-size: 16px;
   }
   .savehome {
     margin-top: 12px;
