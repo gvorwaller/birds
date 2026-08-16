@@ -5,11 +5,13 @@ import {
   POLL_WAITING_MS,
   STALE_AFTER_MS,
   classifyPollResponse,
+  invalidateStep,
   isActive,
   isStaleNow,
   nextIntervalMs,
   shouldInvalidate,
   terminalTransitions,
+  type InvalidateState,
   type PolledJob,
 } from "./job-poll-core";
 
@@ -88,6 +90,48 @@ describe("terminalTransitions", () => {
 
   it("a job first seen already-terminal is not a transition", () => {
     expect(terminalTransitions([], [job(9, "failed")])).toEqual([]);
+  });
+});
+
+describe("invalidateStep — the owed-refresh latch (td-671082 / CODEX1)", () => {
+  const t0 = 1_000_000;
+  const fresh: InvalidateState = { pending: false, lastInvalidateAt: 0 };
+  const running = [job(1, "running")];
+  const done = [job(1, "succeeded")];
+
+  it("a terminal transition during navigation is LATCHED, then fires EXACTLY ONCE on the first quiet on-forecast tick — even with identical snapshots", () => {
+    // Tick 1: job finishes while navigating → no fire, owed.
+    const s1 = invalidateStep(fresh, running, done, true, true, t0);
+    expect(s1.fire).toBe(false);
+    expect(s1.state.pending).toBe(true);
+    // Tick 2: navigation quiet, snapshots now IDENTICAL (done → done) —
+    // shouldInvalidate alone can't see it; the latch carries it.
+    const s2 = invalidateStep(s1.state, done, done, false, true, t0 + 2500);
+    expect(s2.fire).toBe(true);
+    expect(s2.state.pending).toBe(false);
+    // Tick 3: nothing owed, nothing new → quiet.
+    const s3 = invalidateStep(s2.state, done, done, false, true, t0 + 5000);
+    expect(s3.fire).toBe(false);
+  });
+
+  it("a transition observed OFF forecast pages latches and drains on arrival", () => {
+    const s1 = invalidateStep(fresh, running, done, false, false, t0);
+    expect(s1.fire).toBe(false);
+    expect(s1.state.pending).toBe(true);
+    const s2 = invalidateStep(s1.state, done, done, false, true, t0 + 2500);
+    expect(s2.fire).toBe(true);
+  });
+
+  it("quiet on-forecast transitions fire immediately (no behavior change)", () => {
+    const s = invalidateStep(fresh, running, done, false, true, t0);
+    expect(s.fire).toBe(true);
+    expect(s.state.lastInvalidateAt).toBe(t0);
+  });
+
+  it("no qualifying change → never owed, never fires", () => {
+    const s = invalidateStep(fresh, running, running, true, true, t0);
+    expect(s.fire).toBe(false);
+    expect(s.state.pending).toBe(false);
   });
 });
 

@@ -19,10 +19,11 @@ import { invalidateAll } from '$app/navigation';
 import { navigating } from '$app/state';
 import {
 	classifyPollResponse,
+	invalidateStep,
 	isActive,
 	isStaleNow,
 	nextIntervalMs,
-	shouldInvalidate
+	type InvalidateState
 } from '$lib/job-poll-core';
 
 export interface WorkerInfo {
@@ -82,7 +83,7 @@ class JobsPoll {
 	#timer: ReturnType<typeof setTimeout> | null = null;
 	#running = false;
 	#graceDone = false;
-	#lastInvalidate = 0;
+	#invalidate: InvalidateState = { pending: false, lastInvalidateAt: 0 };
 	#listenersBound = false;
 	/**
 	 * Loop generation token (GROK Phase-1 review #1): exactly ONE poll loop may
@@ -170,16 +171,20 @@ class JobsPoll {
 				// cause): a poller invalidateAll landing mid-navigation supersedes
 				// it — the reproduced case killed the remembered-search restore
 				// (its goto RESOLVED yet the URL stayed bare) and could even
-				// swallow a nav-link click outright. Skip; the next poll tick
-				// re-evaluates on a quiet router.
-				if (
-					navigating.to == null &&
-					/^\/forecast(\/|$)/.test(location.pathname) &&
-					shouldInvalidate(prev, data.jobs, this.#lastInvalidate, Date.now())
-				) {
-					this.#lastInvalidate = Date.now();
-					void invalidateAll();
-				}
+				// swallow a nav-link click. Qualifying changes are LATCHED, not
+				// dropped (CODEX1): identical later snapshots can't re-detect a
+				// transition, so the owed refresh drains on the first quiet
+				// on-forecast tick instead.
+				const step = invalidateStep(
+					this.#invalidate,
+					prev,
+					data.jobs,
+					navigating.to != null,
+					/^\/forecast(\/|$)/.test(location.pathname),
+					Date.now()
+				);
+				this.#invalidate = step.state;
+				if (step.fire) void invalidateAll();
 			}
 		} catch {
 			parsed = { kind: 'error' };

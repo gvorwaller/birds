@@ -95,3 +95,33 @@ export function shouldInvalidate(
 			.join(',');
 	return unitsOf(prev) !== unitsOf(next) && next.some(isActive);
 }
+
+export interface InvalidateState {
+	/** A qualifying change was observed but couldn't fire yet — owed. */
+	pending: boolean;
+	lastInvalidateAt: number;
+}
+
+/**
+ * One poll tick's invalidation decision (td-671082 + CODEX1 review). A
+ * qualifying change is LATCHED, not dropped, when it can't fire — firing is
+ * blocked while a navigation is in flight (an invalidateAll would supersede
+ * it) and while off /forecast pages. The latch drains on the first tick
+ * that's quiet AND on a forecast page, so a job finishing mid-navigation
+ * still refreshes the arrived page exactly once. prev/next snapshots may be
+ * identical by then — the latch carries the memory the snapshots can't.
+ */
+export function invalidateStep(
+	state: InvalidateState,
+	prev: readonly PolledJob[],
+	next: readonly PolledJob[],
+	navigatingActive: boolean,
+	onForecast: boolean,
+	now: number
+): { fire: boolean; state: InvalidateState } {
+	const owed = state.pending || shouldInvalidate(prev, next, state.lastInvalidateAt, now);
+	if (owed && !navigatingActive && onForecast) {
+		return { fire: true, state: { pending: false, lastInvalidateAt: now } };
+	}
+	return { fire: false, state: { pending: owed, lastInvalidateAt: state.lastInvalidateAt } };
+}

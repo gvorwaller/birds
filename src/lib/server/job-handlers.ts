@@ -305,6 +305,26 @@ async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void
 /** Per-user wall budget inside a scan — one hung user must not starve the rest. */
 const SCAN_USER_BUDGET_MS = 60_000;
 
+class ScanBudgetExceeded extends Error {
+	constructor() {
+		super('per-user scan budget exceeded');
+		this.name = 'ScanBudgetExceeded';
+	}
+}
+
+/** Race a per-user pipeline against its wall budget (CODEX1: the deadline
+ * covers the WHOLE pipeline — API key, notable fetch, needs, sends — not just
+ * the send loop). The losing pipeline is abandoned, not aborted: any send
+ * already in flight may still land AND record its sent-row (at-least-once
+ * holds; the re-alert window absorbs it). */
+function withBudget<T>(fn: () => Promise<T>, budgetMs: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout>;
+	const deadline = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new ScanBudgetExceeded()), budgetMs);
+	});
+	return Promise.race([fn(), deadline]).finally(() => clearTimeout(timer!)) as Promise<T>;
+}
+
 async function lowestAdminId(): Promise<number> {
 	const r = await query<{ id: number }>(
 		`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`
@@ -375,28 +395,31 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 
 	let alertsSent = 0;
 	for (const u of users.rows) {
-		const unitStart = Date.now();
+		// Everything the user's pipeline sends is tallied here so accounting
+		// survives a budget expiry mid-candidate (CODEX1: unit_ok must report
+		// ACTUAL sends, never the candidate count).
+		const tally = { sent: 0 };
 		const skip = async (reason: string) => {
 			progress.unitsSkipped++;
 			await recordEvent(job.id, 'unit_skipped', { userId: u.user_id, reason });
 			await updateProgress(job.id, progress);
 		};
-		try {
+		const processUser = async (): Promise<'done' | 'skipped'> => {
 			if (u.home_lat == null || u.home_lon == null) {
 				await skip('no-home');
-				continue;
+				return 'skipped';
 			}
 			const apiKey = await getEbirdApiKey(u.user_id);
 			if (!apiKey) {
 				await skip('no-api-key');
-				continue;
+				return 'skipped';
 			}
 			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1);
 			if (notable.stale) {
 				// NEVER notify from stale data (CODEX1 plan #4): old sightings
 				// must not arrive as "just reported". Next scan retries.
 				await skip('stale-cache');
-				continue;
+				return 'skipped';
 			}
 			const [seen, sentRows] = await Promise.all([
 				seenSet(u.user_id),
@@ -418,7 +441,6 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			});
 			const topic = decryptSecret(u.ntfy_topic_enc);
 			for (const c of candidates) {
-				if (Date.now() - unitStart > SCAN_USER_BUDGET_MS) break;
 				// Absolute click URL (CODEX1 Rev-2 addendum #1) — species only,
 				// never coordinates, private or not.
 				await sendNtfy(topic, {
@@ -434,17 +456,31 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					 DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()`,
 					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId]
 				);
-				alertsSent++;
+				tally.sent++;
 			}
-			progress.unitsDone++;
-			await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: candidates.length });
+			return 'done';
+		};
+		try {
+			const outcome = await withBudget(processUser, SCAN_USER_BUDGET_MS);
+			alertsSent += tally.sent;
+			if (outcome === 'done') {
+				progress.unitsDone++;
+				await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: tally.sent });
+			}
 		} catch (err) {
+			// Sends completed before the failure still count (they happened —
+			// and their sent-rows are recorded, so no re-ping next scan).
+			alertsSent += tally.sent;
 			progress.unitsFailed++;
 			const message = sanitizeErrorText(
 				err instanceof Error ? err.message : String(err)
 			).slice(0, 200);
 			progress.lastError = message;
-			await recordEvent(job.id, 'unit_failed', { userId: u.user_id, error: message });
+			await recordEvent(job.id, 'unit_failed', {
+				userId: u.user_id,
+				error: message,
+				...(err instanceof ScanBudgetExceeded ? { budget: true, sentBeforeExpiry: tally.sent } : {})
+			});
 		}
 		await updateProgress(job.id, progress);
 	}

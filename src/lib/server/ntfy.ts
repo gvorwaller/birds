@@ -40,15 +40,22 @@ export async function sendNtfy(
 	if (!validNtfyTopic(topic)) {
 		throw new NtfyError('invalid ntfy topic (not sent)', 0);
 	}
-	const headers: Record<string, string> = { Title: msg.title };
-	if (msg.clickUrl) headers.Click = msg.clickUrl;
-	if (msg.tags?.length) headers.Tags = msg.tags.join(',');
+	// JSON publish, not the header API (CODEX1): HTTP header values are
+	// ByteStrings, so a Title carrying a non-Latin-1 bird name (ʻAkikiki)
+	// throws in undici and the alert is silently lost. The JSON body is
+	// UTF-8. Bonus: the topic rides in the body, never in a URL.
 	let res: Response;
 	try {
-		res = await fetcher(`${NTFY_BASE}/${encodeURIComponent(topic)}`, {
+		res = await fetcher(NTFY_BASE, {
 			method: 'POST',
-			body: msg.body,
-			headers,
+			body: JSON.stringify({
+				topic,
+				title: msg.title,
+				message: msg.body,
+				...(msg.clickUrl ? { click: msg.clickUrl } : {}),
+				...(msg.tags?.length ? { tags: msg.tags } : {})
+			}),
+			headers: { 'Content-Type': 'application/json' },
 			signal: AbortSignal.timeout(NTFY_TIMEOUT_MS)
 		});
 	} catch {
