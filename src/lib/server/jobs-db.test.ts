@@ -633,6 +633,39 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
       "https://push.example/JOBTEST-ep1",
     ]);
   });
+
+  it("need_alert_log append + newest-first read + 180d prune (the /alerts page contract)", async () => {
+    await query(`DELETE FROM need_alert_log WHERE user_id = $1`, [userId]);
+    const append = (species: string, title: string) =>
+      query(
+        `INSERT INTO need_alert_log (user_id, species_code, title, body, url)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [userId, species, title, "2 mi from home", `https://x.example/s?species=${species}`],
+      );
+    await append("snakit", "Lifer nearby: Snail Kite");
+    await append("snakit", "Lifer nearby: Snail Kite"); // same species twice — append-only, no conflict
+    await append("frigul", "Franklin's Gull (unconfirmed)");
+    const rows = await query<{ species_code: string }>(
+      `SELECT species_code FROM need_alert_log
+        WHERE user_id = $1 ORDER BY sent_at DESC, id DESC`,
+      [userId],
+    );
+    expect(rows.rows.map((r) => r.species_code)).toEqual(["frigul", "snakit", "snakit"]);
+
+    // Rows older than the 180-day retention go; recent ones stay.
+    await query(
+      `UPDATE need_alert_log SET sent_at = NOW() - interval '181 days'
+        WHERE user_id = $1 AND species_code = 'frigul'`,
+      [userId],
+    );
+    await pruneHistory();
+    const left = await query<{ species_code: string }>(
+      `SELECT species_code FROM need_alert_log WHERE user_id = $1`,
+      [userId],
+    );
+    expect(left.rows.map((r) => r.species_code).sort()).toEqual(["snakit", "snakit"]);
+    await query(`DELETE FROM need_alert_log WHERE user_id = $1`, [userId]);
+  });
 });
 
 describe.runIf(dbUp)("listing, health, prune", () => {

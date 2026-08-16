@@ -43,7 +43,10 @@
 		{ href: '/forecast', label: 'Forecast', ico: '📅' },
 		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
-	const ownerMenuItems = [{ href: '/settings', label: 'Settings', ico: '⚙️' }];
+	const ownerMenuItems = [
+		{ href: '/alerts', label: 'Alerts', ico: '🔔' },
+		{ href: '/settings', label: 'Settings', ico: '⚙️' }
+	];
 	const adminMenuItems = [{ href: '/admin', label: 'Admin', ico: '🔧' }];
 
 	let drawerItems = $derived(

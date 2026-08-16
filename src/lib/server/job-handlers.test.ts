@@ -728,6 +728,56 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     expect(mocks.completeJob).not.toHaveBeenCalled();
   });
 
+  it("a delivered alert appends a history row — the pushed content VERBATIM, after the sent-row", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+
+    const [, msg] = syncMocks.sendWebPush.mock.calls[0] as unknown as [
+      unknown,
+      { title: string; body: string; url: string },
+    ];
+    const log = db.calls.find((c) => c.text.includes("INSERT INTO need_alert_log"));
+    // Verbatim: history can never disagree with what was pushed.
+    expect(log?.params).toEqual([3, "snakit", msg.title, msg.body, msg.url]);
+    // Ordering: the suppression row (correctness anchor) commits first.
+    const idxSent = db.calls.findIndex((c) => c.text.includes("INSERT INTO need_alerts_sent"));
+    const idxLog = db.calls.findIndex((c) => c.text.includes("INSERT INTO need_alert_log"));
+    expect(idxSent).toBeGreaterThanOrEqual(0);
+    expect(idxLog).toBeGreaterThan(idxSent);
+  });
+
+  it("a history-row failure is swallowed: alert still counts, scan still completes", async () => {
+    scanDb([PREF_ROW]);
+    const base = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("INSERT INTO need_alert_log"))
+        return Promise.reject(new Error("db died")) as never;
+      return base(text, params);
+    };
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+
+    expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(1);
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+    const [, , outcome] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
+      number,
+      number,
+      { kind: string; result: { alertsSent: number } },
+    ];
+    expect(outcome.kind).toBe("complete");
+    expect(outcome.result.alertsSent).toBe(1);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
   it("no enrolled devices → unit_skipped('no-devices'), nothing sent", async () => {
     scanDb([PREF_ROW], { 3: [] });
     syncMocks.notableNearbyObs.mockResolvedValue({

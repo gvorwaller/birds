@@ -498,6 +498,9 @@ export async function pruneHistory(): Promise<void> {
 		`DELETE FROM worker_status_history
 		  WHERE id NOT IN (SELECT id FROM worker_status_history ORDER BY id DESC LIMIT 500)`
 	);
+	// Need-alert history (/alerts): half a year is plenty of lookback; the
+	// re-alert memory (need_alerts_sent) is separate and never pruned.
+	await query(`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days'`);
 }
 
 // ---------------------------------------------------------------------------

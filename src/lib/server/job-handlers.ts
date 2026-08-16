@@ -530,16 +530,17 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				checkpoint();
 				let delivered = 0;
 				let lastErr: PushError | null = null;
+				// Absolute URL (CODEX1 Rev-2 addendum #1) — species only,
+				// never coordinates, private or not.
+				const clickUrl = `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`;
 				for (const sub of subRows.rows) {
 					if (goneEndpoints.has(sub.endpoint)) continue;
 					checkpoint();
 					try {
-						// Absolute URL (CODEX1 Rev-2 addendum #1) — species only,
-						// never coordinates, private or not.
 						await sendWebPush(sub, {
 							title: c.title,
 							body: c.body,
-							url: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`,
+							url: clickUrl,
 							tag: `need-${c.speciesCode}`
 						});
 						delivered++;
@@ -571,6 +572,19 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId],
 					graceLeftMs()
 				);
+				// In-app history row (/alerts) — the pushed content verbatim.
+				// Best-effort: the sent-row above is the correctness anchor; a
+				// missing history line must not fail the candidate or re-ping.
+				try {
+					await queryTimed(
+						`INSERT INTO need_alert_log (user_id, species_code, title, body, url)
+						 VALUES ($1, $2, $3, $4, $5)`,
+						[u.user_id, c.speciesCode, c.title, c.body, clickUrl],
+						graceLeftMs()
+					);
+				} catch {
+					// swallowed by design
+				}
 				tally.sent++;
 			}
 			return 'done';

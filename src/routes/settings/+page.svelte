@@ -86,11 +86,21 @@
 
   let seenTotal = $derived(data.seenBySource.reduce((a, s) => a + s.n, 0));
 
-  function track(name: string) {
+  // reset: false keeps the DOM controls as submitted instead of letting
+  // enhance's form.reset() revert them to their SSR-time defaults — required
+  // for forms whose selects/checkboxes mirror `data.*` (the invalidated data
+  // updates, but reset() runs after and Svelte's tracked value already
+  // matches, so the revert sticks visually). Secret forms keep the default
+  // reset so password fields clear after save.
+  function track(name: string, opts?: { reset?: boolean }) {
     return () => {
       busy = name;
-      return async ({ update }: { update: () => Promise<void> }) => {
-        await update();
+      return async ({
+        update,
+      }: {
+        update: (o?: { reset?: boolean }) => Promise<void>;
+      }) => {
+        await update({ reset: opts?.reset ?? true });
         busy = "";
       };
     };
@@ -348,7 +358,7 @@
     <form
       method="POST"
       action="?/save_radius"
-      use:enhance={track("radius")}
+      use:enhance={track("radius", { reset: false })}
       class="radius-form"
     >
       <label>
@@ -379,7 +389,8 @@
       checked every 30 minutes in the background. Notifications come from the
       birds app itself: enable them on each device you want alerted. Quiet
       hours are your phone's Focus schedule — allow the birds app through any
-      Focus you want a rarity to break.
+      Focus you want a rarity to break. Past alerts persist on the
+      <a href="/alerts">Alerts page</a>.
     </p>
     {#if data.home.home_lat == null}
       <p class="muted">
@@ -404,7 +415,7 @@
     <form
       method="POST"
       action="?/save_alerts"
-      use:enhance={track("alerts")}
+      use:enhance={track("alerts", { reset: false })}
       class="alerts-form"
     >
       <label>

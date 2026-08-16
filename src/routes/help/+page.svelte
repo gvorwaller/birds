@@ -459,6 +459,11 @@
 						for the birds app, and that Focus/Do&nbsp;Not&nbsp;Disturb isn't
 						silencing it — <strong>quiet hours</strong> = your Focus schedule.
 					</li>
+					<li>
+						Dismissed a notification too fast? Every alert also lands on the
+						<a href="/alerts"><strong>Alerts page</strong></a> (menu → 🔔
+						Alerts), exactly as it was sent.
+					</li>
 				</ul>
 			</div>
 		{/if}
