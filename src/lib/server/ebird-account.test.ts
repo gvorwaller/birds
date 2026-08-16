@@ -61,6 +61,23 @@ describe("casLogin classification (via testEbirdLogin)", () => {
     expect((err as InstanceType<typeof EbirdUpstreamError>).status).toBe(503);
   });
 
+  it("login POST fetch rejection → EbirdUpstreamError, NOT a raw TypeError", async () => {
+    fetchQueue = [
+      html(CAS_FORM_HTML),
+      new Error("fetch failed: connection reset"),
+    ];
+    await expect(testEbirdLogin(1)).rejects.toBeInstanceOf(EbirdUpstreamError);
+  });
+
+  it("success-redirect follow rejection → EbirdUpstreamError", async () => {
+    fetchQueue = [
+      html(CAS_FORM_HTML),
+      new Response(null, { status: 302, headers: { location: "https://ebird.org/home" } }),
+      new Error("fetch failed: socket hang up"),
+    ];
+    await expect(testEbirdLogin(1)).rejects.toBeInstanceOf(EbirdUpstreamError);
+  });
+
   it("login POST 5xx → EbirdUpstreamError; credentials are not blamed", async () => {
     fetchQueue = [html(CAS_FORM_HTML), html("oops", 502)];
     const err = await testEbirdLogin(1).catch((e) => e);

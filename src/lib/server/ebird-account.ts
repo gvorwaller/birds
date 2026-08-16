@@ -139,16 +139,34 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 	});
 
 	// The browser posts action="login" relative to the page → CAS_BASE (no query).
-	const loginRes = await fetchWithJar(CAS_BASE, jar, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-		body: body.toString()
-	});
+	// EVERY CAS network leg wraps reachability failures as upstream (CODEX1
+	// Phase-3 re-review): a raw fetch TypeError here would classify as a
+	// permanent per-unit failure in the frequency path instead of retrying.
+	let loginRes: Response;
+	try {
+		loginRes = await fetchWithJar(CAS_BASE, jar, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: body.toString()
+		});
+	} catch (err) {
+		throw new EbirdUpstreamError(
+			`Could not reach the eBird login endpoint: ${err instanceof Error ? err.message : err}`,
+			0
+		);
+	}
 
 	// Success is a 3xx redirect to the service URL with a ticket. A 200/401 here
 	// means the form came back — almost always bad credentials.
 	if (loginRes.status >= 300 && loginRes.status < 400) {
-		await followRedirects(loginRes, jar);
+		try {
+			await followRedirects(loginRes, jar);
+		} catch (err) {
+			throw new EbirdUpstreamError(
+				`Could not complete the eBird sign-in redirect: ${err instanceof Error ? err.message : err}`,
+				0
+			);
+		}
 		return jar;
 	}
 	if (loginRes.status === 200 || loginRes.status === 401) {
