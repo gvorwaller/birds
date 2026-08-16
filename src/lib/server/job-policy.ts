@@ -181,7 +181,13 @@ const REDACT_PATTERNS: [RegExp, string][] = [
 	[/(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi, '$1: [redacted]'],
 	[/(api[_-]?key|apikey|access[_-]?token|secret)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
 	[/(username|user|login|email)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
-	[/bearer\s+[a-z0-9._~+/-]+=*/gi, 'bearer [redacted]']
+	[/bearer\s+[a-z0-9._~+/-]+=*/gi, 'bearer [redacted]'],
+	// JSON-form: an upstream error echoing a request body as JSON carries
+	// `"password":"…"` — quoted key, quoted value (GROK Phase-2 nit).
+	[
+		/"(password|passwd|pwd|api[_-]?key|apikey|access[_-]?token|secret|authorization|cookie|username|user|login|email)"\s*:\s*"[^"]*"/gi,
+		'"$1":"[redacted]"'
+	]
 ];
 
 export function sanitizeErrorText(text: string): string {

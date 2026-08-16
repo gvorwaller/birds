@@ -171,6 +171,16 @@ describe("sanitizeErrorText / scrubStoredValue", () => {
     expect(clean).toContain("[redacted]");
   });
 
+  it('JSON-form "password":"…" bodies are redacted too', () => {
+    const hostile =
+      'upstream echoed {"username":"gaylon@vorwaller.net","password":"hunter2","apiKey":"sk-live-XYZ","note":"ok"}';
+    const clean = sanitizeErrorText(hostile);
+    for (const secret of ["hunter2", "gaylon@vorwaller.net", "sk-live-XYZ"]) {
+      expect(clean).not.toContain(secret);
+    }
+    expect(clean).toContain('"note":"ok"');
+  });
+
   it("multi-pair cookie headers redact EVERY pair, across CRLF line ends", () => {
     const hostile =
       "Set-Cookie: session=deadbeef; auth=topsecret; theme=dark\r\n" +

@@ -128,9 +128,22 @@
   let loadPanelEl = $state<HTMLDetailsElement | undefined>();
   function openLoadPanel() {
     loadPanelOpen = true;
+    // Safari lays out the just-opened <details> too late for a single rAF —
+    // the smooth scroll silently no-opped and the CTA "did nothing" (GROK
+    // Phase-2 Safari pass). Double-rAF for the layout, then a hard-jump
+    // fallback if the panel still isn't in view shortly after.
     requestAnimationFrame(() => {
-      loadPanelEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+      requestAnimationFrame(() => {
+        loadPanelEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     });
+    setTimeout(() => {
+      if (!loadPanelEl) return;
+      const top = loadPanelEl.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight * 0.8) {
+        loadPanelEl.scrollIntoView({ block: "start" });
+      }
+    }, 450);
   }
 
   // Multi-select loading (td-8a6f97): checkbox selection is client state;
@@ -710,10 +723,12 @@
           bind:open={loadPanelOpen}
         >
           <summary>
-            {actionableCount > 0
-              ? `Load hotspot data (${actionableCount}) — pick what to load`
-              : `Hotspot loads — all ${queuedHereCount} queued`}
-            {#if panelSubText}
+            {data.isViewer
+              ? `Hotspots without current data (${loadableCount})`
+              : actionableCount > 0
+                ? `Load hotspot data (${actionableCount}) — pick what to load`
+                : `Hotspot loads — all ${queuedHereCount} queued`}
+            {#if panelSubText && !data.isViewer}
               <span class="muted-inline">({panelSubText})</span>
             {/if}
           </summary>
@@ -991,7 +1006,8 @@
   .loadcta .ctasub {
     font-size: 0.8rem;
     font-weight: 600;
-    opacity: 0.9;
+    /* Full opacity: 0.9 blended the white to ~7.0:1 on the accent — right on
+       the AAA line (GROK). Solid white is 8.3:1. */
   }
   .pickband {
     font-size: 0.85rem;
