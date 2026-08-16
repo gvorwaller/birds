@@ -587,6 +587,43 @@ describe.runIf(dbUp)("recurring primitives (need-alert scheduler)", () => {
   });
 });
 
+describe.runIf(dbUp)("user_alert_prefs upsert (prod 500, 2026-08-16)", () => {
+  const wipe = () => query("DELETE FROM user_alert_prefs WHERE user_id = $1", [userId]);
+
+  it("re-save with enabled + empty topic input keeps the saved topic — the candidate row must satisfy the CHECK itself", async () => {
+    await wipe();
+    const upsert = (enabled: boolean, topicEnc: string | null) =>
+      query(
+        `INSERT INTO user_alert_prefs (user_id, enabled, ntfy_topic_enc, radius_km, realert_days, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           enabled = $2, ntfy_topic_enc = $3,
+           radius_km = $4, realert_days = $5, updated_at = NOW()`,
+        [userId, enabled, topicEnc, 40, 7],
+      );
+    // First save: topic + enabled.
+    await upsert(true, "enc-topic-1");
+    // The PROD failure shape: re-save (radius tweak) with the topic field
+    // empty. The action resolves the effective topic FIRST — the old
+    // COALESCE-in-DO-UPDATE shape put NULL in the candidate row and
+    // violated user_alert_prefs_check before conflict resolution.
+    const effective = await query<{ ntfy_topic_enc: string | null }>(
+      `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
+      [userId],
+    );
+    await upsert(true, effective.rows[0]?.ntfy_topic_enc ?? null); // must not throw
+    const after = await query<{ enabled: boolean; ntfy_topic_enc: string | null }>(
+      `SELECT enabled, ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
+      [userId],
+    );
+    expect(after.rows[0]).toEqual({ enabled: true, ntfy_topic_enc: "enc-topic-1" });
+    // And the DB still rejects a genuinely topic-less enable.
+    await wipe();
+    await expect(upsert(true, null)).rejects.toThrow(/user_alert_prefs_check/);
+    await wipe();
+  });
+});
+
 describe.runIf(dbUp)("listing, health, prune", () => {
   it("listJobs returns active plus recent finished", async () => {
     const a = await enqueueJob(params({ label: "JOBTEST list-active" }));

@@ -386,12 +386,19 @@ export const actions: Actions = {
           "Topic must be 8-64 letters, digits, - or _ — just the topic name, not a URL. Treat it like a password: long and random.",
       });
     }
-    const existing = await query<{ topic_set: boolean }>(
-      `SELECT ntfy_topic_enc IS NOT NULL AS topic_set FROM user_alert_prefs WHERE user_id = $1`,
+    // The candidate row itself must satisfy the enabled-requires-topic CHECK:
+    // Postgres evaluates CHECKs on the INSERT candidate BEFORE ON CONFLICT
+    // resolution, so "keep the saved topic via COALESCE in DO UPDATE" 500'd
+    // on every re-save with an empty topic field (prod, 2026-08-16). Resolve
+    // the effective topic FIRST and pass it explicitly.
+    const existing = await query<{ ntfy_topic_enc: string | null }>(
+      `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
       [userId],
     );
-    const willHaveTopic = !!topicRaw || existing.rows[0]?.topic_set === true;
-    if (enabled && !willHaveTopic) {
+    const topicEnc = topicRaw
+      ? encryptSecret(topicRaw)
+      : (existing.rows[0]?.ntfy_topic_enc ?? null);
+    if (enabled && !topicEnc) {
       return fail(400, {
         error: "Save a ntfy topic before enabling need alerts.",
       });
@@ -400,10 +407,9 @@ export const actions: Actions = {
       `INSERT INTO user_alert_prefs (user_id, enabled, ntfy_topic_enc, radius_km, realert_days, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
-         enabled = $2,
-         ntfy_topic_enc = COALESCE($3, user_alert_prefs.ntfy_topic_enc),
+         enabled = $2, ntfy_topic_enc = $3,
          radius_km = $4, realert_days = $5, updated_at = NOW()`,
-      [userId, enabled, topicRaw ? encryptSecret(topicRaw) : null, radius, realert],
+      [userId, enabled, topicEnc, radius, realert],
     );
     return {
       ok: true as const,
