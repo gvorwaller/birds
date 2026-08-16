@@ -336,34 +336,90 @@ describe.runIf(dbUp)("cancel at the terminalization boundary (CODEX1 re-re-revie
     expect(await claimNextJob()).toBeNull();
   });
 
+  /**
+   * Deterministic lock choreography (no scheduler-dependent sleeps):
+   * `run` executes inside a held-open transaction and resolves `lockHeld`
+   * only after its UPDATE returns — i.e. after the row lock is acquired;
+   * `waitForLockWaiter` polls pg_stat_activity until a backend is actually
+   * BLOCKED (wait_event_type='Lock') on a matching statement.
+   */
+  async function holdLockedUpdate(run: (client: { query: (t: string, p?: unknown[]) => Promise<unknown> }) => Promise<void>) {
+    let lockAcquired!: () => void;
+    let commit!: () => void;
+    const acquired = new Promise<void>((r) => (lockAcquired = r));
+    const gate = new Promise<void>((r) => (commit = r));
+    const txn = withTransaction(async (client) => {
+      await run(client as never);
+      lockAcquired();
+      await gate;
+    });
+    await acquired;
+    return { commit, txn };
+  }
+
+  async function waitForLockWaiter(pattern: string) {
+    for (let i = 0; i < 250; i++) {
+      const r = await query(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE $1`,
+        [pattern],
+      );
+      if ((r.rowCount ?? 0) > 0) return;
+      await new Promise((res) => setTimeout(res, 20));
+    }
+    throw new Error(`no backend ever blocked on a lock for: ${pattern}`);
+  }
+
   it("TWO-CLIENT RACE: a cancel committing while reclaim's UPDATE waits on the row lock still wins", async () => {
-    // The serialization CODEX1 asked to pin: an uncommitted transaction on a
-    // second client sets cancel_requested and HOLDS the row lock; reclaim's
-    // batch UPDATE starts and blocks on that lock; the flag then commits.
-    // Under READ COMMITTED the blocked UPDATE re-reads the committed row, so
-    // its CASE must see cancel_requested=true and resolve to cancelled — a
-    // reclaim that had branched on any earlier observation would re-pend the
-    // row into a permanent wedge (claimNextJob excludes flagged rows).
+    // Flag transaction acquires the row lock; reclaim's batch UPDATE is
+    // verified BLOCKED on it; the flag then commits. Under READ COMMITTED
+    // the blocked UPDATE re-reads the committed row, so its CASE must see
+    // cancel_requested=true and resolve to cancelled — branching on any
+    // earlier observation would re-pend the row into a permanent wedge.
     const a = await enqueueJob(params({ label: "JOBTEST reclaim-race" }));
     const claimed = await claimNextJob();
     expect(claimed?.id).toBe(a.jobId);
 
-    let commitFlag!: () => void;
-    const holdLock = new Promise<void>((r) => (commitFlag = r));
-    const flagTxn = withTransaction(async (client) => {
+    const { commit, txn } = await holdLockedUpdate(async (client) => {
       await client.query(
         `UPDATE jobs SET cancel_requested = TRUE WHERE id = $1 AND status = 'running'`,
         [a.jobId],
       );
-      await holdLock; // keep the row lock until reclaim is blocked on it
     });
-    await new Promise((r) => setTimeout(r, 50)); // flag UPDATE acquires the lock
-
-    const reclaim = reclaimStartupJobs("race-boot"); // blocks on the row lock
-    await new Promise((r) => setTimeout(r, 100)); // let reclaim reach the lock
-    commitFlag();
-    await flagTxn;
+    const reclaim = reclaimStartupJobs("race-boot");
+    await waitForLockWaiter("%UPDATE jobs SET%status = CASE%WHEN cancel_requested%");
+    commit();
+    await txn;
     expect(await reclaim).toBe(1);
+
+    await expectCancelledOnce(a.jobId);
+    expect(await claimNextJob()).toBeNull();
+  });
+
+  it("INVERSE RACE: requestCancel waiting on reclaim's lock re-evaluates the re-pended row and cancels it", async () => {
+    // The two-statement gap CODEX1 flagged: reclaim (simulated by its exact
+    // budget-left effect inside a held transaction — the real function
+    // autocommits, leaving no window to hold) moves running→pending while
+    // requestCancel is BLOCKED on the row lock. After commit, the
+    // single-statement requestCancel re-evaluates the committed PENDING row
+    // and must cancel it outright — the old pending-then-running UPDATE
+    // pair returned noop here and the cancel was silently lost.
+    const a = await enqueueJob(params({ label: "JOBTEST cancel-race" }));
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(a.jobId);
+
+    const { commit, txn } = await holdLockedUpdate(async (client) => {
+      await client.query(
+        `UPDATE jobs SET status = 'pending', next_retry_at = NOW()
+          WHERE id = $1 AND status = 'running'`,
+        [a.jobId],
+      );
+    });
+    const cancel = requestCancel(a.jobId, userId);
+    await waitForLockWaiter("%UPDATE jobs SET%status = CASE WHEN status = 'pending'%");
+    commit();
+    await txn;
+    expect(await cancel).toBe("cancelled");
 
     await expectCancelledOnce(a.jobId);
     expect(await claimNextJob()).toBeNull();

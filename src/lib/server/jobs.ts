@@ -269,31 +269,33 @@ export async function requeueInterrupted(jobId: number, expectedAttempts: number
 }
 
 /**
- * Cancel request from the UI. Atomically cancels PENDING jobs outright; for
- * RUNNING jobs only sets the flag (the worker honors it cooperatively).
- * Terminal jobs are untouched. (CODEX1 #4)
+ * Cancel request from the UI — ONE conditional UPDATE over both live states
+ * (CODEX1 re-review): pending → cancelled outright; running → flag only (the
+ * worker honors it cooperatively); terminal → no row, noop. Single-statement
+ * matters: two autocommit UPDATEs left a window where a concurrent reclaim
+ * could move running→pending between them and the cancel was silently lost.
+ * Under READ COMMITTED a blocked cancel re-evaluates the committed row, so a
+ * reclaim that re-pends the job while we wait still gets cancelled here.
  */
 export async function requestCancel(
 	jobId: number,
 	requestedBy: number
 ): Promise<'cancelled' | 'flagged' | 'noop'> {
-	const direct = await query(
-		`UPDATE jobs SET status = 'cancelled', finished_at = NOW()
-		  WHERE id = $1 AND status = 'pending'
-		  RETURNING id`,
+	const r = await query<{ status: string }>(
+		`UPDATE jobs SET
+		    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+		    finished_at = CASE WHEN status = 'pending' THEN NOW() ELSE finished_at END,
+		    cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END
+		  WHERE id = $1 AND status IN ('pending', 'running')
+		  RETURNING status`,
 		[jobId]
 	);
-	if ((direct.rowCount ?? 0) > 0) {
+	const final = r.rows[0]?.status ?? null;
+	if (final === 'cancelled') {
 		await recordEvent(jobId, 'cancelled', { when: 'pending', requestedBy });
 		return 'cancelled';
 	}
-	const flag = await query(
-		`UPDATE jobs SET cancel_requested = TRUE
-		  WHERE id = $1 AND status = 'running'
-		  RETURNING id`,
-		[jobId]
-	);
-	if ((flag.rowCount ?? 0) > 0) return 'flagged';
+	if (final === 'running') return 'flagged';
 	return 'noop';
 }
 
