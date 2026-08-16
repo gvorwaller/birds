@@ -454,11 +454,17 @@ export async function workerHealth(): Promise<WorkerHealth> {
 // ---------------------------------------------------------------------------
 
 export async function listJobs(limit = 15): Promise<JobRow[]> {
+	// display_name rides along so the hub can say WHO queued a communal job
+	// (GROK #14 — cancellations must not be mysterious).
 	const r = await query<JobRow>(
-		`(SELECT * FROM jobs WHERE status IN ('pending','running') ORDER BY enqueued_at)
+		`(SELECT j.*, u.display_name AS requested_by_name FROM jobs j
+		   JOIN users u ON u.id = j.requested_by
+		  WHERE j.status IN ('pending','running') ORDER BY j.enqueued_at)
 		 UNION ALL
-		 (SELECT * FROM jobs WHERE status NOT IN ('pending','running')
-		   ORDER BY finished_at DESC NULLS LAST LIMIT $1)`,
+		 (SELECT j.*, u.display_name AS requested_by_name FROM jobs j
+		   JOIN users u ON u.id = j.requested_by
+		  WHERE j.status NOT IN ('pending','running')
+		  ORDER BY j.finished_at DESC NULLS LAST LIMIT $1)`,
 		[limit]
 	);
 	return r.rows;

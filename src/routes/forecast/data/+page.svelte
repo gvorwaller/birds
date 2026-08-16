@@ -21,6 +21,15 @@
     if (q) jobsPoll.track(q.jobId);
   });
 
+  // Cancel is destructive AND communal (any non-viewer can cancel anyone's
+  // load) → modal confirmation per cs.md (GROK Phase-1 review #3).
+  let cancelTarget = $state<{ id: number; name: string; by: string | null } | null>(null);
+  function confirmCancel() {
+    if (!cancelTarget) return;
+    void jobsPoll.cancel(cancelTarget.id);
+    cancelTarget = null;
+  }
+
   // Which state sections are expanded — remembered across sessions (GBV).
   const OPEN_KEY = "forecast-data-open-states";
   function readOpen(): string[] {
@@ -226,6 +235,9 @@
           <li>
             <div class="jobhead">
               <strong>{j.displayName}</strong>
+              {#if j.requestedByName}
+                <span class="jobby">queued by {j.requestedByName}</span>
+              {/if}
               <span class="jobstatus" data-color={j.statusColor}>
                 {#if j.cancelRequested}
                   cancelling…
@@ -243,7 +255,12 @@
                 <button
                   type="button"
                   class="secondary"
-                  onclick={() => jobsPoll.cancel(j.id)}
+                  onclick={() =>
+                    (cancelTarget = {
+                      id: j.id,
+                      name: j.displayName,
+                      by: j.requestedByName,
+                    })}
                 >
                   Cancel
                 </button>
@@ -278,6 +295,9 @@
             <li>
               <div class="jobhead">
                 <strong>{j.displayName}</strong>
+                {#if j.requestedByName}
+                  <span class="jobby">queued by {j.requestedByName}</span>
+                {/if}
                 <span class="jobstatus" data-color={j.statusColor}>
                   {j.status}{#if j.finishedAt}
                     &nbsp;· {fmtDate(j.finishedAt)}
@@ -544,6 +564,33 @@
   </p>
 </div>
 
+<!-- Destructive + communal action → modal confirmation (cs.md; GROK #3) -->
+{#if cancelTarget}
+  <div
+    class="modal-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="cancel-title"
+  >
+    <div class="modal">
+      <h3 id="cancel-title">Cancel this load?</h3>
+      <p>
+        "{cancelTarget.name}"{cancelTarget.by ? ` — queued by ${cancelTarget.by}` : ""}
+        will stop after its current location. Data already loaded is kept;
+        the rest stays unloaded until someone queues it again.
+      </p>
+      <div class="modal-actions">
+        <button type="button" class="secondary" onclick={() => (cancelTarget = null)}>
+          Keep loading
+        </button>
+        <button type="button" class="danger-solid" onclick={confirmCancel}>
+          Cancel load
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .page {
     max-width: 860px;
@@ -807,6 +854,50 @@
     font-size: 0.85rem;
     color: var(--muted);
     font-weight: 600;
+  }
+  .jobby {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(33, 37, 41, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 420px;
+    width: 100%;
+  }
+  .modal h3 {
+    margin-bottom: 8px;
+  }
+  .modal p {
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .danger-solid {
+    min-height: 48px;
+    padding: 10px 18px;
+    font-size: 0.95rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--danger);
+    color: #fff;
+    cursor: pointer;
   }
   .jobstatus[data-color="ok"],
   .jobstatus[data-color="busy"] {

@@ -55,6 +55,7 @@ export interface JobInfo {
 	};
 	error: string | null;
 	requestedBy: number;
+	requestedByName: string | null;
 	enqueuedAt: string;
 	finishedAt: string | null;
 	/** Region/loc identity for UI scoping; null for multi-loc loads. */
@@ -82,6 +83,15 @@ class JobsPoll {
 	#graceDone = false;
 	#lastInvalidate = 0;
 	#listenersBound = false;
+	/**
+	 * Loop generation token (GROK Phase-1 review #1): exactly ONE poll loop may
+	 * be alive. Every (re)start increments it; a #poll continuation belonging
+	 * to an older generation dies at its next checkpoint. Without this, a
+	 * stale fired-timer id left in #timer after a stop let track() spawn a
+	 * second loop beside start()'s — Safari fires pageshow AND
+	 * visibilitychange together, doubling polls and invalidateAll churn.
+	 */
+	#gen = 0;
 
 	get active(): JobInfo[] {
 		return this.jobs.filter((j) => isActive(j));
@@ -98,16 +108,20 @@ class JobsPoll {
 		if (this.#running) return;
 		this.#running = true;
 		this.#graceDone = false;
-		void this.#poll();
+		void this.#poll(++this.#gen);
 	}
 
 	/** An action just enqueued jobId — poll immediately so it appears at once. */
 	track(_jobId: number): void {
+		const wasRunning = this.#running;
 		this.start();
-		if (this.#timer) {
-			clearTimeout(this.#timer);
+		if (wasRunning) {
+			// Already looping: supersede whatever is scheduled or in flight with
+			// an immediate poll of a NEW generation — the old loop dies at its
+			// next generation checkpoint, so this can never stack a second loop.
+			if (this.#timer) clearTimeout(this.#timer);
 			this.#timer = null;
-			void this.#poll();
+			void this.#poll(++this.#gen);
 		}
 	}
 
@@ -131,8 +145,9 @@ class JobsPoll {
 		});
 	}
 
-	async #poll(): Promise<void> {
-		if (!this.#running) return;
+	async #poll(gen: number): Promise<void> {
+		if (!this.#running || gen !== this.#gen) return;
+		this.#timer = null;
 		let parsed: ReturnType<typeof classifyPollResponse> = { kind: 'error' };
 		try {
 			const res = await fetch('/api/jobs', { headers: { accept: 'application/json' } });
@@ -147,7 +162,7 @@ class JobsPoll {
 				this.staleSince = null;
 				this.isStale = false;
 				if (
-					/^\/forecast(\/|$)?/.test(location.pathname) &&
+					/^\/forecast(\/|$)/.test(location.pathname) &&
 					shouldInvalidate(prev, data.jobs, this.#lastInvalidate, Date.now())
 				) {
 					this.#lastInvalidate = Date.now();
@@ -158,10 +173,14 @@ class JobsPoll {
 			parsed = { kind: 'error' };
 		}
 
+		// A newer generation superseded this loop while we awaited the fetch.
+		if (gen !== this.#gen) return;
+
 		if (parsed.kind === 'auth') {
 			// Session gone: stop quietly. Jobs keep running server-side.
 			this.authStopped = true;
 			this.#running = false;
+			this.#timer = null;
 			return;
 		}
 		if (parsed.kind === 'error') {
@@ -173,16 +192,17 @@ class JobsPoll {
 		if (interval == null && parsed.kind === 'ok') {
 			if (this.#graceDone) {
 				this.#running = false;
+				this.#timer = null;
 				return;
 			}
 			this.#graceDone = true;
-			this.#timer = setTimeout(() => void this.#poll(), 15_000);
+			this.#timer = setTimeout(() => void this.#poll(gen), 15_000);
 			return;
 		}
 		this.#graceDone = false;
 		// On failed polls keep trying at the active cadence — silence is the
 		// point; staleSince carries the honesty.
-		this.#timer = setTimeout(() => void this.#poll(), interval ?? 2_500);
+		this.#timer = setTimeout(() => void this.#poll(gen), interval ?? 2_500);
 	}
 }
 

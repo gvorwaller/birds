@@ -24,6 +24,7 @@ export interface DecoratedJob {
 	progress: JobRow['progress'];
 	error: string | null;
 	requestedBy: number;
+	requestedByName: string | null;
 	enqueuedAt: string;
 	startedAt: string | null;
 	finishedAt: string | null;
@@ -51,6 +52,7 @@ function decorate(job: JobRow, now: Date): DecoratedJob {
 		progress: job.progress,
 		error: job.error,
 		requestedBy: job.requested_by,
+		requestedByName: job.requested_by_name ?? null,
 		enqueuedAt: new Date(job.enqueued_at).toISOString(),
 		startedAt: job.started_at ? new Date(job.started_at).toISOString() : null,
 		finishedAt: job.finished_at ? new Date(job.finished_at).toISOString() : null,

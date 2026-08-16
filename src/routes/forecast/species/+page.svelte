@@ -414,6 +414,12 @@
                 style="width: {jTotal > 0 ? (jDone / jTotal) * 100 : 0}%"
               ></div>
             </div>
+            {#if jobsPoll.isStale}
+              <p class="meta">
+                Connection to the app lost — the analysis continues on the
+                server; progress will catch up when the connection returns.
+              </p>
+            {/if}
           {:else if progress.current > 0 && progress.remaining > 0}
             <div
               class="progressbar"

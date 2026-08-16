@@ -564,6 +564,25 @@ describe("ensureFrequencies", () => {
     expect(firstResult.refreshed).toEqual(["US-D0"]);
   });
 
+  it("maxFetches: Infinity actually fetches past the 12-unit default clamp (GROK #8)", async () => {
+    queryHandler = taxonomyHandler;
+    const fetcher = vi.fn(async () =>
+      makeValidTsv([["Great Blue Heron", 0.25]]),
+    );
+    const locs = Array.from({ length: 15 }, (_, i) => loc(`US-INF-${i}`));
+    const result = await ensureFrequencies(1, locs, {
+      fetcher,
+      sleep: noSleep,
+      maxFetches: Infinity,
+      timeBudgetMs: Infinity,
+    });
+    // Load-bearing for the worker: all 15 units in ONE ensure call — the old
+    // in-path clamp would have stopped at 12 with 3 notAttempted.
+    expect(fetcher).toHaveBeenCalledTimes(15);
+    expect(result.refreshed).toHaveLength(15);
+    expect(result.notAttempted).toEqual([]);
+  });
+
   it("paces fetches with start-to-start spacing", async () => {
     queryHandler = taxonomyHandler;
     const sleep = vi.fn(async (_ms: number) => {});

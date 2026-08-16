@@ -233,6 +233,8 @@ export interface JobRow {
 	result: unknown;
 	error: string | null;
 	requested_by: number;
+	/** Joined in listJobs only (users.display_name) — absent on bare SELECTs. */
+	requested_by_name?: string;
 	enqueued_at: string | Date;
 	started_at: string | Date | null;
 	finished_at: string | Date | null;
