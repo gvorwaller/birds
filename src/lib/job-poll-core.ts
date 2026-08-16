@@ -22,6 +22,16 @@ export function isActive(job: Pick<PolledJob, 'status'>): boolean {
 }
 
 /**
+ * Stale = failing for longer than STALE_AFTER_MS. The MANAGER re-evaluates
+ * this on every failed poll and stores the answer in rune state — a getter
+ * over Date.now() alone is not reactive and the warning could stay absent
+ * forever (CODEX1 re-review #4).
+ */
+export function isStaleNow(staleSince: number | null, now: number): boolean {
+	return staleSince != null && now - staleSince > STALE_AFTER_MS;
+}
+
+/**
  * Next poll delay. null = stop (nothing active; the caller does one grace
  * poll before stopping so a just-enqueued job isn't missed).
  */

@@ -212,6 +212,36 @@ describe("runJob — frequency jobs", () => {
     expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
+  it("cancel observed by the LAST unit (no later shouldStop) still cancels, never completes", async () => {
+    // The final onUnit's progress write reports cancel_requested, but the
+    // loop ends without another shouldStop call — the post-ensure re-check
+    // must resolve it (CODEX1 re-review #2).
+    mocks.updateProgress.mockResolvedValue({ cancelRequested: true });
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      for (const loc of locs) await opts.onUnit(loc, { status: "ok" });
+      return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+    });
+    await runJob(jobRow(), ctx);
+    expect(mocks.cancelRunningJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+    expect(mocks.failJob).not.toHaveBeenCalled();
+  });
+
+  it("transient failures at the FINAL attempt → terminal failJob, not success", async () => {
+    mocks.ensureFrequencies.mockResolvedValue(
+      ensureResult({
+        refreshed: ["L1"],
+        failed: [{ code: "L2", error: "HTTP 500", kind: "transient" }],
+      }),
+    );
+    await runJob(jobRow({ attempts: 4 }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.failJob.mock.calls[0][2]).toMatch(/after 4 attempts/);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
   it("drain (SIGTERM) mid-job → requeueInterrupted ONLY", async () => {
     const draining = { isDraining: () => true };
     mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {

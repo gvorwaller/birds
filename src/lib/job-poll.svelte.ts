@@ -19,9 +19,9 @@ import { invalidateAll } from '$app/navigation';
 import {
 	classifyPollResponse,
 	isActive,
+	isStaleNow,
 	nextIntervalMs,
-	shouldInvalidate,
-	STALE_AFTER_MS
+	shouldInvalidate
 } from '$lib/job-poll-core';
 
 export interface WorkerInfo {
@@ -57,6 +57,10 @@ export interface JobInfo {
 	requestedBy: number;
 	enqueuedAt: string;
 	finishedAt: string | null;
+	/** Region/loc identity for UI scoping; null for multi-loc loads. */
+	target: string | null;
+	/** Active jobs only: loc codes the job covers. */
+	locCodes?: string[];
 }
 
 class JobsPoll {
@@ -64,6 +68,12 @@ class JobsPoll {
 	jobs = $state<JobInfo[]>([]);
 	/** Set while polls are failing; null when the last poll succeeded. */
 	staleSince = $state<number | null>(null);
+	/**
+	 * Rune STATE, not a Date.now() getter: re-evaluated on every failed poll
+	 * (failures keep rescheduling at the active cadence), so the >10s warning
+	 * reliably appears and reliably clears (CODEX1 re-review #4).
+	 */
+	isStale = $state(false);
 	/** True after an auth stop — session gone, polling suspended. */
 	authStopped = $state(false);
 
@@ -78,9 +88,6 @@ class JobsPoll {
 	}
 	get recent(): JobInfo[] {
 		return this.jobs.filter((j) => !isActive(j));
-	}
-	get isStale(): boolean {
-		return this.staleSince != null && Date.now() - this.staleSince > STALE_AFTER_MS;
 	}
 
 	/** Start (or wake) the poller. Safe to call repeatedly; used by layout mount, enqueue results, and track(). */
@@ -138,6 +145,7 @@ class JobsPoll {
 				this.worker = data.worker;
 				this.jobs = data.jobs;
 				this.staleSince = null;
+				this.isStale = false;
 				if (
 					/^\/forecast(\/|$)?/.test(location.pathname) &&
 					shouldInvalidate(prev, data.jobs, this.#lastInvalidate, Date.now())
@@ -156,8 +164,9 @@ class JobsPoll {
 			this.#running = false;
 			return;
 		}
-		if (parsed.kind === 'error' && this.staleSince == null) {
-			this.staleSince = Date.now();
+		if (parsed.kind === 'error') {
+			if (this.staleSince == null) this.staleSince = Date.now();
+			this.isStale = isStaleNow(this.staleSince, Date.now());
 		}
 
 		const interval = nextIntervalMs(this.jobs);

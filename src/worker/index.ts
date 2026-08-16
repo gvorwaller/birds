@@ -8,6 +8,12 @@
  * drain (in-flight job requeued with the attempt refunded), crash → next
  * boot's reclaim.
  */
+// Before ANY import that could touch the shared pool: the pool is created
+// lazily on first query and reads env then, so setting this here makes every
+// worker connection identify as birds-worker in pg_stat_activity (CODEX1
+// re-review #6). The dedicated lock client below stays birds-worker-lock.
+process.env.BIRDS_DB_APP_NAME = 'birds-worker';
+
 import pg from 'pg';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory } from '$server/jobs';
 import { runJob } from '$server/job-handlers';

@@ -3,8 +3,10 @@ import {
   INVALIDATE_THROTTLE_MS,
   POLL_ACTIVE_MS,
   POLL_WAITING_MS,
+  STALE_AFTER_MS,
   classifyPollResponse,
   isActive,
+  isStaleNow,
   nextIntervalMs,
   shouldInvalidate,
   terminalTransitions,
@@ -62,6 +64,18 @@ describe("classifyPollResponse", () => {
     expect(classifyPollResponse(500, null, false).kind).toBe("error");
     expect(classifyPollResponse(502, "text/html", false).kind).toBe("error");
     expect(classifyPollResponse(0, null, false).kind).toBe("error");
+  });
+});
+
+describe("isStaleNow", () => {
+  it("flips true only past the threshold and never with a clear staleSince", () => {
+    const t0 = 50_000;
+    expect(isStaleNow(null, t0)).toBe(false);
+    expect(isStaleNow(t0, t0)).toBe(false);
+    expect(isStaleNow(t0, t0 + STALE_AFTER_MS)).toBe(false);
+    expect(isStaleNow(t0, t0 + STALE_AFTER_MS + 1)).toBe(true);
+    // The manager re-evaluates on EVERY failed poll (cadence ≤ 15s), so the
+    // first failure past the threshold flips rune state (CODEX1 re-review #4).
   });
 });
 

@@ -6,7 +6,9 @@ import {
   dedupKeys,
   displayName,
   durationMs,
+  jobLocCodes,
   jobOutcome,
+  jobTarget,
   retryDelayMs,
   statusColor,
   type EnsureSummary,
@@ -80,11 +82,18 @@ describe("jobOutcome", () => {
     expect(spent.kind).toBe("fail");
   });
 
-  it("transient unit failures retry while attempts remain, complete when spent", () => {
+  it("transient unit failures retry while attempts remain, FAIL when exhausted (never a quiet success)", () => {
     const s = summary({ refreshed: ["L1"], failed: [failure("transient", "L2")] });
     expect(jobOutcome(s, 1, 4).kind).toBe("retry");
-    // Attempts spent: transient failures land in the result, not a job fail.
-    expect(jobOutcome(s, 4, 4).kind).toBe("complete");
+    // Attempts spent: a location that 500s through every round is a terminal
+    // job failure the UI must surface (CODEX1 re-review #1) — with the
+    // partial result preserved.
+    const spent = jobOutcome(s, 4, 4);
+    expect(spent.kind).toBe("fail");
+    if (spent.kind === "fail") {
+      expect(spent.error).toMatch(/after 4 attempts/);
+      expect(spent.result.refreshed).toEqual(["L1"]);
+    }
   });
 
   it("cooldown-only remainder retries just past the cooldown and NEVER exhausts the budget", () => {
@@ -134,6 +143,38 @@ describe("dedup keys", () => {
     expect(dedupKeys.retryLoc("L123")).toBe("retry_loc:L123");
     expect(dedupKeys.syncLifelist(7)).toBe("sync_lifelist:u7");
     expect(dedupKeys.syncTaxonomy()).toBe("sync_taxonomy:global");
+  });
+});
+
+describe("payload projections", () => {
+  it("jobTarget scopes region jobs to their region, multi-loc loads to null", () => {
+    expect(
+      jobTarget("analyze_counties", { regionCode: "US-ME", counties: [] }),
+    ).toBe("US-ME");
+    expect(
+      jobTarget("load_region", { locs: [{ code: "US-TX", kind: "region" }] }),
+    ).toBe("US-TX");
+    expect(jobTarget("refresh_loc", { locs: [{ code: "L123" }] })).toBe("L123");
+    expect(
+      jobTarget("load_hotspots", { locs: [{ code: "L1" }, { code: "L2" }] }),
+    ).toBeNull();
+    expect(jobTarget("analyze_counties", {})).toBeNull();
+    expect(jobTarget("load_region", null)).toBeNull();
+  });
+
+  it("jobLocCodes lists covered codes for loc AND county payloads, codes only", () => {
+    expect(
+      jobLocCodes({ locs: [{ code: "L1", name: "secret name" }, { code: "L2" }] }),
+    ).toEqual(["L1", "L2"]);
+    expect(
+      jobLocCodes({
+        regionCode: "US-ME",
+        counties: [{ code: "US-ME-001", name: "Androscoggin" }],
+      }),
+    ).toEqual(["US-ME-001"]);
+    expect(jobLocCodes({})).toEqual([]);
+    expect(jobLocCodes(null)).toEqual([]);
+    expect(jobLocCodes({ locs: [{ code: 5 }, {}] })).toEqual([]);
   });
 });
 

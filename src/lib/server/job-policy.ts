@@ -107,11 +107,22 @@ export function jobOutcome(
 		};
 	}
 
-	if (transientFailures.length > 0 && attemptsLeft) {
+	if (transientFailures.length > 0) {
+		if (attemptsLeft) {
+			return {
+				kind: 'retry',
+				delayMs: retryDelayMs(attempt, 'transient'),
+				reason: `${transientFailures.length} location(s) hit transient eBird errors`,
+				result: summary
+			};
+		}
+		// Exhausted transient failures are a TERMINAL failure, never a quiet
+		// success — a location that 500s through every round must surface as
+		// failed in the UI (CODEX1 re-review #1). The summary still carries
+		// whatever did load.
 		return {
-			kind: 'retry',
-			delayMs: retryDelayMs(attempt, 'transient'),
-			reason: `${transientFailures.length} location(s) hit transient eBird errors`,
+			kind: 'fail',
+			error: `${transientFailures.length} location(s) still failing with transient eBird errors after ${maxAttempts} attempts.`,
 			result: summary
 		};
 	}
@@ -149,6 +160,48 @@ export const dedupKeys = {
 	syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
 	syncTaxonomy: () => 'sync_taxonomy:global'
 } as const;
+
+// ---------------------------------------------------------------------------
+// Safe payload projections (for /api/jobs decoration — never credentials)
+// ---------------------------------------------------------------------------
+
+/**
+ * The job's target identity for UI scoping — e.g. the species page must bind
+ * "Analyzing…" to THAT region's job, not any analyze job globally (CODEX1
+ * re-review #3). Region jobs answer with their region code; multi-loc loads
+ * have no single identity and answer null.
+ */
+export function jobTarget(type: string, payload: unknown): string | null {
+	const p = payload as {
+		regionCode?: unknown;
+		locs?: { code?: unknown }[];
+	} | null;
+	if (type === 'analyze_counties' && typeof p?.regionCode === 'string') {
+		return p.regionCode;
+	}
+	if (
+		(type === 'load_region' || type === 'refresh_loc' || type === 'retry_loc') &&
+		Array.isArray(p?.locs) &&
+		typeof p.locs[0]?.code === 'string'
+	) {
+		return p.locs[0].code;
+	}
+	return null;
+}
+
+/**
+ * Every loc code an active job covers, so pages can disable per-row Load
+ * buttons for locations already being fetched (CODEX1 re-review #5). Codes
+ * only — names/regions stay out of the wire format.
+ */
+export function jobLocCodes(payload: unknown): string[] {
+	const p = payload as {
+		locs?: { code?: unknown }[];
+		counties?: { code?: unknown }[];
+	} | null;
+	const arr = Array.isArray(p?.locs) ? p.locs : Array.isArray(p?.counties) ? p.counties : [];
+	return arr.map((x) => x?.code).filter((c): c is string => typeof c === 'string');
+}
 
 // ---------------------------------------------------------------------------
 // Progress + decoration

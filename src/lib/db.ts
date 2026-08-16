@@ -15,7 +15,10 @@ function getPool(): pg.Pool {
 			password: env.PGPASSWORD,
 			max: 10,
 			idleTimeoutMillis: 30_000,
-			application_name: 'birds-app'
+			// The worker process sets BIRDS_DB_APP_NAME before its first query so
+			// its claims/progress/handler traffic is distinguishable from web
+			// traffic in pg_stat_activity (CODEX1 re-review #6).
+			application_name: env.BIRDS_DB_APP_NAME ?? 'birds-app'
 		});
 	}
 	return pool;

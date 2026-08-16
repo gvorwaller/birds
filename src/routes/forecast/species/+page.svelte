@@ -20,8 +20,13 @@
   // ≤12-per-click resubmit loop is gone. The worker reports per-county
   // progress; the throttled invalidateAll refreshes the ranking as counties
   // land, and countyCoverage catches the bar up between polls.
+  // Scoped to THIS state via the job's target (CODEX1 re-review #3): while
+  // Maine analyzes, a Texas page must neither disable its action nor label
+  // Maine's counts as Texas progress.
   const analyzeJob = $derived(
-    jobsPoll.active.find((j) => j.type === "analyze_counties") ?? null,
+    jobsPoll.active.find(
+      (j) => j.type === "analyze_counties" && j.target === data.region?.code,
+    ) ?? null,
   );
   const analyzing = $derived(analyzeJob != null);
 

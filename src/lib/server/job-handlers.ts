@@ -122,6 +122,20 @@ async function runFrequencyJob(
 	});
 	const summary = summarize(ensure);
 
+	// Resolve termination ONCE MORE after ensure returns (CODEX1 re-review #2).
+	// Race policy, most-specific intent first:
+	// - cancel: a cancel observed by the LAST unit's progress write never went
+	//   through shouldStop — without this re-check the job would record
+	//   succeeded against the user's explicit cancel (and cancel_requested
+	//   would linger TRUE on a terminal row).
+	// - drain: any drain with work REMAINING is necessarily observed by
+	//   shouldStop (checked at the loop top and around the 5xx-retry sleep), so
+	//   an unobserved drain means every unit was attempted; completing (or
+	//   letting jobOutcome schedule its 429/transient backoff) is then correct,
+	//   and a blanket requeue would re-run a finished force-job from scratch or
+	//   turn a rate-limit backoff into an immediate re-hit. No post-check.
+	if (!stopCause && cancelSeen) stopCause = 'cancel';
+
 	// One termination path per cause (GROK #6):
 	if (stopCause === 'cancel') {
 		await cancelRunningJob(job.id, attempts, summary);

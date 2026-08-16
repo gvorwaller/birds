@@ -83,19 +83,37 @@
     if (q) jobsPoll.track(q.jobId);
   });
 
-  // Loaded rows leave unloadedNearby on re-render; prune them from the
-  // selection so counts stay honest mid-loop.
+  // Loc codes an ACTIVE job already covers: their rows show "Queued…" instead
+  // of a live Load button, so a covered row can't enqueue a second job
+  // (CODEX1 re-review #5 — dedup keys hash the whole set, so a singleton
+  // enqueue would NOT dedup against a multi-loc job containing it).
+  const coveredLocs = $derived(
+    new Set(jobsPoll.active.flatMap((j) => j.locCodes ?? [])),
+  );
+
+  // Loaded rows leave unloadedNearby on re-render, and covered rows are
+  // already being fetched by a job — prune both from the selection so counts
+  // stay honest.
   $effect(() => {
     const available = new Set(
       (data.view?.unloadedNearby ?? []).map((h) => h.locId),
     );
-    if (selectedLocs.some((id) => !available.has(id))) {
-      selectedLocs = selectedLocs.filter((id) => available.has(id));
+    if (
+      selectedLocs.some((id) => !available.has(id) || coveredLocs.has(id))
+    ) {
+      selectedLocs = selectedLocs.filter(
+        (id) => available.has(id) && !coveredLocs.has(id),
+      );
     }
   });
 
   function selectAllShown() {
-    selectedLocs = [...new Set([...selectedLocs, ...unloadedShown.map((h) => h.locId)])];
+    selectedLocs = [
+      ...new Set([
+        ...selectedLocs,
+        ...unloadedShown.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
+      ]),
+    ];
   }
 
   const MONTH_NAMES = [
@@ -703,6 +721,7 @@
                         type="checkbox"
                         bind:group={selectedLocs}
                         value={h.locId}
+                        disabled={coveredLocs.has(h.locId)}
                       />
                       <span class="name">{h.locName}</span>
                     </label>
@@ -745,9 +764,13 @@
                       <button
                         type="submit"
                         class="rowload"
-                        disabled={loadingLoc !== null}
+                        disabled={loadingLoc !== null || coveredLocs.has(h.locId)}
                       >
-                        {loadingLoc === h.locId ? "Queueing…" : "Load"}
+                        {coveredLocs.has(h.locId)
+                          ? "Queued…"
+                          : loadingLoc === h.locId
+                            ? "Queueing…"
+                            : "Load"}
                       </button>
                     </form>
                   {/if}

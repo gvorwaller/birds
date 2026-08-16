@@ -1,7 +1,14 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listJobs, workerHealth } from '$server/jobs';
-import { displayName, durationMs, statusColor, type JobRow } from '$server/job-policy';
+import {
+	displayName,
+	durationMs,
+	jobLocCodes,
+	jobTarget,
+	statusColor,
+	type JobRow
+} from '$server/job-policy';
 
 export interface DecoratedJob {
 	id: number;
@@ -21,7 +28,13 @@ export interface DecoratedJob {
 	startedAt: string | null;
 	finishedAt: string | null;
 	durationMs: number | null;
+	/** Region/loc identity for UI scoping (CODEX1 re-review #3); null for multi-loc loads. */
+	target: string | null;
+	/** ACTIVE jobs only: loc codes covered, so pages can disable per-row loads (CODEX1 re-review #5). */
+	locCodes?: string[];
 }
+
+const ACTIVE = new Set(['pending', 'running']);
 
 function decorate(job: JobRow, now: Date): DecoratedJob {
 	return {
@@ -41,7 +54,11 @@ function decorate(job: JobRow, now: Date): DecoratedJob {
 		enqueuedAt: new Date(job.enqueued_at).toISOString(),
 		startedAt: job.started_at ? new Date(job.started_at).toISOString() : null,
 		finishedAt: job.finished_at ? new Date(job.finished_at).toISOString() : null,
-		durationMs: durationMs(job, now)
+		durationMs: durationMs(job, now),
+		target: jobTarget(job.type, job.payload),
+		// Payload projections only for ACTIVE rows — codes, never names/creds —
+		// to bound response size (history doesn't need coverage).
+		...(ACTIVE.has(job.status) ? { locCodes: jobLocCodes(job.payload) } : {})
 	};
 }
 
