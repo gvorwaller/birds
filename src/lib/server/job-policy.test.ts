@@ -1,0 +1,173 @@
+import { describe, expect, it } from "vitest";
+import { HOTSPOT_FAILURE_COOLDOWN_MS } from "./barchart";
+import {
+  RATE_LIMIT_RETRY_DELAY_MS,
+  TRANSIENT_RETRY_DELAYS_MS,
+  dedupKeys,
+  displayName,
+  durationMs,
+  jobOutcome,
+  retryDelayMs,
+  statusColor,
+  type EnsureSummary,
+  type UnitFailure,
+} from "./job-policy";
+
+function summary(overrides: Partial<EnsureSummary> = {}): EnsureSummary {
+  return {
+    ready: [],
+    refreshed: [],
+    failed: [],
+    notAttempted: [],
+    credentialProblem: null,
+    rateLimited: false,
+    ...overrides,
+  };
+}
+
+function failure(kind: UnitFailure["kind"], code = "L1"): UnitFailure {
+  return { code, error: `${kind} problem`, kind };
+}
+
+describe("retryDelayMs", () => {
+  it("walks the transient schedule and clamps at the last entry", () => {
+    expect(retryDelayMs(1, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+    expect(retryDelayMs(2, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[1]);
+    expect(retryDelayMs(3, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[2]);
+    expect(retryDelayMs(99, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[2]);
+    expect(retryDelayMs(0, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+  });
+
+  it("rate limit uses the flat delay regardless of attempt", () => {
+    expect(retryDelayMs(1, "rate_limited")).toBe(RATE_LIMIT_RETRY_DELAY_MS);
+    expect(retryDelayMs(3, "rate_limited")).toBe(RATE_LIMIT_RETRY_DELAY_MS);
+  });
+
+  it("PROPERTY: every retry delay ≥ the hotspot failure cooldown, so a retry round never finds all units still cooling down", () => {
+    for (const d of TRANSIENT_RETRY_DELAYS_MS) {
+      expect(d).toBeGreaterThanOrEqual(HOTSPOT_FAILURE_COOLDOWN_MS);
+    }
+    expect(RATE_LIMIT_RETRY_DELAY_MS).toBeGreaterThanOrEqual(
+      HOTSPOT_FAILURE_COOLDOWN_MS,
+    );
+  });
+});
+
+describe("jobOutcome", () => {
+  it("credential problem is terminal on ANY attempt — no retry ever", () => {
+    const s = summary({ credentialProblem: "eBird rejected the sign-in." });
+    const o = jobOutcome(s, 1, 4);
+    expect(o.kind).toBe("fail");
+    if (o.kind === "fail") expect(o.error).toMatch(/rejected/);
+  });
+
+  it("rate limited retries with the flat delay, then fails when attempts run out", () => {
+    const s = summary({ rateLimited: true, notAttempted: ["L2"] });
+    const mid = jobOutcome(s, 2, 4);
+    expect(mid).toMatchObject({ kind: "retry", delayMs: RATE_LIMIT_RETRY_DELAY_MS });
+    const last = jobOutcome(s, 4, 4);
+    expect(last.kind).toBe("fail");
+  });
+
+  it("notAttempted remainder retries per the transient schedule", () => {
+    const s = summary({ refreshed: ["L1"], notAttempted: ["L2", "L3"] });
+    const o = jobOutcome(s, 1, 4);
+    expect(o).toMatchObject({
+      kind: "retry",
+      delayMs: TRANSIENT_RETRY_DELAYS_MS[0],
+    });
+    const spent = jobOutcome(s, 4, 4);
+    expect(spent.kind).toBe("fail");
+  });
+
+  it("transient unit failures retry while attempts remain, complete when spent", () => {
+    const s = summary({ refreshed: ["L1"], failed: [failure("transient", "L2")] });
+    expect(jobOutcome(s, 1, 4).kind).toBe("retry");
+    // Attempts spent: transient failures land in the result, not a job fail.
+    expect(jobOutcome(s, 4, 4).kind).toBe("complete");
+  });
+
+  it("cooldown-only remainder retries just past the cooldown and NEVER exhausts the budget", () => {
+    const s = summary({ failed: [failure("cooldown", "L9")] });
+    const o = jobOutcome(s, 1, 4);
+    expect(o).toMatchObject({
+      kind: "retry",
+      delayMs: HOTSPOT_FAILURE_COOLDOWN_MS + 60_000,
+    });
+    // Attempts spent → complete with the cooldown units reported (GROK #11j),
+    // never a generic failure.
+    const spent = jobOutcome(s, 4, 4);
+    expect(spent.kind).toBe("complete");
+    expect(spent.result.failed[0].kind).toBe("cooldown");
+  });
+
+  it("permanent unit failures complete with the detail in the result", () => {
+    const s = summary({ refreshed: ["L1"], failed: [failure("unit", "L2")] });
+    const o = jobOutcome(s, 1, 4);
+    expect(o.kind).toBe("complete");
+  });
+
+  it("everything-failed-permanently still completes honestly", () => {
+    const s = summary({ failed: [failure("unit", "L1"), failure("unit", "L2")] });
+    expect(jobOutcome(s, 1, 4).kind).toBe("complete");
+  });
+
+  it("all-current no-op completes", () => {
+    const s = summary({ ready: ["L1", "L2"] });
+    expect(jobOutcome(s, 1, 4).kind).toBe("complete");
+  });
+});
+
+describe("dedup keys", () => {
+  it("load_hotspots key is order-independent and bounded", () => {
+    const a = dedupKeys.loadHotspots(["L3", "L1", "L2"]);
+    const b = dedupKeys.loadHotspots(["L1", "L2", "L3"]);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^load_hotspots:[0-9a-f]{16}$/);
+    expect(dedupKeys.loadHotspots(["L1"])).not.toBe(a);
+  });
+
+  it("scalar keys embed their target", () => {
+    expect(dedupKeys.loadRegion("US-ME")).toBe("load_region:US-ME");
+    expect(dedupKeys.analyzeCounties("US-FL")).toBe("analyze_counties:US-FL");
+    expect(dedupKeys.refreshLoc("L123")).toBe("refresh_loc:L123");
+    expect(dedupKeys.retryLoc("L123")).toBe("retry_loc:L123");
+    expect(dedupKeys.syncLifelist(7)).toBe("sync_lifelist:u7");
+    expect(dedupKeys.syncTaxonomy()).toBe("sync_taxonomy:global");
+  });
+});
+
+describe("decoration", () => {
+  it("displayName combines type name and label", () => {
+    expect(displayName({ type: "load_hotspots", label: "5 hotspots near Bangor" })).toBe(
+      "Load hotspots — 5 hotspots near Bangor",
+    );
+    expect(displayName({ type: "load_region", label: "" })).toBe("Load state data");
+    expect(displayName({ type: "mystery", label: "" })).toBe("mystery");
+  });
+
+  it("durationMs handles running and finished jobs", () => {
+    const now = new Date("2026-08-15T10:01:00Z");
+    expect(durationMs({ started_at: null, finished_at: null }, now)).toBeNull();
+    expect(
+      durationMs(
+        {
+          started_at: "2026-08-15T10:00:00Z",
+          finished_at: "2026-08-15T10:00:30Z",
+        },
+        now,
+      ),
+    ).toBe(30_000);
+    expect(
+      durationMs({ started_at: "2026-08-15T10:00:00Z", finished_at: null }, now),
+    ).toBe(60_000);
+  });
+
+  it("statusColor maps every terminal and active status", () => {
+    expect(statusColor("succeeded")).toBe("ok");
+    expect(statusColor("running")).toBe("busy");
+    expect(statusColor("pending")).toBe("warn");
+    expect(statusColor("failed")).toBe("error");
+    expect(statusColor("cancelled")).toBe("muted");
+  });
+});

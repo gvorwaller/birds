@@ -2,13 +2,10 @@ import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, subregions, EbirdError } from "$server/ebird";
-import { ensureFrequencies, type EnsureResult } from "$server/barchart";
-import {
-  analyzeCountyBatch,
-  coverageFromMeta,
-  recentFailures,
-} from "$server/forecast";
+import { coverageFromMeta, recentFailures } from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
+import { enqueueJob } from "$server/jobs";
+import { dedupKeys } from "$server/job-policy";
 
 const STATE_CODE_RE = /^US-[A-Z]{2}$/;
 
@@ -294,18 +291,23 @@ export const actions: Actions = {
     }
     if (!name) return fail(400, { error: "That region is not a US state." });
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      [{ code: regionCode, kind: "region", name, regionCode }],
-      {},
-    );
-    return { ensure };
+    const { jobId, deduped } = await enqueueJob({
+      type: "load_region",
+      payload: {
+        locs: [{ code: regionCode, kind: "region", name, regionCode }],
+      },
+      dedupKey: dedupKeys.loadRegion(regionCode),
+      requestedBy: userId,
+      label: `${name} statewide`,
+    });
+    return { queued: { jobId, deduped, label: `${name} statewide` } };
   },
 
   /**
-   * Analyze the next batch of a state's counties (≤12 eBird requests) —
-   * county data is species-agnostic, so it can be populated from this page
-   * as well as from the species forecast.
+   * Analyze ALL of a state's counties as one background job — county data is
+   * species-agnostic, so it can be populated from this page as well as from
+   * the species forecast. Enqueue-time resolution (CODEX1 #1): the official
+   * county list is snapshotted into the payload here.
    */
   analyzeCounties: async ({ locals, request }) => {
     const userId = locals.scopeId!;
@@ -320,11 +322,37 @@ export const actions: Actions = {
         error: "An eBird API key is required to list counties — add one in Settings.",
       });
     }
-    const outcome = await analyzeCountyBatch(userId, apiKey, regionCode);
-    if (!outcome.ok) {
-      return fail(outcome.status, { error: outcome.message });
+    let regionName: string | null = null;
+    let counties: { code: string; name: string }[];
+    try {
+      regionName =
+        (await subregions(apiKey, "US", "subnational1")).data.find(
+          (s) => s.code === regionCode,
+        )?.name ?? null;
+      if (!regionName) {
+        return fail(400, { error: "That region is not a US state." });
+      }
+      counties = (await subregions(apiKey, regionCode, "subnational2")).data;
+    } catch (err) {
+      return fail(502, {
+        error:
+          err instanceof EbirdError
+            ? err.message
+            : "Could not list counties for that state.",
+      });
     }
-    return { ensure: outcome.ensure, progress: outcome.progress };
+    if (counties.length === 0) {
+      return fail(404, { error: "eBird lists no counties for that state." });
+    }
+
+    const { jobId, deduped } = await enqueueJob({
+      type: "analyze_counties",
+      payload: { regionCode, regionName, counties },
+      dedupKey: dedupKeys.analyzeCounties(regionCode),
+      requestedBy: userId,
+      label: `${counties.length} ${regionName} counties`,
+    });
+    return { queued: { jobId, deduped, label: `${counties.length} ${regionName} counties` } };
   },
 
   /**
@@ -352,19 +380,24 @@ export const actions: Actions = {
       return fail(400, { error: "That location has no stored data." });
     }
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      [
-        {
-          code: row.loc_code,
-          kind: row.loc_kind,
-          name: row.loc_name,
-          regionCode: row.region_code,
-        },
-      ],
-      { force: true },
-    );
-    return { ensure };
+    const { jobId, deduped } = await enqueueJob({
+      type: "refresh_loc",
+      payload: {
+        locs: [
+          {
+            code: row.loc_code,
+            kind: row.loc_kind,
+            name: row.loc_name,
+            regionCode: row.region_code,
+          },
+        ],
+        force: true,
+      },
+      dedupKey: dedupKeys.refreshLoc(row.loc_code),
+      requestedBy: userId,
+      label: `Refresh ${row.loc_name}`,
+    });
+    return { queued: { jobId, deduped, label: `Refresh ${row.loc_name}` } };
   },
 
   /**
@@ -402,18 +435,24 @@ export const actions: Actions = {
       name = known.rows[0]?.loc_name ?? row.loc_code;
     }
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      [
-        {
-          code: row.loc_code,
-          kind: row.loc_kind ?? (row.loc_code.startsWith("L") ? "hotspot" : "region"),
-          name,
-          regionCode: row.region_code,
-        },
-      ],
-      { force: true },
-    );
-    return { ensure };
+    const { jobId, deduped } = await enqueueJob({
+      type: "retry_loc",
+      payload: {
+        locs: [
+          {
+            code: row.loc_code,
+            kind:
+              row.loc_kind ?? (row.loc_code.startsWith("L") ? "hotspot" : "region"),
+            name,
+            regionCode: row.region_code,
+          },
+        ],
+        force: true,
+      },
+      dedupKey: dedupKeys.retryLoc(row.loc_code),
+      requestedBy: userId,
+      label: `Retry ${name}`,
+    });
+    return { queued: { jobId, deduped, label: `Retry ${name}` } };
   },
 };

@@ -1,0 +1,180 @@
+/**
+ * App-level jobs poller — the client half of the background-worker design.
+ * Replaces the old forecastBulkLoad fetch loop. Module-scoped runes state
+ * survives in-app navigation; because the JOBS are server-side, progress also
+ * survives reloads and tab-close (td-ca32f0): the layout starts the poller
+ * once and any active jobs are picked up wherever you are.
+ *
+ * Poll failures are visible-but-calm (GROK #3): the last known state stays
+ * up, a staleSince timestamp drives a muted "connection lost" line, and the
+ * next good poll clears it. Session expiry (401 JSON or a login-page
+ * response) stops polling quietly — the jobs keep running server-side.
+ *
+ * Safari reality (GROK #2): timers freeze in background tabs and bfcache
+ * restores skip onMount — so visibilitychange + pageshow both trigger an
+ * immediate poll, and there is no wall-clock stop condition.
+ */
+import { browser } from '$app/environment';
+import { invalidateAll } from '$app/navigation';
+import {
+	classifyPollResponse,
+	isActive,
+	nextIntervalMs,
+	shouldInvalidate,
+	STALE_AFTER_MS
+} from '$lib/job-poll-core';
+
+export interface WorkerInfo {
+	alive: boolean;
+	state: string | null;
+	pid: number | null;
+	version: string | null;
+	heartbeatAt: string | null;
+	currentJobId: number | null;
+}
+
+export interface JobInfo {
+	id: number;
+	type: string;
+	status: string;
+	label: string;
+	displayName: string;
+	statusColor: string;
+	attempts: number;
+	maxAttempts: number;
+	nextRetryAt: string | null;
+	cancelRequested: boolean;
+	progress: {
+		phase?: string;
+		unitsTotal?: number;
+		unitsDone?: number;
+		unitsFailed?: number;
+		unitsSkipped?: number;
+		currentUnit?: { code: string; name: string };
+		lastError?: string;
+	};
+	error: string | null;
+	requestedBy: number;
+	enqueuedAt: string;
+	finishedAt: string | null;
+}
+
+class JobsPoll {
+	worker = $state<WorkerInfo | null>(null);
+	jobs = $state<JobInfo[]>([]);
+	/** Set while polls are failing; null when the last poll succeeded. */
+	staleSince = $state<number | null>(null);
+	/** True after an auth stop — session gone, polling suspended. */
+	authStopped = $state(false);
+
+	#timer: ReturnType<typeof setTimeout> | null = null;
+	#running = false;
+	#graceDone = false;
+	#lastInvalidate = 0;
+	#listenersBound = false;
+
+	get active(): JobInfo[] {
+		return this.jobs.filter((j) => isActive(j));
+	}
+	get recent(): JobInfo[] {
+		return this.jobs.filter((j) => !isActive(j));
+	}
+	get isStale(): boolean {
+		return this.staleSince != null && Date.now() - this.staleSince > STALE_AFTER_MS;
+	}
+
+	/** Start (or wake) the poller. Safe to call repeatedly; used by layout mount, enqueue results, and track(). */
+	start(): void {
+		if (!browser) return;
+		this.authStopped = false;
+		this.#bindListeners();
+		if (this.#running) return;
+		this.#running = true;
+		this.#graceDone = false;
+		void this.#poll();
+	}
+
+	/** An action just enqueued jobId — poll immediately so it appears at once. */
+	track(_jobId: number): void {
+		this.start();
+		if (this.#timer) {
+			clearTimeout(this.#timer);
+			this.#timer = null;
+			void this.#poll();
+		}
+	}
+
+	async cancel(jobId: number): Promise<void> {
+		try {
+			await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+		} catch {
+			// next poll shows reality either way
+		}
+		this.track(jobId);
+	}
+
+	#bindListeners(): void {
+		if (this.#listenersBound || !browser) return;
+		this.#listenersBound = true;
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible' && !this.authStopped) this.track(0);
+		});
+		window.addEventListener('pageshow', () => {
+			if (!this.authStopped) this.track(0);
+		});
+	}
+
+	async #poll(): Promise<void> {
+		if (!this.#running) return;
+		let parsed: ReturnType<typeof classifyPollResponse> = { kind: 'error' };
+		try {
+			const res = await fetch('/api/jobs', { headers: { accept: 'application/json' } });
+			const text = await res.text();
+			const looksJson = text.trimStart().startsWith('{');
+			parsed = classifyPollResponse(res.status, res.headers.get('content-type'), looksJson);
+			if (parsed.kind === 'ok') {
+				const data = JSON.parse(text) as { worker: WorkerInfo; jobs: JobInfo[] };
+				const prev = this.jobs;
+				this.worker = data.worker;
+				this.jobs = data.jobs;
+				this.staleSince = null;
+				if (
+					/^\/forecast(\/|$)?/.test(location.pathname) &&
+					shouldInvalidate(prev, data.jobs, this.#lastInvalidate, Date.now())
+				) {
+					this.#lastInvalidate = Date.now();
+					void invalidateAll();
+				}
+			}
+		} catch {
+			parsed = { kind: 'error' };
+		}
+
+		if (parsed.kind === 'auth') {
+			// Session gone: stop quietly. Jobs keep running server-side.
+			this.authStopped = true;
+			this.#running = false;
+			return;
+		}
+		if (parsed.kind === 'error' && this.staleSince == null) {
+			this.staleSince = Date.now();
+		}
+
+		const interval = nextIntervalMs(this.jobs);
+		if (interval == null && parsed.kind === 'ok') {
+			if (this.#graceDone) {
+				this.#running = false;
+				return;
+			}
+			this.#graceDone = true;
+			this.#timer = setTimeout(() => void this.#poll(), 15_000);
+			return;
+		}
+		this.#graceDone = false;
+		// On failed polls keep trying at the active cadence — silence is the
+		// point; staleSince carries the honesty.
+		this.#timer = setTimeout(() => void this.#poll(), interval ?? 2_500);
+	}
+}
+
+export const jobsPoll = new JobsPoll();

@@ -89,18 +89,30 @@ export interface AttemptMeta {
 	error: string | null;
 }
 
+/**
+ * Structured per-unit failure classification (CODEX1 #2) — attached where the
+ * typed error is still in hand, so job policy never parses messages.
+ */
+export type UnitFailureKind = 'credential' | 'rate_limited' | 'transient' | 'unit' | 'cooldown';
+
+export interface UnitOutcome {
+	status: 'ok' | 'failed' | 'skipped';
+	kind?: UnitFailureKind;
+	error?: string;
+}
+
 export interface EnsureResult {
 	/** Locs already stored and current (no fetch needed). */
 	ready: string[];
 	/** Locs fetched and stored during this invocation. */
 	refreshed: string[];
-	failed: { code: string; error: string }[];
+	failed: { code: string; error: string; kind: UnitFailureKind }[];
 	/** Locs needing a fetch that this invocation did not attempt (cap or abort). */
 	notAttempted: string[];
 	/** Human message when the CAS session/credentials blocked the batch. */
 	credentialProblem: string | null;
-	/** True when another batch for this owner was already running. */
-	busy: boolean;
+	/** True when eBird 429'd and the batch stopped early (job policy backs off). */
+	rateLimited: boolean;
 }
 
 /** The last complete calendar year — the newest year we ever request. */
@@ -458,10 +470,31 @@ export interface LocToEnsure {
 	regionCode?: string | null;
 }
 
+/** How the batch should wind down early, if at all. */
+export type StopSignal = 'no' | 'cancel' | 'drain';
+
 interface EnsureOptions {
+	/**
+	 * Max locations fetched this invocation. Default FETCH_BATCH_MAX (12) for
+	 * request-path callers; the WORKER passes Infinity — no clamp (GROK #8).
+	 */
 	maxFetches?: number;
+	/** Wall-clock budget; default BATCH_TIME_BUDGET_MS. Worker passes Infinity. */
+	timeBudgetMs?: number;
 	/** Refetch even when stored data is current (owner-triggered "Refresh"). */
 	force?: boolean;
+	/**
+	 * Per-unit callback for job progress/events. Invoked OUTSIDE the fetch
+	 * try/catch (CODEX1 #6): its failure must never convert a stored row into
+	 * a barchart failure.
+	 */
+	onUnit?: (loc: LocToEnsure, outcome: UnitOutcome) => Promise<void>;
+	/**
+	 * Cooperative stop — checked between units AND around the 5xx retry sleep
+	 * (GROK #6). 'cancel' and 'drain' both route remaining locs to
+	 * notAttempted and return normally; the CALLER decides the job's fate.
+	 */
+	shouldStop?: () => Promise<StopSignal>;
 	/** Injectable for tests: returns raw TSV text. */
 	fetcher?: (userId: number, locCode: string, beginYear: number, endYear: number) => Promise<string>;
 	/** Injectable for tests: start-to-start pacing delay. */
@@ -469,23 +502,13 @@ interface EnsureOptions {
 	now?: () => Date;
 }
 
-// Per-owner single-flight lease: one active barchart batch per data owner,
-// process-wide. Overlapping invocations (second tab, double-submit, the client
-// auto-loop racing itself) return busy instead of fanning out in parallel.
-// The lease self-expires: with request timeouts and the batch time budget a
-// batch is bounded well under this, so an entry older than the maximum can
-// only be wreckage — never let it lock the owner out until a restart.
-const LEASE_MAX_MS = 7 * 60_000;
 /** Stop starting new fetches once a batch has run this long (resumable). */
 export const BATCH_TIME_BUDGET_MS = 4 * 60_000;
-const activeBatch = new Map<number, number>(); // userId → startedAt epoch ms
-// NOTE: there is deliberately NO daily fetch ceiling (removed 2026-08-15,
-// GBV: "WTF is the logic behind that false ceiling"). It was an arbitrary
-// runaway-bug backstop that became a real obstacle to legitimate bulk
-// loading, was in-memory (reset by every deploy), and double-billed retries.
-// Runaway protection comes from the guards that matter: owner-triggered
-// only, FETCH_BATCH_MAX per invocation, sequential spacing, the lease, the
-// batch time budget, and the failure cooldown.
+// NOTE: there is deliberately NO in-memory lease anymore — serialization is
+// the worker queue (concurrency 1 + the Postgres advisory lock). And NO daily
+// fetch ceiling (removed 2026-08-15, GBV: "WTF is the logic behind that false
+// ceiling"). Politeness = worker-only fetching, sequential spacing, the 5xx
+// retry-once, the failure cooldown, and the 429 stop.
 
 async function defaultFetcher(
 	userId: number,
@@ -517,14 +540,19 @@ export async function ensureFrequencies(
 		failed: [],
 		notAttempted: [],
 		credentialProblem: null,
-		busy: false
+		rateLimited: false
 	};
 	if (locs.length === 0) return result;
 
-	const maxFetches = Math.min(opts.maxFetches ?? FETCH_BATCH_MAX, FETCH_BATCH_MAX);
+	// No clamp: the worker passes Infinity to cover a whole job in one call
+	// (GROK #8 — a half-removed clamp here would silently truncate to 12).
+	const maxFetches = opts.maxFetches ?? FETCH_BATCH_MAX;
+	const timeBudgetMs = opts.timeBudgetMs ?? BATCH_TIME_BUDGET_MS;
 	const fetcher = opts.fetcher ?? defaultFetcher;
 	const sleep = opts.sleep ?? defaultSleep;
 	const now = opts.now ?? (() => new Date());
+	const onUnit = opts.onUnit ?? (async () => {});
+	const shouldStop = opts.shouldStop ?? (async () => 'no' as StopSignal);
 
 	const endYear = lastCompleteYear(now());
 	const beginYear = endYear - (YEARS_BACK - 1);
@@ -539,118 +567,115 @@ export async function ensureFrequencies(
 	result.ready = locs.filter((l) => current(l.code)).map((l) => l.code);
 	if (toFetch.length === 0) return result;
 
-	const leaseHeldAt = activeBatch.get(userId);
-	if (leaseHeldAt != null && now().getTime() - leaseHeldAt < LEASE_MAX_MS) {
-		result.busy = true;
-		result.notAttempted = toFetch.map((l) => l.code);
-		return result;
-	}
+	// One taxonomy load per invocation, not per location; lazy so a batch
+	// that aborts before its first fetch never pays for it.
+	let matcherPromise: ReturnType<typeof buildMatcher> | null = null;
+	const getMatcher = () => (matcherPromise ??= buildMatcher());
+	// Recently failed locations sit out a short cooldown — reported as
+	// SKIPPED with kind 'cooldown' (CODEX1 #6): no fetch, no fresh failure;
+	// job policy retries at the cooldown expiry. Explicit force bypasses.
+	const priorAttempts = opts.force
+		? new Map<string, AttemptMeta>()
+		: await attemptMeta(toFetch.map((l) => l.code));
 	const batchStart = now().getTime();
-	activeBatch.set(userId, batchStart);
-	try {
-		// One taxonomy load per invocation, not per location; lazy so a batch
-		// that aborts before its first fetch never pays for it.
-		let matcherPromise: ReturnType<typeof buildMatcher> | null = null;
-		const getMatcher = () => (matcherPromise ??= buildMatcher());
-		// Recently failed locations sit out a short cooldown instead of being
-		// re-attempted (and re-billed against the daily cap) EVERY loop round —
-		// the spend inflation that silently exhausted the cap on prod
-		// (2026-08-15). Reported as failed with their stored error so batch
-		// loops account for them and terminate. Explicit force retries bypass.
-		const priorAttempts = opts.force
-			? new Map<string, AttemptMeta>()
-			: await attemptMeta(toFetch.map((l) => l.code));
-		let attempted = 0;
-		let lastStart = 0;
-		let rateLimited = false;
-		for (const loc of toFetch) {
-			const prior = priorAttempts.get(loc.code);
-			if (
-				prior?.status === 'error' &&
-				now().getTime() - prior.lastAttemptAt.getTime() < HOTSPOT_FAILURE_COOLDOWN_MS
-			) {
-				result.failed.push({
-					code: loc.code,
-					error: `${prior.error ?? 'failed recently'} (waiting before retrying)`
-				});
-				continue;
-			}
-			if (
-				attempted >= maxFetches ||
-				// Batch time budget: a slow eBird evening must not hold the lease
-				// for long — leave the rest for the next (resumable) invocation.
-				now().getTime() - batchStart > BATCH_TIME_BUDGET_MS
-			) {
-				result.notAttempted.push(loc.code);
-				continue;
-			}
-			if (result.credentialProblem || rateLimited) {
-				// Auth failed or eBird told us to back off — do not burn more calls.
-				result.notAttempted.push(loc.code);
-				continue;
-			}
+	let attempted = 0;
+	let lastStart = 0;
+	let stopped = false;
 
-			const sinceLast = Date.now() - lastStart;
-			if (lastStart > 0 && sinceLast < FETCH_SPACING_MS) {
-				await sleep(FETCH_SPACING_MS - sinceLast);
-			}
-			lastStart = Date.now();
-			attempted++;
-
-			try {
-				let tsv: string;
-				try {
-					tsv = await fetcher(userId, loc.code, beginYear, endYear);
-				} catch (err) {
-					// eBird's export throws one-off 5xxs (seen live on prod,
-					// 2026-08-14: a lone 500 that succeeded seconds later). One
-					// automatic retry after a short pause absorbs the hiccup; a
-					// second failure is treated as real. 429 is excluded — backing
-					// off harder, not retrying, is the polite response there.
-					if (err instanceof EbirdUpstreamError && err.status >= 500) {
-						await sleep(FETCH_5XX_RETRY_DELAY_MS);
-						tsv = await fetcher(userId, loc.code, beginYear, endYear);
-					} else {
-						throw err;
-					}
-				}
-				const parsed = parseBarchartTsv(tsv);
-				const matcher = await getMatcher();
-				const matched = matchBarchartRows(parsed, {
-					match: (name) => matcher.match(name)
-				});
-				validateMatchedBarchart(parsed, matched, meta.get(loc.code)?.nSpecies ?? null);
-				await storeFrequencies({
-					locCode: loc.code,
-					locKind: loc.kind,
-					locName: loc.name,
-					beginYear,
-					endYear,
-					regionCode: loc.regionCode ?? null,
-					parsed,
-					matched
-				});
-				result.refreshed.push(loc.code);
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				result.failed.push({ code: loc.code, error: message });
-				if (err instanceof EbirdLoginError || err instanceof BarchartAuthError) {
-					// Session/credentials are dead — abort the batch, keep stale data.
-					// A login page at HTTP 200 counts (BarchartAuthError, CODEX8 #2).
-					result.credentialProblem = message;
-				} else if (err instanceof EbirdUpstreamError && err.status === 429) {
-					// Rate limited: a global condition, not a credential problem —
-					// stop the batch without telling the user to check Settings.
-					rateLimited = true;
-				}
-				// Anything else (bad TSV, degenerate data, 5xx) is loc-specific.
-				await recordFailedAttempt(loc, message);
-			}
+	for (const loc of toFetch) {
+		if (!stopped && (await shouldStop()) !== 'no') stopped = true;
+		if (stopped || result.credentialProblem || result.rateLimited) {
+			result.notAttempted.push(loc.code);
+			continue;
 		}
-	} finally {
-		// Release only OUR lease: a zombie batch whose lease already expired and
-		// was taken over must not free the successor's.
-		if (activeBatch.get(userId) === batchStart) activeBatch.delete(userId);
+
+		const prior = priorAttempts.get(loc.code);
+		if (
+			prior?.status === 'error' &&
+			now().getTime() - prior.lastAttemptAt.getTime() < HOTSPOT_FAILURE_COOLDOWN_MS
+		) {
+			const error = `${prior.error ?? 'failed recently'} (waiting before retrying)`;
+			result.failed.push({ code: loc.code, error, kind: 'cooldown' });
+			await onUnit(loc, { status: 'skipped', kind: 'cooldown', error });
+			continue;
+		}
+		if (attempted >= maxFetches || now().getTime() - batchStart > timeBudgetMs) {
+			result.notAttempted.push(loc.code);
+			continue;
+		}
+
+		const sinceLast = Date.now() - lastStart;
+		if (lastStart > 0 && sinceLast < FETCH_SPACING_MS) {
+			await sleep(FETCH_SPACING_MS - sinceLast);
+		}
+		lastStart = Date.now();
+		attempted++;
+
+		let outcome: UnitOutcome;
+		try {
+			let tsv: string;
+			try {
+				tsv = await fetcher(userId, loc.code, beginYear, endYear);
+			} catch (err) {
+				// eBird's export throws one-off 5xxs (seen live on prod,
+				// 2026-08-14). One automatic retry after a short pause absorbs
+				// the hiccup; a second failure is real. 429 excluded — backing
+				// off, not retrying, is the polite response. The stop signal is
+				// honored around this sleep too (GROK #6).
+				if (err instanceof EbirdUpstreamError && err.status >= 500) {
+					await sleep(FETCH_5XX_RETRY_DELAY_MS);
+					if ((await shouldStop()) !== 'no') {
+						stopped = true;
+						result.notAttempted.push(loc.code);
+						continue;
+					}
+					tsv = await fetcher(userId, loc.code, beginYear, endYear);
+				} else {
+					throw err;
+				}
+			}
+			const parsed = parseBarchartTsv(tsv);
+			const matcher = await getMatcher();
+			const matched = matchBarchartRows(parsed, {
+				match: (name) => matcher.match(name)
+			});
+			validateMatchedBarchart(parsed, matched, meta.get(loc.code)?.nSpecies ?? null);
+			await storeFrequencies({
+				locCode: loc.code,
+				locKind: loc.kind,
+				locName: loc.name,
+				beginYear,
+				endYear,
+				regionCode: loc.regionCode ?? null,
+				parsed,
+				matched
+			});
+			result.refreshed.push(loc.code);
+			outcome = { status: 'ok' };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			// Structured classification at the point where the typed error is
+			// in hand (CODEX1 #2) — job policy never parses messages.
+			let kind: UnitFailureKind = 'unit';
+			if (err instanceof EbirdLoginError || err instanceof BarchartAuthError) {
+				// Session/credentials are dead — abort the batch, keep stale data.
+				result.credentialProblem = message;
+				kind = 'credential';
+			} else if (err instanceof EbirdUpstreamError && err.status === 429) {
+				result.rateLimited = true;
+				kind = 'rate_limited';
+			} else if (err instanceof EbirdUpstreamError) {
+				// 5xx/timeout that survived the in-batch retry.
+				kind = 'transient';
+			}
+			result.failed.push({ code: loc.code, error: message, kind });
+			await recordFailedAttempt(loc, message);
+			outcome = { status: 'failed', kind, error: message };
+		}
+		// onUnit runs OUTSIDE the fetch/parse try/catch (CODEX1 #6): a failing
+		// progress write must never convert a stored row into a barchart
+		// failure — its errors are the caller's to handle.
+		await onUnit(loc, outcome);
 	}
 	return result;
 }

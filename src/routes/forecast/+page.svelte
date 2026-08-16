@@ -8,7 +8,7 @@
   import MonthPicker from "$components/MonthPicker.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance } from "$lib/geo";
-  import { forecastBulkLoad } from "$lib/forecast-load.svelte";
+  import { jobsPoll } from "$lib/job-poll.svelte";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
   import type { ActionData, PageData } from "./$types";
@@ -71,26 +71,17 @@
   );
 
   // Multi-select loading (td-8a6f97): checkbox selection is client state;
-  // the loop itself lives in the app-level forecastBulkLoad manager so a run
-  // SURVIVES in-app navigation — leave for /help mid-run and come back to a
-  // live progress bar. ensureFrequencies fetches ≤12/invocation and skips
-  // rows that became current, so resubmitting the selection is progress-safe.
+  // the fetching itself is a background-worker JOB — the action enqueues and
+  // returns immediately, so the load survives navigation, reload, tab-close,
+  // and Safari tab freezes (td-ca32f0). Progress arrives via jobsPoll.
   let selectedLocs = $state<string[]>([]);
-  const bulk = forecastBulkLoad;
 
-  function startBulk(e: SubmitEvent) {
-    e.preventDefault();
-    if (!data.location || selectedLocs.length === 0) return;
-    void bulk.start(
-      {
-        lat: data.location.lat,
-        lng: data.location.lng,
-        dist: data.dist,
-        label: data.location.label,
-      },
-      [...selectedLocs],
-    );
-  }
+  // Any action that returns {queued} gets tracked so the job shows up in the
+  // banner within one poll tick. Duplicate tracks are harmless.
+  $effect(() => {
+    const q = form && "queued" in form ? form.queued : null;
+    if (q) jobsPoll.track(q.jobId);
+  });
 
   // Loaded rows leave unloadedNearby on re-render; prune them from the
   // selection so counts stay honest mid-loop.
@@ -199,6 +190,24 @@
       day: "numeric",
     });
   }
+
+  function fmtTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  // Terminal failures worth flagging here: jobs that FAILED within the last
+  // 15 minutes. Older history (and successes) lives in /forecast/data.
+  const recentlyFailedJobs = $derived(
+    jobsPoll.recent.filter(
+      (j) =>
+        j.status === "failed" &&
+        j.finishedAt != null &&
+        Date.now() - new Date(j.finishedAt).getTime() < 15 * 60 * 1000,
+    ),
+  );
 </script>
 
 <svelte:head>
@@ -351,9 +360,10 @@
             <input type="hidden" name="lat" value={data.location.lat} />
             <input type="hidden" name="lng" value={data.location.lng} />
             <input type="hidden" name="dist" value={data.dist} />
+            <input type="hidden" name="origin" value={data.location.label} />
             <button type="submit" disabled={loading}>
               {loading
-                ? "Loading from eBird…"
+                ? "Queueing…"
                 : v.suggested.length > 0
                   ? `Load ${v.suggested.length} suggested hotspot${v.suggested.length === 1 ? "" : "s"}`
                   : v.outdatedCount > 12
@@ -388,27 +398,65 @@
       {#if form && "error" in form && form.error}
         <p class="error">{form.error}</p>
       {/if}
-      {#if form?.ensure}
-        {#if form.ensure.credentialProblem}
-          <p class="error">{form.ensure.credentialProblem}</p>
-        {:else if form.ensure.busy}
-          <p class="notice">
-            Another data load is already running — try again in a moment.
-          </p>
-        {:else if form.ensure.failed.length > 0}
-          <p class="error">
-            {form.ensure.failed.length} hotspot{form.ensure.failed.length === 1
-              ? ""
-              : "s"} failed: {form.ensure.failed[0].error}
-          </p>
-        {:else if form.ensure.refreshed.length > 0}
-          <p class="notice ok">
-            Loaded data for {form.ensure.refreshed.length} hotspot{form.ensure
-              .refreshed.length === 1
-              ? ""
-              : "s"}.
-          </p>
-        {/if}
+      {#if form?.queued}
+        <p class="notice ok">
+          {form.queued.deduped
+            ? `Already loading — ${form.queued.label} is in the queue.`
+            : `Queued: ${form.queued.label}.`}
+          Progress shows below and in
+          <a href="/forecast/data">Forecast data</a>.
+        </p>
+      {/if}
+
+      {#if jobsPoll.active.length > 0}
+        <div class="jobsbanner">
+          {#each jobsPoll.active as j (j.id)}
+            {@const total = j.progress.unitsTotal ?? 0}
+            {@const done = j.progress.unitsDone ?? 0}
+            <div class="job">
+              <span class="bulkstatus">
+                {j.displayName}
+                {#if j.status === "running" && total > 0}
+                  — {done} of {total}
+                  {#if j.progress.currentUnit}
+                    · {j.progress.currentUnit.name}
+                  {/if}
+                {:else if j.progress.phase === "waiting_retry" && j.nextRetryAt}
+                  — hit a temporary eBird problem; retrying at {fmtTime(
+                    j.nextRetryAt,
+                  )}
+                {:else if j.status === "pending"}
+                  — waiting in queue
+                {/if}
+              </span>
+              {#if j.status === "running" && total > 0}
+                <div
+                  class="progressbar"
+                  role="progressbar"
+                  aria-valuenow={done}
+                  aria-valuemin={0}
+                  aria-valuemax={total}
+                >
+                  <div class="fill" style="width: {(done / total) * 100}%"></div>
+                </div>
+              {/if}
+            </div>
+          {/each}
+          {#if jobsPoll.isStale}
+            <p class="muted">
+              Connection to the app lost — loads continue on the server;
+              progress will catch up when the connection returns.
+            </p>
+          {/if}
+        </div>
+      {/if}
+      {#if recentlyFailedJobs.length > 0}
+        <p class="error">
+          {recentlyFailedJobs.length} recent load{recentlyFailedJobs.length === 1
+            ? ""
+            : "s"} failed — details and retry in
+          <a href="/forecast/data">Forecast data</a>.
+        </p>
       {/if}
 
       {#if covered > 0 && v.year.some((m) => m.likely + m.possible + m.longshot > 0)}
@@ -615,69 +663,35 @@
                   Clear ({selectedLocs.length})
                 </button>
               {/if}
-              {#if selectedLocs.length > 0 && !bulk.running}
-                <!-- Plain no-JS fallback posts once (≤12); with JS the
-                     app-level manager drives the loop so it survives
-                     navigating away and back. -->
-                <form method="POST" action="?/loadData" onsubmit={startBulk}>
+              {#if selectedLocs.length > 0}
+                <!-- Enqueues ONE background job for the whole selection; the
+                     worker does the fetching, so this returns immediately and
+                     the load survives navigation and reload. -->
+                <form
+                  method="POST"
+                  action="?/loadData"
+                  use:enhance={() => {
+                    loading = true;
+                    return async ({ result, update }) => {
+                      loading = false;
+                      if (result.type === "success") selectedLocs = [];
+                      await update();
+                    };
+                  }}
+                >
                   <input type="hidden" name="lat" value={data.location.lat} />
                   <input type="hidden" name="lng" value={data.location.lng} />
                   <input type="hidden" name="dist" value={data.dist} />
+                  <input type="hidden" name="origin" value={data.location.label} />
                   {#each selectedLocs as id (id)}
                     <input type="hidden" name="loc" value={id} />
                   {/each}
-                  <button type="submit" disabled={loadingLoc !== null}>
+                  <button type="submit" disabled={loading}>
                     Load selected ({selectedLocs.length})
                   </button>
                 </form>
               {/if}
-              {#if bulk.running}
-                <span class="bulkstatus"
-                  >Loading {bulk.label}… {bulk.done} of {bulk.total}</span
-                >
-              {/if}
             </div>
-            {#if bulk.running && bulk.total > 0}
-              <div
-                class="progressbar"
-                role="progressbar"
-                aria-valuenow={bulk.done}
-                aria-valuemin={0}
-                aria-valuemax={bulk.total}
-              >
-                <div
-                  class="fill"
-                  style="width: {(bulk.done / bulk.total) * 100}%"
-                ></div>
-              </div>
-            {/if}
-            {#if bulk.hasResult}
-              {#if bulk.credentialProblem}
-                <p class="error">{bulk.credentialProblem}</p>
-              {:else if bulk.busyConflict}
-                <p class="notice">
-                  Another data load was already running — try again in a
-                  moment.
-                </p>
-
-              {:else if bulk.stalled}
-                <p class="notice">
-                  Nothing could load this run — the remaining selections
-                  failed recently and are waiting out a ~15 minute cooldown
-                  before retrying.
-                </p>
-              {:else if bulk.failed.length > 0}
-                <p class="error">
-                  {bulk.failed.length} hotspot{bulk.failed.length === 1
-                    ? ""
-                    : "s"} didn't load — {bulk.failed[0].error} (eBird's export
-                  errors on some locations; retry later from Forecast data).
-                </p>
-              {/if}
-              <button type="button" class="rowload" onclick={() => bulk.dismiss()}>
-                Dismiss
-              </button>
-            {/if}
           {/if}
           <ul>
             {#each unloadedShown as h (h.locId)}
@@ -689,7 +703,6 @@
                         type="checkbox"
                         bind:group={selectedLocs}
                         value={h.locId}
-                        disabled={bulk.running}
                       />
                       <span class="name">{h.locName}</span>
                     </label>
@@ -727,13 +740,14 @@
                         value={data.location.lng}
                       />
                       <input type="hidden" name="dist" value={data.dist} />
+                      <input type="hidden" name="origin" value={data.location.label} />
                       <input type="hidden" name="loc" value={h.locId} />
                       <button
                         type="submit"
                         class="rowload"
-                        disabled={loadingLoc !== null || bulk.running}
+                        disabled={loadingLoc !== null}
                       >
-                        {loadingLoc === h.locId ? "Loading…" : "Load"}
+                        {loadingLoc === h.locId ? "Queueing…" : "Load"}
                       </button>
                     </form>
                   {/if}
@@ -875,6 +889,20 @@
     color: var(--accent);
     font-weight: 600;
     font-size: 0.9rem;
+  }
+  .jobsbanner {
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: var(--accent-soft);
+    border-radius: 8px;
+  }
+  .jobsbanner .job {
+    margin: 4px 0;
+  }
+  .jobsbanner .muted {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin: 4px 0 0;
   }
   .partial {
     background: var(--need-bg);

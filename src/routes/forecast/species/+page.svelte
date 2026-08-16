@@ -1,6 +1,5 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
-  import { tick } from "svelte";
   import { page } from "$app/state";
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
@@ -8,77 +7,30 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
+  import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let loading = $state(false);
-  let analyzing = $state(false);
-  let analyzeForm = $state<HTMLFormElement | undefined>();
-  let liveProgress = $state<{
-    total: number;
-    current: number;
-    stale: number;
-    failed: number;
-    remaining: number;
-  } | null>(null);
 
-  const progress = $derived(liveProgress ?? data.countyCoverage);
+  const progress = $derived(data.countyCoverage);
 
+  // Whole-state county analysis is now ONE background job — the old
+  // ≤12-per-click resubmit loop is gone. The worker reports per-county
+  // progress; the throttled invalidateAll refreshes the ranking as counties
+  // land, and countyCoverage catches the bar up between polls.
+  const analyzeJob = $derived(
+    jobsPoll.active.find((j) => j.type === "analyze_counties") ?? null,
+  );
+  const analyzing = $derived(analyzeJob != null);
+
+  // Any action that returns {queued} gets tracked so the job shows up in the
+  // progress banner within one poll tick. Duplicate tracks are harmless.
   $effect(() => {
-    data.region?.code;
-    data.taxon?.species_code;
-    liveProgress = null;
+    const q = form && "queued" in form ? form.queued : null;
+    if (q) jobsPoll.track(q.jobId);
   });
-
-  let analyzeAllBtn = $state<HTMLButtonElement | undefined>();
-  let autoLoop = false;
-
-  // Resumable county analysis. One batch (≤12 counties) per invocation shows
-  // useful partial results fast (UX doc #3); the "analyze all" button keeps
-  // resubmitting while there is progress and more to do. The server's
-  // per-owner single-flight lease makes overlapping loops harmless.
-  function analyzeEnhance({ submitter }: { submitter: HTMLElement | null }) {
-    analyzing = true;
-    autoLoop = (submitter as HTMLButtonElement | null)?.value === "all";
-    return async ({
-      result,
-      update,
-    }: {
-      result: { type: string; data?: Record<string, unknown> };
-      update: (opts?: { reset?: boolean }) => Promise<void>;
-    }) => {
-      await update({ reset: false });
-      if (result.type === "success" && result.data) {
-        const prog = result.data.progress as typeof liveProgress;
-        const ens = result.data.ensure as {
-          refreshed: string[];
-          failed: unknown[];
-          credentialProblem: string | null;
-          busy: boolean;
-        } | null;
-        if (prog) liveProgress = prog;
-        const madeProgress =
-          (ens?.refreshed.length ?? 0) + (ens?.failed.length ?? 0) > 0;
-        if (
-          autoLoop &&
-          prog &&
-          prog.remaining > 0 &&
-          madeProgress &&
-          !ens?.credentialProblem &&
-          !ens?.busy
-        ) {
-          // requestSubmit(disabled submitter) throws InvalidStateError.
-          // Drop the disabled flag first, then re-submit.
-          analyzing = false;
-          await tick();
-          analyzeForm?.requestSubmit(analyzeAllBtn);
-          return;
-        }
-      }
-      analyzing = false;
-    };
-  }
 
   function countyHref(
     countyCode: string | null,
@@ -340,7 +292,7 @@
               <input type="hidden" name="region" value={data.region.code} />
               <input type="hidden" name="force" value="1" />
               <button type="submit" class="secondary" disabled={loading}>
-                {loading ? "Refreshing…" : "Refresh data"}
+                {loading ? "Queueing…" : "Refresh data"}
               </button>
             </form>
           {:else}
@@ -381,7 +333,7 @@
           >
             <input type="hidden" name="region" value={data.region.code} />
             <button type="submit" disabled={loading}>
-              {loading ? "Loading from eBird…" : "Load data (one eBird request)"}
+              {loading ? "Queueing…" : "Load data (one eBird request)"}
             </button>
           </form>
         {/if}
@@ -390,24 +342,14 @@
       {#if form && "error" in form && form.error}
         <p class="error">{form.error}</p>
       {/if}
-      {#if form?.ensure && !analyzing}
-        {#if form.ensure.credentialProblem}
-          <p class="error">{form.ensure.credentialProblem}</p>
-        {:else if form.ensure.busy}
-          <p class="notice">
-            Another data load is already running — try again in a moment.
-          </p>
-        {:else if form.ensure.failed.length > 0}
-          <p class="error">
-            {form.ensure.failed.length} location{form.ensure.failed.length === 1
-              ? ""
-              : "s"} failed: {form.ensure.failed[0].error}
-          </p>
-        {:else if form.ensure.refreshed.length > 0}
-          <p class="notice ok">Data loaded from eBird.</p>
-        {:else if form.ensure.ready.length > 0}
-          <p class="notice ok">Data was already up to date.</p>
-        {/if}
+      {#if form?.queued}
+        <p class="notice ok">
+          {form.queued.deduped
+            ? `Already loading — ${form.queued.label} is in the queue.`
+            : `Queued: ${form.queued.label}.`}
+          Progress shows here and in
+          <a href="/forecast/data">Forecast data</a>.
+        </p>
       {/if}
     </section>
 
@@ -445,7 +387,29 @@
             {/if}
             · <a href="/forecast/data">details</a>
           </p>
-          {#if analyzing || (progress.current > 0 && progress.remaining > 0)}
+          {#if analyzing && analyzeJob}
+            {@const jTotal = analyzeJob.progress.unitsTotal ?? progress.total}
+            {@const jDone = analyzeJob.progress.unitsDone ?? progress.current}
+            <p class="coverage">
+              {analyzeJob.status === "pending"
+                ? analyzeJob.progress.phase === "waiting_retry"
+                  ? "Analysis hit a temporary eBird problem — it will retry automatically."
+                  : "Analysis queued — starting shortly."
+                : `Analyzing… ${jDone} of ${jTotal}${analyzeJob.progress.currentUnit ? ` · ${analyzeJob.progress.currentUnit.name}` : ""}`}
+            </p>
+            <div
+              class="progressbar"
+              role="progressbar"
+              aria-valuenow={jDone}
+              aria-valuemin={0}
+              aria-valuemax={jTotal}
+            >
+              <div
+                class="fill"
+                style="width: {jTotal > 0 ? (jDone / jTotal) * 100 : 0}%"
+              ></div>
+            </div>
+          {:else if progress.current > 0 && progress.remaining > 0}
             <div
               class="progressbar"
               role="progressbar"
@@ -460,34 +424,30 @@
             </div>
           {/if}
 
-          {#if progress.remaining > 0 && !data.isViewer}
+          {#if progress.remaining > 0 && !data.isViewer && !analyzing}
             {#if data.hasLogin}
               <form
                 method="POST"
                 action="?/analyzeCounties"
-                bind:this={analyzeForm}
-                use:enhance={analyzeEnhance}
+                use:enhance={() => {
+                  loading = true;
+                  return async ({ update }) => {
+                    loading = false;
+                    await update();
+                  };
+                }}
                 class="analyze"
               >
                 <input type="hidden" name="region" value={data.region.code} />
-                <button type="submit" value="one" disabled={analyzing}>
-                  {analyzing
-                    ? `Analyzing… ${progress.current}/${progress.total}`
+                <button type="submit" disabled={loading}>
+                  {loading
+                    ? "Queueing…"
                     : progress.current === 0
-                      ? "Analyze first counties (~15 s)"
+                      ? `Analyze all ${progress.total} counties`
                       : progress.stale > 0 &&
                           progress.current + progress.stale === progress.total
-                        ? `Refresh next outdated batch`
-                        : `Analyze next batch (${progress.remaining} left)`}
-                </button>
-                <button
-                  type="submit"
-                  value="all"
-                  class="secondary"
-                  bind:this={analyzeAllBtn}
-                  disabled={analyzing}
-                >
-                  Analyze all remaining
+                        ? "Refresh outdated counties"
+                        : `Analyze ${progress.remaining} remaining counties`}
                 </button>
               </form>
             {:else}
@@ -638,7 +598,7 @@
               <input type="hidden" name="limit" value={ch.limit} />
               <button type="submit" disabled={loading}>
                 {loading
-                  ? "Loading from eBird…"
+                  ? "Queueing…"
                   : `Load data for ${uncovered} hotspot${uncovered === 1 ? "" : "s"}`}
               </button>
             </form>

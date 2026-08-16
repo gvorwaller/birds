@@ -13,15 +13,12 @@
  */
 import { query } from '$lib/db';
 import {
-	attemptMeta,
-	ensureFrequencies,
 	frequencyMeta,
 	lastCompleteYear,
 	WEEKS,
-	type EnsureResult,
 	type FrequencyMeta
 } from '$server/barchart';
-import { EbirdError, hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
+import { hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
 
@@ -742,8 +739,6 @@ export function majorityRegionCode(hotspots: readonly EbirdHotspot[]): string | 
 // Mode B "where": county ranking + hotspot drill-down (td-854207 Phase 3)
 // ---------------------------------------------------------------------------
 
-/** Counties fetched per analyzeCounties invocation (matches FETCH_BATCH_MAX). */
-export const COUNTY_BATCH = 12;
 /** Hotspots analyzed per county drill-down. */
 export const COUNTY_HOTSPOT_LIMIT = 6;
 
@@ -856,109 +851,6 @@ export function recentFailures(
 		}
 	}
 	return out;
-}
-
-export interface CountyProgress {
-	total: number;
-	current: number;
-	stale: number;
-	failed: number;
-	remaining: number;
-}
-
-export type CountyBatchOutcome =
-	| { ok: true; ensure: EnsureResult; progress: CountyProgress }
-	| { ok: false; status: number; message: string };
-
-/**
- * Analyze the next batch of a state's counties (≤ COUNTY_BATCH eBird
- * requests) — shared by the species page and /forecast/data so county data
- * (which is species-agnostic) can be populated from either. Validates the
- * state against the official region list; progress is recomputed from the DB
- * after the batch so restarts and concurrent tabs stay truthful.
- */
-export async function analyzeCountyBatch(
-	userId: number,
-	apiKey: string,
-	regionCode: string
-): Promise<CountyBatchOutcome> {
-	let counties: { code: string; name: string }[];
-	try {
-		const states = (await subregions(apiKey, 'US', 'subnational1')).data;
-		if (!states.some((s) => s.code === regionCode)) {
-			return { ok: false, status: 400, message: 'That region is not a US state.' };
-		}
-		counties = (await subregions(apiKey, regionCode, 'subnational2')).data;
-	} catch (err) {
-		return {
-			ok: false,
-			status: 502,
-			message:
-				err instanceof EbirdError ? err.message : 'Could not list counties for that state.'
-		};
-	}
-	if (counties.length === 0) {
-		return { ok: false, status: 404, message: 'eBird lists no counties for that state.' };
-	}
-
-	const codes = counties.map((c) => c.code);
-	const newestYear = lastCompleteYear();
-	const [meta, attempts] = await Promise.all([frequencyMeta(codes), attemptMeta(codes)]);
-	const before = coverageFromMeta(codes, meta, recentFailures(attempts, new Date()), newestYear);
-	const batch = nextUncachedCounties(
-		counties,
-		new Set(before.current),
-		new Set(before.failed),
-		COUNTY_BATCH
-	);
-
-	const ensure = await ensureFrequencies(
-		userId,
-		batch.map((c) => ({
-			code: c.code,
-			kind: 'region' as const,
-			name: c.name,
-			regionCode
-		}))
-	);
-
-	const [metaAfter, attemptsAfter] = await Promise.all([
-		frequencyMeta(codes),
-		attemptMeta(codes)
-	]);
-	const after = coverageFromMeta(
-		codes,
-		metaAfter,
-		recentFailures(attemptsAfter, new Date()),
-		newestYear
-	);
-	return {
-		ok: true,
-		ensure,
-		progress: {
-			total: counties.length,
-			current: after.current.length,
-			stale: after.stale.length,
-			failed: after.failed.length,
-			remaining: after.remaining
-		}
-	};
-}
-
-/**
- * Next batch of counties to fetch: not stored yet and not recently failed —
- * failed counties must not re-enter every round or the resumable loop never
- * reaches remaining === 0 (CODEX1 #7). Pure.
- */
-export function nextUncachedCounties(
-	all: readonly { code: string; name: string }[],
-	cached: ReadonlySet<string>,
-	excludedFailed: ReadonlySet<string>,
-	batch: number
-): { code: string; name: string }[] {
-	return all
-		.filter((c) => !cached.has(c.code) && !excludedFailed.has(c.code))
-		.slice(0, batch);
 }
 
 /** One location's checklist-weighted stat for a species in a month. */

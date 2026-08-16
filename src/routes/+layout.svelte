@@ -1,12 +1,31 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/stores';
+	import { jobsPoll } from '$lib/job-poll.svelte';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
 	let menuOpen = $state(false);
 	let isViewer = $derived(data.user?.role === 'viewer');
+
+	// Background-load tracking (td-ca32f0): one app-level poller, started once
+	// per session, resumes across reloads/bfcache restores. When jobs are
+	// active anywhere in the app a slim chip links to the /forecast/data hub.
+	$effect(() => {
+		if (data.user) jobsPoll.start();
+	});
+	const activeJob = $derived(jobsPoll.active[0] ?? null);
+	const jobChipText = $derived.by(() => {
+		if (!activeJob) return '';
+		const extra = jobsPoll.active.length > 1 ? ` (+${jobsPoll.active.length - 1} more)` : '';
+		const p = activeJob.progress;
+		if (activeJob.status === 'running' && (p.unitsTotal ?? 0) > 0) {
+			return `Loading ${p.unitsDone ?? 0} of ${p.unitsTotal} — ${activeJob.displayName}${extra}`;
+		}
+		if (p.phase === 'waiting_retry') return `Load retrying soon — ${activeJob.displayName}${extra}`;
+		return `Load queued — ${activeJob.displayName}${extra}`;
+	});
 
 	// Explicit collections, not a slice of one array: primary tabs render in the
 	// top nav, the bottom nav and the drawer, while owner-only items appear in
@@ -99,6 +118,9 @@
 <main class:with-nav={!!data.user}>
 	{#if isViewer}
 		<div class="ro-banner">👀 Read-only family view — exploring Gaylon's birds.</div>
+	{/if}
+	{#if data.user && activeJob && !$page.url.pathname.startsWith('/forecast')}
+		<a class="job-chip" href="/forecast/data">⏳ {jobChipText}</a>
 	{/if}
 	{@render children()}
 </main>
@@ -215,6 +237,21 @@
 		font-size: 0.83rem;
 		font-weight: 600;
 		padding: 6px 12px;
+	}
+	.job-chip {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 48px;
+		padding: 8px 16px;
+		background: var(--accent-soft);
+		color: var(--accent);
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.job-chip:hover {
+		text-decoration: underline;
 	}
 
 	/* Drawer */

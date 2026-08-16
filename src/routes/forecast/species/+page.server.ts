@@ -10,13 +10,12 @@ import {
 } from "$server/ebird";
 import {
   attemptMeta,
-  ensureFrequencies,
   frequencyMeta,
   lastCompleteYear,
-  type EnsureResult,
 } from "$server/barchart";
+import { enqueueJob } from "$server/jobs";
+import { dedupKeys } from "$server/job-policy";
 import {
-  analyzeCountyBatch,
   selectCountyHotspots,
   calendarMonth,
   COUNTY_HOTSPOT_LIMIT,
@@ -416,19 +415,24 @@ export const actions: Actions = {
       return fail(400, { error: "That region is not a US state." });
     }
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      [{ code: regionCode, kind: "region", name: stateName, regionCode }],
-      { force },
-    );
-    return { ensure };
+    const { jobId, deduped } = await enqueueJob({
+      type: "load_region",
+      payload: {
+        locs: [{ code: regionCode, kind: "region", name: stateName, regionCode }],
+        force,
+      },
+      dedupKey: dedupKeys.loadRegion(regionCode),
+      requestedBy: userId,
+      label: `${stateName} statewide`,
+    });
+    return { queued: { jobId, deduped, label: `${stateName} statewide` } };
   },
 
   /**
-   * Analyze the next batch of counties for a state (≤ COUNTY_BATCH eBird
-   * requests). Resumable: the client loops this action until remaining
-   * reaches 0; recently failed counties sit out so the loop terminates.
-   * County targets derive from the official region list, never the form.
+   * Analyze ALL of a state's counties as ONE job. Enqueue-time resolution
+   * (CODEX1 #1): the official state is validated and the full county list is
+   * resolved HERE and written into the payload — the worker consumes that
+   * snapshot and never re-derives or re-authorizes targets.
    */
   analyzeCounties: async ({ locals, request }) => {
     const userId = locals.scopeId!;
@@ -444,12 +448,34 @@ export const actions: Actions = {
         error: "An eBird API key is required to list counties — add one in Settings.",
       });
     }
-
-    const outcome = await analyzeCountyBatch(userId, apiKey, regionCode);
-    if (!outcome.ok) {
-      return fail(outcome.status, { error: outcome.message });
+    let regionName: string | null = null;
+    let counties: { code: string; name: string }[];
+    try {
+      regionName = await validateState(apiKey, regionCode);
+      if (!regionName) {
+        return fail(400, { error: "That region is not a US state." });
+      }
+      counties = (await subregions(apiKey, regionCode, "subnational2")).data;
+    } catch (err) {
+      return fail(502, {
+        error:
+          err instanceof EbirdError
+            ? err.message
+            : "Could not list counties for that state.",
+      });
     }
-    return { ensure: outcome.ensure, progress: outcome.progress };
+    if (counties.length === 0) {
+      return fail(404, { error: "eBird lists no counties for that state." });
+    }
+
+    const { jobId, deduped } = await enqueueJob({
+      type: "analyze_counties",
+      payload: { regionCode, regionName, counties },
+      dedupKey: dedupKeys.analyzeCounties(regionCode),
+      requestedBy: userId,
+      label: `${counties.length} ${regionName} counties`,
+    });
+    return { queued: { jobId, deduped, label: `${counties.length} ${regionName} counties` } };
   },
 
   /**
@@ -505,17 +531,22 @@ export const actions: Actions = {
       return fail(404, { error: "eBird lists no hotspots in that county." });
     }
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      selected.map((h) => ({
-        code: h.locId,
-        kind: "hotspot" as const,
-        name: h.locName,
-        // Most specific containing region: the drilled county (all these
-        // hotspots belong to it) so /forecast/data nests them under it.
-        regionCode: h.subnational2Code ?? countyCode,
-      })),
-    );
-    return { ensure };
+    const locs = selected.map((h) => ({
+      code: h.locId,
+      kind: "hotspot" as const,
+      name: h.locName,
+      // Most specific containing region: the drilled county (all these
+      // hotspots belong to it) so /forecast/data nests them under it.
+      regionCode: h.subnational2Code ?? countyCode,
+    }));
+    const label = `${locs.length} hotspot${locs.length === 1 ? "" : "s"} in ${countyCode}`;
+    const { jobId, deduped } = await enqueueJob({
+      type: "load_hotspots",
+      payload: { locs },
+      dedupKey: dedupKeys.loadHotspots(locs.map((l) => l.code)),
+      requestedBy: userId,
+      label,
+    });
+    return { queued: { jobId, deduped, label } };
   },
 };

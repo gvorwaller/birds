@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev --port 5178 --strictPort",
 		"dev:test": "vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test",
-		"build": "vite build",
+		"build": "vite build && node scripts/build-worker.mjs",
 		"preview": "vite preview --port 5178",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -20,7 +20,8 @@
 		"test:db:reset": "./scripts/test-db-reset.sh",
 		"test:db:migrate": "./scripts/test-db-migrate.sh",
 		"format": "prettier --write .",
-		"lint": "prettier --check ."
+		"lint": "prettier --check .",
+		"worker:dev:test": "node scripts/build-worker.mjs && BIRDS_ENV=test node --env-file=.env.test build/worker.js"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.2.12",
@@ -29,6 +30,7 @@
 		"@types/node": "^22.10.5",
 		"@types/pg": "^8.11.10",
 		"dotenv": "^17.4.2",
+		"esbuild": "^0.28.2",
 		"prettier": "^3.4.2",
 		"prettier-plugin-svelte": "^3.3.3",
 		"svelte": "^5.17.3",

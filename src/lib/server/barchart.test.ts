@@ -478,36 +478,6 @@ describe("ensureFrequencies", () => {
     expect(result.notAttempted).toEqual(["US-C2", "US-C3"]);
   });
 
-  it("a stale lease expires: a wedged batch cannot lock the owner out", async () => {
-    queryHandler = taxonomyHandler;
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const wedged = vi.fn(async () => {
-      await gate;
-      return makeValidTsv([["Great Blue Heron", 0.25]]);
-    });
-    // Batch A acquires the lease and hangs (owner 42).
-    const first = ensureFrequencies(42, [loc("US-Z0")], {
-      fetcher: wedged,
-      sleep: noSleep,
-    });
-    await new Promise((r) => setTimeout(r, 10));
-    // 8 minutes later (> LEASE_MAX_MS), a new batch may take over.
-    const later = () => new Date(Date.now() + 8 * 60_000);
-    const second = await ensureFrequencies(42, [loc("US-Z1")], {
-      fetcher: vi.fn(async () => makeValidTsv([["Great Blue Heron", 0.25]])),
-      sleep: noSleep,
-      now: later,
-    });
-    expect(second.busy).toBe(false);
-    expect(second.refreshed).toEqual(["US-Z1"]);
-    // The zombie finishing later must not have freed the successor's lease
-    // (third call within the successor's window still sees busy=false only
-    // because the successor completed; just unwedge and settle A cleanly).
-    release();
-    await first;
-  });
-
   it("stops starting fetches once the batch time budget is spent", async () => {
     queryHandler = taxonomyHandler;
     // Deterministic clock that advances 3 minutes per FETCH (a slow eBird
@@ -568,7 +538,7 @@ describe("ensureFrequencies", () => {
     expect(forced.refreshed).toEqual(["US-CD1"]);
   });
 
-  it("returns busy instead of running a second concurrent batch per owner", async () => {
+  it("no in-process lease: overlapping calls both run (serialization now lives in the job queue)", async () => {
     queryHandler = taxonomyHandler;
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -580,14 +550,15 @@ describe("ensureFrequencies", () => {
       fetcher: slowFetcher,
       sleep: noSleep,
     });
-    // Give the first call a tick to acquire the lease.
     await new Promise((r) => setTimeout(r, 10));
+    // A second call while the first is in flight proceeds — the single
+    // worker + queue concurrency 1 is the serialization, not this module.
     const second = await ensureFrequencies(7, [loc("US-D1")], {
-      fetcher: vi.fn(),
+      fetcher: vi.fn(async () => makeValidTsv([["Great Blue Heron", 0.25]])),
       sleep: noSleep,
     });
-    expect(second.busy).toBe(true);
-    expect(second.notAttempted).toEqual(["US-D1"]);
+    expect(second.refreshed).toEqual(["US-D1"]);
+    expect(second.notAttempted).toEqual([]);
     release();
     const firstResult = await first;
     expect(firstResult.refreshed).toEqual(["US-D0"]);

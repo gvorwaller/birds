@@ -1,11 +1,25 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
+  import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let refreshing = $state<string | null>(null);
+
+  // This page is the load/progress hub — force a fresh poll on arrival so
+  // the jobs list is current even if the poller had gone idle.
+  $effect(() => {
+    jobsPoll.track(0);
+  });
+
+  // Any action that returns {queued} gets tracked so the new job appears in
+  // the active list within one poll tick. Duplicate tracks are harmless.
+  $effect(() => {
+    const q = form && "queued" in form ? form.queued : null;
+    if (q) jobsPoll.track(q.jobId);
+  });
 
   // Which state sections are expanded — remembered across sessions (GBV).
   const OPEN_KEY = "forecast-data-open-states";
@@ -71,6 +85,26 @@
       day: "numeric",
     });
   }
+
+  function fmtTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  function fmtDuration(ms: number | null): string {
+    if (ms == null) return "";
+    if (ms < 1000) return "<1 s";
+    const s = Math.round(ms / 1000);
+    if (s < 90) return `${s} s`;
+    return `${Math.round(s / 60)} min`;
+  }
+
+  function jobDuration(j: (typeof jobsPoll.jobs)[number]): number | null {
+    if (!j.finishedAt) return null;
+    return new Date(j.finishedAt).getTime() - new Date(j.enqueuedAt).getTime();
+  }
 </script>
 
 {#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number])}
@@ -101,7 +135,7 @@
           class="secondary"
           disabled={refreshing !== null}
         >
-          {refreshing === r.locCode ? "Refreshing…" : "Refresh"}
+          {refreshing === r.locCode ? "Queueing…" : "Refresh"}
         </button>
       </form>
     </td>
@@ -159,26 +193,115 @@
   {#if form && "error" in form && form.error}
     <p class="error">{form.error}</p>
   {/if}
-  {#if form?.ensure}
-    {#if form.ensure.credentialProblem}
-      <p class="error">{form.ensure.credentialProblem}</p>
-    {:else if form.ensure.busy}
-      <p class="notice">Another data load is already running — try again in a moment.</p>
-    {:else if form.ensure.failed.length > 0}
-      <p class="error">Refresh failed: {form.ensure.failed[0].error}</p>
-    {:else if form.ensure.refreshed.length > 0}
-      <p class="notice ok">
-        {#if "progress" in form && form.progress}
-          Analyzed {form.ensure.refreshed.length} count{form.ensure.refreshed
-            .length === 1
-            ? "y"
-            : "ies"} — {form.progress.current}/{form.progress.total} done.
-        {:else}
-          Refreshed {form.ensure.refreshed[0]}.
-        {/if}
+  {#if form?.queued}
+    <p class="notice ok">
+      {form.queued.deduped
+        ? `Already loading — ${form.queued.label} is in the queue.`
+        : `Queued: ${form.queued.label}.`}
+    </p>
+  {/if}
+
+  <section class="card">
+    <h2>Background loads</h2>
+    {#if jobsPoll.worker && !jobsPoll.worker.alive}
+      <p class="error">
+        The background worker isn't running — queued loads will wait until it
+        returns. (It restarts automatically on deploys; if this persists,
+        something is wrong.)
       </p>
     {/if}
-  {/if}
+    {#if jobsPoll.isStale}
+      <p class="notice">
+        Connection to the app lost — loads continue on the server; this list
+        will catch up when the connection returns.
+      </p>
+    {/if}
+    {#if jobsPoll.active.length === 0}
+      <p class="notice">No loads running or queued.</p>
+    {:else}
+      <ul class="jobs">
+        {#each jobsPoll.active as j (j.id)}
+          {@const total = j.progress.unitsTotal ?? 0}
+          {@const done = j.progress.unitsDone ?? 0}
+          <li>
+            <div class="jobhead">
+              <strong>{j.displayName}</strong>
+              <span class="jobstatus" data-color={j.statusColor}>
+                {#if j.cancelRequested}
+                  cancelling…
+                {:else if j.status === "running"}
+                  running{#if total > 0}
+                    &nbsp;— {done} of {total}{/if}
+                {:else if j.progress.phase === "waiting_retry"}
+                  retrying {j.nextRetryAt ? `at ${fmtTime(j.nextRetryAt)}` : "soon"}
+                  (attempt {j.attempts} of {j.maxAttempts})
+                {:else}
+                  queued
+                {/if}
+              </span>
+              {#if !data.isViewer && !j.cancelRequested}
+                <button
+                  type="button"
+                  class="secondary"
+                  onclick={() => jobsPoll.cancel(j.id)}
+                >
+                  Cancel
+                </button>
+              {/if}
+            </div>
+            {#if j.status === "running" && total > 0}
+              <div
+                class="progressbar"
+                role="progressbar"
+                aria-valuenow={done}
+                aria-valuemin={0}
+                aria-valuemax={total}
+              >
+                <div class="fill" style="width: {(done / total) * 100}%"></div>
+              </div>
+              {#if j.progress.currentUnit}
+                <p class="jobdetail">now: {j.progress.currentUnit.name}</p>
+              {/if}
+            {/if}
+            {#if j.progress.lastError}
+              <p class="jobdetail err">last problem: {j.progress.lastError}</p>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if jobsPoll.recent.length > 0}
+      <details class="history">
+        <summary>Recent loads ({jobsPoll.recent.length})</summary>
+        <ul class="jobs">
+          {#each jobsPoll.recent as j (j.id)}
+            <li>
+              <div class="jobhead">
+                <strong>{j.displayName}</strong>
+                <span class="jobstatus" data-color={j.statusColor}>
+                  {j.status}{#if j.finishedAt}
+                    &nbsp;· {fmtDate(j.finishedAt)}
+                    {fmtTime(j.finishedAt)}{/if}{#if jobDuration(j) != null}
+                    &nbsp;· {fmtDuration(jobDuration(j))}{/if}
+                </span>
+              </div>
+              {#if j.error}
+                <p class="jobdetail err">{j.error}</p>
+              {/if}
+              {#if (j.progress.unitsFailed ?? 0) > 0}
+                <p class="jobdetail">
+                  {j.progress.unitsFailed} of {j.progress.unitsTotal} location{(j
+                    .progress.unitsFailed ?? 0) === 1
+                    ? ""
+                    : "s"} failed — see Failed loads below.
+                </p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+  </section>
 
   {#if !data.isViewer}
     <section class="card">
@@ -211,7 +334,7 @@
           </select>
           <button type="submit" disabled={refreshing !== null}>
             {refreshing === "new-region"
-              ? "Loading from eBird…"
+              ? "Queueing…"
               : "Load data (one eBird request)"}
           </button>
         </form>
@@ -271,8 +394,8 @@
                 <input type="hidden" name="region" value={g.stateCode} />
                 <button type="submit" disabled={refreshing !== null}>
                   {refreshing === `counties-${g.stateCode}`
-                    ? "Analyzing…"
-                    : `Analyze ${Math.min(12, missing)} remaining ${missing === 1 ? "county" : "counties"}`}
+                    ? "Queueing…"
+                    : `Analyze ${missing} remaining ${missing === 1 ? "county" : "counties"}`}
                 </button>
               </form>
             {:else}
@@ -405,7 +528,7 @@
                   class="secondary"
                   disabled={refreshing !== null}
                 >
-                  {refreshing === f.locCode ? "Retrying…" : "Retry"}
+                  {refreshing === f.locCode ? "Queueing…" : "Retry"}
                 </button>
               </form>
             {/if}
@@ -661,6 +784,64 @@
   }
   .notice.ok {
     color: var(--accent);
+  }
+  .jobs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .jobs li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .jobs li:last-child {
+    border-bottom: none;
+  }
+  .jobhead {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .jobstatus {
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .jobstatus[data-color="ok"],
+  .jobstatus[data-color="busy"] {
+    color: var(--accent);
+  }
+  .jobstatus[data-color="error"] {
+    color: var(--danger);
+  }
+  .jobdetail {
+    margin: 4px 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .jobdetail.err {
+    color: var(--danger);
+  }
+  .progressbar {
+    height: 8px;
+    background: var(--accent-soft, var(--border));
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 8px 0 4px;
+  }
+  .progressbar .fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.4s ease;
+  }
+  .history summary {
+    cursor: pointer;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    color: var(--muted);
+    font-size: 0.9rem;
   }
   .attribution {
     text-align: center;

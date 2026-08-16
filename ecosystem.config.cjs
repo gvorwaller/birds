@@ -39,6 +39,37 @@ module.exports = {
 				HOST: '127.0.0.1',
 				PORT: 3003
 			}
+		},
+		{
+			// The dedicated eBird load worker (docs/2026-08-15-ebird-worker-job-queue-plan.md).
+			// Concurrency 1 is a HARD politeness rule — never cluster mode, never
+			// instances > 1 (a Postgres advisory lock enforces it besides).
+			name: 'birds-worker',
+			script: 'build/worker.js',
+			node_args: '--env-file=.env',
+			cwd: '/opt/birds',
+
+			instances: 1,
+			exec_mode: 'fork',
+
+			autorestart: true,
+			restart_delay: 5000,
+			max_restarts: 10,
+			min_uptime: '30s',
+			max_memory_restart: '300M',
+			// Graceful drain must outlast one unit: 30s fetch timeout + 4s 5xx
+			// retry pause + spacing + transition writes.
+			kill_timeout: 45000,
+
+			out_file: '/var/log/pm2/birds-worker.out.log',
+			error_file: '/var/log/pm2/birds-worker.err.log',
+			merge_logs: true,
+			time: true,
+
+			env: {
+				NODE_ENV: 'production',
+				BIRDS_ENV: 'production'
+			}
 		}
 	]
 };

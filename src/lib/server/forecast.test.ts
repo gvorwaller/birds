@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  COUNTY_BATCH,
   FORECAST_HOTSPOT_LIMIT,
   MIN_MONTH_N,
   bestMonth,
@@ -9,7 +8,6 @@ import {
   monthCurve,
   monthWeeks,
   monthlyStat,
-  nextUncachedCounties,
   selectForecastHotspots,
   type MonthStat,
 } from "./forecast";
@@ -416,28 +414,6 @@ describe("buildForecastSpecies", () => {
     );
     expect(allStale.current).toEqual([]);
     expect(allStale.remaining).toBe(2);
-  });
-
-  it("resumable county batching excludes cached AND failed, so the loop terminates", () => {
-    const counties = Array.from({ length: 30 }, (_, i) => ({
-      code: `US-FL-${String(i).padStart(3, "0")}`,
-      name: `County ${i}`,
-    }));
-    const cached = new Set(counties.slice(0, 10).map((c) => c.code));
-    const failed = new Set(counties.slice(10, 14).map((c) => c.code));
-    const batch = nextUncachedCounties(counties, cached, failed, COUNTY_BATCH);
-    expect(batch).toHaveLength(COUNTY_BATCH);
-    for (const c of batch) {
-      expect(cached.has(c.code)).toBe(false);
-      expect(failed.has(c.code)).toBe(false);
-    }
-    // All covered or failed → empty batch, i.e. the loop's terminal state.
-    const allDone = new Set(counties.map((c) => c.code));
-    expect(nextUncachedCounties(counties, allDone, new Set(), 12)).toEqual([]);
-    const allButFailed = new Set(counties.slice(0, 26).map((c) => c.code));
-    expect(
-      nextUncachedCounties(counties, allButFailed, failed, 12),
-    ).toEqual(counties.slice(26));
   });
 
   it("drops species with zero area frequency and handles empty input", () => {

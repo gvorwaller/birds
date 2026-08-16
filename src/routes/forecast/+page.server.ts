@@ -3,12 +3,9 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, hotspotsNear, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
-import {
-  ensureFrequencies,
-  frequencyMeta,
-  lastCompleteYear,
-  type EnsureResult,
-} from "$server/barchart";
+import { frequencyMeta, lastCompleteYear } from "$server/barchart";
+import { enqueueJob } from "$server/jobs";
+import { dedupKeys } from "$server/job-policy";
 import {
   areaLoadTargets,
   calendarMonth,
@@ -230,21 +227,26 @@ export const actions: Actions = {
       return fail(404, { error: "No eBird hotspots found in that radius." });
     }
 
-    const ensure: EnsureResult = await ensureFrequencies(
-      userId,
-      selected.map((h) => ({
-        code: h.locId,
-        kind: "hotspot" as const,
-        name: h.locName,
-        // Most specific containing region: county when eBird provides it, so
-        // /forecast/data can nest the hotspot under its county.
-        regionCode:
-          h.subnational2Code ??
-          h.subnational1Code ??
-          majorityRegionCode(selected),
-      })),
-      { force },
-    );
-    return { ensure };
+    // Thin enqueuer: the validated, RESOLVED targets go into the job payload;
+    // the worker never re-derives them. {queued} replaces the old {ensure}.
+    const locs = selected.map((h) => ({
+      code: h.locId,
+      kind: "hotspot" as const,
+      name: h.locName,
+      // Most specific containing region: county when eBird provides it, so
+      // /forecast/data can nest the hotspot under its county.
+      regionCode:
+        h.subnational2Code ?? h.subnational1Code ?? majorityRegionCode(selected),
+    }));
+    const originLabel = (form.get("origin") ?? "").toString().trim().slice(0, 80);
+    const label = `${locs.length} hotspot${locs.length === 1 ? "" : "s"}${originLabel ? ` near ${originLabel}` : ""}`;
+    const { jobId, deduped } = await enqueueJob({
+      type: "load_hotspots",
+      payload: { locs, force },
+      dedupKey: dedupKeys.loadHotspots(locs.map((l) => l.code)),
+      requestedBy: userId,
+      label,
+    });
+    return { queued: { jobId, deduped, label } };
   },
 };

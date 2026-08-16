@@ -128,22 +128,31 @@ echo "==> pm2 (startOrReload from ecosystem config)"
 pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 
-# Health gate: db must be ok. gallery_source is informational.
+# Health gate: db AND worker must be ok (a dead worker means loads queue
+# silently forever — that must fail the deploy loudly). Worker needs a boot +
+# first heartbeat, so the loop runs longer than the old db-only gate.
+echo "==> pm2 process check"
+if ! pm2 jlist | grep -q '"name":"birds-worker"'; then
+  echo "!! birds-worker missing from pm2 process list" >&2
+  exit 1
+fi
+
 echo "==> health check (internal)"
-for i in 1 2 3 4 5 6; do
+for i in $(seq 1 12); do
   body=$(curl -fsS "${HEALTH_URL_INTERNAL}" || true)
   if [[ -n "${body}" ]]; then
     echo "${body}"
     db=$(printf '%s' "${body}" | sed -n 's/.*"db":"\([^"]*\)".*/\1/p')
-    if [[ "${db}" == "ok" ]]; then
-      echo "==> health OK (db=${db})"
+    worker=$(printf '%s' "${body}" | sed -n 's/.*"worker":"\([^"]*\)".*/\1/p')
+    if [[ "${db}" == "ok" && "${worker}" == "ok" ]]; then
+      echo "==> health OK (db=${db} worker=${worker})"
       exit 0
     fi
   fi
   sleep 5
 done
 
-echo "!! health check failed" >&2
+echo "!! health check failed (db=${db:-?} worker=${worker:-?})" >&2
 exit 1
 REMOTE
 

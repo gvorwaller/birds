@@ -34,6 +34,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
 
 	if (!isPublic(path) && !event.locals.user) {
+		// /api/* consumers are programmatic (the jobs poller) — an expired
+		// session must be a machine-readable 401, never the login-page 303
+		// whose HTML would masquerade as a network failure (GROK #1).
+		if (path.startsWith('/api/')) {
+			return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+				status: 401,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}
 		if (event.request.method === 'GET') {
 			// Path *and* query: a logged-out deep link like
 			// /targets?place=…&dist=…&back=… must survive Login with its full

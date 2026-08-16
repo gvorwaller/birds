@@ -170,11 +170,16 @@
 						most-active), a single row's <strong>Load</strong>, or — under
 						<strong>"More hotspots in range — pick what to load"</strong> —
 						check any set of hotspots (or <strong>Select all shown</strong>)
-						and hit <strong>Load selected (N)</strong>. Big selections run in
-						polite batches with a live progress bar; hotspots move into the
-						results as each one lands, and any that fail (eBird's export
-						errors on the odd location) are reported right there with a
-						later-retry path on Forecast data.
+						and hit <strong>Load selected (N)</strong>.
+					</li>
+					<li>
+						Every load runs <strong>in the background on the server</strong> —
+						queue it and walk away. Navigate anywhere, reload, even close the
+						tab: the load keeps going, a slim progress chip follows you around
+						the app, and <strong>Forecast data</strong> shows every queued,
+						running and finished load (with a Cancel button). Temporary eBird
+						hiccups retry automatically; only real problems (like a wrong
+						eBird password) are surfaced for you to fix.
 					</li>
 					<li>
 						Until an area is fully loaded, an amber note states exactly what
@@ -196,9 +201,10 @@
 						April") and the <strong>good window</strong> ("good Dec–Mar"):
 						every month within 80% of the peak, since trips rarely land on the
 						single best month.
-						<strong>Analyze first counties</strong> shows useful results after
-						one quick batch (~15 s); "Analyze all remaining" finishes the state
-						(one eBird request per county, resumable, cached for the year).
+						<strong>Analyze all N counties</strong> queues one background job
+						for the whole state (one eBird request per county, cached for the
+						year) — results stream in as counties land, and you don't have to
+						stay on the page.
 					</li>
 					<li>
 						Tapping a county ranks its top hotspots (picked by species count +
@@ -223,12 +229,14 @@
 					</li>
 					<li>
 						<strong>Forecast data</strong> (linked from both tabs) is the
-						inventory: states expand to counties, counties expand to their
-						hotspots, each row showing its year span, species count, load date,
-						and a Refresh; failed loads keep a Retry. Load new states and
-						analyze counties from here too. Note: eBird's bar-chart export
-						can't tell provisional or escaped-exotic records apart, so those
-						are included in frequencies.
+						inventory <em>and</em> the load hub: background loads show at the
+						top with live progress, Cancel, and recent history; below, states
+						expand to counties, counties expand to their hotspots, each row
+						showing its year span, species count, load date, and a Refresh;
+						failed loads keep a Retry. Load new states and analyze counties
+						from here too. Note: eBird's bar-chart export can't tell
+						provisional or escaped-exotic records apart, so those are included
+						in frequencies.
 					</li>
 					<li>
 						Species pages show a <strong>Best time of year</strong> chart with
