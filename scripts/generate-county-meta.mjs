@@ -50,10 +50,21 @@ const OVERRIDES = { "US-FL-057": { seat: "Tampa" } };
 // Exact county-equivalent counts; generation aborts on mismatch.
 const EXPECT = { FL: 67, ME: 16, GA: 159, CA: 58 };
 
-const QUERY = `SELECT ?fips ?countyLabel ?seatLabel WHERE {
+// Statement-level P36 (not bare wdt:P36): a county's FORMER seats often
+// remain as normal-rank statements distinguished only by an end-time
+// qualifier (pq:P582) — bare wdt: returned them and the UI showed
+// "Mound City / Paris" for Linn County KS (CODEX1). Deprecated-rank
+// statements are excluded; ranks ride along so preferred wins in JS.
+const QUERY = `SELECT ?fips ?countyLabel ?seatLabel ?rank WHERE {
   ?county wdt:P882 ?fips .
   ?county rdfs:label ?countyLabel . FILTER(LANG(?countyLabel)="en")
-  OPTIONAL { ?county wdt:P36 ?seat . ?seat rdfs:label ?seatLabel . FILTER(LANG(?seatLabel)="en") }
+  OPTIONAL {
+    ?county p:P36 ?st .
+    ?st ps:P36 ?seat ; wikibase:rank ?rank .
+    FILTER(?rank != wikibase:DeprecatedRank)
+    FILTER NOT EXISTS { ?st pq:P582 ?ended }
+    ?seat rdfs:label ?seatLabel . FILTER(LANG(?seatLabel)="en")
+  }
 }`;
 
 const res = await fetch(
@@ -64,38 +75,65 @@ if (!res.ok) throw new Error(`Wikidata SPARQL HTTP ${res.status}`);
 const rows = (await res.json()).results.bindings;
 console.log(`SPARQL rows: ${rows.length}`);
 
+const PREFERRED = "http://wikiba.se/ontology#PreferredRank";
 const byCode = new Map();
 for (const r of rows) {
   const fips = r.fips.value.trim();
   const name = r.countyLabel.value.trim();
   const seat = (r.seatLabel?.value ?? "").trim();
+  const preferred = r.rank?.value === PREFERRED;
   if (!/^\d{5}$/.test(fips) || METRO.test(name)) continue;
   const postal = STATE_FIPS[fips.slice(0, 2)];
   if (!postal) continue;
   const code = `US-${postal}-${fips.slice(2)}`;
-  const entry = byCode.get(code) ?? { names: [], seats: [] };
+  const entry = byCode.get(code) ?? { names: [], seats: new Map() };
   if (!entry.names.includes(name)) entry.names.push(name);
-  if (seat && !/^Q\d+$/.test(seat) && !entry.seats.includes(seat)) {
-    entry.seats.push(seat);
+  if (seat && !/^Q\d+$/.test(seat)) {
+    // PR municipalities list their seat twice — as the town and as the
+    // "X barrio-pueblo" entity. Normalize away the suffix, then dedupe.
+    const cleaned = seat.replace(/\s+barrio-pueblo$/i, "");
+    entry.seats.set(cleaned, entry.seats.get(cleaned) || preferred);
   }
   byCode.set(code, entry);
 }
 
 const final = {};
+let multiSeat = 0;
 for (const code of [...byCode.keys()].sort()) {
   const v = byCode.get(code);
   const named = v.names.filter((n) => SUFFIX.test(n));
   const name = (named.length ? named : v.names)[0];
-  let seat = v.seats.length ? v.seats.slice(0, 2).join(" / ") : null;
+  // Preferred-rank seats win outright; otherwise all current (un-ended)
+  // normal-rank seats remain — genuine dual-seat counties (Hinds MS,
+  // Sebastian AR, …). Alphabetical order = endpoint-order independent.
+  const preferredSeats = [...v.seats.entries()].filter(([, p]) => p).map(([s]) => s);
+  const seats = (preferredSeats.length ? preferredSeats : [...v.seats.keys()]).sort();
+  if (seats.length > 1) multiSeat++;
+  let seat = seats.length ? seats.slice(0, 2).join(" / ") : null;
   if (OVERRIDES[code]?.seat) seat = OVERRIDES[code].seat;
   final[code] = { name, seat };
 }
+console.log(`multi-seat counties after current-seat filtering: ${multiSeat}`);
 
 let bad = false;
 for (const [st, want] of Object.entries(EXPECT)) {
   const have = Object.keys(final).filter((c) => c.startsWith(`US-${st}-`)).length;
   const ok = have === want;
   console.log(`${st}: ${have} (want ${want}) ${ok ? "OK" : "MISMATCH"}`);
+  if (!ok) bad = true;
+}
+// Seat spot-checks: counties whose FORMER seats leaked through bare wdt:P36
+// (CODEX1) plus a genuine dual-seat county that must survive the filter.
+const SEAT_EXPECT = {
+  "US-KS-107": "Mound City", // Linn County — Paris is a 19th-century seat
+  "US-NC-081": "Greensboro", // Guilford County — Martinsville long defunct
+  "US-FL-057": "Tampa",
+  "US-MS-049": "Jackson / Raymond", // Hinds County — genuinely two seats
+};
+for (const [code, want] of Object.entries(SEAT_EXPECT)) {
+  const have = final[code]?.seat ?? null;
+  const ok = have === want;
+  console.log(`${code}: "${have}" (want "${want}") ${ok ? "OK" : "MISMATCH"}`);
   if (!ok) bad = true;
 }
 if (bad) {

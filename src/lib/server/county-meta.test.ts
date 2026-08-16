@@ -19,6 +19,15 @@ describe("county-meta dataset", () => {
     expect(countyMeta("US-LA-071")?.name).toBe("Orleans Parish");
   });
 
+  it("lists CURRENT seats only; genuine dual-seat counties keep both (CODEX1)", () => {
+    // Former seats leaked through bare wdt:P36 before the statement-level
+    // query: Paris (Linn KS, 19th century) and Martinsville (Guilford NC).
+    expect(countySeat("US-KS-107")).toBe("Mound City");
+    expect(countySeat("US-NC-081")).toBe("Greensboro");
+    // Hinds County MS genuinely has two judicial seats.
+    expect(countySeat("US-MS-049")).toBe("Jackson / Raymond");
+  });
+
   it("covers every Florida and Maine county eBird can emit", () => {
     // FL county FIPS are the odd numbers 001..133 EXCEPT 025 — retired when
     // Dade County was renamed Miami-Dade (086). ME are 001..031 odd.
@@ -39,7 +48,7 @@ describe("county-meta dataset", () => {
     expect(countySeat("US-AK-020")).toBeNull();
   });
 
-  it("countyMapQuery composes the official name; falls back to name + County", () => {
+  it("countyMapQuery composes the official name; unknown codes keep the eBird name unchanged", () => {
     expect(countyMapQuery("US-FL-001", "Alachua", "Florida")).toBe(
       "Alachua County, Florida",
     );
