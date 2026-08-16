@@ -57,10 +57,16 @@ sw.addEventListener('notificationclick', (event) => {
 		(async () => {
 			const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
 			for (const client of all) {
-				if ('focus' in client) {
-					await client.focus();
-					if ('navigate' in client) await client.navigate(url);
-					return;
+				// A focus/navigate failure must fall through to openWindow —
+				// not leave the tap doing nothing (GROK).
+				try {
+					if ('focus' in client) {
+						await client.focus();
+						if ('navigate' in client) await client.navigate(url);
+						return;
+					}
+				} catch {
+					break;
 				}
 			}
 			await sw.clients.openWindow(url);

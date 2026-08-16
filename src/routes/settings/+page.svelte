@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { enhance } from "$app/forms";
+  import { deserialize, enhance } from "$app/forms";
   import Badge from "$components/Badge.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import { invalidateAll } from "$app/navigation";
@@ -55,8 +55,22 @@
       });
       const body = new FormData();
       body.set("subscription", JSON.stringify(subscription.toJSON()));
-      const res = await fetch("?/save_push_sub", { method: "POST", body });
-      if (!res.ok) throw new Error(`save failed (${res.status})`);
+      // deserialize, not res.ok: a SvelteKit action fail() arrives as
+      // HTTP 200 {type:"failure"} under this fetch's content negotiation —
+      // res.ok alone reported rejected saves as enrolled (GROK).
+      const res = await fetch("?/save_push_sub", {
+        method: "POST",
+        body,
+        headers: { "x-sveltekit-action": "true" },
+      });
+      const result = deserialize(await res.text());
+      if (result.type === "failure") {
+        const data = result.data as { error?: string } | undefined;
+        throw new Error(data?.error ?? `save rejected (${result.status})`);
+      }
+      if (result.type !== "success") {
+        throw new Error(`save failed (${res.status})`);
+      }
       pushMessage = "This device is enrolled — send a test notification to confirm.";
       await invalidateAll();
     } catch (err) {
