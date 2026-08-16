@@ -73,12 +73,17 @@ recent-obs feed.)
 - **Atomic handoff:** a new queue primitive `terminalizeAndReschedule(jobId,
   expectedAttempts, outcome, runAfterMs)` runs ONE transaction: the existing
   CAS terminal UPDATE (succeeded/failed, cancel still honored by the CASE)
-  + INSERT of the successor with `next_retry_at = NOW() + interval`. Because
-  the current row leaves the active state inside the same txn, the partial-
-  unique dedup index admits the successor — no self-dedup (CODEX1 #1), no
-  crash gap between complete and enqueue. Fired only on TERMINAL outcomes;
-  `scheduleRetry` (waiting_retry) does NOT reschedule — the retrying row
-  still holds the dedup key (GROK gap list).
+  + INSERT of the successor with `next_retry_at = NOW() + interval`
+  **+ BOTH audit events in the same transaction** — the terminal event and
+  the successor's `enqueued` (details: `scheduled`) event (CODEX1 Rev-2
+  addendum #2: the existing record-after-transition pattern would let a
+  crash-after-commit leave correct recurrence rows with missing /admin
+  history). Rollback/commit tests pin all four writes (two rows, two
+  events) together. Because the current row leaves the active state inside
+  the same txn, the partial-unique dedup index admits the successor — no
+  self-dedup (CODEX1 #1), no crash gap between complete and enqueue. Fired
+  only on TERMINAL outcomes; `scheduleRetry` (waiting_retry) does NOT
+  reschedule — the retrying row still holds the dedup key (GROK gap list).
 - **Reconciliation backstop:** the worker's idle tick (every POLL_IDLE_MS,
   cheap indexed SELECT on the dedup key) ensures an active singleton exists
   and enqueues one if not — repairs a chain lost to ANY cause (successor
@@ -126,8 +131,12 @@ re-sends → single upsert).
   "from home" spelled out (a birder mid-field must not read it as
   "from me"). Self-contained: the click URL is a nicety (it opens Safari's
   separate cookie jar, possibly logged out — GROK §1), never load-bearing.
-- Click URL: `/forecast/species?species={code}&region={home state}` — no
-  coordinates ever in the URL.
+- Click URL: **ABSOLUTE** —
+  `https://birds.gaylon.photos/forecast/species?species={code}&region={home state}`
+  from a configured canonical origin (ntfy's Click header expects a full
+  URL; a notification client has no origin to resolve a bare path against —
+  CODEX1 Rev-2 addendum #1). Tests assert both normal and private-location
+  variants are absolute, private stays species-only.
 - **Private locations (CODEX1 #6):** `locationPrivate` → body is the fixed
   phrase `Private location within your alert radius` — no locName, no
   distance, no locId, no location-bearing click params (species-only URL).
