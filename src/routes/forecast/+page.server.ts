@@ -3,11 +3,9 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, hotspotsNear, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
-import { frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import {
-  areaLoadTargets,
   calendarMonth,
   forecastNeedsNear,
   majorityRegionCode,
@@ -152,10 +150,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 export const actions: Actions = {
   /**
-   * Fetch/refresh barchart data for hotspots near a point. Owner-only
-   * (viewer POSTs are 403'd in hooks.server.ts). Targets derive from the
-   * official eBird in-range list: either the bulk areaLoadTargets set, or a
-   * single `loc` id that must appear in that list — never a free-form id.
+   * Queue barchart loads for explicitly selected hotspots near a point.
+   * Owner-only (viewer POSTs are 403'd in hooks.server.ts). Every submitted
+   * `loc` id must appear in the official eBird in-range list — never a
+   * free-form id, and never a server-derived implicit set.
    */
   loadData: async ({ locals, request }) => {
     const userId = locals.scopeId!;
@@ -187,34 +185,30 @@ export const actions: Actions = {
       });
     }
 
-    // Optional hotspot targets (single-row Load OR the multi-select's
-    // repeated `loc` fields). Every id must appear in the official in-range
-    // list — one unknown id rejects the whole request (td-8a6f97 policy).
+    // Hotspot targets (single-row Load OR the multi-select's repeated `loc`
+    // fields) are REQUIRED — the pick panel is the only load surface
+    // (td-17d291; the old no-loc suggested+outdated derivation had no
+    // remaining caller and was removed rather than kept dead — CODEX1
+    // Phase-2). Every id must appear in the official in-range list — one
+    // unknown id rejects the whole request (td-8a6f97 policy).
     const locParams = form
       .getAll("loc")
       .map((v) => v.toString().trim())
       .filter((v) => v !== "");
+    if (locParams.length === 0) {
+      return fail(400, { error: "Select at least one hotspot to load." });
+    }
 
     let selected;
     try {
       const hotspots = await hotspotsNear(apiKey, lat, lng, dist);
-      if (locParams.length > 0) {
-        const validated = validateLocSelection(hotspots.data, locParams);
-        if (!validated.ok) {
-          return fail(400, {
-            error: `${validated.missing.length} selected hotspot${validated.missing.length === 1 ? " is" : "s are"} not in the current search radius — refresh and reselect.`,
-          });
-        }
-        selected = validated.selected;
-      } else {
-        // Bulk load = suggested unloaded + ALL outdated loaded in range —
-        // the same sets the page's button counts promise (CODEX1 #2).
-        const meta = await frequencyMeta(hotspots.data.map((h) => h.locId));
-        selected = areaLoadTargets(hotspots.data, meta, lastCompleteYear(), {
-          lat,
-          lng,
+      const validated = validateLocSelection(hotspots.data, locParams);
+      if (!validated.ok) {
+        return fail(400, {
+          error: `${validated.missing.length} selected hotspot${validated.missing.length === 1 ? " is" : "s are"} not in the current search radius — refresh and reselect.`,
         });
       }
+      selected = validated.selected;
     } catch (err) {
       return fail(502, {
         error:
@@ -222,9 +216,6 @@ export const actions: Actions = {
             ? err.message
             : "Could not list hotspots near that location.",
       });
-    }
-    if (selected.length === 0) {
-      return fail(404, { error: "No eBird hotspots found in that radius." });
     }
 
     // Thin enqueuer: the validated, RESOLVED targets go into the job payload;

@@ -339,31 +339,6 @@ export function selectForecastHotspots(
 }
 
 /**
- * Fetch targets for a bulk area load: the auto-suggested unloaded hotspots
- * PLUS every loaded-but-outdated hotspot in range, deduped. Previously the
- * bulk POST re-derived only the suggested mix, so "Refresh outdated data (N)"
- * could refresh none of the N when the stale sites sat outside the suggestion
- * (CODEX1 2026-08-15 #2). ensureFrequencies caps per batch and skips
- * already-current rows, so passing the full set stays polite and resumable.
- * Pure.
- */
-export function areaLoadTargets(
-	inRange: readonly EbirdHotspot[],
-	meta: ReadonlyMap<string, { endYear: number }>,
-	newestCompleteYear: number,
-	origin: { lat: number; lng: number }
-): EbirdHotspot[] {
-	const suggested = selectForecastHotspots(inRange, origin).filter((h) => !meta.has(h.locId));
-	const stale = inRange.filter((h) => {
-		const m = meta.get(h.locId);
-		return m != null && m.endYear < newestCompleteYear;
-	});
-	const out = new Map<string, EbirdHotspot>();
-	for (const h of [...suggested, ...stale]) out.set(h.locId, h);
-	return [...out.values()];
-}
-
-/**
  * Validate a user's multi-select of hotspot ids against the official
  * in-range list. Policy (td-8a6f97): ANY unknown id rejects the whole
  * request — stricter boundary, same rule as the single-loc path; a stale

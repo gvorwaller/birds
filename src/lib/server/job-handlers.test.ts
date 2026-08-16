@@ -355,13 +355,16 @@ describe("runJob — analyze_counties", () => {
   });
 });
 
-describe("red-team: no credential-shaped material in the job pipeline (GROK #15)", () => {
-  // Walks EVERY value the handlers push toward durable storage — event
-  // details, progress writes, and terminal results — and asserts nothing
-  // credential-shaped survives, even when upstream error text tries to
-  // smuggle it in. Payloads are code-constructed {code,kind,name,regionCode}
-  // by design; this pins the OUTPUT side of that contract.
-  const FORBIDDEN = /password|passwd|api[_-]?key|secret|authorization|cookie|login_username|login_password|_enc\b/i;
+describe("red-team: hostile upstream text is REDACTED before storage (GROK #15 / CODEX1 Phase-2 #1)", () => {
+  // Injects genuinely credential-bearing text through every free-text inlet
+  // (unit errors, the ensure result's failed[].error, credentialProblem, and
+  // a thrown handler error) and asserts the SECRET VALUES never reach the
+  // storage calls — only [redacted] markers do. This exercises the
+  // handler-layer sanitize; jobs-db.test.ts proves the jobs.ts boundary.
+  const SECRETS = ["hunter2", "gaylon@vorwaller.net", "abc.def.ghi", "sk-live-XYZ"];
+  const HOSTILE =
+    "proxy echo: username=gaylon@vorwaller.net password=hunter2 " +
+    "Authorization: Bearer abc.def.ghi api_key=sk-live-XYZ";
 
   function collectStoredJson(): string[] {
     return [
@@ -374,42 +377,43 @@ describe("red-team: no credential-shaped material in the job pipeline (GROK #15)
     ];
   }
 
-  it("happy path + hostile unit errors leave no credential-shaped keys or values", async () => {
-    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
-      await opts.onUnit(locs[0], { status: "ok" });
-      await opts.onUnit(locs[1], {
-        status: "failed",
-        kind: "unit",
-        // Hostile: upstream error text should be stored verbatim (truncated),
-        // but our own structures must never ADD credential fields around it.
-        error: "eBird export failed (HTTP 500) for request id 8842",
-      });
-      await opts.onUnit(locs[2], { status: "skipped", kind: "cooldown" });
-      return ensureResult({
-        refreshed: ["L1"],
-        failed: [{ code: "L2", error: "eBird export failed (HTTP 500)", kind: "unit" }],
-      });
-    });
-    await runJob(jobRow(), ctx);
+  function expectNoSecrets() {
     const stored = collectStoredJson();
     expect(stored.length).toBeGreaterThan(0);
     for (const json of stored) {
-      expect(json).not.toMatch(FORBIDDEN);
+      for (const secret of SECRETS) expect(json).not.toContain(secret);
     }
+    // Prove the redaction actually fired (not a vacuous pass).
+    expect(stored.some((j) => j.includes("[redacted]"))).toBe(true);
+  }
+
+  it("hostile unit errors are redacted in progress, events, and the summary", async () => {
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      await opts.onUnit(locs[0], { status: "ok" });
+      await opts.onUnit(locs[1], { status: "failed", kind: "unit", error: HOSTILE });
+      return ensureResult({
+        refreshed: ["L1"],
+        failed: [{ code: "L2", error: HOSTILE, kind: "unit" }],
+      });
+    });
+    await runJob(jobRow(), ctx);
+    expectNoSecrets();
   });
 
-  it("credential-failure path stores the user-facing message, never the credentials themselves", async () => {
+  it("hostile credentialProblem is redacted in the failJob error and result", async () => {
     mocks.ensureFrequencies.mockResolvedValue(
-      ensureResult({
-        credentialProblem: "eBird rejected the stored sign-in — update it in Settings.",
-        notAttempted: ["L2", "L3"],
-      }),
+      ensureResult({ credentialProblem: `sign-in rejected: ${HOSTILE}`, notAttempted: ["L2"] }),
     );
     await runJob(jobRow(), ctx);
-    for (const json of collectStoredJson()) {
-      // "sign-in" wording is fine; key-shaped fields are not.
-      expect(json).not.toMatch(FORBIDDEN);
-    }
+    expect(mocks.failJob).toHaveBeenCalled();
+    expectNoSecrets();
+  });
+
+  it("a hostile thrown error is redacted before failJob", async () => {
+    mocks.ensureFrequencies.mockRejectedValue(new Error(`upstream blew up: ${HOSTILE}`));
+    await runJob(jobRow(), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expectNoSecrets();
   });
 });
 

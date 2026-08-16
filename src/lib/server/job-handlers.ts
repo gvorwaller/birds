@@ -25,7 +25,12 @@ import {
 	scheduleRetry,
 	updateProgress
 } from '$server/jobs';
-import { jobOutcome, type JobProgress, type JobRow } from '$server/job-policy';
+import {
+	jobOutcome,
+	sanitizeErrorText,
+	type JobProgress,
+	type JobRow
+} from '$server/job-policy';
 
 export interface WorkerContext {
 	/** True once SIGTERM/SIGINT received — jobs wind down and requeue. */
@@ -44,14 +49,22 @@ interface AnalyzeCountiesPayload {
 	counties: { code: string; name: string }[];
 }
 
-/** Summarize an EnsureResult for the jobs.result column (compact, no secrets). */
+/**
+ * Summarize an EnsureResult for the jobs.result column — compact, and every
+ * free-text field sanitized here as well as at the jobs.ts durable boundary
+ * (defense in depth; upstream error text is the credential-leak vector).
+ */
 function summarize(r: EnsureResult) {
 	return {
 		ready: r.ready.length,
 		refreshed: r.refreshed.length,
-		failed: r.failed.map((f) => ({ code: f.code, kind: f.kind, error: f.error.slice(0, 200) })),
+		failed: r.failed.map((f) => ({
+			code: f.code,
+			kind: f.kind,
+			error: sanitizeErrorText(f.error).slice(0, 200)
+		})),
 		notAttempted: r.notAttempted.length,
-		credentialProblem: r.credentialProblem,
+		credentialProblem: r.credentialProblem ? sanitizeErrorText(r.credentialProblem) : null,
 		rateLimited: r.rateLimited
 	};
 }
@@ -94,7 +107,10 @@ async function runFrequencyJob(
 		else if (outcome.status === 'skipped') progress.unitsSkipped++;
 		else progress.unitsFailed++;
 		progress.currentUnit = { code: loc.code, name: loc.name };
-		if (outcome.error) progress.lastError = outcome.error.slice(0, 200);
+		const cleanError = outcome.error
+			? sanitizeErrorText(outcome.error).slice(0, 200)
+			: undefined;
+		if (cleanError) progress.lastError = cleanError;
 		try {
 			await recordEvent(
 				job.id,
@@ -103,7 +119,7 @@ async function runFrequencyJob(
 					: outcome.status === 'skipped'
 						? 'unit_skipped'
 						: 'unit_failed',
-				{ code: loc.code, name: loc.name, kind: outcome.kind, error: outcome.error?.slice(0, 200) }
+				{ code: loc.code, name: loc.name, kind: outcome.kind, error: cleanError }
 			);
 			const { cancelRequested } = await updateProgress(job.id, progress);
 			if (cancelRequested) cancelSeen = true;
@@ -162,7 +178,9 @@ async function runFrequencyJob(
 	} else if (outcome.kind === 'retry') {
 		await scheduleRetry(job.id, attempts, outcome.delayMs, outcome.reason, summary);
 	} else {
-		await failJob(job.id, attempts, outcome.error, summary);
+		// outcome.error may embed raw upstream text (credentialProblem) —
+		// sanitize here too, not only at the jobs.ts boundary.
+		await failJob(job.id, attempts, sanitizeErrorText(outcome.error), summary);
 	}
 }
 
@@ -233,6 +251,6 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		await failJob(job.id, job.attempts, message.slice(0, 300));
+		await failJob(job.id, job.attempts, sanitizeErrorText(message).slice(0, 300));
 	}
 }

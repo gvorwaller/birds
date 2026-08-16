@@ -69,15 +69,35 @@
         : data.view.unloadedNearby.slice(0, UNLOADED_PREVIEW)
       : [],
   );
+  // Loc codes an ACTIVE job already covers: their rows show "Queued…" instead
+  // of a live Load button, so a covered row can't enqueue a second job
+  // (CODEX1 re-review #5 — dedup keys hash the whole set, so a singleton
+  // enqueue would NOT dedup against a multi-loc job containing it).
+  const coveredLocs = $derived(
+    new Set(jobsPoll.active.flatMap((j) => j.locCodes ?? [])),
+  );
+
   // Outdated loaded hotspots join the pick panel as a refresh group — the
   // action validates every id against the official in-range list, and
   // ensureFrequencies refreshes non-current rows naturally (td-17d291).
   const outdatedRows = $derived(
     data.view ? data.view.analyzed.filter((h) => !h.current) : [],
   );
+  // Loadable = everything the panel shows; actionable = what a click could
+  // actually queue RIGHT NOW (job-covered rows subtracted — CODEX1 Phase-2
+  // #2: the CTA must never advertise N with zero selectable targets).
   const loadableCount = $derived(
     (data.view?.unloadedNearby.length ?? 0) + outdatedRows.length,
   );
+  const actionableUnloaded = $derived(
+    (data.view?.unloadedNearby ?? []).filter((h) => !coveredLocs.has(h.locId))
+      .length,
+  );
+  const actionableOutdated = $derived(
+    outdatedRows.filter((h) => !coveredLocs.has(h.locId)).length,
+  );
+  const actionableCount = $derived(actionableUnloaded + actionableOutdated);
+  const queuedHereCount = $derived(loadableCount - actionableCount);
 
   // ONE prominent CTA near the results header opens + scrolls to the pick
   // panel (td-17d291 — the old suggested-mix quick button was redundant with
@@ -103,14 +123,6 @@
     const q = form && "queued" in form ? form.queued : null;
     if (q) jobsPoll.track(q.jobId);
   });
-
-  // Loc codes an ACTIVE job already covers: their rows show "Queued…" instead
-  // of a live Load button, so a covered row can't enqueue a second job
-  // (CODEX1 re-review #5 — dedup keys hash the whole set, so a singleton
-  // enqueue would NOT dedup against a multi-loc job containing it).
-  const coveredLocs = $derived(
-    new Set(jobsPoll.active.flatMap((j) => j.locCodes ?? [])),
-  );
 
   // Freshly-loaded rows leave the pickable pool on re-render, and covered
   // rows are already being fetched by a job — prune both from the selection
@@ -386,20 +398,32 @@
             Loading frequency data uses your eBird sign-in — add it in
             <a href="/settings">Settings</a>.
           </p>
-        {:else}
+        {:else if actionableCount > 0}
           <!-- The ONE load entry point (td-17d291): opens and scrolls to the
                pick panel below. The old suggested-mix quick button was
-               redundant with it. -->
+               redundant with it. Counts exclude rows a job already covers. -->
           <button type="button" class="loadcta" onclick={openLoadPanel}>
-            Load hotspot data ({loadableCount})
-            {#if outdatedRows.length > 0 && v.unloadedNearby.length > 0}
+            Load hotspot data ({actionableCount})
+            {#if actionableOutdated > 0 && actionableUnloaded > 0}
               <span class="ctasub"
-                >{v.unloadedNearby.length} unloaded · {outdatedRows.length} outdated</span
+                >{actionableUnloaded} unloaded · {actionableOutdated} outdated{queuedHereCount >
+                0
+                  ? ` · ${queuedHereCount} already queued`
+                  : ""}</span
               >
-            {:else if outdatedRows.length > 0}
+            {:else if actionableOutdated > 0}
               <span class="ctasub">refresh outdated</span>
+            {:else if queuedHereCount > 0}
+              <span class="ctasub">{queuedHereCount} more already queued</span>
             {/if}
           </button>
+        {:else}
+          <p class="notice ok">
+            All {queuedHereCount} remaining hotspot{queuedHereCount === 1
+              ? " is"
+              : "s are"} already queued — progress shows below and in
+            <a href="/forecast/data">Forecast data</a>.
+          </p>
         {/if}
       {/if}
 
@@ -750,7 +774,8 @@
                       {#if h.fetchedAt}
                         · data from {fmtDate(h.fetchedAt)}
                       {/if}
-                      · outdated
+                      · outdated{#if coveredLocs.has(h.locId)}
+                        · <span class="queuedflag">queued</span>{/if}
                     </span>
                   </div>
                 </li>
@@ -967,6 +992,10 @@
     color: var(--muted);
     font-weight: 400;
     font-size: 0.85rem;
+  }
+  .queuedflag {
+    color: var(--accent);
+    font-weight: 600;
   }
   .progressbar {
     height: 8px;

@@ -171,8 +171,8 @@
 						header opens the pick panel. There, check any set of hotspots (or
 						<strong>Select all shown</strong>) and hit
 						<strong>Load selected (N)</strong>; outdated hotspots appear in
-						their own <strong>refresh</strong> group, and every row also keeps
-						its individual <strong>Load</strong> button.
+						their own <strong>refresh</strong> group, and not-yet-loaded rows
+						also keep an individual <strong>Load</strong> button.
 					</li>
 					<li>
 						Every load runs <strong>in the background on the server</strong> —

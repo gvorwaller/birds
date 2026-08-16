@@ -10,6 +10,8 @@ import {
   jobOutcome,
   jobTarget,
   retryDelayMs,
+  sanitizeErrorText,
+  scrubStoredValue,
   statusColor,
   type EnsureSummary,
   type UnitFailure,
@@ -143,6 +145,49 @@ describe("dedup keys", () => {
     expect(dedupKeys.retryLoc("L123")).toBe("retry_loc:L123");
     expect(dedupKeys.syncLifelist(7)).toBe("sync_lifelist:u7");
     expect(dedupKeys.syncTaxonomy()).toBe("sync_taxonomy:global");
+  });
+});
+
+describe("sanitizeErrorText / scrubStoredValue", () => {
+  it("redacts every credential-shaped key=value pattern", () => {
+    const hostile =
+      "username=gaylon@vorwaller.net password=hunter2 pwd:oops " +
+      "Authorization: Bearer abc.def.ghi\nCookie: session=deadbeef; theme=dark " +
+      "api_key=sk-live-XYZ access-token=tok123 secret: s3cr3t email=x@y.z";
+    const clean = sanitizeErrorText(hostile);
+    for (const secret of [
+      "hunter2",
+      "gaylon@vorwaller.net",
+      "abc.def.ghi",
+      "deadbeef",
+      "sk-live-XYZ",
+      "tok123",
+      "s3cr3t",
+      "x@y.z",
+      "oops",
+    ]) {
+      expect(clean).not.toContain(secret);
+    }
+    expect(clean).toContain("[redacted]");
+  });
+
+  it("leaves innocent place names and plain errors untouched", () => {
+    for (const s of [
+      "eBird export failed (HTTP 500) for Token Creek Conservancy",
+      "Login Rd Marsh returned no rows",
+      "timeout after 30s fetching US-ME-001",
+    ]) {
+      expect(sanitizeErrorText(s)).toBe(s);
+    }
+  });
+
+  it("scrubStoredValue deep-walks nested objects and arrays", () => {
+    const scrubbed = scrubStoredValue({
+      a: [{ error: "password=hunter2" }],
+      b: { c: "fine", n: 3, t: true, z: null },
+    });
+    expect(JSON.stringify(scrubbed)).not.toContain("hunter2");
+    expect(scrubbed.b).toEqual({ c: "fine", n: 3, t: true, z: null });
   });
 });
 

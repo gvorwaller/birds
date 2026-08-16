@@ -445,6 +445,32 @@ describe.runIf(dbUp)("startup reclaim", () => {
   });
 });
 
+describe.runIf(dbUp)("durable-boundary sanitization (CODEX1 Phase-2 #1)", () => {
+  it("hostile details/error/result are stored REDACTED, read back clean", async () => {
+    const HOSTILE = "echo: password=hunter2 Authorization: Bearer abc.def.ghi";
+    const a = await enqueueJob(params({ label: "JOBTEST scrub" }));
+    const claimed = await claimNextJob();
+    await updateProgress(a.jobId, {
+      phase: "fetching",
+      unitsTotal: 1,
+      unitsDone: 0,
+      unitsFailed: 1,
+      unitsSkipped: 0,
+      lastError: HOSTILE,
+      round: 1,
+    });
+    await failJob(a.jobId, claimed!.attempts, HOSTILE, {
+      failed: [{ code: "L1", error: HOSTILE }],
+    });
+    const row = await getJob(a.jobId);
+    const events = await jobEvents(a.jobId);
+    const everything = JSON.stringify([row?.progress, row?.error, row?.result, events]);
+    expect(everything).not.toContain("hunter2");
+    expect(everything).not.toContain("abc.def.ghi");
+    expect(everything).toContain("[redacted]");
+  });
+});
+
 describe.runIf(dbUp)("listing, health, prune", () => {
   it("listJobs returns active plus recent finished", async () => {
     const a = await enqueueJob(params({ label: "JOBTEST list-active" }));

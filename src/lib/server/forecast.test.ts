@@ -251,37 +251,6 @@ describe("validateLocSelection", () => {
   });
 });
 
-describe("areaLoadTargets", () => {
-  it("includes stale loaded hotspots OUTSIDE the suggestion set", async () => {
-    // CODEX1 2026-08-15 #2: "Refresh outdated data (N)" must actually target
-    // the N outdated sites, not re-derive the suggested mix and refresh none.
-    const { areaLoadTargets } = await import("./forecast");
-    const inRange = Array.from({ length: 20 }, (_, i) =>
-      hs(`H${i}`, i, 100 + i),
-    );
-    const meta = new Map<string, { endYear: number }>();
-    // H15..H19 (far, outside any 8-slot mix of nearest+active) loaded but stale.
-    for (let i = 15; i < 20; i++) meta.set(`H${i}`, { endYear: 2024 });
-    // H0 loaded and current — must NOT be a target.
-    meta.set("H0", { endYear: 2025 });
-    const targets = areaLoadTargets(inRange, meta, 2025, ORIGIN);
-    const ids = targets.map((h) => h.locId);
-    for (let i = 15; i < 20; i++) expect(ids).toContain(`H${i}`);
-    expect(ids).not.toContain("H0");
-    // Suggested unloaded sites are included too (bulk first-load path).
-    expect(ids.some((id) => !id.match(/^H1[5-9]$/) && id !== "H0")).toBe(true);
-  });
-
-  it("dedupes when a suggested site is also stale", async () => {
-    const { areaLoadTargets } = await import("./forecast");
-    const inRange = Array.from({ length: 10 }, (_, i) => hs(`H${i}`, i, 100));
-    const meta = new Map([["H1", { endYear: 2024 }]]); // near → suggested AND stale
-    const targets = areaLoadTargets(inRange, meta, 2025, ORIGIN);
-    const ids = targets.map((h) => h.locId);
-    expect(ids.filter((id) => id === "H1")).toHaveLength(1);
-  });
-});
-
 describe("selectForecastHotspots", () => {
   it("mixes nearest and most-active, deduped, nearest-first order", () => {
     // 12 hotspots: A0..A11 by increasing distance; activity is inverted so the

@@ -162,6 +162,49 @@ export const dedupKeys = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Durable-storage sanitization (cs.md: never log eBird credentials)
+// ---------------------------------------------------------------------------
+
+/**
+ * Redact credential-shaped material from free text before it can reach
+ * durable storage (CODEX1 Phase-2 review #1). The realistic vector is
+ * upstream error text — a proxy or login page echoing request material —
+ * which the pipeline stores verbatim in progress.lastError, job_events
+ * details, and job results. Patterns require a key[=:]value shape so plain
+ * place names ("Token Creek", "Login Rd") never match.
+ */
+const REDACT_PATTERNS: [RegExp, string][] = [
+	[/(password|passwd|pwd)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
+	[/(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\n;]+/gi, '$1: [redacted]'],
+	[/(api[_-]?key|apikey|access[_-]?token|secret)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
+	[/(username|user|login|email)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
+	[/bearer\s+[a-z0-9._~+/-]+=*/gi, 'bearer [redacted]']
+];
+
+export function sanitizeErrorText(text: string): string {
+	let out = text;
+	for (const [re, replacement] of REDACT_PATTERNS) {
+		out = out.replace(re, replacement);
+	}
+	return out;
+}
+
+/**
+ * Deep-scrub every string in a JSON-bound value. Applied by jobs.ts at THE
+ * durable boundary (events/progress/results/errors) so no caller can forget.
+ */
+export function scrubStoredValue<T>(value: T): T {
+	if (typeof value === 'string') return sanitizeErrorText(value) as unknown as T;
+	if (Array.isArray(value)) return value.map((v) => scrubStoredValue(v)) as unknown as T;
+	if (value && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, scrubStoredValue(v)])
+		) as unknown as T;
+	}
+	return value;
+}
+
+// ---------------------------------------------------------------------------
 // Safe payload projections (for /api/jobs decoration — never credentials)
 // ---------------------------------------------------------------------------
 

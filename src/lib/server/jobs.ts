@@ -14,7 +14,7 @@
  * - Payloads/events/results NEVER contain credentials (cs.md sacred rules).
  */
 import { query, withTransaction } from '$lib/db';
-import type { JobProgress, JobRow } from '$server/job-policy';
+import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
 
 export type JobType =
 	| 'load_hotspots'
@@ -54,10 +54,13 @@ export async function recordEvent(
 	action: JobEventAction,
 	details: unknown = {}
 ): Promise<void> {
+	// Every durable write scrubs credential-shaped strings (cs.md; CODEX1
+	// Phase-2 #1) — upstream error text is the vector, and this boundary is
+	// the one place no caller can forget.
 	await query('INSERT INTO job_events (job_id, action, details) VALUES ($1, $2, $3)', [
 		jobId,
 		action,
-		JSON.stringify(details ?? {})
+		JSON.stringify(scrubStoredValue(details ?? {}))
 	]);
 }
 
@@ -137,7 +140,7 @@ export async function updateProgress(
 		`UPDATE jobs SET progress = $2, heartbeat_at = NOW()
 		  WHERE id = $1
 		  RETURNING cancel_requested`,
-		[jobId, JSON.stringify(progress)]
+		[jobId, JSON.stringify(scrubStoredValue(progress))]
 	);
 	return { cancelRequested: r.rows[0]?.cancel_requested ?? false };
 }
@@ -178,7 +181,7 @@ export async function completeJob(
 		expectedAttempts,
 		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'succeeded' END,
 		 result = $3, finished_at = NOW()`,
-		[JSON.stringify(result ?? null)]
+		[JSON.stringify(scrubStoredValue(result ?? null))]
 	);
 	if (final === 'succeeded') await recordEvent(jobId, 'completed', { result });
 	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_completion' });
@@ -197,7 +200,7 @@ export async function failJob(
 		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
 		 error = CASE WHEN cancel_requested THEN NULL ELSE $3 END,
 		 result = $4, finished_at = NOW()`,
-		[error, JSON.stringify(result ?? null)]
+		[scrubStoredValue(error), JSON.stringify(scrubStoredValue(result ?? null))]
 	);
 	if (final === 'failed') await recordEvent(jobId, 'failed', { error });
 	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_failure' });
@@ -213,7 +216,7 @@ export async function cancelRunningJob(
 		jobId,
 		expectedAttempts,
 		`status = 'cancelled', result = $3, finished_at = NOW()`,
-		[JSON.stringify(result ?? null)]
+		[JSON.stringify(scrubStoredValue(result ?? null))]
 	);
 	if (final != null) await recordEvent(jobId, 'cancelled', { when: 'running' });
 	return final != null;
@@ -236,7 +239,7 @@ export async function scheduleRetry(
 		 result = $4,
 		 progress = CASE WHEN cancel_requested THEN progress
 		                 ELSE progress || '{"phase":"waiting_retry"}'::jsonb END`,
-		[Math.round(delayMs / 1000), JSON.stringify(result ?? null)]
+		[Math.round(delayMs / 1000), JSON.stringify(scrubStoredValue(result ?? null))]
 	);
 	if (final === 'pending')
 		await recordEvent(jobId, 'retry_scheduled', {
