@@ -299,40 +299,46 @@ export async function requestCancel(
 
 /**
  * Startup reclaim: with the advisory lock held, any 'running' row is crash
- * wreckage from a previous worker. Budget left → pending (event carries the
- * inference + prior progress); exhausted → failed.
+ * wreckage from a previous worker. Cancel-flagged → cancelled; budget left →
+ * pending (event carries the inference + prior progress); exhausted → failed.
  */
 export async function reclaimStartupJobs(note: string): Promise<number> {
-	const rows = await query<JobRow>(`SELECT * FROM jobs WHERE status = 'running'`);
-	for (const job of rows.rows) {
-		if (job.cancel_requested) {
-			// A cancel-flagged row must resolve to cancelled, never pending —
-			// claimNextJob excludes flagged pending rows, so re-pending it
-			// would wedge the job forever.
-			await query(
-				`UPDATE jobs SET status = 'cancelled', finished_at = NOW()
-				  WHERE id = $1 AND status = 'running'`,
-				[job.id]
-			);
-			await recordEvent(job.id, 'cancelled', { when: 'at_reclaim', note });
-		} else if (job.attempts < job.max_attempts) {
-			await query(
-				`UPDATE jobs SET status = 'pending', next_retry_at = NOW()
-				  WHERE id = $1 AND status = 'running'`,
-				[job.id]
-			);
-			await recordEvent(job.id, 'reclaimed', { note, priorProgress: job.progress });
+	// ONE conditional UPDATE for all crash-wreckage rows: the cancelled vs
+	// pending vs failed decision is made INSIDE the statement from each row's
+	// committed state at lock time — no SELECT/recheck window, so a cancel
+	// whose flag commits before this statement acquires the row can never be
+	// overwritten into pending/failed (CODEX1 re-review). A cancel-flagged row
+	// must resolve to cancelled, never pending: claimNextJob excludes flagged
+	// pending rows, so re-pending it would wedge the job forever. Events are
+	// emitted only for rows the UPDATE actually returned, matching the FINAL
+	// status of each.
+	const r = await query<{ id: number; status: string; progress: unknown }>(
+		`UPDATE jobs SET
+		    status = CASE
+		      WHEN cancel_requested THEN 'cancelled'
+		      WHEN attempts < max_attempts THEN 'pending'
+		      ELSE 'failed'
+		    END,
+		    next_retry_at = CASE WHEN NOT cancel_requested AND attempts < max_attempts
+		                         THEN NOW() ELSE next_retry_at END,
+		    finished_at = CASE WHEN cancel_requested OR attempts >= max_attempts
+		                       THEN NOW() ELSE finished_at END,
+		    error = CASE WHEN NOT cancel_requested AND attempts >= max_attempts
+		                 THEN 'worker crashed or restarted during this job'
+		                 ELSE error END
+		  WHERE status = 'running'
+		  RETURNING id, status, progress`
+	);
+	for (const row of r.rows) {
+		if (row.status === 'cancelled') {
+			await recordEvent(row.id, 'cancelled', { when: 'at_reclaim', note });
+		} else if (row.status === 'pending') {
+			await recordEvent(row.id, 'reclaimed', { note, priorProgress: row.progress });
 		} else {
-			await query(
-				`UPDATE jobs SET status = 'failed', finished_at = NOW(),
-				        error = 'worker crashed or restarted during this job'
-				  WHERE id = $1 AND status = 'running'`,
-				[job.id]
-			);
-			await recordEvent(job.id, 'failed', { note: `${note} (attempts exhausted)` });
+			await recordEvent(row.id, 'failed', { note: `${note} (attempts exhausted)` });
 		}
 	}
-	return rows.rows.length;
+	return r.rows.length;
 }
 
 export async function pruneHistory(): Promise<void> {

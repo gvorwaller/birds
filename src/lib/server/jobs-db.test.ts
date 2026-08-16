@@ -33,7 +33,7 @@ for (const k of ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]) {
 }
 process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 
-const { query } = await import("$lib/db");
+const { query, withTransaction } = await import("$lib/db");
 const {
   cancelRunningJob,
   claimNextJob,
@@ -332,6 +332,39 @@ describe.runIf(dbUp)("cancel at the terminalization boundary (CODEX1 re-re-revie
     expect(claimed?.id).toBe(a.jobId);
     expect(await requestCancel(a.jobId, userId)).toBe("flagged");
     await reclaimStartupJobs("test-boot");
+    await expectCancelledOnce(a.jobId);
+    expect(await claimNextJob()).toBeNull();
+  });
+
+  it("TWO-CLIENT RACE: a cancel committing while reclaim's UPDATE waits on the row lock still wins", async () => {
+    // The serialization CODEX1 asked to pin: an uncommitted transaction on a
+    // second client sets cancel_requested and HOLDS the row lock; reclaim's
+    // batch UPDATE starts and blocks on that lock; the flag then commits.
+    // Under READ COMMITTED the blocked UPDATE re-reads the committed row, so
+    // its CASE must see cancel_requested=true and resolve to cancelled — a
+    // reclaim that had branched on any earlier observation would re-pend the
+    // row into a permanent wedge (claimNextJob excludes flagged rows).
+    const a = await enqueueJob(params({ label: "JOBTEST reclaim-race" }));
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(a.jobId);
+
+    let commitFlag!: () => void;
+    const holdLock = new Promise<void>((r) => (commitFlag = r));
+    const flagTxn = withTransaction(async (client) => {
+      await client.query(
+        `UPDATE jobs SET cancel_requested = TRUE WHERE id = $1 AND status = 'running'`,
+        [a.jobId],
+      );
+      await holdLock; // keep the row lock until reclaim is blocked on it
+    });
+    await new Promise((r) => setTimeout(r, 50)); // flag UPDATE acquires the lock
+
+    const reclaim = reclaimStartupJobs("race-boot"); // blocks on the row lock
+    await new Promise((r) => setTimeout(r, 100)); // let reclaim reach the lock
+    commitFlag();
+    await flagTxn;
+    expect(await reclaim).toBe(1);
+
     await expectCancelledOnce(a.jobId);
     expect(await claimNextJob()).toBeNull();
   });
