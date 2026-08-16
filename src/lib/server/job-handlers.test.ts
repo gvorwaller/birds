@@ -827,6 +827,49 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     }
   });
 
+  it("post-send UPSERT that never acquires/settles is bounded by queryTimed's contract: user fails at the wall, next user runs, scan terminalizes (CODEX1)", async () => {
+    vi.useFakeTimers();
+    try {
+      scanDb([PREF_ROW, { ...PREF_ROW, user_id: 4 }]);
+      syncMocks.notableNearbyObs.mockResolvedValue({
+        data: [NOTABLE],
+        fetchedAt: new Date(),
+        stale: false,
+      });
+      // User 3's send SUCCEEDS, then its sent-row upsert models a total pool
+      // stall: the real queryTimed guarantees rejection within its timeoutMs
+      // (db-querytimed.test.ts pins that mechanism) — honor the contract here.
+      const dbMod = await import("$lib/db");
+      let user3UpsertTimeout: number | null = null;
+      (dbMod.queryTimed as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        (_text: string, params: unknown[] | undefined, timeoutMs: number) => {
+          user3UpsertTimeout = timeoutMs;
+          return new Promise((_, reject) => {
+            setTimeout(
+              () => reject(new Error(`queryTimed: pool acquisition exceeded ${timeoutMs}ms`)),
+              timeoutMs,
+            );
+          });
+        },
+      );
+      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+      // Wall contract: 60s budget + the documented 5s must-record grace.
+      await vi.advanceTimersByTimeAsync(66_000);
+      await vi.advanceTimersByTimeAsync(5_000); // settle user 4 + terminalize
+      await p;
+      expect(user3UpsertTimeout).not.toBeNull();
+      expect(user3UpsertTimeout!).toBeLessThanOrEqual(65_000); // remaining + 5s grace
+      const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+      expect(fails).toHaveLength(1);
+      expect(fails[0][2]).toMatchObject({ userId: 3 });
+      // User 4 still ran and alerted; the scan terminalized.
+      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(2); // user 3's send DID go out
+      expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a fetch RESOLVING after expiry causes zero post-deadline side effects (CODEX1 re-review)", async () => {
     vi.useFakeTimers();
     try {

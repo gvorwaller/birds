@@ -32,22 +32,57 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 }
 
 /**
- * Query with a client-side timeout (node-postgres query_timeout): the call
- * REJECTS within ~timeoutMs even through pool/lock stalls, and the client is
- * discarded rather than reused in an unknown state. For deadline-bounded
- * writes (need-alert scan budget) where an unbounded await would wedge the
- * caller's wall-clock guarantee.
+ * Query with a HARD client-side deadline covering BOTH pool acquisition and
+ * query execution (node-postgres query_timeout arms only inside
+ * Client.query, so pool.query alone can wait forever on checkout — CODEX1).
+ * For deadline-bounded writes (need-alert scan budget) where an unbounded
+ * await would wedge the caller's wall-clock guarantee.
+ *
+ * - Acquisition is raced against the deadline. Losing does NOT abandon the
+ *   pending checkout: a late-arriving clean client is released back to the
+ *   pool untouched (no query was ever issued on it).
+ * - The query itself gets the REMAINING interval as query_timeout; on any
+ *   error/timeout the client is destroyed (release(err)), never reused in
+ *   an unknown state.
  */
 export async function queryTimed<T extends pg.QueryResultRow = pg.QueryResultRow>(
 	text: string,
 	params: unknown[] | undefined,
 	timeoutMs: number
 ): Promise<pg.QueryResult<T>> {
-	return getPool().query<T>({
-		text,
-		values: params as never,
-		query_timeout: Math.max(1, Math.round(timeoutMs))
-	} as never);
+	const deadlineAt = Date.now() + Math.max(1, Math.round(timeoutMs));
+	const connectP = getPool().connect();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const acquired = await Promise.race([
+		connectP.then((client) => ({ client })),
+		new Promise<'timeout'>((resolve) => {
+			timer = setTimeout(() => resolve('timeout'), Math.max(1, deadlineAt - Date.now()));
+		})
+	]).finally(() => clearTimeout(timer));
+	if (acquired === 'timeout') {
+		// Safe late-acquisition cleanup: the checkout may still complete later —
+		// hand the (clean, never-queried) client straight back; swallow a
+		// connect rejection.
+		connectP.then(
+			(client) => client.release(),
+			() => {}
+		);
+		throw new Error(`queryTimed: pool acquisition exceeded ${timeoutMs}ms`);
+	}
+	const client = acquired.client;
+	let ok = false;
+	try {
+		const remaining = Math.max(1, deadlineAt - Date.now());
+		const r = await client.query<T>({
+			text,
+			values: params as never,
+			query_timeout: remaining
+		} as never);
+		ok = true;
+		return r;
+	} finally {
+		client.release(ok ? undefined : new Error('queryTimed: discarding client after error/timeout'));
+	}
 }
 
 /**
