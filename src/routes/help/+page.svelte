@@ -412,38 +412,31 @@
 			<div class="body">
 				<p>
 					Every 30 minutes the app checks eBird's <em>notable</em> (rare /
-					review-worthy) reports near your home and pushes a notification to
-					your phone when one is a species <strong>you still need</strong> —
-					"Lifer nearby: Snail Kite · Sweetwater Wetlands · 12 mi from home."
-					Delivery uses the free
-					<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
-					app. One-time setup:
+					review-worthy) reports near your home and sends a notification when
+					one is a species <strong>you still need</strong> — "Lifer nearby:
+					Snail Kite · Sweetwater Wetlands · 12 mi from home." Notifications
+					come from the birds app itself — no other app needed. One-time
+					setup, on each device you want alerted:
 				</p>
 				<ol>
 					<li>
-						<strong>Install ntfy on your phone</strong> — search "ntfy" in the
-						App Store (iOS) or Play Store (Android). No account needed.
+						<strong>On iPhone: use the installed app</strong> — notifications
+						only work from the Home-Screen version. If you haven't installed
+						it: open the site in Safari → Share → <em>Add to Home Screen</em>.
 					</li>
 					<li>
-						<strong>Invent a topic name</strong> — long and random, like
-						<code>gv-birds-k8Rx2mQz94</code> (8–64 letters, digits, - or _).
-						<strong>Treat it like a password</strong>: ntfy has no logins, so
-						anyone who knows the topic can read your alerts. Don't pick
-						something guessable.
+						Open Settings → <strong>Need alerts</strong> → tap
+						<strong>🔔 Enable notifications on this device</strong> and Allow
+						when your phone asks.
 					</li>
 					<li>
-						<strong>Subscribe in the ntfy app</strong> — tap +, enter that exact
-						topic name, keep the default ntfy.sh server.
+						Tap <strong>Send test notification</strong> — it should appear
+						like a normal notification from <strong>birds</strong>.
 					</li>
 					<li>
-						<strong>Save it here</strong> — Settings → Need alerts → paste the
-						topic, pick a radius and a re-alert window, then hit
-						<strong>Send test notification</strong>. Your phone should buzz with
-						"Need-alerts test." If it stays quiet: check the ntfy app is
-						subscribed to that exact spelling, notifications are allowed for
-						ntfy, and Focus/Do&nbsp;Not&nbsp;Disturb isn't silencing it.
+						Pick a radius and re-alert window, tick
+						<strong>Enable need alerts</strong>, and save. Done.
 					</li>
-					<li><strong>Tick Enable</strong> and save. Done.</li>
 				</ol>
 				<ul>
 					<li>
@@ -452,20 +445,19 @@
 						home, and the scan runs under your own eBird account).
 					</li>
 					<li>
-						Each account uses its <strong>own topic</strong> — alerts match each
-						person's own life list, so don't share one topic between accounts.
-						The same topic on multiple <em>devices</em> is fine (phone + the
-						ntfy web app on your Mac, for example).
+						Each account gets its own alerts (matched to that person's life
+						list); enroll as many of your own devices as you like.
 					</li>
 					<li>
 						You're alerted about a species at most once per re-alert window
-						(default 7 days), at most 5 pushes per scan, and
-						"(unconfirmed)" in the title means the report hasn't been reviewed
-						yet. Private locations show no place name by design.
+						(default 7 days), at most 5 alerts per scan, and
+						"(unconfirmed)" in the title means the report hasn't been
+						reviewed yet. Private locations show no place name by design.
 					</li>
 					<li>
-						<strong>Quiet hours</strong> = your phone's Focus schedule. Allow
-						ntfy through any Focus you want a rarity to break.
+						No notification arriving? Check your phone allows notifications
+						for the birds app, and that Focus/Do&nbsp;Not&nbsp;Disturb isn't
+						silencing it — <strong>quiet hours</strong> = your Focus schedule.
 					</li>
 				</ul>
 			</div>

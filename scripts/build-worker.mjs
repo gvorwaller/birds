@@ -16,8 +16,9 @@ await build({
 	format: 'esm',
 	target: 'node22',
 	sourcemap: true,
-	// Native-dep packages stay external (present in node_modules on the droplet).
-	external: ['pg', 'argon2'],
+	// Native-dep / heavy packages stay external (present in node_modules on
+	// the droplet via npm install at deploy).
+	external: ['pg', 'argon2', 'web-push'],
 	alias: {
 		'$env/dynamic/private': path.join(root, 'src/worker/env-shim.ts'),
 		'$lib': path.join(root, 'src/lib'),

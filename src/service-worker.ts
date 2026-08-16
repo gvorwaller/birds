@@ -28,3 +28,42 @@ sw.addEventListener('activate', (event) => {
 // Network passthrough: keep a fetch handler present (installability) but never
 // call respondWith, so the browser always goes to the network. No stale serving.
 sw.addEventListener('fetch', () => {});
+
+// Need alerts arrive as Web Push (payloads built by src/lib/server/push.ts):
+// {title, body, url?, tag?}. iOS requires showNotification for every push.
+sw.addEventListener('push', (event) => {
+	let data: { title?: string; body?: string; url?: string; tag?: string } = {};
+	try {
+		data = event.data?.json() ?? {};
+	} catch {
+		// Non-JSON payload — show something honest rather than dropping it.
+		data = { title: 'birds', body: event.data?.text() ?? '' };
+	}
+	event.waitUntil(
+		sw.registration.showNotification(data.title ?? 'birds', {
+			body: data.body ?? '',
+			tag: data.tag,
+			icon: '/icon-192.png',
+			badge: '/icon-192.png',
+			data: { url: data.url }
+		})
+	);
+});
+
+sw.addEventListener('notificationclick', (event) => {
+	event.notification.close();
+	const url: string = event.notification.data?.url ?? '/';
+	event.waitUntil(
+		(async () => {
+			const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+			for (const client of all) {
+				if ('focus' in client) {
+					await client.focus();
+					if ('navigate' in client) await client.navigate(url);
+					return;
+				}
+			}
+			await sw.clients.openWindow(url);
+		})()
+	);
+});

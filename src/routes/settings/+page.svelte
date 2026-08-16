@@ -2,6 +2,7 @@
   import { enhance } from "$app/forms";
   import Badge from "$components/Badge.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
+  import { invalidateAll } from "$app/navigation";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -15,6 +16,55 @@
     const q = form && "queued" in form && form.queued ? form.queued : null;
     if (q) jobsPoll.track(q.jobId);
   });
+
+  // --- Web Push enrollment for THIS device (need alerts) -----------------
+  let pushBusy = $state(false);
+  let pushMessage = $state("");
+
+  function base64UrlToUint8Array(base64Url: string): Uint8Array {
+    const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+    const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  }
+
+  async function enrollThisDevice() {
+    pushMessage = "";
+    if (!data.vapidPublicKey) {
+      pushMessage = "Push isn't configured on the server (missing VAPID keys).";
+      return;
+    }
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      // iOS exposes PushManager only inside the INSTALLED (Home Screen) app.
+      pushMessage =
+        "This browser can't receive pushes. On iPhone: open the birds app you added to your Home Screen and enable it there (Share → Add to Home Screen if you haven't).";
+      return;
+    }
+    pushBusy = true;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        pushMessage =
+          "Notifications are blocked for this app — allow them in your device settings, then try again.";
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToUint8Array(data.vapidPublicKey) as BufferSource,
+      });
+      const body = new FormData();
+      body.set("subscription", JSON.stringify(subscription.toJSON()));
+      const res = await fetch("?/save_push_sub", { method: "POST", body });
+      if (!res.ok) throw new Error(`save failed (${res.status})`);
+      pushMessage = "This device is enrolled — send a test notification to confirm.";
+      await invalidateAll();
+    } catch (err) {
+      pushMessage = `Couldn't enable notifications: ${err instanceof Error ? err.message : "unknown error"}.`;
+    } finally {
+      pushBusy = false;
+    }
+  }
 
   let revealedKey = $derived(
     form && "apiKey" in form ? (form as { apiKey: string }).apiKey : null,
@@ -310,18 +360,32 @@
         />{/if}
     </h2>
     <p class="muted">
-      A phone push when a <strong>rare bird you still need</strong> is reported
-      near your home — checked every 30 minutes in the background. Install the
-      free <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
-      app, subscribe it to a topic name you invent, and save that topic here.
-      Treat the topic like a password — long and random; anyone who knows it
-      can read your alerts. Quiet hours are your phone's Focus schedule:
-      allow the ntfy app through any Focus you want alerts to break.
+      A notification from this app when a
+      <strong>rare bird you still need</strong> is reported near your home —
+      checked every 30 minutes in the background. Notifications come from the
+      birds app itself: enable them on each device you want alerted. Quiet
+      hours are your phone's Focus schedule — allow the birds app through any
+      Focus you want a rarity to break.
     </p>
     {#if data.home.home_lat == null}
       <p class="muted">
         ⚠ Alerts need a home location — set one in the Home section above.
       </p>
+    {/if}
+    <div class="pushrow">
+      <button
+        type="button"
+        onclick={enrollThisDevice}
+        disabled={pushBusy}
+      >
+        {pushBusy ? "Enabling…" : "🔔 Enable notifications on this device"}
+      </button>
+      <span class="muted">
+        {data.pushDeviceCount} device{data.pushDeviceCount === 1 ? "" : "s"} enrolled
+      </span>
+    </div>
+    {#if pushMessage}
+      <p class="muted">{pushMessage}</p>
     {/if}
     <form
       method="POST"
@@ -329,15 +393,6 @@
       use:enhance={track("alerts")}
       class="alerts-form"
     >
-      <label>
-        <span>ntfy topic {#if data.alerts.topic_set}(saved — enter to replace){/if}</span>
-        <input
-          name="ntfy_topic"
-          type="password"
-          autocomplete="off"
-          placeholder={data.alerts.topic_set ? "••••••••" : "e.g. gv-birds-x7Qp29rTmZ"}
-        />
-      </label>
       <label>
         <span>Alert radius</span>
         <select name="radius_km">
@@ -365,7 +420,7 @@
         <button
           type="submit"
           class="secondary"
-          formaction="?/test_ntfy"
+          formaction="?/test_push"
           disabled={busy === "alerts"}
         >
           Send test notification
@@ -791,6 +846,13 @@
   .saved-as {
     margin-bottom: 10px;
   }
+  .pushrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin: 8px 0 12px;
+  }
   .alerts-form {
     display: flex;
     flex-direction: column;
@@ -807,16 +869,6 @@
   }
   .alerts-form label span {
     min-width: 150px;
-  }
-  .alerts-form input[type="password"] {
-    flex: 1;
-    min-height: 48px;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg);
-    color: var(--text);
-    font-size: 16px;
   }
   .alerts-form select {
     /* Safari ignores min-height on NATIVE selects (measured 26px, GROK) —

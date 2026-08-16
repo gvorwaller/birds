@@ -18,10 +18,9 @@ import { coverageFromMeta, recentFailures } from '$server/forecast';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
 import { env } from '$env/dynamic/private';
 import { query, queryTimed } from '$lib/db';
-import { decryptSecret } from '$server/crypto';
 import { getEbirdApiKey, notableNearbyObs, syncTaxonomy, EbirdError } from '$server/ebird';
 import { seenSet } from '$server/needs';
-import { sendNtfy } from '$server/ntfy';
+import { sendWebPush, PushError, type PushSubscriptionRow } from '$server/push';
 import {
 	alertCandidates,
 	SCAN_INTERVAL_MS,
@@ -407,7 +406,8 @@ export async function ensureNeedAlertScan(): Promise<void> {
 }
 
 /**
- * One scan: for every enabled user, notable-near-home ∩ needs → ntfy pushes.
+ * One scan: for every enabled user, notable-near-home ∩ needs → Web Push to
+ * every enrolled device.
  * Delivery is explicitly AT-LEAST-ONCE (CODEX1 plan #3): send, then upsert
  * need_alerts_sent immediately per species — a crash in that window may
  * duplicate one push next scan; record-first would silently LOSE alerts.
@@ -421,14 +421,12 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 
 	const users = await query<{
 		user_id: number;
-		ntfy_topic_enc: string;
 		radius_km: number;
 		realert_days: number;
 		home_lat: number | null;
 		home_lon: number | null;
 	}>(
-		`SELECT p.user_id, p.ntfy_topic_enc, p.radius_km, p.realert_days,
-		        u.home_lat, u.home_lon
+		`SELECT p.user_id, p.radius_km, p.realert_days, u.home_lat, u.home_lon
 		   FROM user_alert_prefs p JOIN users u ON u.id = p.user_id
 		  WHERE p.enabled ORDER BY p.user_id`
 	);
@@ -482,15 +480,24 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				return 'skipped';
 			}
 			// Side-effect-free reads — detachable on deadline.
-			const [seen, sentRows] = await raceRead(
+			const [seen, sentRows, subRows] = await raceRead(
 				Promise.all([
 					seenSet(u.user_id),
 					query<{ species_code: string; sent_at: string }>(
 						`SELECT species_code, sent_at FROM need_alerts_sent WHERE user_id = $1`,
 						[u.user_id]
+					),
+					query<PushSubscriptionRow>(
+						`SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`,
+						[u.user_id]
 					)
 				])
 			);
+			if (subRows.rows.length === 0) {
+				// Enabled but no enrolled device (all pruned / never enrolled).
+				await skip('no-devices');
+				return 'skipped';
+			}
 			const sentAt = new Map(
 				sentRows.rows.map((r) => [r.species_code, new Date(r.sent_at).getTime()])
 			);
@@ -502,20 +509,47 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				realertDays: u.realert_days,
 				home: { lat: u.home_lat, lng: u.home_lon }
 			});
-			const topic = decryptSecret(u.ntfy_topic_enc);
+			// Devices that answer 404/410 during this user are pruned once at
+			// the end (bounded write); dead endpoints are skipped for later
+			// candidates within the same scan.
+			const goneEndpoints = new Set<string>();
 			for (const c of candidates) {
-				// No NEW side effect starts past the deadline; an in-flight send
-				// aborts via the shared signal and settles before classification.
+				// No NEW side effect starts past the deadline. Each push is
+				// bounded by the adapter's own timeout (web-push has no
+				// AbortSignal), the candidate count is capped, so the send
+				// phase is wall-bounded: cap × devices × PUSH_TIMEOUT_MS.
 				checkpoint();
-				// Absolute click URL (CODEX1 Rev-2 addendum #1) — species only,
-				// never coordinates, private or not.
-				await sendNtfy(topic, {
-					title: c.title,
-					body: c.body,
-					clickUrl: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`,
-					tags: ['bird'],
-					signal
-				});
+				let delivered = 0;
+				let lastErr: PushError | null = null;
+				for (const sub of subRows.rows) {
+					if (goneEndpoints.has(sub.endpoint)) continue;
+					checkpoint();
+					try {
+						// Absolute URL (CODEX1 Rev-2 addendum #1) — species only,
+						// never coordinates, private or not.
+						await sendWebPush(sub, {
+							title: c.title,
+							body: c.body,
+							url: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`,
+							tag: `need-${c.speciesCode}`
+						});
+						delivered++;
+					} catch (err) {
+						if (err instanceof PushError && err.gone) {
+							goneEndpoints.add(sub.endpoint);
+						} else if (err instanceof PushError) {
+							lastErr = err;
+						} else {
+							throw err;
+						}
+					}
+				}
+				if (delivered === 0) {
+					// Nothing reached ANY device: no sent-row (the next scan
+					// re-attempts inside the re-alert window's absence).
+					if (lastErr) throw lastErr;
+					continue; // every endpoint was gone — the no-devices prune below
+				}
 				// A delivered push MUST record its sent-row (or the next scan
 				// re-pings) — never detached; bounded by the remaining budget
 				// via a client-side query timeout instead.
@@ -528,6 +562,13 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					remainingMs() + 5_000
 				);
 				tally.sent++;
+			}
+			if (goneEndpoints.size > 0) {
+				await queryTimed(
+					`DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = ANY($2)`,
+					[u.user_id, [...goneEndpoints]],
+					remainingMs() + 5_000
+				);
 			}
 			return 'done';
 		};

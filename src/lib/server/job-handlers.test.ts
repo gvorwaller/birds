@@ -133,7 +133,7 @@ const syncMocks = vi.hoisted(() => {
       (...a: unknown[]) => Promise<{ data: unknown[]; fetchedAt: Date; stale: boolean }>
     >(async () => ({ data: [], fetchedAt: new Date(), stale: false })),
     seenSet: vi.fn<(userId: number) => Promise<Set<string>>>(async () => new Set()),
-    sendNtfy: vi.fn<(...a: unknown[]) => Promise<void>>(async () => {}),
+    sendWebPush: vi.fn<(...a: unknown[]) => Promise<void>>(async () => {}),
   };
 });
 
@@ -154,8 +154,22 @@ vi.mock("$server/gallery", () => ({
 vi.mock("$server/needs", () => ({
   seenSet: syncMocks.seenSet,
 }));
-vi.mock("$server/ntfy", () => ({
-  sendNtfy: syncMocks.sendNtfy,
+const pushMocks = vi.hoisted(() => {
+  class FakePushError extends Error {
+    constructor(
+      message: string,
+      public status: number,
+      public gone: boolean,
+    ) {
+      super(message);
+    }
+  }
+  return { FakePushError };
+});
+vi.mock("$server/push", () => ({
+  sendWebPush: syncMocks.sendWebPush,
+  PushError: pushMocks.FakePushError,
+  vapidPublicKey: () => "test-vapid-pub",
 }));
 vi.mock("$server/crypto", () => ({
   decryptSecret: (v: string) => v.replace(/^enc-/, ""),
@@ -217,6 +231,22 @@ beforeEach(() => {
   mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
   db.handler = null;
   db.calls.length = 0;
+  // clearAllMocks resets CALLS, not implementations — persistent
+  // mockRejectedValue/mockResolvedValue set by one test must not leak into
+  // the next (bit the budget suite: a prior test's rejecting sendWebPush
+  // failed an unrelated user).
+  syncMocks.sendWebPush.mockReset();
+  syncMocks.sendWebPush.mockImplementation(async () => {});
+  syncMocks.notableNearbyObs.mockReset();
+  syncMocks.notableNearbyObs.mockImplementation(async () => ({
+    data: [],
+    fetchedAt: new Date(),
+    stale: false,
+  }));
+  syncMocks.seenSet.mockReset();
+  syncMocks.seenSet.mockImplementation(async () => new Set());
+  syncMocks.getEbirdApiKey.mockReset();
+  syncMocks.getEbirdApiKey.mockImplementation(async () => "key");
 });
 
 describe("runJob — frequency jobs", () => {
@@ -623,16 +653,11 @@ describe("runJob — sync jobs (Phase 3)", () => {
   });
 });
 
-describe("runJob — scan_need_alerts (plan Part A)", () => {
-  const SECRET = "gv-birds-x7Qp29rTmZ";
+describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
+  const ENDPOINT = "https://push.apple.example/dev-abc123SECRET";
   const HOME = { home_lat: 27.77, home_lon: -82.64 };
-  const PREF_ROW = {
-    user_id: 3,
-    ntfy_topic_enc: `enc-${SECRET}`,
-    radius_km: 40,
-    realert_days: 7,
-    ...HOME,
-  };
+  const PREF_ROW = { user_id: 3, radius_km: 40, realert_days: 7, ...HOME };
+  const SUB_ROW = { endpoint: ENDPOINT, p256dh: "k1", auth: "a1" };
   const NOTABLE = {
     speciesCode: "snakit",
     comName: "Snail Kite",
@@ -647,16 +672,18 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     subId: "S555",
   };
 
-  function scanDb(prefs: unknown[], sent: unknown[] = []) {
-    db.handler = (text) => {
+  function scanDb(prefs: unknown[], subsByUser: Record<number, unknown[]> = { 3: [SUB_ROW], 4: [SUB_ROW] }, sent: unknown[] = []) {
+    db.handler = (text, params) => {
       if (text.includes("FROM user_alert_prefs p JOIN users")) return { rows: prefs };
       if (text.includes("FROM need_alerts_sent")) return { rows: sent };
+      if (text.includes("FROM push_subscriptions"))
+        return { rows: subsByUser[(params?.[0] as number) ?? 0] ?? [] };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
       return undefined;
     };
   }
 
-  it("happy path: push sent with ABSOLUTE click URL, sent-row upserted, successor scheduled", async () => {
+  it("happy path: push to the device with ABSOLUTE url + collapse tag, sent-row upserted, successor scheduled", async () => {
     scanDb([PREF_ROW]);
     syncMocks.notableNearbyObs.mockResolvedValue({
       data: [NOTABLE],
@@ -665,18 +692,17 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     });
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
 
-    expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
-    const [topic, msg] = syncMocks.sendNtfy.mock.calls[0] as unknown as [
-      string,
-      { title: string; clickUrl: string },
+    expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(1);
+    const [sub, msg] = syncMocks.sendWebPush.mock.calls[0] as unknown as [
+      { endpoint: string },
+      { title: string; url: string; tag: string },
     ];
-    expect(topic).toBe(SECRET);
+    expect(sub.endpoint).toBe(ENDPOINT);
     expect(msg.title).toBe("Lifer nearby: Snail Kite");
-    expect(msg.clickUrl).toMatch(/^https:\/\/.+\/forecast\/species\?species=snakit$/);
-    // Sent-row upsert happened AFTER the send (at-least-once, CODEX1 #3).
+    expect(msg.url).toMatch(/^https:\/\/.+\/forecast\/species\?species=snakit$/);
+    expect(msg.tag).toBe("need-snakit");
     const upsert = db.calls.find((c) => c.text.includes("INSERT INTO need_alerts_sent"));
     expect(upsert?.params).toEqual([3, "snakit", "L9", "2026-08-16 14:40", "S555"]);
-    // Atomic handoff with the 30-min successor.
     expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
     const [, , outcome, successor] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
       number,
@@ -688,10 +714,62 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     expect(outcome.result.alertsSent).toBe(1);
     expect(successor.runAfterMs).toBe(30 * 60_000);
     expect(successor.dedupKey).toBe("scan_need_alerts:global");
-    expect(mocks.completeJob).not.toHaveBeenCalled(); // handoff owns terminalization
+    expect(mocks.completeJob).not.toHaveBeenCalled();
   });
 
-  it("STALE cache never notifies — unit_skipped and retried next scan (CODEX1 #4)", async () => {
+  it("no enrolled devices → unit_skipped('no-devices'), nothing sent", async () => {
+    scanDb([PREF_ROW], { 3: [] });
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(syncMocks.sendWebPush).not.toHaveBeenCalled();
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect((skips[0][2] as { reason: string }).reason).toBe("no-devices");
+  });
+
+  it("a GONE endpoint (410) is pruned; delivery to a live sibling still counts", async () => {
+    const dead = { endpoint: "https://push.apple.example/dead", p256dh: "k2", auth: "a2" };
+    scanDb([PREF_ROW], { 3: [dead, SUB_ROW] });
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    syncMocks.sendWebPush
+      .mockRejectedValueOnce(new pushMocks.FakePushError("push endpoint returned HTTP 410", 410, true))
+      .mockResolvedValueOnce(undefined);
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    // Delivered to the live device → sent-row recorded.
+    expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(1);
+    // Dead endpoint pruned in the bounded cleanup write.
+    const prune = db.calls.find((c) => c.text.includes("DELETE FROM push_subscriptions"));
+    expect(prune?.params?.[1]).toEqual(["https://push.apple.example/dead"]);
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect((oks[0][2] as { alerts: number }).alerts).toBe(1);
+  });
+
+  it("EVERY endpoint failing (non-gone) fails the user; no sent-row, next scan re-attempts", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    syncMocks.sendWebPush.mockRejectedValue(
+      new pushMocks.FakePushError("push endpoint returned HTTP 500", 500, false),
+    );
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(0);
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(fails).toHaveLength(1);
+    // Only eligible user failed → aggregate retry, not success.
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("STALE cache never notifies — unit_skipped and retried next scan (CODEX1 plan #4)", async () => {
     scanDb([PREF_ROW]);
     syncMocks.notableNearbyObs.mockResolvedValue({
       data: [NOTABLE],
@@ -699,11 +777,9 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       stale: true,
     });
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
-    expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+    expect(syncMocks.sendWebPush).not.toHaveBeenCalled();
     const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
-    expect(skips).toHaveLength(1);
     expect((skips[0][2] as { reason: string }).reason).toBe("stale-cache");
-    // All-skipped (no eligible) still completes + reschedules.
     expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
   });
 
@@ -718,19 +794,19 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       .filter((c) => c[1] === "unit_skipped")
       .map((c) => (c[2] as { reason: string }).reason);
     expect(reasons.sort()).toEqual(["no-api-key", "no-home"]);
-    expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+    expect(syncMocks.sendWebPush).not.toHaveBeenCalled();
   });
 
-  it("EVERY eligible user failing takes the retry schedule, not success (CODEX1 #5)", async () => {
+  it("EVERY eligible user failing takes the retry schedule, not success (CODEX1 plan #5)", async () => {
     scanDb([PREF_ROW]);
     syncMocks.notableNearbyObs.mockRejectedValue(new Error("eBird 502"));
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
     expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
-    expect(mocks.terminalizeAndReschedule).not.toHaveBeenCalled(); // dedup key held by waiting_retry
+    expect(mocks.terminalizeAndReschedule).not.toHaveBeenCalled();
   });
 
-  it("at-least-once crash window: send succeeded, record failed → user unit_failed, scan survives", async () => {
+  it("at-least-once crash window: push delivered, record failed → user unit_failed, scan survives", async () => {
     scanDb([PREF_ROW]);
     syncMocks.notableNearbyObs.mockResolvedValue({
       data: [NOTABLE],
@@ -743,16 +819,13 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       return baseHandler(text, params);
     };
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
-    expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1); // push went out
+    expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(1); // push went out
     const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
     expect(fails).toHaveLength(1);
-    // Aggregate rule → retry (the only eligible user failed).
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
   });
 
-  /** A signal-respecting hang: rejects when the budget's abort fires (real
-   * fetch behavior). The awaited-settlement model requires this — a truly
-   * signal-ignoring never-resolving promise would honestly hang the scan. */
+  /** A signal-respecting hang for the reads (real pool-stall shape). */
   function hangUntilAborted(): (
     ...a: unknown[]
   ) => Promise<{ data: unknown[]; fetchedAt: Date; stale: boolean }> {
@@ -778,11 +851,9 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
       expect(fails).toHaveLength(1);
       expect((fails[0][2] as { budget?: boolean }).budget).toBe(true);
-      // The signal actually reached the fetch.
       const opts = syncMocks.notableNearbyObs.mock.calls[0][5] as { signal?: AbortSignal };
       expect(opts?.signal).toBeInstanceOf(AbortSignal);
-      // The healthy user still ran and alerted — no starvation.
-      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
+      expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(1); // user 4 only
       expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -793,8 +864,6 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     vi.useFakeTimers();
     try {
       scanDb([PREF_ROW, { ...PREF_ROW, user_id: 4 }]);
-      // User 3's seenSet hangs forever and knows nothing about signals —
-      // the pool-stall shape. raceRead must detach it at the wall.
       syncMocks.seenSet
         .mockImplementationOnce(() => new Promise(() => {}))
         .mockResolvedValueOnce(new Set());
@@ -806,65 +875,19 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
       await vi.advanceTimersByTimeAsync(61_000);
       await p;
-      // User 3 budget-failed; user 4 alerted; the scan terminalized.
       const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
       expect(fails).toHaveLength(1);
       expect((fails[0][2] as { budget?: boolean; userId: number })).toMatchObject({
         budget: true,
         userId: 3,
       });
-      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1); // user 4 only
+      expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(1); // user 4 only
       expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
-      // Advance far past — the detached read never produces side effects:
-      // still exactly one send, and only user 4's upsert.
       await vi.advanceTimersByTimeAsync(600_000);
-      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
+      expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(1);
       const upserts = db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"));
       expect(upserts).toHaveLength(1);
       expect(upserts[0].params?.[0]).toBe(4);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("post-send UPSERT that never acquires/settles is bounded by queryTimed's contract: user fails at the wall, next user runs, scan terminalizes (CODEX1)", async () => {
-    vi.useFakeTimers();
-    try {
-      scanDb([PREF_ROW, { ...PREF_ROW, user_id: 4 }]);
-      syncMocks.notableNearbyObs.mockResolvedValue({
-        data: [NOTABLE],
-        fetchedAt: new Date(),
-        stale: false,
-      });
-      // User 3's send SUCCEEDS, then its sent-row upsert models a total pool
-      // stall: the real queryTimed guarantees rejection within its timeoutMs
-      // (db-querytimed.test.ts pins that mechanism) — honor the contract here.
-      const dbMod = await import("$lib/db");
-      let user3UpsertTimeout: number | null = null;
-      (dbMod.queryTimed as ReturnType<typeof vi.fn>).mockImplementationOnce(
-        (_text: string, params: unknown[] | undefined, timeoutMs: number) => {
-          user3UpsertTimeout = timeoutMs;
-          return new Promise((_, reject) => {
-            setTimeout(
-              () => reject(new Error(`queryTimed: pool acquisition exceeded ${timeoutMs}ms`)),
-              timeoutMs,
-            );
-          });
-        },
-      );
-      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
-      // Wall contract: 60s budget + the documented 5s must-record grace.
-      await vi.advanceTimersByTimeAsync(66_000);
-      await vi.advanceTimersByTimeAsync(5_000); // settle user 4 + terminalize
-      await p;
-      expect(user3UpsertTimeout).not.toBeNull();
-      expect(user3UpsertTimeout!).toBeLessThanOrEqual(65_000); // remaining + 5s grace
-      const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
-      expect(fails).toHaveLength(1);
-      expect(fails[0][2]).toMatchObject({ userId: 3 });
-      // User 4 still ran and alerted; the scan terminalized.
-      expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(2); // user 3's send DID go out
-      expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -874,8 +897,6 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     vi.useFakeTimers();
     try {
       scanDb([PREF_ROW]);
-      // Signal-ignoring slow fetch: resolves WITH DATA at t+70s — past the
-      // 60s budget. The checkpoint after it must throw before any send.
       syncMocks.notableNearbyObs.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -888,69 +909,28 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
       await vi.advanceTimersByTimeAsync(71_000);
       await p;
-      // The pipeline SETTLED before classification (awaited), and nothing
-      // fired after the deadline: no publish, no upsert.
-      expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+      expect(syncMocks.sendWebPush).not.toHaveBeenCalled();
       expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(0);
       const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
       expect(fails).toHaveLength(1);
       expect((fails[0][2] as { budget?: boolean }).budget).toBe(true);
-      // Terminal handling happened AFTER the unit settled — the retry call is
-      // the last queue transition and no event follows it.
       expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("mid-candidate expiry: ACTUAL sends counted, in-flight send settles first (CODEX1)", async () => {
-    vi.useFakeTimers();
-    try {
-      scanDb([PREF_ROW]);
-      syncMocks.notableNearbyObs.mockResolvedValue({
-        data: [
-          NOTABLE,
-          { ...NOTABLE, speciesCode: "wantat1", comName: "Wandering Tattler", locId: "L2", lat: 28.4 },
-        ],
-        fetchedAt: new Date(),
-        stale: false,
-      });
-      // First push lands; the second respects the abort signal (as the real
-      // adapter does via AbortSignal.any) and rejects at the deadline.
-      syncMocks.sendNtfy
-        .mockResolvedValueOnce(undefined)
-        .mockImplementationOnce(
-          (...a: unknown[]) =>
-            new Promise((_, reject) => {
-              const msg = a[1] as { signal?: AbortSignal };
-              msg.signal?.addEventListener("abort", () => reject(new Error("aborted")));
-            }),
-        );
-      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
-      await vi.advanceTimersByTimeAsync(61_000);
-      await p;
-      const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
-      expect(fails).toHaveLength(1);
-      expect(fails[0][2]).toMatchObject({ budget: true, sentBeforeExpiry: 1 });
-      // One sent-row upsert — for the push that actually went out.
-      expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(1);
-      // Only eligible user failed → aggregate retry; its summary counts 1 real send.
-      expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
-      expect(
-        (mocks.scheduleRetry.mock.calls[0][4] as { alertsSent: number }).alertsSent,
-      ).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("red-team: the decrypted topic appears in NOTHING recorded (CODEX1 #4)", async () => {
+  it("red-team: the endpoint URL appears in NOTHING recorded (capability secrecy)", async () => {
     scanDb([PREF_ROW]);
     syncMocks.notableNearbyObs.mockResolvedValue({
       data: [NOTABLE],
       fetchedAt: new Date(),
       stale: false,
     });
+    // Even when a push FAILS, the typed error carries no endpoint.
+    syncMocks.sendWebPush.mockRejectedValue(
+      new pushMocks.FakePushError("push endpoint returned HTTP 500", 500, false),
+    );
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
     const stored = [
       ...mocks.recordEvent.mock.calls.map((c) => JSON.stringify(c[2] ?? {})),
@@ -959,7 +939,10 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       ...mocks.scheduleRetry.mock.calls.map((c) => JSON.stringify(c[4] ?? null)),
     ];
     expect(stored.length).toBeGreaterThan(0);
-    for (const json of stored) expect(json).not.toContain(SECRET);
+    for (const json of stored) {
+      expect(json).not.toContain(ENDPOINT);
+      expect(json).not.toContain("dev-abc123SECRET");
+    }
   });
 });
 

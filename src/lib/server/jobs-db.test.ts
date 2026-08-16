@@ -587,40 +587,51 @@ describe.runIf(dbUp)("recurring primitives (need-alert scheduler)", () => {
   });
 });
 
-describe.runIf(dbUp)("user_alert_prefs upsert (prod 500, 2026-08-16)", () => {
-  const wipe = () => query("DELETE FROM user_alert_prefs WHERE user_id = $1", [userId]);
+describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", () => {
+  const wipe = async () => {
+    await query("DELETE FROM user_alert_prefs WHERE user_id = $1", [userId]);
+    await query("DELETE FROM push_subscriptions WHERE user_id = $1", [userId]);
+  };
 
-  it("re-save with enabled + empty topic input keeps the saved topic — the candidate row must satisfy the CHECK itself", async () => {
+  it("prefs upsert round-trips; re-save is idempotent (regression home of the prod 500)", async () => {
     await wipe();
-    const upsert = (enabled: boolean, topicEnc: string | null) =>
+    const upsert = (enabled: boolean, radius: number, realert: number) =>
       query(
-        `INSERT INTO user_alert_prefs (user_id, enabled, ntfy_topic_enc, radius_km, realert_days, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
+        `INSERT INTO user_alert_prefs (user_id, enabled, radius_km, realert_days, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
          ON CONFLICT (user_id) DO UPDATE SET
-           enabled = $2, ntfy_topic_enc = $3,
-           radius_km = $4, realert_days = $5, updated_at = NOW()`,
-        [userId, enabled, topicEnc, 40, 7],
+           enabled = $2, radius_km = $3, realert_days = $4, updated_at = NOW()`,
+        [userId, enabled, radius, realert],
       );
-    // First save: topic + enabled.
-    await upsert(true, "enc-topic-1");
-    // The PROD failure shape: re-save (radius tweak) with the topic field
-    // empty. The action resolves the effective topic FIRST — the old
-    // COALESCE-in-DO-UPDATE shape put NULL in the candidate row and
-    // violated user_alert_prefs_check before conflict resolution.
-    const effective = await query<{ ntfy_topic_enc: string | null }>(
-      `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
+    await upsert(true, 40, 7);
+    await upsert(true, 50, 3); // the re-save shape that 500'd under the old CHECK
+    const after = await query<{ enabled: boolean; radius_km: number; realert_days: number }>(
+      `SELECT enabled, radius_km, realert_days FROM user_alert_prefs WHERE user_id = $1`,
       [userId],
     );
-    await upsert(true, effective.rows[0]?.ntfy_topic_enc ?? null); // must not throw
-    const after = await query<{ enabled: boolean; ntfy_topic_enc: string | null }>(
-      `SELECT enabled, ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
-      [userId],
+    expect(after.rows[0]).toEqual({ enabled: true, radius_km: 50, realert_days: 3 });
+    await wipe();
+  });
+
+  it("push subscription endpoint upsert re-homes to the latest user; cascade on user delete", async () => {
+    await wipe();
+    const sub = (uid: number) =>
+      query(
+        `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (endpoint) DO UPDATE SET user_id = $2, p256dh = $3, auth = $4`,
+        ["https://push.example/JOBTEST-ep1", uid, "k1", "a1"],
+      );
+    await sub(userId);
+    await sub(userId); // idempotent
+    const rows = await query<{ user_id: number }>(
+      `SELECT user_id FROM push_subscriptions WHERE endpoint = $1`,
+      ["https://push.example/JOBTEST-ep1"],
     );
-    expect(after.rows[0]).toEqual({ enabled: true, ntfy_topic_enc: "enc-topic-1" });
-    // And the DB still rejects a genuinely topic-less enable.
-    await wipe();
-    await expect(upsert(true, null)).rejects.toThrow(/user_alert_prefs_check/);
-    await wipe();
+    expect(rows.rows).toEqual([{ user_id: userId }]);
+    await query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [
+      "https://push.example/JOBTEST-ep1",
+    ]);
   });
 });
 

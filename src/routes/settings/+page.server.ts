@@ -12,7 +12,7 @@ import {
 import { syncGallery } from "$server/gallery";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
-import { sendNtfy, validNtfyTopic, NtfyError } from "$server/ntfy";
+import { sendWebPush, vapidPublicKey, PushError, type PushSubscriptionRow } from "$server/push";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -53,6 +53,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     cacheStats,
     tripStats,
     alertPrefs,
+    pushDevices,
   ] = await Promise.all([
     query<{
       api_key_set: boolean;
@@ -102,12 +103,15 @@ export const load: PageServerLoad = async ({ locals }) => {
     ),
     query<{
       enabled: boolean;
-      topic_set: boolean;
       radius_km: number;
       realert_days: number;
     }>(
-      `SELECT enabled, ntfy_topic_enc IS NOT NULL AS topic_set, radius_km, realert_days
+      `SELECT enabled, radius_km, realert_days
          FROM user_alert_prefs WHERE user_id = $1`,
+      [userId],
+    ),
+    query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = $1`,
       [userId],
     ),
   ]);
@@ -142,10 +146,13 @@ export const load: PageServerLoad = async ({ locals }) => {
     },
     alerts: alertPrefs.rows[0] ?? {
       enabled: false,
-      topic_set: false,
       radius_km: 40,
       realert_days: 7,
     },
+    pushDeviceCount: Number(pushDevices.rows[0]?.n ?? 0),
+    // The PUBLIC half of the VAPID pair — safe to expose; the browser needs
+    // it as applicationServerKey to subscribe.
+    vapidPublicKey: vapidPublicKey(),
     // Settings is the single explicit persistence surface for the saved search
     // radius now that Home's implicit save-on-change action is gone.
     radiusKm: normalizeNearMeRadiusKm(user.rows[0]?.near_me_radius_km),
@@ -363,15 +370,14 @@ export const actions: Actions = {
   },
 
   /**
-   * Need-alert preferences (plan A4). Topic is write-only like the eBird
-   * password: saved encrypted, replaced not revealed. Enabling requires a
-   * topic (friendly error here; the DB CHECK is the backstop).
+   * Need-alert preferences (Web Push channel). Enabling requires at least
+   * one enrolled device — checked here; the scan also skips users whose
+   * devices have all been pruned.
    */
   save_alerts: async ({ locals, request }) => {
     const userId = locals.user!.id;
     const form = await request.formData();
     const enabled = form.get("enabled") === "1";
-    const topicRaw = (form.get("ntfy_topic") ?? "").toString().trim();
     const radius = Number(form.get("radius_km"));
     const realert = Number(form.get("realert_days"));
     if (!Number.isInteger(radius) || radius < 1 || radius > 50) {
@@ -380,36 +386,23 @@ export const actions: Actions = {
     if (!Number.isInteger(realert) || realert < 1 || realert > 30) {
       return fail(400, { error: "Re-alert window must be between 1 and 30 days." });
     }
-    if (topicRaw && !validNtfyTopic(topicRaw)) {
-      return fail(400, {
-        error:
-          "Topic must be 8-64 letters, digits, - or _ — just the topic name, not a URL. Treat it like a password: long and random.",
-      });
-    }
-    // The candidate row itself must satisfy the enabled-requires-topic CHECK:
-    // Postgres evaluates CHECKs on the INSERT candidate BEFORE ON CONFLICT
-    // resolution, so "keep the saved topic via COALESCE in DO UPDATE" 500'd
-    // on every re-save with an empty topic field (prod, 2026-08-16). Resolve
-    // the effective topic FIRST and pass it explicitly.
-    const existing = await query<{ ntfy_topic_enc: string | null }>(
-      `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
-      [userId],
-    );
-    const topicEnc = topicRaw
-      ? encryptSecret(topicRaw)
-      : (existing.rows[0]?.ntfy_topic_enc ?? null);
-    if (enabled && !topicEnc) {
-      return fail(400, {
-        error: "Save a ntfy topic before enabling need alerts.",
-      });
+    if (enabled) {
+      const devices = await query<{ n: string }>(
+        `SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = $1`,
+        [userId],
+      );
+      if (Number(devices.rows[0]?.n ?? 0) === 0) {
+        return fail(400, {
+          error: "Enable notifications on this device first (the button above).",
+        });
+      }
     }
     await query(
-      `INSERT INTO user_alert_prefs (user_id, enabled, ntfy_topic_enc, radius_km, realert_days, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
+      `INSERT INTO user_alert_prefs (user_id, enabled, radius_km, realert_days, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
-         enabled = $2, ntfy_topic_enc = $3,
-         radius_km = $4, realert_days = $5, updated_at = NOW()`,
-      [userId, enabled, topicEnc, radius, realert],
+         enabled = $2, radius_km = $3, realert_days = $4, updated_at = NOW()`,
+      [userId, enabled, radius, realert],
     );
     return {
       ok: true as const,
@@ -420,49 +413,76 @@ export const actions: Actions = {
   },
 
   /**
-   * Synchronous test push (plan A4/GROK §1): proves the SERVER can publish
-   * to the topic — deliberately in-request so misconfiguration surfaces at
-   * setup time. A quiet phone after "sent" is a phone-side issue (ntfy app
-   * subscription, iOS notification permission, Focus).
+   * Store this browser/device's push subscription (from
+   * pushManager.subscribe().toJSON()). The endpoint is a capability — never
+   * echoed back, never logged.
    */
-  test_ntfy: async ({ locals, request }) => {
+  save_push_sub: async ({ locals, request }) => {
     const userId = locals.user!.id;
     const form = await request.formData();
-    const inputTopic = (form.get("ntfy_topic") ?? "").toString().trim();
-    let topic = inputTopic;
-    if (!topic) {
-      const saved = await query<{ ntfy_topic_enc: string | null }>(
-        `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
-        [userId],
-      );
-      const enc = saved.rows[0]?.ntfy_topic_enc;
-      if (!enc) return fail(400, { error: "Enter or save a ntfy topic first." });
-      topic = decryptSecret(enc);
-    }
-    if (!validNtfyTopic(topic)) {
-      return fail(400, { error: "That topic isn't valid — 8-64 letters, digits, - or _." });
-    }
+    let sub: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
     try {
-      // Distinct title — a setup ping must never look like a lifer (GROK §1).
-      await sendNtfy(topic, {
-        title: "Need-alerts test",
-        body: "Your birds app can reach this topic. If you're reading this on your phone, you're all set.",
-        tags: ["white_check_mark"],
-      });
-    } catch (err) {
+      sub = JSON.parse((form.get("subscription") ?? "").toString());
+    } catch {
+      return fail(400, { error: "Malformed push subscription." });
+    }
+    const endpoint = typeof sub.endpoint === "string" ? sub.endpoint : "";
+    const p256dh = typeof sub.keys?.p256dh === "string" ? sub.keys.p256dh : "";
+    const auth = typeof sub.keys?.auth === "string" ? sub.keys.auth : "";
+    if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+      return fail(400, { error: "Malformed push subscription." });
+    }
+    await query(
+      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $2, p256dh = $3, auth = $4`,
+      [endpoint, userId, p256dh, auth],
+    );
+    return { ok: true as const, message: "This device is enrolled for notifications." };
+  },
+
+  /**
+   * Synchronous test push to EVERY enrolled device — misconfiguration must
+   * surface at setup time. Dead endpoints (404/410) are pruned on the spot.
+   */
+  test_push: async ({ locals }) => {
+    const userId = locals.user!.id;
+    const subs = await query<PushSubscriptionRow>(
+      `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`,
+      [userId],
+    );
+    if (subs.rows.length === 0) {
+      return fail(400, { error: "Enable notifications on this device first." });
+    }
+    let delivered = 0;
+    let lastError: string | null = null;
+    for (const sub of subs.rows) {
+      try {
+        await sendWebPush(sub, {
+          title: "Need-alerts test",
+          body: "Notifications are working. Rare birds you need will show up like this.",
+          tag: "need-alerts-test",
+        });
+        delivered++;
+      } catch (err) {
+        if (err instanceof PushError && err.gone) {
+          await query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [sub.endpoint]);
+        } else {
+          lastError = err instanceof PushError ? err.message : "push failed";
+        }
+      }
+    }
+    if (delivered === 0) {
       return fail(502, {
-        error:
-          err instanceof NtfyError
-            ? `Test failed: ${err.message}.`
-            : "Test failed: could not reach ntfy.",
+        error: `Test failed on every enrolled device${lastError ? ` (${lastError})` : ""} — try re-enabling notifications on this device.`,
       });
     }
     return {
       ok: true as const,
-      message:
-        "Test sent. If your phone stayed quiet: check the ntfy app is subscribed to this exact topic, notifications are allowed, and Focus isn't silencing ntfy.",
+      message: `Test sent to ${delivered} device${delivered === 1 ? "" : "s"}. If nothing appeared: notifications must be allowed for the birds app, and Focus can silence them.`,
     };
   },
+
 
   import_csv: async ({ locals, request }) => {
     const userId = locals.user!.id;
