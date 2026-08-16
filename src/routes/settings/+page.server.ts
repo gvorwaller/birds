@@ -12,7 +12,14 @@ import {
 import { syncGallery } from "$server/gallery";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
-import { sendWebPush, vapidPublicKey, PushError, type PushSubscriptionRow } from "$server/push";
+import {
+  sendWebPush,
+  validPushEndpoint,
+  validPushKeys,
+  vapidPublicKey,
+  PushError,
+  type PushSubscriptionRow,
+} from "$server/push";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -429,9 +436,16 @@ export const actions: Actions = {
     const endpoint = typeof sub.endpoint === "string" ? sub.endpoint : "";
     const p256dh = typeof sub.keys?.p256dh === "string" ? sub.keys.p256dh : "";
     const auth = typeof sub.keys?.auth === "string" ? sub.keys.auth : "";
-    if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+    // Strict boundary (CODEX1): only real push-service origins, structural
+    // URL checks, and key-shape bounds — an arbitrary https URL here would be
+    // authenticated blind SSRF via the worker's sends.
+    if (!validPushEndpoint(endpoint) || !validPushKeys(p256dh, auth)) {
       return fail(400, { error: "Malformed push subscription." });
     }
+    // Re-homing an EXISTING endpoint to the current login is deliberate: the
+    // subscription tuple is capability material the browser just proved it
+    // holds; same browser switching accounts moves the device's alerts to
+    // the account now using it.
     await query(
       `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth)
        VALUES ($1, $2, $3, $4)

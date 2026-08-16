@@ -11,7 +11,8 @@ const webpushMock = vi.hoisted(() => ({
 }));
 vi.mock("web-push", () => ({ default: webpushMock }));
 
-const { sendWebPush, PushError, PUSH_TIMEOUT_MS } = await import("./push");
+const { sendWebPush, validPushEndpoint, validPushKeys, PushError, PUSH_TIMEOUT_MS } =
+  await import("./push");
 
 const SUB = {
   endpoint: "https://push.apple.example/device-SECRET-xyz",
@@ -21,6 +22,52 @@ const SUB = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("validPushEndpoint — the SSRF boundary (CODEX1)", () => {
+  const P256 = "B" + "a".repeat(86); // 87 chars, base64url
+  const AUTH = "b".repeat(22);
+
+  it("accepts the real push-service origins browsers hand out", () => {
+    for (const url of [
+      "https://web.push.apple.com/QOZzz0HzALxSAB3ilJDANQ",
+      "https://fcm.googleapis.com/fcm/send/abc123:APA91b",
+      "https://updates.push.services.mozilla.com/wpush/v2/gAAAA",
+      "https://sg2p.notify.windows.com/w/?token=abc",
+    ]) {
+      expect(validPushEndpoint(url), url).toBe(true);
+    }
+  });
+
+  it("rejects attacker-chosen destinations: private nets, loopback, ports, creds, fragments, http", () => {
+    for (const url of [
+      "https://localhost/push",
+      "https://127.0.0.1/push",
+      "https://10.0.0.7/push",
+      "https://192.168.1.1/push",
+      "https://169.254.169.254/latest/meta-data", // cloud metadata
+      "https://birds.gaylon.photos/api/health", // own host
+      "https://evil.example.com/collect",
+      "https://web.push.apple.com.evil.example/x", // suffix spoof
+      "https://web.push.apple.com:8443/x", // non-default port
+      "https://user:pass@web.push.apple.com/x", // credentials
+      "https://web.push.apple.com/x#frag",
+      "http://web.push.apple.com/x", // not https
+      "not a url",
+      "https://web.push.apple.com/" + "x".repeat(1100), // oversize
+    ]) {
+      expect(validPushEndpoint(url), url).toBe(false);
+    }
+  });
+
+  it("validPushKeys enforces base64url shape and P-256/auth lengths", () => {
+    expect(validPushKeys(P256, AUTH)).toBe(true);
+    expect(validPushKeys("short", AUTH)).toBe(false);
+    expect(validPushKeys(P256, "x")).toBe(false);
+    expect(validPushKeys(P256 + "!", AUTH)).toBe(false); // non-base64url
+    expect(validPushKeys("a".repeat(200), AUTH)).toBe(false); // oversize
+    expect(validPushKeys(P256, "c".repeat(50))).toBe(false);
+  });
 });
 
 describe("sendWebPush", () => {

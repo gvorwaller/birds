@@ -81,6 +81,10 @@ const db = vi.hoisted(() => {
   const state = {
     handler: null as null | ((text: string, params?: unknown[]) => { rows: unknown[] } | undefined),
     calls: [] as { text: string; params: unknown[] }[],
+    /** When true, queryTimed stalls to its timeout then rejects — the
+     * pool-stall shape, honoring the real contract. */
+    stallTimedWrites: false,
+    timedTimeouts: [] as number[],
   };
   return state;
 });
@@ -90,10 +94,15 @@ vi.mock("$lib/db", () => ({
     db.calls.push({ text, params: params ?? [] });
     return db.handler?.(text, params) ?? { rows: [] };
   }),
-  queryTimed: vi.fn(async (text: string, params: unknown[] | undefined, timeoutMs: number) => {
+  queryTimed: vi.fn((text: string, params: unknown[] | undefined, timeoutMs: number) => {
     db.calls.push({ text, params: params ?? [] });
-    void timeoutMs;
-    return db.handler?.(text, params) ?? { rows: [] };
+    db.timedTimeouts.push(timeoutMs);
+    if (db.stallTimedWrites) {
+      return new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`queryTimed: timeout after ${timeoutMs}ms`)), timeoutMs);
+      });
+    }
+    return Promise.resolve(db.handler?.(text, params) ?? { rows: [] });
   }),
   withTransaction: vi.fn(),
 }));
@@ -231,6 +240,8 @@ beforeEach(() => {
   mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
   db.handler = null;
   db.calls.length = 0;
+  db.stallTimedWrites = false;
+  db.timedTimeouts.length = 0;
   // clearAllMocks resets CALLS, not implementations — persistent
   // mockRejectedValue/mockResolvedValue set by one test must not leak into
   // the next (bit the budget suite: a prior test's rejecting sendWebPush
@@ -749,6 +760,78 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     expect(prune?.params?.[1]).toEqual(["https://push.apple.example/dead"]);
     const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
     expect((oks[0][2] as { alerts: number }).alerts).toBe(1);
+  });
+
+  it("a 410 sibling is pruned EVEN WHEN the user fails (500 sibling, zero delivery) — CODEX1", async () => {
+    const dead = { endpoint: "https://push.apple.example/dead", p256dh: "k2", auth: "a2" };
+    scanDb([PREF_ROW], { 3: [dead, SUB_ROW] });
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    syncMocks.sendWebPush
+      .mockRejectedValueOnce(new pushMocks.FakePushError("push endpoint returned HTTP 410", 410, true))
+      .mockRejectedValueOnce(new pushMocks.FakePushError("push endpoint returned HTTP 500", 500, false));
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    // The user failed (zero delivery, non-gone error present)...
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(fails).toHaveLength(1);
+    // ...but the settlement path STILL pruned the dead endpoint — it must
+    // not survive to repeat on every retry.
+    const prune = db.calls.find((c) => c.text.includes("DELETE FROM push_subscriptions"));
+    expect(prune?.params?.[1]).toEqual(["https://push.apple.example/dead"]);
+    expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(0);
+  });
+
+  it("TRUE OUTER WALL: late send + gone sibling + stalling writes share ONE grace (budget+push-timeout+5s) — CODEX1", async () => {
+    vi.useFakeTimers();
+    try {
+      const dead = { endpoint: "https://push.apple.example/dead", p256dh: "k2", auth: "a2" };
+      scanDb([PREF_ROW], { 3: [dead, SUB_ROW] });
+      // Pre-send pipeline consumes ~59s (signal-unaware slow fetch that DOES
+      // resolve, just slowly — before the deadline).
+      syncMocks.notableNearbyObs.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(
+              () => resolve({ data: [NOTABLE], fetchedAt: new Date(), stale: false }),
+              59_000,
+            );
+          }),
+      );
+      // Dead sibling 410s instantly; the live send starts ~59s (just before
+      // the 60s deadline) and resolves at ~68s — inside its own 10s bound.
+      syncMocks.sendWebPush.mockImplementation((...a: unknown[]) => {
+        const sub = a[0] as { endpoint: string };
+        if (sub.endpoint.endsWith("/dead")) {
+          return Promise.reject(
+            new pushMocks.FakePushError("push endpoint returned HTTP 410", 410, true),
+          );
+        }
+        return new Promise<void>((resolve) => setTimeout(() => resolve(), 9_000));
+      });
+      // Every must-settle write stalls to its full timeout then rejects.
+      db.stallTimedWrites = true;
+      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+      let doneAt = 0;
+      void p.then(() => (doneAt = Date.now()));
+      const startAt = Date.now();
+      await vi.advanceTimersByTimeAsync(80_000);
+      await p;
+      const elapsed = doneAt - startAt;
+      // One shared grace: wall ≤ 60s budget + 10s push timeout + 5s grace
+      // (+ small epsilon). Stacked per-write graces would exceed this.
+      expect(elapsed).toBeGreaterThan(60_000);
+      expect(elapsed).toBeLessThanOrEqual(75_500);
+      // Both writes were bounded by the SHARED window — each timeout handed
+      // to queryTimed was ≤ the grace remainder, never a fresh 5s+.
+      for (const t of db.timedTimeouts) {
+        expect(t).toBeLessThanOrEqual(5_000 + 100);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("EVERY endpoint failing (non-gone) fails the user; no sent-row, next scan re-attempts", async () => {

@@ -311,33 +311,39 @@ class ScanBudgetExceeded extends Error {
 	}
 }
 
+/** ONE shared settlement-grace window past the deadline for must-settle
+ * writes — NOT per-operation (CODEX1: fresh per-write graces stack). */
+const WRITE_GRACE_MS = 5_000;
+
 /**
  * HARD per-user wall deadline with no abandoned side effects (CODEX1
- * re-re-review). Every awaited leg inside the budget is bounded:
- * - network legs carry the AbortSignal (notableNearbyObs → ebirdFetch,
- *   sendNtfy via AbortSignal.any) — hung fetches STOP;
- * - side-effect-FREE reads (API-key lookup, seenSet, sent-rows SELECT) go
- *   through raceRead: on deadline the AWAIT rejects and the underlying read
- *   is detached — provably safe, a SELECT/decrypt that settles later mutates
- *   nothing and its result is discarded;
- * - the one budgeted WRITE (the sent-row upsert) is never detached — it is
- *   bounded by a client-side query timeout (queryTimed) sized to the
- *   remaining budget, so it terminates within the deadline WITHOUT leaving
- *   live write work behind;
- * - checkpoint() throws before every new side effect past the deadline; an
- *   in-flight send settles (abort-bounded) before the unit is classified.
+ * reviews). Every awaited leg inside the budget is bounded:
+ * - the eBird fetch carries the AbortSignal (notableNearbyObs → ebirdFetch)
+ *   — a hung fetch STOPS at the deadline;
+ * - side-effect-FREE reads (API-key lookup, seenSet, sent-rows/subs SELECT)
+ *   go through raceRead: on deadline the AWAIT rejects and the underlying
+ *   read is detached — provably safe, a SELECT/decrypt that settles later
+ *   mutates nothing and its result is discarded;
+ * - web pushes take no signal (the web-push lib doesn't) — each is bounded
+ *   by the adapter's own PUSH_TIMEOUT_MS, with checkpoint() before every
+ *   send, so at most ONE send can straddle the deadline;
+ * - must-settle WRITES (sent-row upsert, gone-endpoint prune) are never
+ *   detached — each is bounded by queryTimed sized to graceLeftMs(), the
+ *   SHARED absolute window (deadline + WRITE_GRACE_MS): however many writes
+ *   remain, they split ONE grace, they don't stack fresh ones.
+ * True outer wall: budget + PUSH_TIMEOUT_MS (one straddling send) +
+ * WRITE_GRACE_MS — a fixed bound, tested.
  * The scan's OWN infra writes (skip/unit events, progress) are outside the
  * budget by design: they hit the same DB as the queue's heartbeat and
- * claims — if those stall, the worker itself is stalled and worker-level
- * recovery (heartbeat staleness + startup reclaim) is the correct layer,
- * not a per-user budget.
+ * claims — a stall there is a stalled worker, recovered by heartbeat
+ * staleness + startup reclaim, not a per-user budget.
  */
 async function withBudget<T>(
 	fn: (tools: {
 		signal: AbortSignal;
 		checkpoint: () => void;
 		raceRead: <R>(p: Promise<R>) => Promise<R>;
-		remainingMs: () => number;
+		graceLeftMs: () => number;
 	}) => Promise<T>,
 	budgetMs: number
 ): Promise<T> {
@@ -364,9 +370,9 @@ async function withBudget<T>(
 			);
 		});
 	};
-	const remainingMs = () => Math.max(1, deadlineAt - Date.now());
+	const graceLeftMs = () => Math.max(1, deadlineAt + WRITE_GRACE_MS - Date.now());
 	try {
-		return await fn({ signal: controller.signal, checkpoint, raceRead, remainingMs });
+		return await fn({ signal: controller.signal, checkpoint, raceRead, graceLeftMs });
 	} catch (err) {
 		if (controller.signal.aborted) throw new ScanBudgetExceeded();
 		throw err;
@@ -456,9 +462,9 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			signal: AbortSignal;
 			checkpoint: () => void;
 			raceRead: <R>(p: Promise<R>) => Promise<R>;
-			remainingMs: () => number;
+			graceLeftMs: () => number;
 		}): Promise<'done' | 'skipped'> => {
-			const { signal, checkpoint, raceRead, remainingMs } = tools;
+			const { signal, checkpoint, raceRead, graceLeftMs } = tools;
 			if (u.home_lat == null || u.home_lon == null) {
 				await skip('no-home');
 				return 'skipped';
@@ -509,10 +515,13 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				realertDays: u.realert_days,
 				home: { lat: u.home_lat, lng: u.home_lon }
 			});
-			// Devices that answer 404/410 during this user are pruned once at
-			// the end (bounded write); dead endpoints are skipped for later
+			// Devices that answer 404/410 during this user are pruned once in
+			// the SETTLEMENT path below (runs even when the user fails —
+			// CODEX1: a 410 sibling next to a 500 sibling must not survive to
+			// repeat on every retry); dead endpoints are skipped for later
 			// candidates within the same scan.
 			const goneEndpoints = new Set<string>();
+			try {
 			for (const c of candidates) {
 				// No NEW side effect starts past the deadline. Each push is
 				// bounded by the adapter's own timeout (web-push has no
@@ -551,26 +560,32 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					continue; // every endpoint was gone — the no-devices prune below
 				}
 				// A delivered push MUST record its sent-row (or the next scan
-				// re-pings) — never detached; bounded by the remaining budget
-				// via a client-side query timeout instead.
+				// re-pings) — never detached; bounded by the SHARED settlement
+				// grace (all remaining writes split one window, they don't
+				// stack fresh per-write graces — CODEX1).
 				await queryTimed(
 					`INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
 					 VALUES ($1, $2, $3, $4, $5, NOW())
 					 ON CONFLICT (user_id, species_code)
 					 DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()`,
 					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId],
-					remainingMs() + 5_000
+					graceLeftMs()
 				);
 				tally.sent++;
 			}
-			if (goneEndpoints.size > 0) {
-				await queryTimed(
-					`DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = ANY($2)`,
-					[u.user_id, [...goneEndpoints]],
-					remainingMs() + 5_000
-				);
-			}
 			return 'done';
+			} finally {
+				// Settlement path: prune accumulated dead endpoints even when a
+				// candidate/user failed, best-effort within the same shared
+				// grace — a prune failure must not mask the real outcome.
+				if (goneEndpoints.size > 0) {
+					await queryTimed(
+						`DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = ANY($2)`,
+						[u.user_id, [...goneEndpoints]],
+						graceLeftMs()
+					).catch(() => {});
+				}
+			}
 		};
 		try {
 			const outcome = await withBudget(processUser, SCAN_USER_BUDGET_MS);

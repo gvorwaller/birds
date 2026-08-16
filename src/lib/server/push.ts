@@ -25,6 +25,48 @@ export interface PushMessage {
 	tag?: string;
 }
 
+/**
+ * Endpoint validation for save-time (CODEX1: an attacker-chosen https URL +
+ * offline-generated key material is authenticated blind SSRF from this
+ * host). Only the push-service origins real browsers hand out are accepted —
+ * Apple (Safari/iOS PWA), FCM (Chrome/Edge/Brave), Mozilla (Firefox),
+ * WNS (Edge legacy) — with structural checks: no credentials, no fragment,
+ * default port only, sane length.
+ */
+const PUSH_HOST_ALLOW: RegExp[] = [
+	/(^|\.)push\.apple\.com$/,
+	/^fcm\.googleapis\.com$/,
+	/(^|\.)push\.services\.mozilla\.com$/,
+	/(^|\.)notify\.windows\.com$/
+];
+
+export function validPushEndpoint(raw: string): boolean {
+	if (raw.length < 20 || raw.length > 1024) return false;
+	let u: URL;
+	try {
+		u = new URL(raw);
+	} catch {
+		return false;
+	}
+	if (u.protocol !== 'https:') return false;
+	if (u.username || u.password || u.hash) return false;
+	if (u.port !== '') return false; // default 443 only
+	return PUSH_HOST_ALLOW.some((re) => re.test(u.hostname));
+}
+
+/** P-256 uncompressed point (65 bytes) / 16-byte auth secret, base64url. */
+const B64URL = /^[A-Za-z0-9_-]+$/;
+export function validPushKeys(p256dh: string, auth: string): boolean {
+	return (
+		B64URL.test(p256dh) &&
+		p256dh.length >= 80 &&
+		p256dh.length <= 100 &&
+		B64URL.test(auth) &&
+		auth.length >= 16 &&
+		auth.length <= 30
+	);
+}
+
 export class PushError extends Error {
 	constructor(
 		message: string,
