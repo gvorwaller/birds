@@ -33,6 +33,8 @@ export interface EbirdObs {
 	obsValid: boolean;
 	obsReviewed: boolean;
 	locationPrivate: boolean;
+	/** Checklist id ("S123456789") — present on recent/notable obs payloads. */
+	subId?: string;
 }
 
 export interface CachedResult<T> {

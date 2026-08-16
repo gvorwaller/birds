@@ -302,6 +302,79 @@
   </section>
 
   <section class="card">
+    <h2>
+      Need alerts
+      {#if data.alerts.enabled}<Badge kind="seen" label="on" />{:else}<Badge
+          kind="need"
+          label="off"
+        />{/if}
+    </h2>
+    <p class="muted">
+      A phone push when a <strong>rare bird you still need</strong> is reported
+      near your home — checked every 30 minutes in the background. Install the
+      free <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
+      app, subscribe it to a topic name you invent, and save that topic here.
+      Treat the topic like a password — long and random; anyone who knows it
+      can read your alerts. Quiet hours are your phone's Focus schedule:
+      allow the ntfy app through any Focus you want alerts to break.
+    </p>
+    {#if data.home.home_lat == null}
+      <p class="muted">
+        ⚠ Alerts need a home location — set one in the Home section above.
+      </p>
+    {/if}
+    <form
+      method="POST"
+      action="?/save_alerts"
+      use:enhance={track("alerts")}
+      class="alerts-form"
+    >
+      <label>
+        <span>ntfy topic {#if data.alerts.topic_set}(saved — enter to replace){/if}</span>
+        <input
+          name="ntfy_topic"
+          type="password"
+          autocomplete="off"
+          placeholder={data.alerts.topic_set ? "••••••••" : "e.g. gv-birds-x7Qp29rTmZ"}
+        />
+      </label>
+      <label>
+        <span>Alert radius</span>
+        <select name="radius_km">
+          {#each [10, 20, 30, 40, 50] as km (km)}
+            <option value={km} selected={data.alerts.radius_km === km}>{km} km</option>
+          {/each}
+        </select>
+      </label>
+      <label>
+        <span>Re-alert same species after</span>
+        <select name="realert_days">
+          {#each [3, 7, 14] as d (d)}
+            <option value={d} selected={data.alerts.realert_days === d}>{d} days</option>
+          {/each}
+        </select>
+      </label>
+      <label class="inline">
+        <input type="checkbox" name="enabled" value="1" checked={data.alerts.enabled} />
+        <span>Enable need alerts</span>
+      </label>
+      <div class="alerts-actions">
+        <button type="submit" disabled={busy === "alerts"}>
+          {busy === "alerts" ? "Saving…" : "Save alerts"}
+        </button>
+        <button
+          type="submit"
+          class="secondary"
+          formaction="?/test_ntfy"
+          disabled={busy === "alerts"}
+        >
+          Send test notification
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
     <h2>Data & syncs</h2>
     <div class="obs">
       <div class="grow">
@@ -717,6 +790,59 @@
   }
   .saved-as {
     margin-bottom: 10px;
+  }
+  .alerts-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 480px;
+  }
+  .alerts-form label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
+  }
+  .alerts-form label span {
+    min-width: 150px;
+  }
+  .alerts-form input[type="password"] {
+    flex: 1;
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 16px;
+  }
+  .alerts-form select {
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .alerts-form label.inline {
+    min-height: 48px;
+  }
+  .alerts-form label.inline input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--accent);
+  }
+  .alerts-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .alerts-actions .secondary {
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
   }
   .radius-form label {
     display: flex;

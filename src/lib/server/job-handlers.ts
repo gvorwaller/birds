@@ -16,7 +16,17 @@ import {
 } from '$server/barchart';
 import { coverageFromMeta, recentFailures } from '$server/forecast';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
-import { getEbirdApiKey, syncTaxonomy, EbirdError } from '$server/ebird';
+import { env } from '$env/dynamic/private';
+import { query } from '$lib/db';
+import { decryptSecret } from '$server/crypto';
+import { getEbirdApiKey, notableNearbyObs, syncTaxonomy, EbirdError } from '$server/ebird';
+import { seenSet } from '$server/needs';
+import { sendNtfy } from '$server/ntfy';
+import {
+	alertCandidates,
+	SCAN_INTERVAL_MS,
+	type AlertObs
+} from '$lib/need-alerts-policy';
 import {
 	syncLifeListFromEbird,
 	EbirdLoginError,
@@ -26,10 +36,13 @@ import { rematchPhotoLinks } from '$server/gallery';
 import {
 	cancelRunningJob,
 	completeJob,
+	enqueueJob,
 	failJob,
+	hasActiveJob,
 	recordEvent,
 	requeueInterrupted,
 	scheduleRetry,
+	terminalizeAndReschedule,
 	updateProgress
 } from '$server/jobs';
 import {
@@ -285,6 +298,190 @@ async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Need-alert scan (plan Part A) — system-recurring singleton
+// ---------------------------------------------------------------------------
+
+/** Per-user wall budget inside a scan — one hung user must not starve the rest. */
+const SCAN_USER_BUDGET_MS = 60_000;
+
+async function lowestAdminId(): Promise<number> {
+	const r = await query<{ id: number }>(
+		`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`
+	);
+	if (!r.rows[0]) throw new Error('no admin user exists to own the recurring scan');
+	return r.rows[0].id;
+}
+
+function scanEnqueueParams(adminId: number, runAfterMs: number) {
+	return {
+		type: 'scan_need_alerts' as const,
+		payload: {},
+		dedupKey: 'scan_need_alerts:global',
+		requestedBy: adminId,
+		label: 'every 30 min',
+		runAfterMs
+	};
+}
+
+/**
+ * Ensure exactly one active scan job exists — called at worker startup AND
+ * every idle tick (CODEX1 plan #1: the reconciliation backstop that repairs
+ * a chain lost to ANY cause without a restart). Cheap: one indexed SELECT.
+ */
+export async function ensureNeedAlertScan(): Promise<void> {
+	if (await hasActiveJob('scan_need_alerts:global')) return;
+	const adminId = await lowestAdminId();
+	await enqueueJob(scanEnqueueParams(adminId, 5_000));
+}
+
+/**
+ * One scan: for every enabled user, notable-near-home ∩ needs → ntfy pushes.
+ * Delivery is explicitly AT-LEAST-ONCE (CODEX1 plan #3): send, then upsert
+ * need_alerts_sent immediately per species — a crash in that window may
+ * duplicate one push next scan; record-first would silently LOSE alerts.
+ * Terminalization always goes through terminalizeAndReschedule so the next
+ * run is scheduled atomically with this one's completion.
+ */
+async function runNeedAlertScan(job: JobRow): Promise<void> {
+	const attempts = job.attempts;
+	const origin = env.BIRDS_PUBLIC_ORIGIN ?? 'https://birds.gaylon.photos';
+	await recordEvent(job.id, 'claimed', { attempt: attempts });
+
+	const users = await query<{
+		user_id: number;
+		ntfy_topic_enc: string;
+		radius_km: number;
+		realert_days: number;
+		home_lat: number | null;
+		home_lon: number | null;
+		home_state: string | null;
+	}>(
+		`SELECT p.user_id, p.ntfy_topic_enc, p.radius_km, p.realert_days,
+		        u.home_lat, u.home_lon, NULL AS home_state
+		   FROM user_alert_prefs p JOIN users u ON u.id = p.user_id
+		  WHERE p.enabled ORDER BY p.user_id`
+	);
+
+	const progress: JobProgress = {
+		phase: 'fetching',
+		unitsTotal: users.rows.length,
+		unitsDone: 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	};
+	await updateProgress(job.id, progress);
+
+	let alertsSent = 0;
+	for (const u of users.rows) {
+		const unitStart = Date.now();
+		const skip = async (reason: string) => {
+			progress.unitsSkipped++;
+			await recordEvent(job.id, 'unit_skipped', { userId: u.user_id, reason });
+			await updateProgress(job.id, progress);
+		};
+		try {
+			if (u.home_lat == null || u.home_lon == null) {
+				await skip('no-home');
+				continue;
+			}
+			const apiKey = await getEbirdApiKey(u.user_id);
+			if (!apiKey) {
+				await skip('no-api-key');
+				continue;
+			}
+			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1);
+			if (notable.stale) {
+				// NEVER notify from stale data (CODEX1 plan #4): old sightings
+				// must not arrive as "just reported". Next scan retries.
+				await skip('stale-cache');
+				continue;
+			}
+			const [seen, sentRows] = await Promise.all([
+				seenSet(u.user_id),
+				query<{ species_code: string; sent_at: string }>(
+					`SELECT species_code, sent_at FROM need_alerts_sent WHERE user_id = $1`,
+					[u.user_id]
+				)
+			]);
+			const sentAt = new Map(
+				sentRows.rows.map((r) => [r.species_code, new Date(r.sent_at).getTime()])
+			);
+			const candidates = alertCandidates({
+				notable: notable.data as AlertObs[],
+				seen,
+				sentAt,
+				now: new Date(),
+				realertDays: u.realert_days,
+				home: { lat: u.home_lat, lng: u.home_lon }
+			});
+			const topic = decryptSecret(u.ntfy_topic_enc);
+			for (const c of candidates) {
+				if (Date.now() - unitStart > SCAN_USER_BUDGET_MS) break;
+				// Absolute click URL (CODEX1 Rev-2 addendum #1) — species only,
+				// never coordinates, private or not.
+				await sendNtfy(topic, {
+					title: c.title,
+					body: c.body,
+					clickUrl: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`,
+					tags: ['bird']
+				});
+				await query(
+					`INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
+					 VALUES ($1, $2, $3, $4, $5, NOW())
+					 ON CONFLICT (user_id, species_code)
+					 DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()`,
+					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId]
+				);
+				alertsSent++;
+			}
+			progress.unitsDone++;
+			await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: candidates.length });
+		} catch (err) {
+			progress.unitsFailed++;
+			const message = sanitizeErrorText(
+				err instanceof Error ? err.message : String(err)
+			).slice(0, 200);
+			progress.lastError = message;
+			await recordEvent(job.id, 'unit_failed', { userId: u.user_id, error: message });
+		}
+		await updateProgress(job.id, progress);
+	}
+
+	const eligible = progress.unitsDone + progress.unitsFailed;
+	const summary = {
+		usersScanned: users.rows.length,
+		alertsSent,
+		skipped: progress.unitsSkipped,
+		failed: progress.unitsFailed
+	};
+	// Aggregate rule (CODEX1 plan #5): 100% failure of eligible users must not
+	// read as success — take the retry schedule; the retrying row still holds
+	// the dedup key, so no successor is scheduled from here (GROK gap list).
+	if (eligible > 0 && progress.unitsDone === 0 && attempts < job.max_attempts) {
+		await scheduleRetry(
+			job.id,
+			attempts,
+			retryDelayMs(attempts, 'transient'),
+			'every eligible user failed',
+			summary
+		);
+		return;
+	}
+	const adminId = await lowestAdminId();
+	const outcome =
+		eligible > 0 && progress.unitsDone === 0
+			? ({ kind: 'fail', error: 'every eligible user failed', result: summary } as const)
+			: ({ kind: 'complete', result: summary } as const);
+	await terminalizeAndReschedule(
+		job.id,
+		attempts,
+		outcome,
+		scanEnqueueParams(adminId, SCAN_INTERVAL_MS)
+	);
+}
+
 /** Dispatch a claimed job. Never throws — failures become failJob. */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
@@ -323,6 +520,10 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 						unmatched: r.unmatched.slice(0, 10)
 					};
 				});
+				return;
+			}
+			case 'scan_need_alerts': {
+				await runNeedAlertScan(job);
 				return;
 			}
 			case 'sync_taxonomy': {

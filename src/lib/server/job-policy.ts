@@ -158,7 +158,8 @@ export const dedupKeys = {
 	refreshLoc: (locCode: string) => `refresh_loc:${locCode}`,
 	retryLoc: (locCode: string) => `retry_loc:${locCode}`,
 	syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
-	syncTaxonomy: () => 'sync_taxonomy:global'
+	syncTaxonomy: () => 'sync_taxonomy:global',
+	scanNeedAlerts: () => 'scan_need_alerts:global'
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -300,7 +301,8 @@ const TYPE_NAMES: Record<string, string> = {
 	refresh_loc: 'Refresh data',
 	retry_loc: 'Retry load',
 	sync_lifelist: 'Sync life list',
-	sync_taxonomy: 'Sync taxonomy'
+	sync_taxonomy: 'Sync taxonomy',
+	scan_need_alerts: 'Need-alert scan (system)'
 };
 
 export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {

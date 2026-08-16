@@ -39,6 +39,15 @@ const mocks = vi.hoisted(() => {
     requeueInterrupted: vi.fn<(jobId: number, attempts: number) => Promise<boolean>>(
       async () => true,
     ),
+    enqueueJob: vi.fn<(...a: unknown[]) => Promise<{ jobId: number; deduped: boolean }>>(
+      async () => ({ jobId: 999, deduped: false }),
+    ),
+    hasActiveJob: vi.fn<(k: string) => Promise<boolean>>(async () => false),
+    terminalizeAndReschedule: vi.fn<
+      (
+        ...a: unknown[]
+      ) => Promise<{ won: boolean; finalStatus: string | null; successorId: number | null }>
+    >(async () => ({ won: true, finalStatus: "succeeded", successorId: 1000 })),
     frequencyMeta: vi.fn<(codes: string[]) => Promise<Map<string, { endYear: number }>>>(
       async () => new Map(),
     ),
@@ -63,10 +72,24 @@ vi.mock("$server/jobs", () => ({
   cancelRunningJob: mocks.cancelRunningJob,
   scheduleRetry: mocks.scheduleRetry,
   requeueInterrupted: mocks.requeueInterrupted,
+  enqueueJob: mocks.enqueueJob,
+  hasActiveJob: mocks.hasActiveJob,
+  terminalizeAndReschedule: mocks.terminalizeAndReschedule,
 }));
 
+const db = vi.hoisted(() => {
+  const state = {
+    handler: null as null | ((text: string, params?: unknown[]) => { rows: unknown[] } | undefined),
+    calls: [] as { text: string; params: unknown[] }[],
+  };
+  return state;
+});
+
 vi.mock("$lib/db", () => ({
-  query: vi.fn(async () => ({ rows: [] })),
+  query: vi.fn(async (text: string, params?: unknown[]) => {
+    db.calls.push({ text, params: params ?? [] });
+    return db.handler?.(text, params) ?? { rows: [] };
+  }),
   withTransaction: vi.fn(),
 }));
 
@@ -101,6 +124,11 @@ const syncMocks = vi.hoisted(() => {
     rematchPhotoLinks: vi.fn<() => Promise<{ matched: number; unmatched: number }>>(
       async () => ({ matched: 5, unmatched: 1 }),
     ),
+    notableNearbyObs: vi.fn<
+      (...a: unknown[]) => Promise<{ data: unknown[]; fetchedAt: Date; stale: boolean }>
+    >(async () => ({ data: [], fetchedAt: new Date(), stale: false })),
+    seenSet: vi.fn<(userId: number) => Promise<Set<string>>>(async () => new Set()),
+    sendNtfy: vi.fn<(...a: unknown[]) => Promise<void>>(async () => {}),
   };
 });
 
@@ -113,12 +141,23 @@ vi.mock("$server/ebird", () => ({
   EbirdError: syncMocks.FakeEbirdError,
   getEbirdApiKey: syncMocks.getEbirdApiKey,
   syncTaxonomy: syncMocks.syncTaxonomy,
+  notableNearbyObs: syncMocks.notableNearbyObs,
 }));
 vi.mock("$server/gallery", () => ({
   rematchPhotoLinks: syncMocks.rematchPhotoLinks,
 }));
+vi.mock("$server/needs", () => ({
+  seenSet: syncMocks.seenSet,
+}));
+vi.mock("$server/ntfy", () => ({
+  sendNtfy: syncMocks.sendNtfy,
+}));
+vi.mock("$server/crypto", () => ({
+  decryptSecret: (v: string) => v.replace(/^enc-/, ""),
+  encryptSecret: (v: string) => `enc-${v}`,
+}));
 
-const { runJob } = await import("./job-handlers");
+const { runJob, ensureNeedAlertScan } = await import("./job-handlers");
 const { RATE_LIMIT_RETRY_DELAY_MS, TRANSIENT_RETRY_DELAYS_MS } = await import(
   "./job-policy"
 );
@@ -171,6 +210,8 @@ const ctx = { isDraining: () => false };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+  db.handler = null;
+  db.calls.length = 0;
 });
 
 describe("runJob — frequency jobs", () => {
@@ -574,6 +615,176 @@ describe("runJob — sync jobs (Phase 3)", () => {
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.failJob.mock.calls[0][2]).toMatch(/API key/);
     expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+});
+
+describe("runJob — scan_need_alerts (plan Part A)", () => {
+  const SECRET = "gv-birds-x7Qp29rTmZ";
+  const HOME = { home_lat: 27.77, home_lon: -82.64 };
+  const PREF_ROW = {
+    user_id: 3,
+    ntfy_topic_enc: `enc-${SECRET}`,
+    radius_km: 40,
+    realert_days: 7,
+    ...HOME,
+  };
+  const NOTABLE = {
+    speciesCode: "snakit",
+    comName: "Snail Kite",
+    locId: "L9",
+    locName: "Sweetwater",
+    obsDt: "2026-08-16 14:40",
+    lat: 27.9,
+    lng: -82.64,
+    obsValid: true,
+    obsReviewed: true,
+    locationPrivate: false,
+    subId: "S555",
+  };
+
+  function scanDb(prefs: unknown[], sent: unknown[] = []) {
+    db.handler = (text) => {
+      if (text.includes("FROM user_alert_prefs p JOIN users")) return { rows: prefs };
+      if (text.includes("FROM need_alerts_sent")) return { rows: sent };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+  }
+
+  it("happy path: push sent with ABSOLUTE click URL, sent-row upserted, successor scheduled", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+
+    expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
+    const [topic, msg] = syncMocks.sendNtfy.mock.calls[0] as unknown as [
+      string,
+      { title: string; clickUrl: string },
+    ];
+    expect(topic).toBe(SECRET);
+    expect(msg.title).toBe("Lifer nearby: Snail Kite");
+    expect(msg.clickUrl).toMatch(/^https:\/\/.+\/forecast\/species\?species=snakit$/);
+    // Sent-row upsert happened AFTER the send (at-least-once, CODEX1 #3).
+    const upsert = db.calls.find((c) => c.text.includes("INSERT INTO need_alerts_sent"));
+    expect(upsert?.params).toEqual([3, "snakit", "L9", "2026-08-16 14:40", "S555"]);
+    // Atomic handoff with the 30-min successor.
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+    const [, , outcome, successor] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
+      number,
+      number,
+      { kind: string; result: { alertsSent: number } },
+      { runAfterMs: number; dedupKey: string },
+    ];
+    expect(outcome.kind).toBe("complete");
+    expect(outcome.result.alertsSent).toBe(1);
+    expect(successor.runAfterMs).toBe(30 * 60_000);
+    expect(successor.dedupKey).toBe("scan_need_alerts:global");
+    expect(mocks.completeJob).not.toHaveBeenCalled(); // handoff owns terminalization
+  });
+
+  it("STALE cache never notifies — unit_skipped and retried next scan (CODEX1 #4)", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(Date.now() - 3 * 60 * 60_000),
+      stale: true,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect(skips).toHaveLength(1);
+    expect((skips[0][2] as { reason: string }).reason).toBe("stale-cache");
+    // All-skipped (no eligible) still completes + reschedules.
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("skip reasons: no home, no API key", async () => {
+    scanDb([
+      { ...PREF_ROW, user_id: 3, home_lat: null, home_lon: null },
+      { ...PREF_ROW, user_id: 4 },
+    ]);
+    syncMocks.getEbirdApiKey.mockResolvedValueOnce(null); // user 4
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    const reasons = mocks.recordEvent.mock.calls
+      .filter((c) => c[1] === "unit_skipped")
+      .map((c) => (c[2] as { reason: string }).reason);
+    expect(reasons.sort()).toEqual(["no-api-key", "no-home"]);
+    expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+  });
+
+  it("EVERY eligible user failing takes the retry schedule, not success (CODEX1 #5)", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockRejectedValue(new Error("eBird 502"));
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+    expect(mocks.terminalizeAndReschedule).not.toHaveBeenCalled(); // dedup key held by waiting_retry
+  });
+
+  it("at-least-once crash window: send succeeded, record failed → user unit_failed, scan survives", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    const baseHandler = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("INSERT INTO need_alerts_sent")) throw new Error("db died");
+      return baseHandler(text, params);
+    };
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1); // push went out
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(fails).toHaveLength(1);
+    // Aggregate rule → retry (the only eligible user failed).
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("red-team: the decrypted topic appears in NOTHING recorded (CODEX1 #4)", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    const stored = [
+      ...mocks.recordEvent.mock.calls.map((c) => JSON.stringify(c[2] ?? {})),
+      ...mocks.updateProgress.mock.calls.map((c) => JSON.stringify(c[1])),
+      ...mocks.terminalizeAndReschedule.mock.calls.map((c) => JSON.stringify([c[2], c[3]])),
+      ...mocks.scheduleRetry.mock.calls.map((c) => JSON.stringify(c[4] ?? null)),
+    ];
+    expect(stored.length).toBeGreaterThan(0);
+    for (const json of stored) expect(json).not.toContain(SECRET);
+  });
+});
+
+describe("ensureNeedAlertScan (reconciliation)", () => {
+  it("enqueues the singleton when absent, owned by the lowest-id admin", async () => {
+    db.handler = (text) =>
+      text.includes("FROM users WHERE role = 'admin'") ? { rows: [{ id: 1 }] } : undefined;
+    mocks.hasActiveJob.mockResolvedValueOnce(false);
+    await ensureNeedAlertScan();
+    expect(mocks.enqueueJob).toHaveBeenCalledTimes(1);
+    const p = mocks.enqueueJob.mock.calls[0][0] as {
+      type: string;
+      dedupKey: string;
+      requestedBy: number;
+    };
+    expect(p.type).toBe("scan_need_alerts");
+    expect(p.dedupKey).toBe("scan_need_alerts:global");
+    expect(p.requestedBy).toBe(1);
+  });
+
+  it("no-ops while an active singleton exists", async () => {
+    mocks.hasActiveJob.mockResolvedValueOnce(true);
+    await ensureNeedAlertScan();
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
   });
 });
 

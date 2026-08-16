@@ -23,7 +23,16 @@ export type JobType =
 	| 'refresh_loc'
 	| 'retry_loc'
 	| 'sync_lifelist'
-	| 'sync_taxonomy';
+	| 'sync_taxonomy'
+	| 'scan_need_alerts';
+
+/**
+ * System-recurring types: self-rescheduling singletons owned by the lowest-id
+ * admin. Not user-cancellable (requestCancel noops; the worker's idle-tick
+ * reconciliation would resurrect them anyway) — disable the FEATURE in
+ * Settings instead of killing the scheduler.
+ */
+export const RECURRING_TYPES: ReadonlySet<string> = new Set(['scan_need_alerts']);
 
 export type JobEventAction =
 	| 'enqueued'
@@ -47,6 +56,13 @@ export interface EnqueueParams {
 	requestedBy: number;
 	label: string;
 	maxAttempts?: number;
+	/**
+	 * Delay before the job becomes claimable (INSERT-time next_retry_at —
+	 * claimNextJob already gates on it). Used by the recurring scheduler; the
+	 * enqueued event's details say 'scheduled' so /admin never conflates a
+	 * scheduled future run with a failure backoff (waiting_retry).
+	 */
+	runAfterMs?: number;
 }
 
 export async function recordEvent(
@@ -73,8 +89,10 @@ export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; ded
 	for (let round = 0; round < 3; round++) {
 		const outcome = await withTransaction(async (client) => {
 			const ins = await client.query<{ id: number }>(
-				`INSERT INTO jobs (type, payload, dedup_key, requested_by, label, max_attempts)
-				 VALUES ($1, $2, $3, $4, $5, $6)
+				`INSERT INTO jobs (type, payload, dedup_key, requested_by, label, max_attempts, next_retry_at)
+				 VALUES ($1, $2, $3, $4, $5, $6,
+				         CASE WHEN $7::int IS NULL THEN NULL
+				              ELSE NOW() + make_interval(secs => $7::int / 1000.0) END)
 				 ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL AND status IN ('pending','running')
 				 DO NOTHING
 				 RETURNING id`,
@@ -84,13 +102,22 @@ export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; ded
 					p.dedupKey,
 					p.requestedBy,
 					p.label,
-					p.maxAttempts ?? 4
+					p.maxAttempts ?? 4,
+					p.runAfterMs ?? null
 				]
 			);
 			if (ins.rows[0]) {
 				await client.query(
 					`INSERT INTO job_events (job_id, action, details) VALUES ($1, 'enqueued', $2)`,
-					[ins.rows[0].id, JSON.stringify({ type: p.type, label: p.label, requestedBy: p.requestedBy })]
+					[
+						ins.rows[0].id,
+						JSON.stringify({
+							type: p.type,
+							label: p.label,
+							requestedBy: p.requestedBy,
+							...(p.runAfterMs != null ? { scheduled: true, runAfterMs: p.runAfterMs } : {})
+						})
+					]
 				);
 				return { jobId: ins.rows[0].id, deduped: false };
 			}
@@ -272,6 +299,112 @@ export async function requeueInterrupted(jobId: number, expectedAttempts: number
 }
 
 /**
+ * Terminalize the CURRENT recurring run and insert its successor in ONE
+ * transaction (plan A2; CODEX1 #1 + Rev-2 addendum #2): because the current
+ * row leaves the active state inside the same txn, the partial-unique dedup
+ * index admits the successor — no self-dedup and no crash gap between
+ * completing and rescheduling. BOTH audit events (the terminal event and the
+ * successor's 'enqueued' with scheduled details) commit atomically with the
+ * two row writes, so /admin history can never show recurrence rows without
+ * their events. Cancel is still honored by the same CASE as every terminal
+ * transition; a cancel win skips the successor (the worker's idle-tick
+ * reconciliation revives the chain).
+ *
+ * Returns {won, successorId} — won=false when the CAS lost (raced transition);
+ * successorId=null when the successor was skipped (cancel win / dedup race).
+ */
+export async function terminalizeAndReschedule(
+	jobId: number,
+	expectedAttempts: number,
+	outcome:
+		| { kind: 'complete'; result: unknown }
+		| { kind: 'fail'; error: string; result?: unknown },
+	successor: EnqueueParams
+): Promise<{ won: boolean; finalStatus: string | null; successorId: number | null }> {
+	return withTransaction(async (client) => {
+		const desired = outcome.kind === 'complete' ? 'succeeded' : 'failed';
+		const term = await client.query<{ status: string }>(
+			`UPDATE jobs SET
+			    status = CASE WHEN cancel_requested THEN 'cancelled' ELSE '${desired}' END,
+			    error = CASE WHEN cancel_requested THEN NULL ELSE $3 END,
+			    result = $4, finished_at = NOW()
+			  WHERE id = $1 AND status = 'running' AND attempts = $2
+			  RETURNING status`,
+			[
+				jobId,
+				expectedAttempts,
+				outcome.kind === 'fail' ? scrubStoredValue(outcome.error) : null,
+				JSON.stringify(scrubStoredValue(outcome.result ?? null))
+			]
+		);
+		const final = term.rows[0]?.status ?? null;
+		if (final == null) return { won: false, finalStatus: null, successorId: null };
+		await client.query(
+			`INSERT INTO job_events (job_id, action, details) VALUES ($1, $2, $3)`,
+			[
+				jobId,
+				final === 'succeeded' ? 'completed' : final === 'failed' ? 'failed' : 'cancelled',
+				JSON.stringify(
+					scrubStoredValue(
+						final === 'succeeded'
+							? { result: outcome.result }
+							: final === 'failed'
+								? { error: (outcome as { error: string }).error }
+								: { when: 'at_terminalize' }
+					)
+				)
+			]
+		);
+		if (final === 'cancelled') return { won: true, finalStatus: final, successorId: null };
+
+		const ins = await client.query<{ id: number }>(
+			`INSERT INTO jobs (type, payload, dedup_key, requested_by, label, max_attempts, next_retry_at)
+			 VALUES ($1, $2, $3, $4, $5, $6,
+			         CASE WHEN $7::int IS NULL THEN NULL
+			              ELSE NOW() + make_interval(secs => $7::int / 1000.0) END)
+			 ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL AND status IN ('pending','running')
+			 DO NOTHING
+			 RETURNING id`,
+			[
+				successor.type,
+				JSON.stringify(successor.payload ?? {}),
+				successor.dedupKey,
+				successor.requestedBy,
+				successor.label,
+				successor.maxAttempts ?? 4,
+				successor.runAfterMs ?? null
+			]
+		);
+		const successorId = ins.rows[0]?.id ?? null;
+		if (successorId != null) {
+			await client.query(
+				`INSERT INTO job_events (job_id, action, details) VALUES ($1, 'enqueued', $2)`,
+				[
+					successorId,
+					JSON.stringify({
+						type: successor.type,
+						label: successor.label,
+						requestedBy: successor.requestedBy,
+						scheduled: true,
+						runAfterMs: successor.runAfterMs ?? 0
+					})
+				]
+			);
+		}
+		return { won: true, finalStatus: final, successorId };
+	});
+}
+
+/** True when an ACTIVE (pending/running) job holds the dedup key. */
+export async function hasActiveJob(dedupKey: string): Promise<boolean> {
+	const r = await query(
+		`SELECT 1 FROM jobs WHERE dedup_key = $1 AND status IN ('pending','running') LIMIT 1`,
+		[dedupKey]
+	);
+	return (r.rowCount ?? 0) > 0;
+}
+
+/**
  * Cancel request from the UI — ONE conditional UPDATE over both live states
  * (CODEX1 re-review): pending → cancelled outright; running → flag only (the
  * worker honors it cooperatively); terminal → no row, noop. Single-statement
@@ -284,6 +417,11 @@ export async function requestCancel(
 	jobId: number,
 	requestedBy: number
 ): Promise<'cancelled' | 'flagged' | 'noop'> {
+	// System-recurring singletons are not cancellable (CODEX1 plan #2): the
+	// scheduler chain must not be killable from the hub; disable the feature
+	// in Settings instead. Reconciliation would resurrect it regardless.
+	const typeRow = await query<{ type: string }>(`SELECT type FROM jobs WHERE id = $1`, [jobId]);
+	if (typeRow.rows[0] && RECURRING_TYPES.has(typeRow.rows[0].type)) return 'noop';
 	const r = await query<{ status: string }>(
 		`UPDATE jobs SET
 		    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,

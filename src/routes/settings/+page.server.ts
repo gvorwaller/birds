@@ -12,6 +12,7 @@ import {
 import { syncGallery } from "$server/gallery";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
+import { sendNtfy, validNtfyTopic, NtfyError } from "$server/ntfy";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -51,6 +52,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     photoStats,
     cacheStats,
     tripStats,
+    alertPrefs,
   ] = await Promise.all([
     query<{
       api_key_set: boolean;
@@ -98,6 +100,16 @@ export const load: PageServerLoad = async ({ locals }) => {
 			  WHERE t.user_id = $1`,
       [userId],
     ),
+    query<{
+      enabled: boolean;
+      topic_set: boolean;
+      radius_km: number;
+      realert_days: number;
+    }>(
+      `SELECT enabled, ntfy_topic_enc IS NOT NULL AS topic_set, radius_km, realert_days
+         FROM user_alert_prefs WHERE user_id = $1`,
+      [userId],
+    ),
   ]);
 
   const row = ebird.rows[0];
@@ -127,6 +139,12 @@ export const load: PageServerLoad = async ({ locals }) => {
       home_label: null,
       home_google_place_id: null,
       near_me_radius_km: null,
+    },
+    alerts: alertPrefs.rows[0] ?? {
+      enabled: false,
+      topic_set: false,
+      radius_km: 40,
+      realert_days: 7,
     },
     // Settings is the single explicit persistence surface for the saved search
     // radius now that Home's implicit save-on-change action is gone.
@@ -341,6 +359,102 @@ export const actions: Actions = {
         ? "A life-list sync is already queued — it runs in the background."
         : "Life-list sync queued — it runs in the background; your last synced list stays until it succeeds.",
       queued: { jobId, deduped },
+    };
+  },
+
+  /**
+   * Need-alert preferences (plan A4). Topic is write-only like the eBird
+   * password: saved encrypted, replaced not revealed. Enabling requires a
+   * topic (friendly error here; the DB CHECK is the backstop).
+   */
+  save_alerts: async ({ locals, request }) => {
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const enabled = form.get("enabled") === "1";
+    const topicRaw = (form.get("ntfy_topic") ?? "").toString().trim();
+    const radius = Number(form.get("radius_km"));
+    const realert = Number(form.get("realert_days"));
+    if (!Number.isInteger(radius) || radius < 1 || radius > 50) {
+      return fail(400, { error: "Alert radius must be between 1 and 50 km." });
+    }
+    if (!Number.isInteger(realert) || realert < 1 || realert > 30) {
+      return fail(400, { error: "Re-alert window must be between 1 and 30 days." });
+    }
+    if (topicRaw && !validNtfyTopic(topicRaw)) {
+      return fail(400, {
+        error:
+          "Topic must be 8-64 letters, digits, - or _ — just the topic name, not a URL. Treat it like a password: long and random.",
+      });
+    }
+    const existing = await query<{ topic_set: boolean }>(
+      `SELECT ntfy_topic_enc IS NOT NULL AS topic_set FROM user_alert_prefs WHERE user_id = $1`,
+      [userId],
+    );
+    const willHaveTopic = !!topicRaw || existing.rows[0]?.topic_set === true;
+    if (enabled && !willHaveTopic) {
+      return fail(400, {
+        error: "Save a ntfy topic before enabling need alerts.",
+      });
+    }
+    await query(
+      `INSERT INTO user_alert_prefs (user_id, enabled, ntfy_topic_enc, radius_km, realert_days, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         enabled = $2,
+         ntfy_topic_enc = COALESCE($3, user_alert_prefs.ntfy_topic_enc),
+         radius_km = $4, realert_days = $5, updated_at = NOW()`,
+      [userId, enabled, topicRaw ? encryptSecret(topicRaw) : null, radius, realert],
+    );
+    return {
+      ok: true as const,
+      message: enabled
+        ? "Need alerts saved and enabled — the next background scan (within ~30 min) starts watching."
+        : "Need-alert settings saved (alerts off).",
+    };
+  },
+
+  /**
+   * Synchronous test push (plan A4/GROK §1): proves the SERVER can publish
+   * to the topic — deliberately in-request so misconfiguration surfaces at
+   * setup time. A quiet phone after "sent" is a phone-side issue (ntfy app
+   * subscription, iOS notification permission, Focus).
+   */
+  test_ntfy: async ({ locals, request }) => {
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const inputTopic = (form.get("ntfy_topic") ?? "").toString().trim();
+    let topic = inputTopic;
+    if (!topic) {
+      const saved = await query<{ ntfy_topic_enc: string | null }>(
+        `SELECT ntfy_topic_enc FROM user_alert_prefs WHERE user_id = $1`,
+        [userId],
+      );
+      const enc = saved.rows[0]?.ntfy_topic_enc;
+      if (!enc) return fail(400, { error: "Enter or save a ntfy topic first." });
+      topic = decryptSecret(enc);
+    }
+    if (!validNtfyTopic(topic)) {
+      return fail(400, { error: "That topic isn't valid — 8-64 letters, digits, - or _." });
+    }
+    try {
+      // Distinct title — a setup ping must never look like a lifer (GROK §1).
+      await sendNtfy(topic, {
+        title: "Need-alerts test",
+        body: "Your birds app can reach this topic. If you're reading this on your phone, you're all set.",
+        tags: ["white_check_mark"],
+      });
+    } catch (err) {
+      return fail(502, {
+        error:
+          err instanceof NtfyError
+            ? `Test failed: ${err.message}.`
+            : "Test failed: could not reach ntfy.",
+      });
+    }
+    return {
+      ok: true as const,
+      message:
+        "Test sent. If your phone stayed quiet: check the ntfy app is subscribed to this exact topic, notifications are allowed, and Focus isn't silencing ntfy.",
     };
   },
 

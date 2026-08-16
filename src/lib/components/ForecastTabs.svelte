@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { hasIdentityParam, restoreDecision } from '$lib/forecast-restore';
 
 	/**
 	 * The two forecast modes presented as one workspace (UX doc #2): tabs named
@@ -57,37 +58,41 @@
 	// /forecast/data, fresh tab): reverting to the saved-home default every
 	// time was maddening mid-research (GBV 2026-08-15). An explicit cleared
 	// search is different — its keys are PRESENT (empty), so it wins.
-	let lastRestoreCheck: string | null = null;
-	$effect(() => {
-		if (!browser || params === lastRestoreCheck) return;
-		lastRestoreCheck = params;
-		try {
-			const sp = new URLSearchParams(params);
-			// Identity = an actual place/species selection. month/dist alone are
-			// NOT identity (GROK #5): a month-only URL (tab self-link, month
-			// click on a bare page) still deserves its remembered search — the
-			// current month/dist are merged over the restored params below.
-			const IDENTITY_KEYS = ['place', 'lat', 'loc', 'species', 'q', 'region', 'county'];
-			if (IDENTITY_KEYS.some((k) => sp.has(k))) return;
-			const saved = localStorage.getItem(KEY(mode)) ?? '';
-			const ssp = new URLSearchParams(saved);
-			const savedIdentity = !!(
-				ssp.get('place') ||
-				ssp.get('lat') ||
-				ssp.get('species') ||
-				ssp.get('q') ||
-				ssp.get('region')
-			);
-			if (!savedIdentity) return;
-			for (const k of ['month', 'dist']) {
-				const cur = sp.get(k);
-				if (cur) ssp.set(k, cur);
-			}
-			// Not awaited by design, but a rejected goto (rapid nav) must allow
-			// a retry on the next bare arrival with the same params (GROK #1).
-			goto(`${ROUTES[mode]}?${ssp.toString()}`, { replaceState: true }).catch(() => {
-				lastRestoreCheck = null;
+	//
+	// Triggered from afterNavigate, NOT a mount-time $effect (td-671082): it
+	// runs once per COMPLETED navigation (including the post-hydration
+	// 'enter'), so every bare arrival gets a fresh decision and the restore
+	// can never race an in-flight navigation of its own making — its goto
+	// fires a new afterNavigate whose decision sees identity and no-ops (the
+	// loop guard). Failure modes, both covered:
+	// - goto REJECTED (superseded by a user navigation): that navigation
+	//   fires its own afterNavigate → fresh decision. No manual retry state.
+	// - goto RESOLVED but LOST (the reproduced invalidateAll race resolves
+	//   the promise while the URL stays bare, and fires NO afterNavigate):
+	//   verify the URL actually gained identity; if not, retry ONCE.
+	// The jobsPoll navigating-gate removes the known cause of that race; the
+	// verify-retry is the belt for unknown ones.
+	let retriedFor: string | null = null;
+	function attemptRestore(target: string, isRetry: boolean): void {
+		goto(`${ROUTES[mode]}?${target}`, { replaceState: true })
+			.then(() => {
+				if (hasIdentityParam(location.search)) return;
+				if (isRetry || retriedFor === target) return;
+				retriedFor = target;
+				setTimeout(() => attemptRestore(target, true), 100);
+			})
+			.catch(() => {
+				// Superseded — the winning navigation's afterNavigate re-decides.
 			});
+	}
+	afterNavigate(() => {
+		try {
+			// Decide from the CURRENT url, never a stale prop snapshot.
+			const search = page.url.search.replace(/^\?/, '');
+			const d = restoreDecision(search, localStorage.getItem(KEY(mode)));
+			if (!d.restore) return;
+			// Same-tick goto inside afterNavigate is flaky (GROK) — defer.
+			queueMicrotask(() => attemptRestore(d.target, false));
 		} catch {
 			// storage unavailable — bare default stands
 		}

@@ -41,6 +41,7 @@ const {
   enqueueJob,
   failJob,
   getJob,
+  hasActiveJob,
   jobEvents,
   listJobs,
   pruneHistory,
@@ -48,6 +49,7 @@ const {
   requeueInterrupted,
   requestCancel,
   scheduleRetry,
+  terminalizeAndReschedule,
   updateProgress,
   workerHealth,
 } = await import("./jobs");
@@ -468,6 +470,120 @@ describe.runIf(dbUp)("durable-boundary sanitization (CODEX1 Phase-2 #1)", () => 
     expect(everything).not.toContain("hunter2");
     expect(everything).not.toContain("abc.def.ghi");
     expect(everything).toContain("[redacted]");
+  });
+});
+
+describe.runIf(dbUp)("recurring primitives (need-alert scheduler)", () => {
+  const KEY = "JOBTEST:recur";
+  function recurParams(label: string) {
+    return params({
+      type: "scan_need_alerts" as const,
+      dedupKey: KEY,
+      label,
+    });
+  }
+
+  it("runAfterMs gates claiming until the delay elapses", async () => {
+    await enqueueJob({ ...recurParams("JOBTEST scheduled"), runAfterMs: 60_000 });
+    expect(await hasActiveJob(KEY)).toBe(true);
+    expect(await claimNextJob()).toBeNull(); // not claimable yet
+    const row = await query<{ id: number }>(
+      `SELECT id FROM jobs WHERE dedup_key = $1 AND status = 'pending'`,
+      [KEY],
+    );
+    // Make it due, then it claims.
+    await query(`UPDATE jobs SET next_retry_at = NOW() WHERE id = $1`, [row.rows[0].id]);
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(row.rows[0].id);
+    await cancelRunningJob(claimed!.id, claimed!.attempts);
+  });
+
+  it("scheduled enqueue event carries scheduled details (not waiting_retry)", async () => {
+    const { jobId } = await enqueueJob({
+      ...recurParams("JOBTEST sched-event"),
+      runAfterMs: 30_000,
+    });
+    const events = await jobEvents(jobId);
+    expect(events[0].action).toBe("enqueued");
+    expect((events[0].details as { scheduled?: boolean }).scheduled).toBe(true);
+    await query(`UPDATE jobs SET status='cancelled', finished_at=NOW() WHERE id=$1`, [jobId]);
+  });
+
+  it("terminalizeAndReschedule: terminal row + successor + BOTH events in one txn", async () => {
+    const { jobId } = await enqueueJob(recurParams("JOBTEST handoff"));
+    await query(`UPDATE jobs SET next_retry_at = NULL WHERE id = $1`, [jobId]);
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(jobId);
+    const r = await terminalizeAndReschedule(
+      jobId,
+      claimed!.attempts,
+      { kind: "complete", result: { usersScanned: 2, alertsSent: 1 } },
+      { ...recurParams("JOBTEST handoff-next"), runAfterMs: 30 * 60_000 },
+    );
+    expect(r.won).toBe(true);
+    expect(r.finalStatus).toBe("succeeded");
+    expect(r.successorId).not.toBeNull();
+    // Current terminalized with its completed event...
+    expect((await getJob(jobId))?.status).toBe("succeeded");
+    const doneEvents = await jobEvents(jobId);
+    expect(doneEvents.some((e) => e.action === "completed")).toBe(true);
+    // ...successor pending, gated, with its scheduled enqueued event.
+    const succ = await getJob(r.successorId!);
+    expect(succ?.status).toBe("pending");
+    expect(succ?.next_retry_at).not.toBeNull();
+    const succEvents = await jobEvents(r.successorId!);
+    expect(succEvents.map((e) => e.action)).toEqual(["enqueued"]);
+    expect((succEvents[0].details as { scheduled?: boolean }).scheduled).toBe(true);
+    // Exactly one active holder of the dedup key.
+    const active = await query(
+      `SELECT COUNT(*)::int AS n FROM jobs WHERE dedup_key = $1 AND status IN ('pending','running')`,
+      [KEY],
+    );
+    expect((active.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it("terminalizeAndReschedule honors a raced cancel: cancelled, NO successor", async () => {
+    const { jobId } = await enqueueJob(recurParams("JOBTEST handoff-cancel"));
+    await query(`UPDATE jobs SET next_retry_at = NULL WHERE id = $1`, [jobId]);
+    const claimed = await claimNextJob();
+    // Flag lands after the worker's last observation, before terminalization.
+    await query(`UPDATE jobs SET cancel_requested = TRUE WHERE id = $1`, [jobId]);
+    const r = await terminalizeAndReschedule(
+      jobId,
+      claimed!.attempts,
+      { kind: "complete", result: {} },
+      { ...recurParams("JOBTEST handoff-cancel-next"), runAfterMs: 30 * 60_000 },
+    );
+    expect(r.finalStatus).toBe("cancelled");
+    expect(r.successorId).toBeNull();
+    expect(await hasActiveJob(KEY)).toBe(false);
+  });
+
+  it("a lost CAS writes NOTHING (rollback: no successor, no events)", async () => {
+    const { jobId } = await enqueueJob(recurParams("JOBTEST handoff-lost"));
+    await query(`UPDATE jobs SET next_retry_at = NULL WHERE id = $1`, [jobId]);
+    const claimed = await claimNextJob();
+    const r = await terminalizeAndReschedule(
+      jobId,
+      claimed!.attempts + 7, // stale expectation → CAS loses
+      { kind: "complete", result: {} },
+      { ...recurParams("JOBTEST handoff-lost-next"), runAfterMs: 30 * 60_000 },
+    );
+    expect(r.won).toBe(false);
+    expect((await getJob(jobId))?.status).toBe("running");
+    const active = await query(
+      `SELECT COUNT(*)::int AS n FROM jobs WHERE dedup_key = $1 AND status IN ('pending','running')`,
+      [KEY],
+    );
+    expect((active.rows[0] as { n: number }).n).toBe(1); // just the running row
+    await cancelRunningJob(jobId, claimed!.attempts);
+  });
+
+  it("requestCancel noops for the recurring type (CODEX1 plan #2)", async () => {
+    const { jobId } = await enqueueJob(recurParams("JOBTEST cancel-guard"));
+    expect(await requestCancel(jobId, userId)).toBe("noop");
+    expect((await getJob(jobId))?.status).toBe("pending");
+    await query(`UPDATE jobs SET status='cancelled', finished_at=NOW() WHERE id=$1`, [jobId]);
   });
 });
 

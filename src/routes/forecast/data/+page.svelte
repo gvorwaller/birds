@@ -252,7 +252,9 @@
                   queued
                 {/if}
               </span>
-              {#if !data.isViewer && !j.cancelRequested}
+              {#if !data.isViewer && !j.cancelRequested && j.type !== "scan_need_alerts"}
+                <!-- The recurring scan singleton is not cancellable (server
+                     noops it too) — need alerts are disabled in Settings. -->
                 <button
                   type="button"
                   class="secondary"

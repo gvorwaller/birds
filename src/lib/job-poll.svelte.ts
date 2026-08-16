@@ -16,6 +16,7 @@
  */
 import { browser } from '$app/environment';
 import { invalidateAll } from '$app/navigation';
+import { navigating } from '$app/state';
 import {
 	classifyPollResponse,
 	isActive,
@@ -165,7 +166,14 @@ class JobsPoll {
 				this.jobs = data.jobs;
 				this.staleSince = null;
 				this.isStale = false;
+				// NEVER invalidate while a navigation is in flight (td-671082 root
+				// cause): a poller invalidateAll landing mid-navigation supersedes
+				// it — the reproduced case killed the remembered-search restore
+				// (its goto RESOLVED yet the URL stayed bare) and could even
+				// swallow a nav-link click outright. Skip; the next poll tick
+				// re-evaluates on a quiet router.
 				if (
+					navigating.to == null &&
 					/^\/forecast(\/|$)/.test(location.pathname) &&
 					shouldInvalidate(prev, data.jobs, this.#lastInvalidate, Date.now())
 				) {
@@ -211,3 +219,4 @@ class JobsPoll {
 }
 
 export const jobsPoll = new JobsPoll();
+
