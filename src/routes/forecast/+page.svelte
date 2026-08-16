@@ -98,6 +98,28 @@
   );
   const actionableCount = $derived(actionableUnloaded + actionableOutdated);
   const queuedHereCount = $derived(loadableCount - actionableCount);
+  // Composed orthogonally so EVERY mixture states its queued remainder
+  // (CODEX1 Phase-2 re-review #2 — a branch-per-combination dropped it).
+  const ctaSubText = $derived.by(() => {
+    const parts: string[] = [];
+    if (actionableUnloaded > 0 && actionableOutdated > 0) {
+      parts.push(
+        `${actionableUnloaded} unloaded`,
+        `${actionableOutdated} outdated`,
+      );
+    } else if (actionableOutdated > 0) {
+      parts.push("refresh outdated");
+    }
+    if (queuedHereCount > 0) parts.push(`${queuedHereCount} already queued`);
+    return parts.join(" · ");
+  });
+  const panelSubText = $derived.by(() => {
+    const parts: string[] = [];
+    if (actionableUnloaded > 0) parts.push(`${actionableUnloaded} unloaded`);
+    if (actionableOutdated > 0) parts.push(`${actionableOutdated} outdated`);
+    if (queuedHereCount > 0) parts.push(`${queuedHereCount} queued`);
+    return parts.join(" · ");
+  });
 
   // ONE prominent CTA near the results header opens + scrolls to the pick
   // panel (td-17d291 — the old suggested-mix quick button was redundant with
@@ -404,17 +426,8 @@
                redundant with it. Counts exclude rows a job already covers. -->
           <button type="button" class="loadcta" onclick={openLoadPanel}>
             Load hotspot data ({actionableCount})
-            {#if actionableOutdated > 0 && actionableUnloaded > 0}
-              <span class="ctasub"
-                >{actionableUnloaded} unloaded · {actionableOutdated} outdated{queuedHereCount >
-                0
-                  ? ` · ${queuedHereCount} already queued`
-                  : ""}</span
-              >
-            {:else if actionableOutdated > 0}
-              <span class="ctasub">refresh outdated</span>
-            {:else if queuedHereCount > 0}
-              <span class="ctasub">{queuedHereCount} more already queued</span>
+            {#if ctaSubText}
+              <span class="ctasub">{ctaSubText}</span>
             {/if}
           </button>
         {:else}
@@ -697,11 +710,11 @@
           bind:open={loadPanelOpen}
         >
           <summary>
-            Load hotspot data ({loadableCount}) — pick what to load
-            {#if outdatedRows.length > 0}
-              <span class="muted-inline"
-                >({v.unloadedNearby.length} unloaded · {outdatedRows.length} outdated)</span
-              >
+            {actionableCount > 0
+              ? `Load hotspot data (${actionableCount}) — pick what to load`
+              : `Hotspot loads — all ${queuedHereCount} queued`}
+            {#if panelSubText}
+              <span class="muted-inline">({panelSubText})</span>
             {/if}
           </summary>
           {#if !data.isViewer && data.hasLogin && data.location}

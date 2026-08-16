@@ -171,6 +171,19 @@ describe("sanitizeErrorText / scrubStoredValue", () => {
     expect(clean).toContain("[redacted]");
   });
 
+  it("multi-pair cookie headers redact EVERY pair, across CRLF line ends", () => {
+    const hostile =
+      "Set-Cookie: session=deadbeef; auth=topsecret; theme=dark\r\n" +
+      "next line is fine\r\n" +
+      "Cookie: sid=alpha1; token=beta2";
+    const clean = sanitizeErrorText(hostile);
+    for (const secret of ["deadbeef", "topsecret", "alpha1", "beta2"]) {
+      expect(clean).not.toContain(secret);
+    }
+    // Redaction stops at the line break — following lines survive.
+    expect(clean).toContain("next line is fine");
+  });
+
   it("leaves innocent place names and plain errors untouched", () => {
     for (const s of [
       "eBird export failed (HTTP 500) for Token Creek Conservancy",

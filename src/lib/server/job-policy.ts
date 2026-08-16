@@ -175,7 +175,10 @@ export const dedupKeys = {
  */
 const REDACT_PATTERNS: [RegExp, string][] = [
 	[/(password|passwd|pwd)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
-	[/(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\n;]+/gi, '$1: [redacted]'],
+	// Header values redact through end-of-line (CR/LF): a Cookie header can
+	// carry MULTIPLE `name=value; name=value` pairs and every one is
+	// potentially a credential (CODEX1 Phase-2 re-review #1).
+	[/(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi, '$1: [redacted]'],
 	[/(api[_-]?key|apikey|access[_-]?token|secret)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
 	[/(username|user|login|email)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
 	[/bearer\s+[a-z0-9._~+/-]+=*/gi, 'bearer [redacted]']
