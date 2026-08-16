@@ -634,6 +634,35 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
     ]);
   });
 
+  it("unenroll DELETE is ownership-scoped: wrong user removes NOTHING (TOCTOU regression, CODEX1)", async () => {
+    const ep = "https://push.example/JOBTEST-toctou";
+    await query(
+      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth)
+       VALUES ($1, $2, 'k', 'a')
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $2`,
+      [ep, userId],
+    );
+    // The re-home race shape: the row now belongs to userId, but a stale
+    // remove tries to delete it under a DIFFERENT user's identity. The
+    // production predicate (endpoint AND user_id) must match zero rows.
+    const wrongUser = await query<{ endpoint: string }>(
+      `DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2 RETURNING endpoint`,
+      [ep, userId + 999_999],
+    );
+    expect(wrongUser.rows).toHaveLength(0);
+    const survives = await query<{ user_id: number }>(
+      `SELECT user_id FROM push_subscriptions WHERE endpoint = $1`,
+      [ep],
+    );
+    expect(survives.rows).toEqual([{ user_id: userId }]);
+    // The rightful owner's scoped delete removes exactly the row.
+    const owner = await query<{ endpoint: string }>(
+      `DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2 RETURNING endpoint`,
+      [ep, userId],
+    );
+    expect(owner.rows).toEqual([{ endpoint: ep }]);
+  });
+
   it("need_alert_log append + newest-first read + 180d prune (the /alerts page contract)", async () => {
     await query(`DELETE FROM need_alert_log WHERE user_id = $1`, [userId]);
     await query(`DELETE FROM need_alerts_sent WHERE user_id = $1`, [userId]);

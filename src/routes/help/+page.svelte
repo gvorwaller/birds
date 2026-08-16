@@ -446,7 +446,12 @@
 					</li>
 					<li>
 						Each account gets its own alerts (matched to that person's life
-						list); enroll as many of your own devices as you like.
+						list); enroll as many of your own devices as you like. Settings
+						lists every enrolled device by name ("iPhone · Safari") with when
+						it was enrolled, marks the one you're holding, and each has a
+						<strong>Remove</strong> button to stop its alerts. A device
+						enrolled before naming existed shows a generic label — tap
+						Enable again on that device to name it.
 					</li>
 					<li>
 						You're alerted about a species at most once per re-alert window

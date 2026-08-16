@@ -501,7 +501,17 @@ export const actions: Actions = {
     if (!match) {
       return fail(404, { error: "That device is no longer enrolled." });
     }
-    await query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [match.endpoint]);
+    // Ownership lives in the DELETE predicate itself, not just the SELECT
+    // above — save_push_sub deliberately re-homes endpoints across accounts,
+    // so an unscoped DELETE here is a TOCTOU that could remove another
+    // account's subscription (CODEX1). Zero rows = it moved/vanished.
+    const del = await query<{ endpoint: string }>(
+      `DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2 RETURNING endpoint`,
+      [match.endpoint, userId],
+    );
+    if (del.rows.length === 0) {
+      return fail(404, { error: "That device is no longer enrolled." });
+    }
     return { ok: true as const, message: "Device removed — it will no longer get alerts." };
   },
 
