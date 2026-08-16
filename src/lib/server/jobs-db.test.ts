@@ -636,15 +636,32 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
 
   it("need_alert_log append + newest-first read + 180d prune (the /alerts page contract)", async () => {
     await query(`DELETE FROM need_alert_log WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM need_alerts_sent WHERE user_id = $1`, [userId]);
+    // The production settlement write: suppression upsert + history append in
+    // ONE atomic statement (CODEX1 round 2 — a history hole must not be able
+    // to hide behind a committed suppression row).
     const append = (species: string, title: string) =>
       query(
-        `INSERT INTO need_alert_log (user_id, species_code, title, body, url)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [userId, species, title, "2 mi from home", `https://x.example/s?species=${species}`],
+        `WITH sent AS (
+          INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (user_id, species_code)
+          DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()
+          RETURNING user_id, species_code
+        )
+        INSERT INTO need_alert_log (user_id, species_code, title, body, url)
+        SELECT user_id, species_code, $6, $7, $8 FROM sent`,
+        [userId, species, "L1", "2026-08-16 09:00", "S1", title, "2 mi from home", `https://x.example/s?species=${species}`],
       );
     await append("snakit", "Lifer nearby: Snail Kite");
-    await append("snakit", "Lifer nearby: Snail Kite"); // same species twice — append-only, no conflict
+    await append("snakit", "Lifer nearby: Snail Kite"); // re-alert: upsert conflict path STILL appends history
     await append("frigul", "Franklin's Gull (unconfirmed)");
+    // Suppression memory stays one row per species; history got every alert.
+    const sent = await query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM need_alerts_sent WHERE user_id = $1`,
+      [userId],
+    );
+    expect(Number(sent.rows[0].n)).toBe(2);
     const rows = await query<{ species_code: string }>(
       `SELECT species_code FROM need_alert_log
         WHERE user_id = $1 ORDER BY sent_at DESC, id DESC`,
@@ -665,6 +682,7 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
     );
     expect(left.rows.map((r) => r.species_code).sort()).toEqual(["snakit", "snakit"]);
     await query(`DELETE FROM need_alert_log WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM need_alerts_sent WHERE user_id = $1`, [userId]);
   });
 });
 

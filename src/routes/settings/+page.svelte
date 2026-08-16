@@ -438,19 +438,17 @@
         <input type="checkbox" name="enabled" value="1" checked={data.alerts.enabled} />
         <span>Enable need alerts</span>
       </label>
-      <div class="alerts-actions">
-        <button type="submit" disabled={busy === "alerts"}>
-          {busy === "alerts" ? "Saving…" : "Save alerts"}
-        </button>
-        <button
-          type="submit"
-          class="secondary"
-          formaction="?/test_push"
-          disabled={busy === "alerts"}
-        >
-          Send test notification
-        </button>
-      </div>
+      <button type="submit" disabled={busy === "alerts"}>
+        {busy === "alerts" ? "Saving…" : "Save alerts"}
+      </button>
+    </form>
+    <!-- Separate form: test_push ignores the pref fields, and it must NOT
+         inherit the alerts form's reset:false — otherwise a test click
+         would leave unsaved pref edits on screen looking saved (CODEX1). -->
+    <form method="POST" action="?/test_push" use:enhance={track("testpush")}>
+      <button type="submit" class="secondary" disabled={busy === "testpush"}>
+        {busy === "testpush" ? "Sending…" : "Send test notification"}
+      </button>
     </form>
   </section>
 
@@ -921,12 +919,7 @@
     height: 22px;
     accent-color: var(--accent);
   }
-  .alerts-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .alerts-actions .secondary {
+  button.secondary {
     background: var(--card);
     color: var(--accent);
     border: 1px solid var(--accent);

@@ -563,28 +563,34 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				// A delivered push MUST record its sent-row (or the next scan
 				// re-pings) — never detached; bounded by the SHARED settlement
 				// grace (all remaining writes split one window, they don't
-				// stack fresh per-write graces — CODEX1).
+				// stack fresh per-write graces — CODEX1). The /alerts history
+				// row rides the SAME statement via a writable CTE: once the
+				// suppression row exists no later scan would repair a missing
+				// history line, so the pair must commit atomically or fail
+				// together into the normal retry path (CODEX1 round 2) — and
+				// it costs one grace-bounded write, not two.
 				await queryTimed(
-					`INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
-					 VALUES ($1, $2, $3, $4, $5, NOW())
-					 ON CONFLICT (user_id, species_code)
-					 DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()`,
-					[u.user_id, c.speciesCode, c.obs.locId, c.obs.obsDt, c.obs.subId],
+					`WITH sent AS (
+						INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)
+						VALUES ($1, $2, $3, $4, $5, NOW())
+						ON CONFLICT (user_id, species_code)
+						DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()
+						RETURNING user_id, species_code
+					)
+					INSERT INTO need_alert_log (user_id, species_code, title, body, url)
+					SELECT user_id, species_code, $6, $7, $8 FROM sent`,
+					[
+						u.user_id,
+						c.speciesCode,
+						c.obs.locId,
+						c.obs.obsDt,
+						c.obs.subId,
+						c.title,
+						c.body,
+						clickUrl
+					],
 					graceLeftMs()
 				);
-				// In-app history row (/alerts) — the pushed content verbatim.
-				// Best-effort: the sent-row above is the correctness anchor; a
-				// missing history line must not fail the candidate or re-ping.
-				try {
-					await queryTimed(
-						`INSERT INTO need_alert_log (user_id, species_code, title, body, url)
-						 VALUES ($1, $2, $3, $4, $5)`,
-						[u.user_id, c.speciesCode, c.title, c.body, clickUrl],
-						graceLeftMs()
-					);
-				} catch {
-					// swallowed by design
-				}
 				tally.sent++;
 			}
 			return 'done';
