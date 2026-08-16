@@ -564,7 +564,13 @@
   </p>
 </div>
 
-<!-- Destructive + communal action → modal confirmation (cs.md; GROK #3) -->
+<!-- Destructive + communal action → modal confirmation (cs.md; GROK #3).
+     Escape and overlay-click dismiss (GROK nit, Phase 2). -->
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && cancelTarget) cancelTarget = null;
+  }}
+/>
 {#if cancelTarget}
   <div
     class="modal-overlay"
@@ -572,6 +578,11 @@
     aria-modal="true"
     aria-labelledby="cancel-title"
   >
+    <button
+      class="modal-scrim"
+      aria-label="Close dialog"
+      onclick={() => (cancelTarget = null)}
+    ></button>
     <div class="modal">
       <h3 id="cancel-title">Cancel this load?</h3>
       <p>
@@ -869,7 +880,15 @@
     justify-content: center;
     padding: 16px;
   }
+  .modal-scrim {
+    position: absolute;
+    inset: 0;
+    background: none;
+    border: none;
+    cursor: default;
+  }
   .modal {
+    position: relative;
     background: var(--card);
     border-radius: 8px;
     padding: 24px;

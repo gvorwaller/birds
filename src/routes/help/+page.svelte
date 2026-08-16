@@ -166,11 +166,13 @@
 						instant and only refreshes about once a year.
 					</li>
 					<li>
-						Three ways to load: the suggested-mix button (nearest +
-						most-active), a single row's <strong>Load</strong>, or — under
-						<strong>"More hotspots in range — pick what to load"</strong> —
-						check any set of hotspots (or <strong>Select all shown</strong>)
-						and hit <strong>Load selected (N)</strong>.
+						One obvious entry point: the big
+						<strong>Load hotspot data (N)</strong> button under the results
+						header opens the pick panel. There, check any set of hotspots (or
+						<strong>Select all shown</strong>) and hit
+						<strong>Load selected (N)</strong>; outdated hotspots appear in
+						their own <strong>refresh</strong> group, and every row also keeps
+						its individual <strong>Load</strong> button.
 					</li>
 					<li>
 						Every load runs <strong>in the background on the server</strong> —

@@ -69,6 +69,27 @@
         : data.view.unloadedNearby.slice(0, UNLOADED_PREVIEW)
       : [],
   );
+  // Outdated loaded hotspots join the pick panel as a refresh group — the
+  // action validates every id against the official in-range list, and
+  // ensureFrequencies refreshes non-current rows naturally (td-17d291).
+  const outdatedRows = $derived(
+    data.view ? data.view.analyzed.filter((h) => !h.current) : [],
+  );
+  const loadableCount = $derived(
+    (data.view?.unloadedNearby.length ?? 0) + outdatedRows.length,
+  );
+
+  // ONE prominent CTA near the results header opens + scrolls to the pick
+  // panel (td-17d291 — the old suggested-mix quick button was redundant with
+  // it and the obscure details link was painful to find).
+  let loadPanelOpen = $state(false);
+  let loadPanelEl = $state<HTMLDetailsElement | undefined>();
+  function openLoadPanel() {
+    loadPanelOpen = true;
+    requestAnimationFrame(() => {
+      loadPanelEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   // Multi-select loading (td-8a6f97): checkbox selection is client state;
   // the fetching itself is a background-worker JOB — the action enqueues and
@@ -91,13 +112,14 @@
     new Set(jobsPoll.active.flatMap((j) => j.locCodes ?? [])),
   );
 
-  // Loaded rows leave unloadedNearby on re-render, and covered rows are
-  // already being fetched by a job — prune both from the selection so counts
-  // stay honest.
+  // Freshly-loaded rows leave the pickable pool on re-render, and covered
+  // rows are already being fetched by a job — prune both from the selection
+  // so counts stay honest. Pickable = unloaded in range ∪ outdated loaded.
   $effect(() => {
-    const available = new Set(
-      (data.view?.unloadedNearby ?? []).map((h) => h.locId),
-    );
+    const available = new Set([
+      ...(data.view?.unloadedNearby ?? []).map((h) => h.locId),
+      ...outdatedRows.map((h) => h.locId),
+    ]);
     if (
       selectedLocs.some((id) => !available.has(id) || coveredLocs.has(id))
     ) {
@@ -112,6 +134,7 @@
       ...new Set([
         ...selectedLocs,
         ...unloadedShown.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
+        ...outdatedRows.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
       ]),
     ];
   }
@@ -357,44 +380,26 @@
         · <a href="/forecast/data">details</a>
       </p>
 
-      {#if (v.suggested.length > 0 || v.outdatedCount > 0) && !data.isViewer}
+      {#if loadableCount > 0 && !data.isViewer}
         {#if !data.hasLogin}
           <p class="notice">
             Loading frequency data uses your eBird sign-in — add it in
             <a href="/settings">Settings</a>.
           </p>
         {:else}
-          <form
-            method="POST"
-            action="?/loadData"
-            use:enhance={() => {
-              loading = true;
-              return async ({ update }) => {
-                loading = false;
-                await update();
-              };
-            }}
-          >
-            <input type="hidden" name="lat" value={data.location.lat} />
-            <input type="hidden" name="lng" value={data.location.lng} />
-            <input type="hidden" name="dist" value={data.dist} />
-            <input type="hidden" name="origin" value={data.location.label} />
-            <button type="submit" disabled={loading}>
-              {loading
-                ? "Queueing…"
-                : v.suggested.length > 0
-                  ? `Load ${v.suggested.length} suggested hotspot${v.suggested.length === 1 ? "" : "s"}`
-                  : v.outdatedCount > 12
-                    ? `Refresh outdated data (12 of ${v.outdatedCount} per click)`
-                    : `Refresh outdated data (${v.outdatedCount} hotspot${v.outdatedCount === 1 ? "" : "s"})`}
-            </button>
-          </form>
-          {#if v.suggested.length > 0 && v.analyzed.length > 0}
-            <p class="notice">
-              Suggestions mix nearest + most-active — or pick exact hotspots
-              under "More hotspots in range" below.
-            </p>
-          {/if}
+          <!-- The ONE load entry point (td-17d291): opens and scrolls to the
+               pick panel below. The old suggested-mix quick button was
+               redundant with it. -->
+          <button type="button" class="loadcta" onclick={openLoadPanel}>
+            Load hotspot data ({loadableCount})
+            {#if outdatedRows.length > 0 && v.unloadedNearby.length > 0}
+              <span class="ctasub"
+                >{v.unloadedNearby.length} unloaded · {outdatedRows.length} outdated</span
+              >
+            {:else if outdatedRows.length > 0}
+              <span class="ctasub">refresh outdated</span>
+            {/if}
+          </button>
         {/if}
       {/if}
 
@@ -661,11 +666,19 @@
         </ul>
       </details>
 
-      {#if v.unloadedNearby.length > 0}
-        <details class="analyzed">
+      {#if loadableCount > 0}
+        <details
+          class="analyzed"
+          bind:this={loadPanelEl}
+          bind:open={loadPanelOpen}
+        >
           <summary>
-            More hotspots in range ({v.unloadedNearby.length}) — pick what to
-            load
+            Load hotspot data ({loadableCount}) — pick what to load
+            {#if outdatedRows.length > 0}
+              <span class="muted-inline"
+                >({v.unloadedNearby.length} unloaded · {outdatedRows.length} outdated)</span
+              >
+            {/if}
           </summary>
           {#if !data.isViewer && data.hasLogin && data.location}
             <div class="bulkbar">
@@ -710,6 +723,42 @@
                 </form>
               {/if}
             </div>
+          {/if}
+          {#if outdatedRows.length > 0}
+            <h3 class="pickband">
+              Outdated — refresh ({outdatedRows.length})
+            </h3>
+            <ul>
+              {#each outdatedRows as h (h.locId)}
+                <li>
+                  <div class="sp">
+                    {#if !data.isViewer && data.hasLogin}
+                      <label class="pick">
+                        <input
+                          type="checkbox"
+                          bind:group={selectedLocs}
+                          value={h.locId}
+                          disabled={coveredLocs.has(h.locId)}
+                        />
+                        <span class="name">{h.locName}</span>
+                      </label>
+                    {:else}
+                      <span class="name">{h.locName}</span>
+                    {/if}
+                    <span class="meta">
+                      {formatDistance(h.distanceKm, "mi")}
+                      {#if h.fetchedAt}
+                        · data from {fmtDate(h.fetchedAt)}
+                      {/if}
+                      · outdated
+                    </span>
+                  </div>
+                </li>
+              {/each}
+            </ul>
+            {#if v.unloadedNearby.length > 0}
+              <h3 class="pickband">Not loaded yet ({v.unloadedNearby.length})</h3>
+            {/if}
           {/if}
           <ul>
             {#each unloadedShown as h (h.locId)}
@@ -883,6 +932,41 @@
     gap: 8px;
     align-items: center;
     margin: 8px 0;
+  }
+  .loadcta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
+    min-height: 56px;
+    padding: 12px 20px;
+    margin: 10px 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  .loadcta .ctasub {
+    font-size: 0.8rem;
+    font-weight: 600;
+    opacity: 0.9;
+  }
+  .pickband {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 12px 0 4px;
+  }
+  .muted-inline {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 0.85rem;
   }
   .progressbar {
     height: 8px;

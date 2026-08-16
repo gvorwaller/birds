@@ -355,6 +355,64 @@ describe("runJob — analyze_counties", () => {
   });
 });
 
+describe("red-team: no credential-shaped material in the job pipeline (GROK #15)", () => {
+  // Walks EVERY value the handlers push toward durable storage — event
+  // details, progress writes, and terminal results — and asserts nothing
+  // credential-shaped survives, even when upstream error text tries to
+  // smuggle it in. Payloads are code-constructed {code,kind,name,regionCode}
+  // by design; this pins the OUTPUT side of that contract.
+  const FORBIDDEN = /password|passwd|api[_-]?key|secret|authorization|cookie|login_username|login_password|_enc\b/i;
+
+  function collectStoredJson(): string[] {
+    return [
+      ...mocks.recordEvent.mock.calls.map((c) => JSON.stringify(c[2] ?? {})),
+      ...mocks.updateProgress.mock.calls.map((c) => JSON.stringify(c[1])),
+      ...mocks.completeJob.mock.calls.map((c) => JSON.stringify(c[2] ?? null)),
+      ...mocks.failJob.mock.calls.map((c) => JSON.stringify([c[2], c[3] ?? null])),
+      ...mocks.scheduleRetry.mock.calls.map((c) => JSON.stringify(c[4] ?? null)),
+      ...mocks.cancelRunningJob.mock.calls.map((c) => JSON.stringify(c[2] ?? null)),
+    ];
+  }
+
+  it("happy path + hostile unit errors leave no credential-shaped keys or values", async () => {
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      await opts.onUnit(locs[0], { status: "ok" });
+      await opts.onUnit(locs[1], {
+        status: "failed",
+        kind: "unit",
+        // Hostile: upstream error text should be stored verbatim (truncated),
+        // but our own structures must never ADD credential fields around it.
+        error: "eBird export failed (HTTP 500) for request id 8842",
+      });
+      await opts.onUnit(locs[2], { status: "skipped", kind: "cooldown" });
+      return ensureResult({
+        refreshed: ["L1"],
+        failed: [{ code: "L2", error: "eBird export failed (HTTP 500)", kind: "unit" }],
+      });
+    });
+    await runJob(jobRow(), ctx);
+    const stored = collectStoredJson();
+    expect(stored.length).toBeGreaterThan(0);
+    for (const json of stored) {
+      expect(json).not.toMatch(FORBIDDEN);
+    }
+  });
+
+  it("credential-failure path stores the user-facing message, never the credentials themselves", async () => {
+    mocks.ensureFrequencies.mockResolvedValue(
+      ensureResult({
+        credentialProblem: "eBird rejected the stored sign-in — update it in Settings.",
+        notAttempted: ["L2", "L3"],
+      }),
+    );
+    await runJob(jobRow(), ctx);
+    for (const json of collectStoredJson()) {
+      // "sign-in" wording is fine; key-shaped fields are not.
+      expect(json).not.toMatch(FORBIDDEN);
+    }
+  });
+});
+
 describe("runJob — dispatch", () => {
   it("Phase-3 types fail cleanly until their handlers land", async () => {
     await runJob(jobRow({ type: "sync_lifelist" }), ctx);

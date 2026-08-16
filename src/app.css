@@ -15,7 +15,7 @@
 	--border: #e9ecef;
 	--text: #212529; /* 16.1:1 on white */
 	--muted: #495057; /* 7.5:1 on white */
-	--accent: #0a5c43; /* dark green, 7.6:1 on white */
+	--accent: #0a5940; /* dark green, 8.3:1 on white, 7.3:1 on --accent-soft (AAA) */
 	--accent-soft: #e3f3ec;
 	--link: #084298; /* 9.3:1 on white */
 	--need-bg: #fff3cd;
