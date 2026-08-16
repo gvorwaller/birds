@@ -16,8 +16,12 @@ import {
 } from '$server/barchart';
 import { coverageFromMeta, recentFailures } from '$server/forecast';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
-import { getEbirdApiKey, syncTaxonomy } from '$server/ebird';
-import { syncLifeListFromEbird, EbirdLoginError } from '$server/ebird-account';
+import { getEbirdApiKey, syncTaxonomy, EbirdError } from '$server/ebird';
+import {
+	syncLifeListFromEbird,
+	EbirdLoginError,
+	EbirdUpstreamError
+} from '$server/ebird-account';
 import { rematchPhotoLinks } from '$server/gallery';
 import {
 	cancelRunningJob,
@@ -30,6 +34,7 @@ import {
 } from '$server/jobs';
 import {
 	jobOutcome,
+	RATE_LIMIT_RETRY_DELAY_MS,
 	retryDelayMs,
 	sanitizeErrorText,
 	type JobProgress,
@@ -252,12 +257,28 @@ async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void
 		const message = sanitizeErrorText(
 			err instanceof Error ? err.message : String(err)
 		).slice(0, 300);
-		if (err instanceof EbirdLoginError) {
+		// Typed classification (CODEX1 Phase-3): EbirdLoginError is reserved
+		// for credential/auth-flow failures (casLogin now throws
+		// EbirdUpstreamError for reachability/5xx); an official-API 401/403 is
+		// a bad key — both terminal. 429 anywhere honors the queue's flat
+		// rate-limit backoff; everything else follows the transient schedule.
+		const status =
+			err instanceof EbirdUpstreamError
+				? err.status
+				: err instanceof EbirdError
+					? (err.status ?? null)
+					: null;
+		const isCredential =
+			err instanceof EbirdLoginError ||
+			(err instanceof EbirdError && (status === 401 || status === 403));
+		if (isCredential) {
 			await failJob(job.id, attempts, message);
 			return;
 		}
 		if (attempts < job.max_attempts) {
-			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
+			const delay =
+				status === 429 ? RATE_LIMIT_RETRY_DELAY_MS : retryDelayMs(attempts, 'transient');
+			await scheduleRetry(job.id, attempts, delay, message);
 			return;
 		}
 		await failJob(job.id, attempts, message);

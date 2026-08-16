@@ -103,8 +103,20 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 	try {
 		formRes = await followRedirects(await fetchWithJar(CAS_LOGIN_URL, jar), jar);
 	} catch (err) {
-		throw new EbirdLoginError(
-			`Could not reach the eBird sign-in page: ${err instanceof Error ? err.message : err}`
+		// Reachability (DNS/timeout/reset) is an UPSTREAM problem, never a
+		// credential one — classifying it as EbirdLoginError made a Cornell
+		// outage fail sync/frequency jobs terminally on attempt 1 instead of
+		// retrying (CODEX1 Phase-3 #1).
+		throw new EbirdUpstreamError(
+			`Could not reach the eBird sign-in page: ${err instanceof Error ? err.message : err}`,
+			0
+		);
+	}
+	if (formRes.status >= 500 || formRes.status === 429) {
+		// A 5xx/429 maintenance or throttle page has no login form — upstream.
+		throw new EbirdUpstreamError(
+			`eBird sign-in page returned HTTP ${formRes.status}.`,
+			formRes.status
 		);
 	}
 	const formHtml = await formRes.text();
@@ -144,6 +156,12 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 		if (/invalid|incorrect|name=["']password["']/i.test(html)) {
 			throw new EbirdLoginError('eBird rejected the username or password.');
 		}
+	}
+	if (loginRes.status >= 500 || loginRes.status === 429) {
+		throw new EbirdUpstreamError(
+			`eBird login endpoint returned HTTP ${loginRes.status}.`,
+			loginRes.status
+		);
 	}
 	throw new EbirdLoginError(`Unexpected eBird login response (HTTP ${loginRes.status}).`);
 }

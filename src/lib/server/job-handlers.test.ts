@@ -71,9 +71,30 @@ vi.mock("$lib/db", () => ({
 }));
 
 const syncMocks = vi.hoisted(() => {
+  // Real classes with the real shapes — the handler's instanceof/status
+  // classification must be exercised with typed errors, not generic Error
+  // (CODEX1 Phase-3).
   class FakeEbirdLoginError extends Error {}
+  class FakeEbirdUpstreamError extends Error {
+    constructor(
+      message: string,
+      public status: number,
+    ) {
+      super(message);
+    }
+  }
+  class FakeEbirdError extends Error {
+    constructor(
+      message: string,
+      public status?: number,
+    ) {
+      super(message);
+    }
+  }
   return {
     FakeEbirdLoginError,
+    FakeEbirdUpstreamError,
+    FakeEbirdError,
     syncLifeListFromEbird: vi.fn<(userId: number) => Promise<{ total: number; matched: number; unmatched: string[] }>>(),
     getEbirdApiKey: vi.fn<(userId: number) => Promise<string | null>>(async () => "key"),
     syncTaxonomy: vi.fn<(apiKey: string) => Promise<number>>(async () => 42),
@@ -85,9 +106,11 @@ const syncMocks = vi.hoisted(() => {
 
 vi.mock("$server/ebird-account", () => ({
   EbirdLoginError: syncMocks.FakeEbirdLoginError,
+  EbirdUpstreamError: syncMocks.FakeEbirdUpstreamError,
   syncLifeListFromEbird: syncMocks.syncLifeListFromEbird,
 }));
 vi.mock("$server/ebird", () => ({
+  EbirdError: syncMocks.FakeEbirdError,
   getEbirdApiKey: syncMocks.getEbirdApiKey,
   syncTaxonomy: syncMocks.syncTaxonomy,
 }));
@@ -482,6 +505,57 @@ describe("runJob — sync jobs (Phase 3)", () => {
     await runJob(jobRow({ type: "sync_lifelist", attempts: 4 }), ctx);
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("CAS reachability/5xx (EbirdUpstreamError) retries on the transient schedule, NOT terminal", async () => {
+    // The pre-fix bug: casLogin threw EbirdLoginError for "could not reach
+    // the sign-in page", failing the job on attempt 1 during an outage.
+    syncMocks.syncLifeListFromEbird.mockRejectedValue(
+      new syncMocks.FakeEbirdUpstreamError("Could not reach the eBird sign-in page", 0),
+    );
+    await runJob(jobRow({ type: "sync_lifelist" }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+    expect(mocks.failJob).not.toHaveBeenCalled();
+  });
+
+  it("a 429 (either typed class) honors the flat rate-limit backoff", async () => {
+    syncMocks.syncLifeListFromEbird.mockRejectedValue(
+      new syncMocks.FakeEbirdUpstreamError("eBird throttled", 429),
+    );
+    await runJob(jobRow({ type: "sync_lifelist" }), ctx);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(RATE_LIMIT_RETRY_DELAY_MS);
+
+    vi.clearAllMocks();
+    mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+    syncMocks.syncTaxonomy.mockRejectedValueOnce(
+      new syncMocks.FakeEbirdError("too many requests", 429),
+    );
+    await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(RATE_LIMIT_RETRY_DELAY_MS);
+  });
+
+  it("an invalid API key (EbirdError 401/403) is TERMINAL, never retried", async () => {
+    for (const status of [401, 403]) {
+      vi.clearAllMocks();
+      mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+      syncMocks.syncTaxonomy.mockRejectedValueOnce(
+        new syncMocks.FakeEbirdError("eBird rejected the API key", status),
+      );
+      await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
+      expect(mocks.failJob).toHaveBeenCalledTimes(1);
+      expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+    }
+  });
+
+  it("an EbirdError 5xx retries as transient", async () => {
+    syncMocks.syncTaxonomy.mockRejectedValueOnce(
+      new syncMocks.FakeEbirdError("eBird 502", 502),
+    );
+    await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+    expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
   it("sync_taxonomy success → taxa + photo re-match counts", async () => {
