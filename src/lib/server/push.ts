@@ -67,6 +67,38 @@ export function validPushKeys(p256dh: string, auth: string): boolean {
 	);
 }
 
+/**
+ * Client-supplied device label ("iPhone · Safari"), sanitized: it renders on
+ * the Settings device list, so strip control chars, collapse whitespace,
+ * clamp length. Returns null for junk so the platform fallback shows instead.
+ */
+export function sanitizeDeviceLabel(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null;
+	// eslint-disable-next-line no-control-regex
+	const cleaned = raw.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+	if (cleaned.length === 0) return null;
+	return cleaned.slice(0, 60);
+}
+
+/**
+ * Coarse platform from the push-service origin — the display fallback for
+ * rows enrolled before device labels existed. Coarse by design: the ORIGIN
+ * is allowlisted, so this can only be one of four families.
+ */
+export function platformFromEndpoint(endpoint: string): string {
+	let host: string;
+	try {
+		host = new URL(endpoint).hostname;
+	} catch {
+		return 'Unknown device';
+	}
+	if (/(^|\.)push\.apple\.com$/.test(host)) return 'Apple device (Safari)';
+	if (host === 'fcm.googleapis.com') return 'Chrome-based browser';
+	if (/(^|\.)push\.services\.mozilla\.com$/.test(host)) return 'Firefox';
+	if (/(^|\.)notify\.windows\.com$/.test(host)) return 'Windows (Edge)';
+	return 'Unknown device';
+}
+
 export class PushError extends Error {
 	constructor(
 		message: string,

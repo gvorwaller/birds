@@ -60,6 +60,30 @@ describe("validPushEndpoint — the SSRF boundary (CODEX1)", () => {
     }
   });
 
+  it("sanitizeDeviceLabel strips control chars, collapses whitespace, clamps, nulls junk", async () => {
+    const { sanitizeDeviceLabel } = await import("./push");
+    expect(sanitizeDeviceLabel("iPhone · Safari")).toBe("iPhone · Safari");
+    expect(sanitizeDeviceLabel("  Mac \n\t Safari  ")).toBe("Mac Safari");
+    expect(sanitizeDeviceLabel("a\u0000b\u001fc\u007fd")).toBe("abcd");
+    expect(sanitizeDeviceLabel("x".repeat(200))).toHaveLength(60);
+    expect(sanitizeDeviceLabel("")).toBeNull();
+    expect(sanitizeDeviceLabel("\u0000\u0001")).toBeNull();
+    expect(sanitizeDeviceLabel(null)).toBeNull();
+    expect(sanitizeDeviceLabel(42)).toBeNull();
+  });
+
+  it("platformFromEndpoint maps allowlisted origins; junk stays Unknown", async () => {
+    const { platformFromEndpoint } = await import("./push");
+    expect(platformFromEndpoint("https://web.push.apple.com/x")).toBe("Apple device (Safari)");
+    expect(platformFromEndpoint("https://fcm.googleapis.com/fcm/send/a")).toBe(
+      "Chrome-based browser",
+    );
+    expect(platformFromEndpoint("https://updates.push.services.mozilla.com/w/1")).toBe("Firefox");
+    expect(platformFromEndpoint("https://sg2p.notify.windows.com/w/?t=1")).toBe("Windows (Edge)");
+    expect(platformFromEndpoint("not a url")).toBe("Unknown device");
+    expect(platformFromEndpoint("https://evil.example/x")).toBe("Unknown device");
+  });
+
   it("validPushKeys enforces base64url shape and P-256/auth lengths", () => {
     expect(validPushKeys(P256, AUTH)).toBe(true);
     expect(validPushKeys("short", AUTH)).toBe(false);

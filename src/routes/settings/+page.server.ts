@@ -17,9 +17,19 @@ import {
   validPushEndpoint,
   validPushKeys,
   vapidPublicKey,
+  sanitizeDeviceLabel,
+  platformFromEndpoint,
   PushError,
   type PushSubscriptionRow,
 } from "$server/push";
+import { createHash } from "node:crypto";
+
+// Stable non-capability handle for one enrolled device: the endpoint's hash
+// prefix. Safe to send to the page (unlike the endpoint itself) and lets the
+// browser mark "this device" by hashing its own subscription locally.
+function deviceKey(endpoint: string): string {
+  return createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
+}
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -117,8 +127,10 @@ export const load: PageServerLoad = async ({ locals }) => {
          FROM user_alert_prefs WHERE user_id = $1`,
       [userId],
     ),
-    query<{ n: string }>(
-      `SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = $1`,
+    query<{ endpoint: string; device_label: string | null; created_at: string }>(
+      `SELECT endpoint, device_label, created_at::text
+         FROM push_subscriptions WHERE user_id = $1
+        ORDER BY created_at`,
       [userId],
     ),
   ]);
@@ -156,7 +168,16 @@ export const load: PageServerLoad = async ({ locals }) => {
       radius_km: 40,
       realert_days: 7,
     },
-    pushDeviceCount: Number(pushDevices.rows[0]?.n ?? 0),
+    // Per device: label (or platform fallback), enrolled date, and a hash
+    // key — the endpoint itself is capability material and never leaves the
+    // server.
+    pushDevices: pushDevices.rows.map((d) => ({
+      key: deviceKey(d.endpoint),
+      label: d.device_label ?? platformFromEndpoint(d.endpoint),
+      labeled: d.device_label != null,
+      created_at: d.created_at,
+    })),
+    pushDeviceCount: pushDevices.rows.length,
     // The PUBLIC half of the VAPID pair — safe to expose; the browser needs
     // it as applicationServerKey to subscribe.
     vapidPublicKey: vapidPublicKey(),
@@ -442,17 +463,46 @@ export const actions: Actions = {
     if (!validPushEndpoint(endpoint) || !validPushKeys(p256dh, auth)) {
       return fail(400, { error: "Malformed push subscription." });
     }
+    // Display label from the browser's own UA ("iPhone · Safari") — cosmetic,
+    // sanitized; NULL keeps the platform fallback.
+    const label = sanitizeDeviceLabel(form.get("device_label"));
     // Re-homing an EXISTING endpoint to the current login is deliberate: the
     // subscription tuple is capability material the browser just proved it
     // holds; same browser switching accounts moves the device's alerts to
-    // the account now using it.
+    // the account now using it. Re-enrolling also backfills the label on
+    // pre-0019 rows (COALESCE keeps an existing label if the new one is null).
     await query(
-      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (endpoint) DO UPDATE SET user_id = $2, p256dh = $3, auth = $4`,
-      [endpoint, userId, p256dh, auth],
+      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, device_label)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (endpoint) DO UPDATE SET
+         user_id = $2, p256dh = $3, auth = $4,
+         device_label = COALESCE($5, push_subscriptions.device_label)`,
+      [endpoint, userId, p256dh, auth, label],
     );
     return { ok: true as const, message: "This device is enrolled for notifications." };
+  },
+
+  /**
+   * Unenroll one device by its hash key (the page never holds endpoints).
+   * Scoped to the caller's own rows — you can only remove your own devices.
+   */
+  remove_push_sub: async ({ locals, request }) => {
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const key = (form.get("device_key") ?? "").toString();
+    if (!/^[0-9a-f]{16}$/.test(key)) {
+      return fail(400, { error: "Malformed device key." });
+    }
+    const subs = await query<{ endpoint: string }>(
+      `SELECT endpoint FROM push_subscriptions WHERE user_id = $1`,
+      [userId],
+    );
+    const match = subs.rows.find((r) => deviceKey(r.endpoint) === key);
+    if (!match) {
+      return fail(404, { error: "That device is no longer enrolled." });
+    }
+    await query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [match.endpoint]);
+    return { ok: true as const, message: "Device removed — it will no longer get alerts." };
   },
 
   /**

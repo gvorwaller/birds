@@ -28,6 +28,59 @@
     return Uint8Array.from(raw, (c) => c.charCodeAt(0));
   }
 
+  // Human label for THIS device, derived from the UA at enrollment time —
+  // the only moment the browser can tell us what it is.
+  function thisDeviceLabel(): string {
+    const ua = navigator.userAgent;
+    const device = /iPhone/.test(ua)
+      ? "iPhone"
+      : /iPad/.test(ua)
+        ? "iPad"
+        : /Macintosh/.test(ua)
+          ? "Mac"
+          : /Android/.test(ua)
+            ? "Android"
+            : /Windows/.test(ua)
+              ? "Windows PC"
+              : "Device";
+    const browser = /Edg\//.test(ua)
+      ? "Edge"
+      : /Firefox\//.test(ua)
+        ? "Firefox"
+        : /Chrome\//.test(ua)
+          ? "Chrome"
+          : /Safari\//.test(ua)
+            ? "Safari"
+            : "browser";
+    return `${device} · ${browser}`;
+  }
+
+  // Which listed row is the device in hand: hash this browser's own
+  // subscription endpoint (it already holds it) and match the server's
+  // non-capability hash keys. Display-only nicety — fails silently.
+  let thisDeviceKey = $state<string | null>(null);
+  $effect(() => {
+    void data.pushDevices; // re-run when the list changes
+    (async () => {
+      try {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (!sub) return;
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(sub.endpoint),
+        );
+        thisDeviceKey = [...new Uint8Array(digest)]
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+          .slice(0, 16);
+      } catch {
+        thisDeviceKey = null;
+      }
+    })();
+  });
+
   async function enrollThisDevice() {
     pushMessage = "";
     if (!data.vapidPublicKey) {
@@ -55,6 +108,7 @@
       });
       const body = new FormData();
       body.set("subscription", JSON.stringify(subscription.toJSON()));
+      body.set("device_label", thisDeviceLabel());
       // deserialize, not res.ok: a SvelteKit action fail() arrives as
       // HTTP 200 {type:"failure"} under this fetch's content negotiation —
       // res.ok alone reported rejected saves as enrolled (GROK).
@@ -405,12 +459,43 @@
       >
         {pushBusy ? "Enabling…" : "🔔 Enable notifications on this device"}
       </button>
-      <span class="muted">
-        {data.pushDeviceCount} device{data.pushDeviceCount === 1 ? "" : "s"} enrolled
-      </span>
+      {#if data.pushDevices.length === 0}
+        <span class="muted">No devices enrolled yet</span>
+      {/if}
     </div>
     {#if pushMessage}
       <p class="muted">{pushMessage}</p>
+    {/if}
+    {#if data.pushDevices.length > 0}
+      <ul class="devices">
+        {#each data.pushDevices as d (d.key)}
+          <li>
+            <span class="dev-main">
+              <span class="dev-label">
+                {d.label}
+                {#if d.key === thisDeviceKey}<Badge kind="seen" label="this device" />{/if}
+              </span>
+              <span class="muted">
+                enrolled {new Date(d.created_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}{d.labeled ? "" : " — re-enable on that device to name it"}
+              </span>
+            </span>
+            <form
+              method="POST"
+              action="?/remove_push_sub"
+              use:enhance={track(`rm-${d.key}`)}
+            >
+              <input type="hidden" name="device_key" value={d.key} />
+              <button type="submit" class="danger dev-remove" disabled={busy === `rm-${d.key}`}>
+                {busy === `rm-${d.key}` ? "Removing…" : "Remove"}
+              </button>
+            </form>
+          </li>
+        {/each}
+      </ul>
     {/if}
     <form
       method="POST"
@@ -922,6 +1007,36 @@
     width: 22px;
     height: 22px;
     accent-color: var(--accent);
+  }
+  .devices {
+    list-style: none;
+    margin: 10px 0 4px;
+    padding: 0;
+    max-width: 480px;
+  }
+  .devices li {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    min-height: 48px;
+  }
+  .devices li + li {
+    border-top: 1px solid var(--border);
+  }
+  .dev-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .dev-label {
+    font-weight: 600;
+  }
+  .dev-remove {
+    min-height: 48px;
+    padding: 6px 14px;
   }
   button.secondary {
     background: var(--card);
