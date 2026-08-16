@@ -745,13 +745,27 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("budget covers PRE-SEND work: a hung notable fetch fails the user, scan survives (CODEX1)", async () => {
+  /** A signal-respecting hang: rejects when the budget's abort fires (real
+   * fetch behavior). The awaited-settlement model requires this — a truly
+   * signal-ignoring never-resolving promise would honestly hang the scan. */
+  function hangUntilAborted(): (
+    ...a: unknown[]
+  ) => Promise<{ data: unknown[]; fetchedAt: Date; stale: boolean }> {
+    return (...a: unknown[]) =>
+      new Promise((_, reject) => {
+        const opts = a[5] as { signal?: AbortSignal } | undefined;
+        opts?.signal?.addEventListener("abort", () =>
+          reject(new Error("request aborted (deadline)")),
+        );
+      });
+  }
+
+  it("budget ABORTS pre-send work: hung fetch stops at the deadline, next user still alerts (CODEX1)", async () => {
     vi.useFakeTimers();
     try {
       scanDb([PREF_ROW, { ...PREF_ROW, user_id: 4 }]);
-      // User 3's fetch hangs forever; user 4 is healthy.
       syncMocks.notableNearbyObs
-        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockImplementationOnce(hangUntilAborted())
         .mockResolvedValueOnce({ data: [NOTABLE], fetchedAt: new Date(), stale: false });
       const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
       await vi.advanceTimersByTimeAsync(61_000);
@@ -759,6 +773,9 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
       const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
       expect(fails).toHaveLength(1);
       expect((fails[0][2] as { budget?: boolean }).budget).toBe(true);
+      // The signal actually reached the fetch.
+      const opts = syncMocks.notableNearbyObs.mock.calls[0][5] as { signal?: AbortSignal };
+      expect(opts?.signal).toBeInstanceOf(AbortSignal);
       // The healthy user still ran and alerted — no starvation.
       expect(syncMocks.sendNtfy).toHaveBeenCalledTimes(1);
       expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
@@ -767,7 +784,40 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
     }
   });
 
-  it("mid-candidate expiry: ACTUAL sends counted, not the candidate list (CODEX1)", async () => {
+  it("a fetch RESOLVING after expiry causes zero post-deadline side effects (CODEX1 re-review)", async () => {
+    vi.useFakeTimers();
+    try {
+      scanDb([PREF_ROW]);
+      // Signal-ignoring slow fetch: resolves WITH DATA at t+70s — past the
+      // 60s budget. The checkpoint after it must throw before any send.
+      syncMocks.notableNearbyObs.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(
+              () => resolve({ data: [NOTABLE], fetchedAt: new Date(), stale: false }),
+              70_000,
+            );
+          }),
+      );
+      const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+      await vi.advanceTimersByTimeAsync(71_000);
+      await p;
+      // The pipeline SETTLED before classification (awaited), and nothing
+      // fired after the deadline: no publish, no upsert.
+      expect(syncMocks.sendNtfy).not.toHaveBeenCalled();
+      expect(db.calls.filter((c) => c.text.includes("INSERT INTO need_alerts_sent"))).toHaveLength(0);
+      const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+      expect(fails).toHaveLength(1);
+      expect((fails[0][2] as { budget?: boolean }).budget).toBe(true);
+      // Terminal handling happened AFTER the unit settled — the retry call is
+      // the last queue transition and no event follows it.
+      expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mid-candidate expiry: ACTUAL sends counted, in-flight send settles first (CODEX1)", async () => {
     vi.useFakeTimers();
     try {
       scanDb([PREF_ROW]);
@@ -779,10 +829,17 @@ describe("runJob — scan_need_alerts (plan Part A)", () => {
         fetchedAt: new Date(),
         stale: false,
       });
-      // First push lands; the second hangs past the budget.
+      // First push lands; the second respects the abort signal (as the real
+      // adapter does via AbortSignal.any) and rejects at the deadline.
       syncMocks.sendNtfy
         .mockResolvedValueOnce(undefined)
-        .mockImplementationOnce(() => new Promise(() => {}));
+        .mockImplementationOnce(
+          (...a: unknown[]) =>
+            new Promise((_, reject) => {
+              const msg = a[1] as { signal?: AbortSignal };
+              msg.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            }),
+        );
       const p = runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
       await vi.advanceTimersByTimeAsync(61_000);
       await p;

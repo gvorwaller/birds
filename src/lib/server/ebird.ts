@@ -52,13 +52,17 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 	return enc ? decryptSecret(enc) : null;
 }
 
-async function ebirdFetch<T>(path: string, apiKey: string): Promise<T> {
+async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(`${API}${path}`, {
-			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' }
+			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
+			signal
 		});
 	} catch (err) {
+		if (signal?.aborted) {
+			throw new EbirdError('eBird API request aborted (deadline).');
+		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
 	if (res.status === 403 || res.status === 401) {
@@ -159,14 +163,16 @@ export async function notableNearbyObs(
 	lat: number,
 	lng: number,
 	distKm: number,
-	back: number
+	back: number,
+	opts?: { signal?: AbortSignal }
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
 	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
 			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
-			apiKey
+			apiKey,
+			opts?.signal
 		)
 	);
 }

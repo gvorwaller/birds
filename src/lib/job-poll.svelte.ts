@@ -127,6 +127,27 @@ class JobsPoll {
 		}
 	}
 
+	/**
+	 * Route-arrival drain for the owed-invalidation latch (CODEX1 re-review):
+	 * the poller may have GRACE-STOPPED with pending=true (terminal landed
+	 * while gated, then jobs went quiet), so no future poll tick exists to
+	 * drain it. The layout calls this from afterNavigate — arriving on a
+	 * forecast page with a quiet router pays the debt exactly once.
+	 */
+	onNavigated(): void {
+		if (!browser) return;
+		const step = invalidateStep(
+			this.#invalidate,
+			this.jobs,
+			this.jobs, // identical snapshots — only the latch can owe here
+			navigating.to != null,
+			/^\/forecast(\/|$)/.test(location.pathname),
+			Date.now()
+		);
+		this.#invalidate = step.state;
+		if (step.fire) void invalidateAll();
+	}
+
 	async cancel(jobId: number): Promise<void> {
 		try {
 			await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });

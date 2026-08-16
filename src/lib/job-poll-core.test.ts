@@ -114,6 +114,26 @@ describe("invalidateStep — the owed-refresh latch (td-671082 / CODEX1)", () =>
     expect(s3.fire).toBe(false);
   });
 
+  it("GRACE-STOP sequence: terminal while gated → gated grace tick → poller stops → forecast arrival drains EXACTLY once (CODEX1 re-review)", () => {
+    // Tick 1: job goes terminal while navigation is active → latched.
+    const s1 = invalidateStep(fresh, running, done, true, true, t0);
+    expect(s1.fire).toBe(false);
+    expect(s1.state.pending).toBe(true);
+    // Tick 2 (the single grace poll): STILL gated — user is mid-navigation
+    // or off-forecast. The poller stops after this; no more poll ticks exist.
+    const s2 = invalidateStep(s1.state, done, done, true, false, t0 + 15_000);
+    expect(s2.fire).toBe(false);
+    expect(s2.state.pending).toBe(true);
+    // Later: the layout's afterNavigate → jobsPoll.onNavigated() calls with
+    // identical snapshots on a quiet router, on a forecast page.
+    const s3 = invalidateStep(s2.state, done, done, false, true, t0 + 60_000);
+    expect(s3.fire).toBe(true);
+    expect(s3.state.pending).toBe(false);
+    // A second arrival owes nothing.
+    const s4 = invalidateStep(s3.state, done, done, false, true, t0 + 90_000);
+    expect(s4.fire).toBe(false);
+  });
+
   it("a transition observed OFF forecast pages latches and drains on arrival", () => {
     const s1 = invalidateStep(fresh, running, done, false, false, t0);
     expect(s1.fire).toBe(false);

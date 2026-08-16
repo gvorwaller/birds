@@ -312,17 +312,39 @@ class ScanBudgetExceeded extends Error {
 	}
 }
 
-/** Race a per-user pipeline against its wall budget (CODEX1: the deadline
- * covers the WHOLE pipeline — API key, notable fetch, needs, sends — not just
- * the send loop). The losing pipeline is abandoned, not aborted: any send
- * already in flight may still land AND record its sent-row (at-least-once
- * holds; the re-alert window absorbs it). */
-function withBudget<T>(fn: () => Promise<T>, budgetMs: number): Promise<T> {
-	let timer: ReturnType<typeof setTimeout>;
-	const deadline = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => reject(new ScanBudgetExceeded()), budgetMs);
-	});
-	return Promise.race([fn(), deadline]).finally(() => clearTimeout(timer!)) as Promise<T>;
+/**
+ * Cooperative, ABORTABLE, fully-awaited per-user deadline (CODEX1 re-review:
+ * a raced-and-abandoned pipeline could keep publishing/upserting after the
+ * job terminalized). Shape:
+ * - an AbortController fires at the budget; the signal propagates into the
+ *   network legs (notableNearbyObs → ebirdFetch, sendNtfy), so hung fetches
+ *   actually STOP instead of resolving later;
+ * - checkpoint() throws before every subsequent side effect, so nothing new
+ *   starts past the deadline even where a signal can't reach (fast local DB
+ *   work);
+ * - the pipeline promise is AWAITED to settlement either way — runNeedAlertScan
+ *   never records the unit outcome, moves to the next user, or terminalizes
+ *   while cancelled work is still in flight. A send that was already
+ *   in flight at expiry settles (and records its sent-row) BEFORE the unit
+ *   is classified, so events/summary stay truthful.
+ */
+async function withBudget<T>(
+	fn: (signal: AbortSignal, checkpoint: () => void) => Promise<T>,
+	budgetMs: number
+): Promise<T> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(new ScanBudgetExceeded()), budgetMs);
+	const checkpoint = () => {
+		if (controller.signal.aborted) throw new ScanBudgetExceeded();
+	};
+	try {
+		return await fn(controller.signal, checkpoint);
+	} catch (err) {
+		if (controller.signal.aborted) throw new ScanBudgetExceeded();
+		throw err;
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 async function lowestAdminId(): Promise<number> {
@@ -404,17 +426,24 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			await recordEvent(job.id, 'unit_skipped', { userId: u.user_id, reason });
 			await updateProgress(job.id, progress);
 		};
-		const processUser = async (): Promise<'done' | 'skipped'> => {
+		const processUser = async (
+			signal: AbortSignal,
+			checkpoint: () => void
+		): Promise<'done' | 'skipped'> => {
 			if (u.home_lat == null || u.home_lon == null) {
 				await skip('no-home');
 				return 'skipped';
 			}
 			const apiKey = await getEbirdApiKey(u.user_id);
+			checkpoint();
 			if (!apiKey) {
 				await skip('no-api-key');
 				return 'skipped';
 			}
-			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1);
+			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1, {
+				signal
+			});
+			checkpoint();
 			if (notable.stale) {
 				// NEVER notify from stale data (CODEX1 plan #4): old sightings
 				// must not arrive as "just reported". Next scan retries.
@@ -428,6 +457,7 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					[u.user_id]
 				)
 			]);
+			checkpoint();
 			const sentAt = new Map(
 				sentRows.rows.map((r) => [r.species_code, new Date(r.sent_at).getTime()])
 			);
@@ -441,13 +471,17 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			});
 			const topic = decryptSecret(u.ntfy_topic_enc);
 			for (const c of candidates) {
+				// No NEW side effect starts past the deadline; an in-flight send
+				// aborts via the shared signal and settles before classification.
+				checkpoint();
 				// Absolute click URL (CODEX1 Rev-2 addendum #1) — species only,
 				// never coordinates, private or not.
 				await sendNtfy(topic, {
 					title: c.title,
 					body: c.body,
 					clickUrl: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`,
-					tags: ['bird']
+					tags: ['bird'],
+					signal
 				});
 				await query(
 					`INSERT INTO need_alerts_sent (user_id, species_code, first_loc_id, first_obs_dt, sub_id, sent_at)

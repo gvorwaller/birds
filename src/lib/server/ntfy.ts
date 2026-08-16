@@ -30,6 +30,8 @@ export interface NtfyMessage {
 	/** ABSOLUTE URL (notification clients have no origin to resolve against). */
 	clickUrl?: string;
 	tags?: string[];
+	/** External deadline combined with the adapter's own timeout. */
+	signal?: AbortSignal;
 }
 
 export async function sendNtfy(
@@ -56,7 +58,9 @@ export async function sendNtfy(
 				...(msg.tags?.length ? { tags: msg.tags } : {})
 			}),
 			headers: { 'Content-Type': 'application/json' },
-			signal: AbortSignal.timeout(NTFY_TIMEOUT_MS)
+			signal: msg.signal
+				? AbortSignal.any([AbortSignal.timeout(NTFY_TIMEOUT_MS), msg.signal])
+				: AbortSignal.timeout(NTFY_TIMEOUT_MS)
 		});
 	} catch {
 		// Deliberately no cause/URL in the message — it could carry the topic.
