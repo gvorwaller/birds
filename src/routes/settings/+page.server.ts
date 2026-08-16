@@ -2,16 +2,16 @@ import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { decryptSecret, encryptSecret } from "$server/crypto";
-import { getEbirdApiKey, syncTaxonomy, EbirdError } from "$server/ebird";
+import { getEbirdApiKey } from "$server/ebird";
 import {
   importLifeList,
   parseLifeListCsv,
-  syncLifeListFromEbird,
   testEbirdLogin,
   invalidateEbirdSession,
-  EbirdLoginError,
 } from "$server/ebird-account";
-import { rematchPhotoLinks, syncGallery } from "$server/gallery";
+import { syncGallery } from "$server/gallery";
+import { enqueueJob } from "$server/jobs";
+import { dedupKeys } from "$server/job-policy";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -292,48 +292,56 @@ export const actions: Actions = {
     };
   },
 
+  /**
+   * Both syncs are background JOBS (Phase 3, td-eb9e1d): validate the
+   * prerequisites here, enqueue, return immediately. The worker runs them
+   * with the retry schedule; results land in the job history (/admin and
+   * the Forecast data hub).
+   */
   sync_taxonomy: async ({ locals }) => {
     const userId = locals.user!.id;
     const apiKey = await getEbirdApiKey(userId);
     if (!apiKey) return fail(400, { error: "Save your eBird API key first." });
-    try {
-      const n = await syncTaxonomy(apiKey);
-      const rematch = await rematchPhotoLinks();
-      return {
-        ok: true as const,
-        message: `Taxonomy synced: ${n} taxa. Photos re-matched: ${rematch.matched} matched, ${rematch.unmatched} unmatched.`,
-      };
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : `Taxonomy sync failed: ${err}`,
-      });
-    }
+    const { jobId, deduped } = await enqueueJob({
+      type: "sync_taxonomy",
+      payload: {},
+      dedupKey: dedupKeys.syncTaxonomy(),
+      requestedBy: userId,
+      label: "eBird taxonomy + photo re-match",
+    });
+    return {
+      ok: true as const,
+      message: deduped
+        ? "A taxonomy sync is already queued — it runs in the background."
+        : "Taxonomy sync queued — it runs in the background; the result appears in the job history.",
+      queued: { jobId, deduped },
+    };
   },
 
   sync_lifelist: async ({ locals }) => {
     const userId = locals.user!.id;
-    try {
-      const result = await syncLifeListFromEbird(userId);
-      const unmatchedNote =
-        result.unmatched.length > 0
-          ? ` ${result.unmatched.length} names didn't match the taxonomy (first few: ${result.unmatched.slice(0, 3).join(", ")}).`
-          : "";
-      return {
-        ok: true as const,
-        message: `Life list synced from eBird: ${result.matched} species.${unmatchedNote}`,
-      };
-    } catch (err) {
-      const msg =
-        err instanceof EbirdLoginError || err instanceof Error
-          ? err.message
-          : String(err);
-      return fail(502, {
-        error: `Life-list sync failed (your last synced list is unchanged): ${msg}`,
-      });
+    const creds = await query<{ login_set: boolean }>(
+      `SELECT (login_username_enc IS NOT NULL AND login_password_enc IS NOT NULL) AS login_set
+         FROM user_ebird WHERE user_id = $1`,
+      [userId],
+    );
+    if (creds.rows[0]?.login_set !== true) {
+      return fail(400, { error: "Save your eBird sign-in first." });
     }
+    const { jobId, deduped } = await enqueueJob({
+      type: "sync_lifelist",
+      payload: {},
+      dedupKey: dedupKeys.syncLifelist(userId),
+      requestedBy: userId,
+      label: "Life list from eBird",
+    });
+    return {
+      ok: true as const,
+      message: deduped
+        ? "A life-list sync is already queued — it runs in the background."
+        : "Life-list sync queued — it runs in the background; your last synced list stays until it succeeds.",
+      queued: { jobId, deduped },
+    };
   },
 
   import_csv: async ({ locals, request }) => {

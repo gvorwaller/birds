@@ -2,11 +2,19 @@
   import { enhance } from "$app/forms";
   import Badge from "$components/Badge.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
+  import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let busy = $state("");
   let homePick = $state<PickedLocation | null>(null);
+
+  // Syncs are background jobs now — track a freshly queued one so the
+  // layout chip and job history pick it up within one poll tick.
+  $effect(() => {
+    const q = form && "queued" in form && form.queued ? form.queued : null;
+    if (q) jobsPoll.track(q.jobId);
+  });
 
   let revealedKey = $derived(
     form && "apiKey" in form ? (form as { apiKey: string }).apiKey : null,

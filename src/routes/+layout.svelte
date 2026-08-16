@@ -38,8 +38,15 @@
 		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
 	const ownerMenuItems = [{ href: '/settings', label: 'Settings', ico: '⚙️' }];
+	const adminMenuItems = [{ href: '/admin', label: 'Admin', ico: '🔧' }];
 
-	let drawerItems = $derived(isViewer ? primaryItems : [...primaryItems, ...ownerMenuItems]);
+	let drawerItems = $derived(
+		isViewer
+			? primaryItems
+			: data.user?.role === 'admin'
+				? [...primaryItems, ...ownerMenuItems, ...adminMenuItems]
+				: [...primaryItems, ...ownerMenuItems]
+	);
 
 	function isActive(href: string, path: string): boolean {
 		return href === '/' ? path === '/' : path.startsWith(href);

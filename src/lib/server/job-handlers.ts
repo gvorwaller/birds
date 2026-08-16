@@ -16,6 +16,9 @@ import {
 } from '$server/barchart';
 import { coverageFromMeta, recentFailures } from '$server/forecast';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
+import { getEbirdApiKey, syncTaxonomy } from '$server/ebird';
+import { syncLifeListFromEbird, EbirdLoginError } from '$server/ebird-account';
+import { rematchPhotoLinks } from '$server/gallery';
 import {
 	cancelRunningJob,
 	completeJob,
@@ -27,6 +30,7 @@ import {
 } from '$server/jobs';
 import {
 	jobOutcome,
+	retryDelayMs,
 	sanitizeErrorText,
 	type JobProgress,
 	type JobRow
@@ -216,6 +220,50 @@ async function analyzeCountiesLocs(job: JobRow): Promise<LocToEnsure[]> {
 		}));
 }
 
+/**
+ * Single-unit sync runner (Phase 3: sync_lifelist / sync_taxonomy). One
+ * attempt = one call; credential failures are terminal, anything else
+ * retries per the transient schedule while budget remains. Result payloads
+ * are compact counts (never row dumps, never credentials).
+ */
+async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void> {
+	const attempts = job.attempts;
+	await recordEvent(job.id, 'claimed', { attempt: attempts });
+	await updateProgress(job.id, {
+		phase: 'fetching',
+		unitsTotal: 1,
+		unitsDone: 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	});
+	try {
+		const result = await fn();
+		await updateProgress(job.id, {
+			phase: 'fetching',
+			unitsTotal: 1,
+			unitsDone: 1,
+			unitsFailed: 0,
+			unitsSkipped: 0,
+			round: attempts
+		});
+		await completeJob(job.id, attempts, result);
+	} catch (err) {
+		const message = sanitizeErrorText(
+			err instanceof Error ? err.message : String(err)
+		).slice(0, 300);
+		if (err instanceof EbirdLoginError) {
+			await failJob(job.id, attempts, message);
+			return;
+		}
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
+			return;
+		}
+		await failJob(job.id, attempts, message);
+	}
+}
+
 /** Dispatch a claimed job. Never throws — failures become failJob. */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
@@ -244,8 +292,31 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				await runFrequencyJob(job, locs, false, ctx);
 				return;
 			}
+			case 'sync_lifelist': {
+				await runSyncJob(job, async () => {
+					const r = await syncLifeListFromEbird(job.requested_by);
+					return {
+						total: r.total,
+						matched: r.matched,
+						unmatchedCount: r.unmatched.length,
+						unmatched: r.unmatched.slice(0, 10)
+					};
+				});
+				return;
+			}
+			case 'sync_taxonomy': {
+				await runSyncJob(job, async () => {
+					const apiKey = await getEbirdApiKey(job.requested_by);
+					if (!apiKey) {
+						throw new EbirdLoginError('An eBird API key is required — add one in Settings.');
+					}
+					const taxa = await syncTaxonomy(apiKey);
+					const rematch = await rematchPhotoLinks();
+					return { taxa, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched };
+				});
+				return;
+			}
 			default:
-				// sync_lifelist / sync_taxonomy land in Phase 3.
 				await failJob(job.id, job.attempts, `no handler for job type "${job.type}"`);
 				return;
 		}

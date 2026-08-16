@@ -70,6 +70,31 @@ vi.mock("$lib/db", () => ({
   withTransaction: vi.fn(),
 }));
 
+const syncMocks = vi.hoisted(() => {
+  class FakeEbirdLoginError extends Error {}
+  return {
+    FakeEbirdLoginError,
+    syncLifeListFromEbird: vi.fn<(userId: number) => Promise<{ total: number; matched: number; unmatched: string[] }>>(),
+    getEbirdApiKey: vi.fn<(userId: number) => Promise<string | null>>(async () => "key"),
+    syncTaxonomy: vi.fn<(apiKey: string) => Promise<number>>(async () => 42),
+    rematchPhotoLinks: vi.fn<() => Promise<{ matched: number; unmatched: number }>>(
+      async () => ({ matched: 5, unmatched: 1 }),
+    ),
+  };
+});
+
+vi.mock("$server/ebird-account", () => ({
+  EbirdLoginError: syncMocks.FakeEbirdLoginError,
+  syncLifeListFromEbird: syncMocks.syncLifeListFromEbird,
+}));
+vi.mock("$server/ebird", () => ({
+  getEbirdApiKey: syncMocks.getEbirdApiKey,
+  syncTaxonomy: syncMocks.syncTaxonomy,
+}));
+vi.mock("$server/gallery", () => ({
+  rematchPhotoLinks: syncMocks.rematchPhotoLinks,
+}));
+
 const { runJob } = await import("./job-handlers");
 const { RATE_LIMIT_RETRY_DELAY_MS, TRANSIENT_RETRY_DELAYS_MS } = await import(
   "./job-policy"
@@ -417,9 +442,70 @@ describe("red-team: hostile upstream text is REDACTED before storage (GROK #15 /
   });
 });
 
-describe("runJob — dispatch", () => {
-  it("Phase-3 types fail cleanly until their handlers land", async () => {
+describe("runJob — sync jobs (Phase 3)", () => {
+  it("sync_lifelist success → completeJob with a compact counts result", async () => {
+    syncMocks.syncLifeListFromEbird.mockResolvedValue({
+      total: 412,
+      matched: 400,
+      unmatched: Array.from({ length: 12 }, (_, i) => `Mystery bird ${i}`),
+    });
     await runJob(jobRow({ type: "sync_lifelist" }), ctx);
+    expect(syncMocks.syncLifeListFromEbird).toHaveBeenCalledWith(7);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    const result = mocks.completeJob.mock.calls[0][2] as {
+      total: number;
+      matched: number;
+      unmatchedCount: number;
+      unmatched: string[];
+    };
+    expect(result).toMatchObject({ total: 412, matched: 400, unmatchedCount: 12 });
+    expect(result.unmatched).toHaveLength(10); // first 10 only — compact
+  });
+
+  it("sync_lifelist credential failure → terminal failJob, never a retry", async () => {
+    syncMocks.syncLifeListFromEbird.mockRejectedValue(
+      new syncMocks.FakeEbirdLoginError("eBird rejected the sign-in."),
+    );
+    await runJob(jobRow({ type: "sync_lifelist" }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("sync_lifelist transient failure retries, then fails when the budget is spent", async () => {
+    syncMocks.syncLifeListFromEbird.mockRejectedValue(new Error("HTTP 502 from eBird"));
+    await runJob(jobRow({ type: "sync_lifelist" }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);
+    vi.clearAllMocks();
+    mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+    syncMocks.syncLifeListFromEbird.mockRejectedValue(new Error("HTTP 502 from eBird"));
+    await runJob(jobRow({ type: "sync_lifelist", attempts: 4 }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("sync_taxonomy success → taxa + photo re-match counts", async () => {
+    await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
+    expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key");
+    expect(mocks.completeJob.mock.calls[0][2]).toEqual({
+      taxa: 42,
+      photosMatched: 5,
+      photosUnmatched: 1,
+    });
+  });
+
+  it("sync_taxonomy without an API key → terminal failJob", async () => {
+    syncMocks.getEbirdApiKey.mockResolvedValueOnce(null);
+    await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.failJob.mock.calls[0][2]).toMatch(/API key/);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+});
+
+describe("runJob — dispatch", () => {
+  it("unknown types fail cleanly", async () => {
+    await runJob(jobRow({ type: "mystery_job" }), ctx);
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.failJob.mock.calls[0][2]).toMatch(/no handler/);
   });
