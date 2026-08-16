@@ -142,20 +142,30 @@ export async function updateProgress(
 	return { cancelRequested: r.rows[0]?.cancel_requested ?? false };
 }
 
-/** CAS guard shared by every running→X transition. Returns true when THIS caller won. */
+/**
+ * CAS guard shared by every running→X transition, with cancel honored AT THE
+ * SQL LINEARIZATION POINT (CODEX1 re-re-review): a cancel_requested flag set
+ * at any moment before this UPDATE commits atomically resolves the row to
+ * 'cancelled' instead of the desired state — no SELECT-then-write window. A
+ * cancel arriving AFTER this statement correctly gets requestCancel's noop;
+ * the row-lock ordering of the two UPDATEs defines the boundary.
+ *
+ * Returns the FINAL status when this caller won the CAS (so it can emit the
+ * matching single event), or null when it lost.
+ */
 async function transition(
 	jobId: number,
 	expectedAttempts: number,
-	set: string,
+	desiredSet: string,
 	params: unknown[]
-): Promise<boolean> {
-	const r = await query(
-		`UPDATE jobs SET ${set}
+): Promise<string | null> {
+	const r = await query<{ status: string }>(
+		`UPDATE jobs SET ${desiredSet}
 		  WHERE id = $1 AND status = 'running' AND attempts = $2
-		  RETURNING id`,
+		  RETURNING status`,
 		[jobId, expectedAttempts, ...params]
 	);
-	return (r.rowCount ?? 0) > 0;
+	return r.rows[0]?.status ?? null;
 }
 
 export async function completeJob(
@@ -163,14 +173,16 @@ export async function completeJob(
 	expectedAttempts: number,
 	result: unknown
 ): Promise<boolean> {
-	const won = await transition(
+	const final = await transition(
 		jobId,
 		expectedAttempts,
-		`status = 'succeeded', result = $3, finished_at = NOW()`,
+		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'succeeded' END,
+		 result = $3, finished_at = NOW()`,
 		[JSON.stringify(result ?? null)]
 	);
-	if (won) await recordEvent(jobId, 'completed', { result });
-	return won;
+	if (final === 'succeeded') await recordEvent(jobId, 'completed', { result });
+	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_completion' });
+	return final != null;
 }
 
 export async function failJob(
@@ -179,14 +191,17 @@ export async function failJob(
 	error: string,
 	result?: unknown
 ): Promise<boolean> {
-	const won = await transition(
+	const final = await transition(
 		jobId,
 		expectedAttempts,
-		`status = 'failed', error = $3, result = $4, finished_at = NOW()`,
+		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
+		 error = CASE WHEN cancel_requested THEN NULL ELSE $3 END,
+		 result = $4, finished_at = NOW()`,
 		[error, JSON.stringify(result ?? null)]
 	);
-	if (won) await recordEvent(jobId, 'failed', { error });
-	return won;
+	if (final === 'failed') await recordEvent(jobId, 'failed', { error });
+	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_failure' });
+	return final != null;
 }
 
 export async function cancelRunningJob(
@@ -194,14 +209,14 @@ export async function cancelRunningJob(
 	expectedAttempts: number,
 	result?: unknown
 ): Promise<boolean> {
-	const won = await transition(
+	const final = await transition(
 		jobId,
 		expectedAttempts,
 		`status = 'cancelled', result = $3, finished_at = NOW()`,
 		[JSON.stringify(result ?? null)]
 	);
-	if (won) await recordEvent(jobId, 'cancelled', { when: 'running' });
-	return won;
+	if (final != null) await recordEvent(jobId, 'cancelled', { when: 'running' });
+	return final != null;
 }
 
 export async function scheduleRetry(
@@ -211,35 +226,46 @@ export async function scheduleRetry(
 	reason: string,
 	result?: unknown
 ): Promise<boolean> {
-	const won = await transition(
+	const final = await transition(
 		jobId,
 		expectedAttempts,
-		`status = 'pending', next_retry_at = NOW() + make_interval(secs => $3),
-		 result = $4, progress = progress || '{"phase":"waiting_retry"}'::jsonb`,
+		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'pending' END,
+		 next_retry_at = CASE WHEN cancel_requested THEN NULL
+		                      ELSE NOW() + make_interval(secs => $3) END,
+		 finished_at = CASE WHEN cancel_requested THEN NOW() ELSE NULL END,
+		 result = $4,
+		 progress = CASE WHEN cancel_requested THEN progress
+		                 ELSE progress || '{"phase":"waiting_retry"}'::jsonb END`,
 		[Math.round(delayMs / 1000), JSON.stringify(result ?? null)]
 	);
-	if (won)
+	if (final === 'pending')
 		await recordEvent(jobId, 'retry_scheduled', {
 			delayMs,
 			reason,
 			attempt: expectedAttempts
 		});
-	return won;
+	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_retry' });
+	return final != null;
 }
 
 /**
  * Drain requeue (SIGTERM): back to pending immediately, refunding the attempt
- * — a deploy must not consume retry budget (plan §5).
+ * — a deploy must not consume retry budget (plan §5). A raced cancel still
+ * wins: the job must not resurrect as pending on the next worker.
  */
 export async function requeueInterrupted(jobId: number, expectedAttempts: number): Promise<boolean> {
-	const won = await transition(
+	const final = await transition(
 		jobId,
 		expectedAttempts,
-		`status = 'pending', next_retry_at = NOW(), attempts = GREATEST(attempts - 1, 0)`,
+		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'pending' END,
+		 next_retry_at = CASE WHEN cancel_requested THEN NULL ELSE NOW() END,
+		 finished_at = CASE WHEN cancel_requested THEN NOW() ELSE NULL END,
+		 attempts = GREATEST(attempts - 1, 0)`,
 		[]
 	);
-	if (won) await recordEvent(jobId, 'interrupted', { reason: 'worker draining' });
-	return won;
+	if (final === 'pending') await recordEvent(jobId, 'interrupted', { reason: 'worker draining' });
+	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_requeue' });
+	return final != null;
 }
 
 /**
@@ -279,7 +305,17 @@ export async function requestCancel(
 export async function reclaimStartupJobs(note: string): Promise<number> {
 	const rows = await query<JobRow>(`SELECT * FROM jobs WHERE status = 'running'`);
 	for (const job of rows.rows) {
-		if (job.attempts < job.max_attempts) {
+		if (job.cancel_requested) {
+			// A cancel-flagged row must resolve to cancelled, never pending —
+			// claimNextJob excludes flagged pending rows, so re-pending it
+			// would wedge the job forever.
+			await query(
+				`UPDATE jobs SET status = 'cancelled', finished_at = NOW()
+				  WHERE id = $1 AND status = 'running'`,
+				[job.id]
+			);
+			await recordEvent(job.id, 'cancelled', { when: 'at_reclaim', note });
+		} else if (job.attempts < job.max_attempts) {
 			await query(
 				`UPDATE jobs SET status = 'pending', next_retry_at = NOW()
 				  WHERE id = $1 AND status = 'running'`,

@@ -265,6 +265,78 @@ describe.runIf(dbUp)("cancel round-trip", () => {
   });
 });
 
+describe.runIf(dbUp)("cancel at the terminalization boundary (CODEX1 re-re-review)", () => {
+  // Simulates: last updateProgress returned cancelRequested=false, THEN the
+  // user's cancel lands, THEN the worker terminalizes. The transition SQL
+  // must atomically resolve to cancelled — no lost cancel, single event.
+  async function claimThenFlag(label: string) {
+    const a = await enqueueJob(params({ label }));
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(a.jobId);
+    const { cancelRequested } = await updateProgress(a.jobId, {
+      phase: "fetching",
+      unitsTotal: 1,
+      unitsDone: 1,
+      unitsFailed: 0,
+      unitsSkipped: 0,
+      round: 1,
+    });
+    expect(cancelRequested).toBe(false); // worker's last observation
+    expect(await requestCancel(a.jobId, userId)).toBe("flagged");
+    return { jobId: a.jobId, attempts: claimed!.attempts };
+  }
+
+  async function expectCancelledOnce(jobId: number) {
+    const row = await getJob(jobId);
+    expect(row?.status).toBe("cancelled");
+    const events = await jobEvents(jobId);
+    const terminal = events.filter((e) =>
+      ["completed", "failed", "retry_scheduled", "interrupted", "cancelled"].includes(e.action),
+    );
+    expect(terminal.map((e) => e.action)).toEqual(["cancelled"]);
+  }
+
+  it("completeJob after a late cancel → cancelled, not succeeded", async () => {
+    const { jobId, attempts } = await claimThenFlag("JOBTEST late-cancel complete");
+    expect(await completeJob(jobId, attempts, { n: 1 })).toBe(true);
+    await expectCancelledOnce(jobId);
+  });
+
+  it("failJob after a late cancel → cancelled, not failed", async () => {
+    const { jobId, attempts } = await claimThenFlag("JOBTEST late-cancel fail");
+    expect(await failJob(jobId, attempts, "would-be error")).toBe(true);
+    const row = await getJob(jobId);
+    expect(row?.error).toBeNull();
+    await expectCancelledOnce(jobId);
+  });
+
+  it("scheduleRetry after a late cancel → cancelled, never re-pended", async () => {
+    const { jobId, attempts } = await claimThenFlag("JOBTEST late-cancel retry");
+    expect(await scheduleRetry(jobId, attempts, 16 * 60_000, "test")).toBe(true);
+    const row = await getJob(jobId);
+    expect(row?.next_retry_at).toBeNull();
+    await expectCancelledOnce(jobId);
+    expect(await claimNextJob()).toBeNull();
+  });
+
+  it("requeueInterrupted after a late cancel → cancelled, never resurrects", async () => {
+    const { jobId, attempts } = await claimThenFlag("JOBTEST late-cancel requeue");
+    expect(await requeueInterrupted(jobId, attempts)).toBe(true);
+    await expectCancelledOnce(jobId);
+    expect(await claimNextJob()).toBeNull();
+  });
+
+  it("reclaim resolves a cancel-flagged running row to cancelled, not pending", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST reclaim-flagged" }));
+    const claimed = await claimNextJob();
+    expect(claimed?.id).toBe(a.jobId);
+    expect(await requestCancel(a.jobId, userId)).toBe("flagged");
+    await reclaimStartupJobs("test-boot");
+    await expectCancelledOnce(a.jobId);
+    expect(await claimNextJob()).toBeNull();
+  });
+});
+
 describe.runIf(dbUp)("startup reclaim", () => {
   it("budget left → pending with reclaimed event; exhausted → failed", async () => {
     const fresh = await enqueueJob(params({ label: "JOBTEST reclaim-fresh" }));
