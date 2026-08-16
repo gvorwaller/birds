@@ -152,6 +152,10 @@ class JobsPoll {
 		try {
 			const res = await fetch('/api/jobs', { headers: { accept: 'application/json' } });
 			const text = await res.text();
+			// Superseded while awaiting → bail BEFORE touching any state: a dead
+			// generation must not write jobs/isStale or fire invalidateAll (GROK
+			// re-review — was only checked after application, causing flicker).
+			if (gen !== this.#gen) return;
 			const looksJson = text.trimStart().startsWith('{');
 			parsed = classifyPollResponse(res.status, res.headers.get('content-type'), looksJson);
 			if (parsed.kind === 'ok') {
@@ -173,7 +177,7 @@ class JobsPoll {
 			parsed = { kind: 'error' };
 		}
 
-		// A newer generation superseded this loop while we awaited the fetch.
+		// Re-check for the fetch-threw path (the in-try check never ran).
 		if (gen !== this.#gen) return;
 
 		if (parsed.kind === 'auth') {
