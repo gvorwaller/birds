@@ -29,12 +29,14 @@
   }
 
   // Human label for THIS device, derived from the UA at enrollment time —
-  // the only moment the browser can tell us what it is.
+  // the only moment the browser can tell us what it is. iPadOS Safari
+  // reports "Macintosh"; touch points tell it apart (GROK). iOS browsers
+  // use CriOS/FxiOS/EdgiOS tokens, not the desktop ones.
   function thisDeviceLabel(): string {
     const ua = navigator.userAgent;
     const device = /iPhone/.test(ua)
       ? "iPhone"
-      : /iPad/.test(ua)
+      : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
         ? "iPad"
         : /Macintosh/.test(ua)
           ? "Mac"
@@ -43,11 +45,11 @@
             : /Windows/.test(ua)
               ? "Windows PC"
               : "Device";
-    const browser = /Edg\//.test(ua)
+    const browser = /EdgiOS\/|Edg\//.test(ua)
       ? "Edge"
-      : /Firefox\//.test(ua)
+      : /FxiOS\/|Firefox\//.test(ua)
         ? "Firefox"
-        : /Chrome\//.test(ua)
+        : /CriOS\/|Chrome\//.test(ua)
           ? "Chrome"
           : /Safari\//.test(ua)
             ? "Safari"
@@ -61,24 +63,29 @@
   let thisDeviceKey = $state<string | null>(null);
   $effect(() => {
     void data.pushDevices; // re-run when the list changes
+    let cancelled = false;
     (async () => {
       try {
         if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
-        if (!sub) return;
+        if (!sub || cancelled) return;
         const digest = await crypto.subtle.digest(
           "SHA-256",
           new TextEncoder().encode(sub.endpoint),
         );
+        if (cancelled) return;
         thisDeviceKey = [...new Uint8Array(digest)]
           .map((b) => b.toString(16).padStart(2, "0"))
           .join("")
           .slice(0, 16);
       } catch {
-        thisDeviceKey = null;
+        if (!cancelled) thisDeviceKey = null;
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   });
 
   async function enrollThisDevice() {
@@ -1033,10 +1040,13 @@
   }
   .dev-label {
     font-weight: 600;
+    overflow-wrap: anywhere;
   }
   .dev-remove {
     min-height: 48px;
     padding: 6px 14px;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   button.secondary {
     background: var(--card);

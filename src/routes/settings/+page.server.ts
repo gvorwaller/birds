@@ -23,13 +23,6 @@ import {
   type PushSubscriptionRow,
 } from "$server/push";
 import { createHash } from "node:crypto";
-
-// Stable non-capability handle for one enrolled device: the endpoint's hash
-// prefix. Safe to send to the page (unlike the endpoint itself) and lets the
-// browser mark "this device" by hashing its own subscription locally.
-function deviceKey(endpoint: string): string {
-  return createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
-}
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import {
@@ -37,6 +30,13 @@ import {
   radiusSelectOptionsKm,
   validateNearMeRadiusKm,
 } from "$lib/near-me-radius";
+
+// Stable non-capability handle for one enrolled device: the endpoint's hash
+// prefix. Safe to send to the page (unlike the endpoint itself) and lets the
+// browser mark "this device" by hashing its own subscription locally.
+function deviceKey(endpoint: string): string {
+  return createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
   const userId = locals.user!.id;
@@ -175,7 +175,9 @@ export const load: PageServerLoad = async ({ locals }) => {
       key: deviceKey(d.endpoint),
       label: d.device_label ?? platformFromEndpoint(d.endpoint),
       labeled: d.device_label != null,
-      created_at: d.created_at,
+      // ISO at the boundary — PG's DateStyle text happens to parse in
+      // today's WebKit, but don't depend on it (GROK).
+      created_at: new Date(d.created_at).toISOString(),
     })),
     pushDeviceCount: pushDevices.rows.length,
     // The PUBLIC half of the VAPID pair — safe to expose; the browser needs
@@ -540,7 +542,12 @@ export const actions: Actions = {
         delivered++;
       } catch (err) {
         if (err instanceof PushError && err.gone) {
-          await query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [sub.endpoint]);
+          // Ownership in the predicate — same re-home race as remove_push_sub
+          // (GROK): an unscoped prune could delete the endpoint's NEW owner.
+          await query(
+            `DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2`,
+            [sub.endpoint, userId],
+          );
         } else {
           lastError = err instanceof PushError ? err.message : "push failed";
         }
