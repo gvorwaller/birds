@@ -385,8 +385,87 @@
 						around a place. eBird caps it at 50 km.
 					</li>
 					<li>
+						<strong>Need alerts</strong> — phone pushes when a rare bird you
+						still need is reported near home. Setup steps are in the
+						<strong>Need alerts</strong> section below.
+					</li>
+					<li>
 						Read-only family accounts don't see Settings — they're along for the
 						ride on someone else's data.
+					</li>
+				</ul>
+			</div>
+		{/if}
+
+		<!-- Need alerts -->
+		<button
+			class="toggle"
+			class:open={open === 'alerts'}
+			aria-expanded={open === 'alerts'}
+			onclick={() => toggle('alerts')}
+		>
+			<span class="ico">🔔</span>
+			<span class="title">Need alerts</span>
+			<span class="chev">{open === 'alerts' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'alerts'}
+			<div class="body">
+				<p>
+					Every 30 minutes the app checks eBird's <em>notable</em> (rare /
+					review-worthy) reports near your home and pushes a notification to
+					your phone when one is a species <strong>you still need</strong> —
+					"Lifer nearby: Snail Kite · Sweetwater Wetlands · 12 mi from home."
+					Delivery uses the free
+					<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
+					app. One-time setup:
+				</p>
+				<ol>
+					<li>
+						<strong>Install ntfy on your phone</strong> — search "ntfy" in the
+						App Store (iOS) or Play Store (Android). No account needed.
+					</li>
+					<li>
+						<strong>Invent a topic name</strong> — long and random, like
+						<code>gv-birds-k8Rx2mQz94</code> (8–64 letters, digits, - or _).
+						<strong>Treat it like a password</strong>: ntfy has no logins, so
+						anyone who knows the topic can read your alerts. Don't pick
+						something guessable.
+					</li>
+					<li>
+						<strong>Subscribe in the ntfy app</strong> — tap +, enter that exact
+						topic name, keep the default ntfy.sh server.
+					</li>
+					<li>
+						<strong>Save it here</strong> — Settings → Need alerts → paste the
+						topic, pick a radius and a re-alert window, then hit
+						<strong>Send test notification</strong>. Your phone should buzz with
+						"Need-alerts test." If it stays quiet: check the ntfy app is
+						subscribed to that exact spelling, notifications are allowed for
+						ntfy, and Focus/Do&nbsp;Not&nbsp;Disturb isn't silencing it.
+					</li>
+					<li><strong>Tick Enable</strong> and save. Done.</li>
+				</ol>
+				<ul>
+					<li>
+						Alerts need your <strong>home location</strong> and
+						<strong>eBird API key</strong> set (distances are measured from
+						home, and the scan runs under your own eBird account).
+					</li>
+					<li>
+						Each account uses its <strong>own topic</strong> — alerts match each
+						person's own life list, so don't share one topic between accounts.
+						The same topic on multiple <em>devices</em> is fine (phone + the
+						ntfy web app on your Mac, for example).
+					</li>
+					<li>
+						You're alerted about a species at most once per re-alert window
+						(default 7 days), at most 5 pushes per scan, and
+						"(unconfirmed)" in the title means the report hasn't been reviewed
+						yet. Private locations show no place name by design.
+					</li>
+					<li>
+						<strong>Quiet hours</strong> = your phone's Focus schedule. Allow
+						ntfy through any Focus you want a rarity to break.
 					</li>
 				</ul>
 			</div>
@@ -531,6 +610,32 @@
 		left: 2px;
 		color: var(--accent);
 		font-weight: 700;
+	}
+	.body p {
+		margin: 0 0 8px;
+	}
+	.body ol {
+		margin: 0 0 8px;
+		padding-left: 22px;
+	}
+	.body ol li {
+		padding: 4px 0;
+	}
+	.body ol li::before {
+		content: none; /* numbered items keep their numbers, not bullets */
+	}
+	.body ol li::marker {
+		color: var(--accent);
+		font-weight: 700;
+	}
+	.body code {
+		font-family: ui-monospace, monospace;
+		font-size: 0.85em;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 1px 5px;
+		word-break: break-all;
 	}
 
 	.foot {
