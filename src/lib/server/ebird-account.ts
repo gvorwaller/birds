@@ -464,12 +464,35 @@ export async function syncLifeListFromEbird(userId: number): Promise<SyncResult>
 			decryptSecret(row.login_username_enc),
 			decryptSecret(row.login_password_enc)
 		);
-		const csvRes = await followRedirects(await fetchWithJar(LIFELIST_CSV_URL, jar), jar);
+		let csvRes: Response;
+		try {
+			csvRes = await followRedirects(await fetchWithJar(LIFELIST_CSV_URL, jar), jar);
+		} catch (err) {
+			throw new EbirdUpstreamError(
+				`Could not reach the eBird life-list export: ${err instanceof Error ? err.message : err}`,
+				0
+			);
+		}
 		const contentType = csvRes.headers.get('content-type') ?? '';
 		const text = await csvRes.text();
-		if (!csvRes.ok || contentType.includes('text/html')) {
+		// Classification split (GROK Phase-3 P2, same class as the CAS legs):
+		// a 5xx/429 export page after a SUCCESSFUL login is upstream trouble
+		// and must retry — only a login-page/flow-change response blames auth.
+		if (csvRes.status >= 500 || csvRes.status === 429) {
+			throw new EbirdUpstreamError(
+				`eBird life-list export returned HTTP ${csvRes.status}.`,
+				csvRes.status
+			);
+		}
+		if (!csvRes.ok) {
+			throw new EbirdUpstreamError(
+				`eBird life-list export returned HTTP ${csvRes.status} — the export URL may have moved.`,
+				csvRes.status
+			);
+		}
+		if (contentType.includes('text/html')) {
 			throw new EbirdLoginError(
-				'eBird login succeeded but the life-list export did not return CSV — the flow may have changed.'
+				'eBird login succeeded but the life-list export returned a page instead of CSV — the flow may have changed.'
 			);
 		}
 		const result = await importLifeList(userId, parseLifeListCsv(text), 'ebird_sync');

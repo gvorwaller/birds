@@ -361,7 +361,7 @@
     cursor: pointer;
     font-size: 0.85rem;
     padding: 4px 8px;
-    min-height: 44px;
+    min-height: 48px;
   }
   .linkish:hover {
     text-decoration: underline;

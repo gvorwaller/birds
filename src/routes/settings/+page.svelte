@@ -169,8 +169,8 @@
           disabled={busy === "lifelist" || !data.ebird.login_set}
         >
           {busy === "lifelist"
-            ? "Syncing… (logs into eBird)"
-            : "⟳ Sync life list now"}
+            ? "Queueing…"
+            : "⟳ Sync life list (runs in background)"}
         </button>
       </form>
       {#if data.ebird.login_set}
@@ -319,7 +319,7 @@
           type="submit"
           disabled={busy === "tax" || !data.ebird.api_key_set}
         >
-          {busy === "tax" ? "Syncing…" : "⟳ Sync"}
+          {busy === "tax" ? "Queueing…" : "⟳ Sync"}
         </button>
       </form>
     </div>
