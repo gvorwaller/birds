@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
+  import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -466,6 +467,16 @@
                         {:else}
                           <strong>{b.countyName}</strong>
                         {/if}
+                        {#if b.seat}
+                          <span class="seat">· {b.seat}</span>
+                        {/if}
+                        <a
+                          class="seatmap"
+                          href={mapsPlaceUrl({ name: b.mapQuery })}
+                          target="_blank"
+                          rel="noopener"
+                          title="Show {b.countyName} on Google Maps">📍</a
+                        >
                         <span class="code">{b.countyCode}</span>
                       </td>
                       {#if b.county}
@@ -869,6 +880,21 @@
   .jobby {
     font-size: 0.82rem;
     color: var(--muted);
+  }
+  .seat {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .seatmap {
+    color: var(--link);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 4px 6px;
+  }
+  .seatmap:hover {
+    text-decoration: underline;
   }
   .modal-overlay {
     position: fixed;

@@ -7,7 +7,7 @@
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
-  import { formatDistance } from "$lib/geo";
+  import { formatDistance, mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
@@ -678,7 +678,19 @@
             {#each data.countyNeeds.slice(0, 10) as c (c.code)}
               <li>
                 <div class="sp">
-                  <span class="name">{c.name}</span>
+                  <span>
+                    <span class="name">{c.name}</span>
+                    {#if c.seat}
+                      <span class="seat">· {c.seat}</span>
+                    {/if}
+                    <a
+                      class="seatmap"
+                      href={mapsPlaceUrl({ name: c.mapQuery })}
+                      target="_blank"
+                      rel="noopener"
+                      title="Show {c.name} on Google Maps">📍</a
+                    >
+                  </span>
                   <span class="freq"
                     >{c.likely} likely{#if c.possible > 0}&nbsp;· {c.possible} possible{/if}</span
                   >
@@ -1025,6 +1037,22 @@
   .queuedflag {
     color: var(--accent);
     font-weight: 600;
+  }
+  .seat {
+    color: var(--muted);
+    font-size: 0.88rem;
+    font-weight: 400;
+  }
+  .seatmap {
+    color: var(--link);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 4px 6px;
+  }
+  .seatmap:hover {
+    text-decoration: underline;
   }
   .progressbar {
     height: 8px;

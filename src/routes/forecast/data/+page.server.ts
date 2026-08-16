@@ -6,6 +6,7 @@ import { coverageFromMeta, recentFailures } from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
+import { countyMapQuery, countySeat } from "$server/county-meta";
 
 const STATE_CODE_RE = /^US-[A-Z]{2}$/;
 
@@ -37,6 +38,10 @@ export interface DataRow {
 export interface CountyBlock {
   countyCode: string;
   countyName: string;
+  /** County seat for orientation (td-01ddb6); null when unknown. */
+  seat: string | null;
+  /** Maps search text that outlines the county. */
+  mapQuery: string;
   /** The county's own frequency row — null when hotspots loaded first. */
   county: DataRow | null;
   hotspots: DataRow[];
@@ -158,7 +163,14 @@ export const load: PageServerLoad = async ({ locals }) => {
   const blockFor = (countyCode: string): CountyBlock => {
     let b = blocks.get(countyCode);
     if (!b) {
-      b = { countyCode, countyName: countyCode, county: null, hotspots: [] };
+      b = {
+        countyCode,
+        countyName: countyCode,
+        seat: countySeat(countyCode),
+        mapQuery: "",
+        county: null,
+        hotspots: [],
+      };
       blocks.set(countyCode, b);
       groupFor(countyCode.slice(0, 5)).countyBlocks.push(b);
     }
@@ -183,6 +195,9 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
   for (const g of groups.values()) {
     g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
+    for (const b of g.countyBlocks) {
+      b.mapQuery = countyMapQuery(b.countyCode, b.countyName, g.stateName);
+    }
     g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
     g.hotspotCount =
       g.stateHotspots.length +

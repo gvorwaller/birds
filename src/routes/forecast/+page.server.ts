@@ -5,6 +5,7 @@ import { getEbirdApiKey, hotspotsNear, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
+import { countyMapQuery, countySeat } from "$server/county-meta";
 import {
   calendarMonth,
   forecastNeedsNear,
@@ -101,7 +102,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   }
 
   let view: ForecastNeedsView | null = null;
-  let countyNeeds: CountyNeedsRank[] = [];
+  let countyNeeds: (CountyNeedsRank & {
+    seat: string | null;
+    mapQuery: string;
+  })[] = [];
   if (location && apiKey) {
     try {
       const seen = await seenSet(userId);
@@ -115,12 +119,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         seen,
       );
       if (view.regionCode) {
-        countyNeeds = await rankCountiesForNeeds(
-          userId,
-          view.regionCode,
-          month,
-          seen,
-        );
+        // Seat + county-outlining Maps query per county (td-01ddb6).
+        const stateName = view.regionName ?? view.regionCode;
+        countyNeeds = (
+          await rankCountiesForNeeds(userId, view.regionCode, month, seen)
+        ).map((c) => ({
+          ...c,
+          seat: countySeat(c.code),
+          mapQuery: countyMapQuery(c.code, c.name, stateName),
+        }));
       }
     } catch (err) {
       error =

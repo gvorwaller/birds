@@ -7,6 +7,7 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
+  import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -497,7 +498,12 @@
                   {@const peak = data.countyPeaks[c.code]}
                   <li>
                     <div class="sp">
-                      <a href={countyHref(c.code)} class="name">{c.name}</a>
+                      <span>
+                        <a href={countyHref(c.code)} class="name">{c.name}</a>
+                        {#if c.seat}
+                          <span class="seat">· {c.seat}</span>
+                        {/if}
+                      </span>
                       <span class="freq"
                         >{pct(c.freq)} of checklists (n={c.n.toLocaleString()})</span
                       >
@@ -509,6 +515,12 @@
                     {/if}
                     <div class="actions">
                       <a href={countyHref(c.code)}>Hotspots</a>
+                      <a
+                        href={mapsPlaceUrl({ name: c.mapQuery })}
+                        target="_blank"
+                        rel="noopener"
+                        title="Show {c.name} on Google Maps">📍 Map</a
+                      >
                       <a
                         href="https://ebird.org/region/{c.code}"
                         target="_blank"
@@ -531,7 +543,19 @@
                   {#each lowSampleCounties as c (c.code)}
                     <li>
                       <div class="sp">
-                        <a href={countyHref(c.code)} class="name">{c.name}</a>
+                        <span>
+                          <a href={countyHref(c.code)} class="name">{c.name}</a>
+                          {#if c.seat}
+                            <span class="seat">· {c.seat}</span>
+                          {/if}
+                          <a
+                            class="seatmap"
+                            href={mapsPlaceUrl({ name: c.mapQuery })}
+                            target="_blank"
+                            rel="noopener"
+                            title="Show {c.name} on Google Maps">📍</a
+                          >
+                        </span>
                         <span class="freq"
                           >{pct(c.freq)} (n={c.n.toLocaleString()}) †</span
                         >
@@ -574,7 +598,16 @@
       {@const uncovered = ch.selected.filter((h) => !h.current).length}
       <section class="card" id="county-hotspots">
         <h2>
-          Hotspots in {data.county.name} — {MONTH_NAMES[data.month - 1]}
+          Hotspots in {data.county.name}{data.county.seat
+            ? ` (${data.county.seat})`
+            : ""} — {MONTH_NAMES[data.month - 1]}
+          <a
+            class="seatmap"
+            href={mapsPlaceUrl({ name: data.county.mapQuery })}
+            target="_blank"
+            rel="noopener"
+            title="Show {data.county.name} on Google Maps">📍 Map</a
+          >
         </h2>
         <p class="coverage">
           {#if ch.dataYears}{ch.dataYears.begin}–{ch.dataYears.end} ·
@@ -825,6 +858,22 @@
     color: var(--muted);
     font-size: 0.82rem;
     margin-top: 2px;
+  }
+  .seat {
+    color: var(--muted);
+    font-size: 0.88rem;
+    font-weight: 400;
+  }
+  .seatmap {
+    color: var(--link);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 4px 6px;
+  }
+  .seatmap:hover {
+    text-decoration: underline;
   }
   .lowflag {
     color: var(--muted);

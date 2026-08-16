@@ -15,6 +15,7 @@ import {
 } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
+import { countyMapQuery, countySeat } from "$server/county-meta";
 import {
   selectCountyHotspots,
   calendarMonth,
@@ -205,7 +206,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     failed: number;
     remaining: number;
   } | null = null;
-  let countyRanking: RankedLoc[] = [];
+  let countyRanking: (RankedLoc & {
+    seat: string | null;
+    mapQuery: string;
+  })[] = [];
   let countyPeaks: Record<string, { month: number; freq: number }> = {};
   let countyDataYears: { begin: number; end: number } | null = null;
   if (taxon && region) {
@@ -254,11 +258,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         remaining: cov.remaining,
       };
       const usable = [...cov.current, ...cov.stale];
-      countyRanking = await rankLocsForSpeciesMonth(
-        usable,
-        taxon.species_code,
-        month,
-      );
+      // Each county carries its seat + a Maps query that outlines the county
+      // (td-01ddb6 — "I don't know Florida much by counties").
+      countyRanking = (
+        await rankLocsForSpeciesMonth(usable, taxon.species_code, month)
+      ).map((c) => ({
+        ...c,
+        seat: countySeat(c.code),
+        mapQuery: countyMapQuery(c.code, c.name, region.name),
+      }));
       const peaks = await bestMonthsByLoc(usable, taxon.species_code);
       countyPeaks = Object.fromEntries(
         [...peaks.entries()].map(([code, b]) => [
@@ -277,7 +285,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   }
 
   // ---- Hotspot drill-down for one county (cached reads only) ------------
-  let county: { code: string; name: string } | null = null;
+  let county: {
+    code: string;
+    name: string;
+    seat: string | null;
+    mapQuery: string;
+  } | null = null;
   let hotspotError: string | null = null;
   let countyHotspots: {
     selected: {
@@ -296,7 +309,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     totalInCounty: number;
   } | null = null;
   if (countyParam && COUNTY_CODE_RE.test(countyParam) && region) {
-    county = counties.find((c) => c.code === countyParam) ?? null;
+    const found = counties.find((c) => c.code === countyParam) ?? null;
+    county = found
+      ? {
+          ...found,
+          seat: countySeat(found.code),
+          mapQuery: countyMapQuery(found.code, found.name, region.name),
+        }
+      : null;
     if (county && taxon) {
       try {
         // Cache-first: a fresh ebird_cache hit does not use the key.
