@@ -246,6 +246,58 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     await wipe();
   });
 
+  it("ok→error keeps prose AND its original retrieval date; ok→no_article CLEARS prose (CODEX1 round 3)", async () => {
+    await wipe();
+    await upsertWikiOk(CODE, {
+      title: "Test bird",
+      revId: 50,
+      extract: "A distinctive estuary sentinel.",
+      sections: [{ title: "Habitat", text: "Estuaries." }],
+    });
+    const okAt = (await getEnrichment(CODE))?.wiki_ok_at;
+    expect(okAt).not.toBeNull();
+
+    // Failed refresh: prose survives, attribution date does NOT advance.
+    await query(
+      `UPDATE species_enrichment SET wiki_ok_at = NOW() - INTERVAL '30 days',
+              wiki_fetched_at = NOW() - INTERVAL '30 days' WHERE species_code = $1`,
+      [CODE],
+    );
+    const before = (await getEnrichment(CODE))?.wiki_ok_at;
+    await markWikiError(CODE, "HTTP 503");
+    let row = await getEnrichment(CODE);
+    expect(row?.wikipedia_extract).toContain("estuary sentinel");
+    expect(row?.wiki_ok_at).toBe(before); // failed attempt never re-dates prose
+    expect(row?.wiki_fetched_at).not.toBe(before); // but the attempt clock moved
+
+    // Article later disappears: terminal state clears the obsolete prose;
+    // the vector keeps AI-owned lexemes only.
+    await upsertAiData(CODE, {
+      fieldCraft: "Scan tidal edges.",
+      tags: ["habitat:mudflat"],
+      model: "m",
+      sourceRevId: 50,
+    });
+    await markWikiNoArticle(CODE);
+    row = await getEnrichment(CODE);
+    expect(row?.wiki_status).toBe("no_article");
+    expect(row?.wikipedia_extract).toBeNull();
+    expect(row?.wikipedia_rev_id).toBeNull();
+    expect(row?.wiki_ok_at).toBeNull();
+    expect(row?.field_craft).toBe("Scan tidal edges."); // AI-owned survives
+    const proseHit = await query<{ species_code: string }>(
+      `SELECT species_code FROM species_enrichment
+        WHERE search_tsv @@ websearch_to_tsquery('english', 'estuary sentinel')`,
+    );
+    expect(proseHit.rows.map((r) => r.species_code)).not.toContain(CODE);
+    const tagHit = await query<{ species_code: string }>(
+      `SELECT species_code FROM species_enrichment
+        WHERE search_tsv @@ websearch_to_tsquery('english', 'mudflat')`,
+    );
+    expect(tagHit.rows.map((r) => r.species_code)).toContain(CODE);
+    await wipe();
+  });
+
   it("TERMINAL resolution outcomes (no_mapping/no_sitelink + clock) leave scope AND stale — no scanner loop (CODEX1 P1 #1)", async () => {
     await wipe();
     await query(

@@ -39,8 +39,13 @@ CREATE TABLE IF NOT EXISTS species_enrichment (
     wiki_status        TEXT CHECK (wiki_status IN ('ok','no_article','error')),
     wiki_error         TEXT,
     -- Freshness clock for ALL wiki-stage states: stamped on every ATTEMPT,
-    -- including no_article, so absent articles are not re-fetched daily.
+    -- including no_article and error, so absent articles are not re-fetched
+    -- daily and error retries respect their window.
     wiki_fetched_at    TIMESTAMPTZ,
+    -- When the STORED prose was successfully retrieved — the attribution
+    -- date. Never advanced by a failed attempt (CODEX1: preserved text must
+    -- not be re-dated to the failed-attempt clock).
+    wiki_ok_at         TIMESTAMPTZ,
     -- AI stage (Phase 2; columns present now so Phase 2 is data-only)
     field_craft        TEXT,
     tags               TEXT[] NOT NULL DEFAULT '{}',

@@ -135,13 +135,13 @@ export async function upsertWikiOk(code: string, article: WikiArticle): Promise<
 		`INSERT INTO species_enrichment
 		   (species_code, wikipedia_title, wikipedia_url, wikipedia_rev_id,
 		    wikipedia_extract, wikipedia_sections, wiki_status, wiki_error,
-		    wiki_fetched_at, search_tsv)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'ok', NULL, NOW(), ${insertTsv})
+		    wiki_fetched_at, wiki_ok_at, search_tsv)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'ok', NULL, NOW(), NOW(), ${insertTsv})
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   wikipedia_title = $2, wikipedia_url = $3, wikipedia_rev_id = $4,
 		   wikipedia_extract = $5, wikipedia_sections = $6,
 		   wiki_status = 'ok', wiki_error = NULL, wiki_fetched_at = NOW(),
-		   search_tsv = ${updateTsv}, updated_at = NOW()`,
+		   wiki_ok_at = NOW(), search_tsv = ${updateTsv}, updated_at = NOW()`,
 		[
 			code,
 			article.title,
@@ -156,14 +156,25 @@ export async function upsertWikiOk(code: string, article: WikiArticle): Promise<
 /**
  * The article does not exist — a terminal data state with the SAME freshness
  * clock as ok (so absent articles are not re-fetched daily; CODEX1 #9).
+ * CLEARS any previously stored Wikipedia-owned prose (an ok→no_article
+ * transition means the article is gone — rendering the obsolete text would
+ * contradict the persisted terminal state; CODEX1 round 3). AI-owned fields
+ * survive; the search vector is recomputed over what remains.
  */
 export async function markWikiNoArticle(code: string): Promise<void> {
+	const tsv = tsvExpr({
+		tags: `array_to_string(species_enrichment.tags, ' ')`,
+		prose: `coalesce(species_enrichment.field_craft, '')`,
+		sections: `'[]'::jsonb`
+	});
 	await query(
 		`INSERT INTO species_enrichment (species_code, wiki_status, wiki_error, wiki_fetched_at)
 		 VALUES ($1, 'no_article', NULL, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   wiki_status = 'no_article', wiki_error = NULL, wiki_fetched_at = NOW(),
-		   updated_at = NOW()`,
+		   wikipedia_title = NULL, wikipedia_url = NULL, wikipedia_rev_id = NULL,
+		   wikipedia_extract = NULL, wikipedia_sections = '[]'::jsonb,
+		   wiki_ok_at = NULL, search_tsv = ${tsv}, updated_at = NOW()`,
 		[code]
 	);
 }
@@ -289,6 +300,7 @@ export interface EnrichmentRow {
 	wikipedia_sections: { title: string; text: string }[];
 	wiki_status: string | null;
 	wiki_fetched_at: string | null;
+	wiki_ok_at: string | null;
 	field_craft: string | null;
 	tags: string[];
 	ai_generated_at: string | null;
@@ -298,7 +310,7 @@ export async function getEnrichment(code: string): Promise<EnrichmentRow | null>
 	const r = await query<EnrichmentRow>(
 		`SELECT species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids,
 		        wikipedia_title, wikipedia_url, wikipedia_rev_id::text, wikipedia_extract,
-		        wikipedia_sections, wiki_status, wiki_fetched_at::text,
+		        wikipedia_sections, wiki_status, wiki_fetched_at::text, wiki_ok_at::text,
 		        field_craft, tags, ai_generated_at::text
 		   FROM species_enrichment WHERE species_code = $1`,
 		[code]

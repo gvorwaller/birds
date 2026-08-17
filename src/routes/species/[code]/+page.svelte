@@ -8,6 +8,7 @@
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { sectionBlocks } from "$lib/wiki-render";
   import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
@@ -84,9 +85,20 @@
   const hasFacts = $derived(
     !!en && (en.iucn_status != null || massBadge != null || wingspanBadge != null),
   );
+  // Attribution date = when the STORED prose was successfully retrieved —
+  // never the failed-attempt clock (CODEX1 round 3).
   const retrievedOn = $derived(
-    en?.wiki_fetched_at ? new Date(en.wiki_fetched_at).toLocaleDateString() : null,
+    en?.wiki_ok_at ? new Date(en.wiki_ok_at).toLocaleDateString() : null,
   );
+  // Read more only when the clamp actually hides content (GROK).
+  let leadEl = $state<HTMLElement | null>(null);
+  let leadOverflows = $state(false);
+  $effect(() => {
+    void en?.wikipedia_extract;
+    if (leadEl && !aboutExpanded) {
+      leadOverflows = leadEl.scrollHeight > leadEl.clientHeight + 2;
+    }
+  });
   const revisionPermalink = $derived(
     en?.wikipedia_title && en?.wikipedia_rev_id
       ? `https://en.wikipedia.org/w/index.php?title=${encodeURIComponent(en.wikipedia_title.replace(/ /g, "_"))}&oldid=${en.wikipedia_rev_id}`
@@ -288,7 +300,10 @@
       <h2>
         About {data.taxon.com_name}
         {#if en?.iucn_status}
-          <span class="iucn" title={IUCN_LABELS[en.iucn_status] ?? en.iucn_status}>
+          <span
+            class="iucn s-{en.iucn_status.toLowerCase()}"
+            title={IUCN_LABELS[en.iucn_status] ?? en.iucn_status}
+          >
             {en.iucn_status} · {IUCN_LABELS[en.iucn_status] ?? "IUCN status"}
           </span>
         {/if}
@@ -313,16 +328,31 @@
             article text.
           </p>
         {/if}
-        <p class="lead" class:clamped={!aboutExpanded}>{en?.wikipedia_extract}</p>
-        {#if !aboutExpanded}
-          <button type="button" class="readmore" onclick={() => (aboutExpanded = true)}>
-            Read more
+        <p bind:this={leadEl} class="lead" class:clamped={!aboutExpanded}>
+          {en?.wikipedia_extract}
+        </p>
+        {#if aboutExpanded || leadOverflows}
+          <button
+            type="button"
+            class="readmore"
+            aria-expanded={aboutExpanded}
+            onclick={() => (aboutExpanded = !aboutExpanded)}
+          >
+            {aboutExpanded ? "Show less" : "Read more"}
           </button>
         {/if}
         {#each en?.wikipedia_sections ?? [] as s (s.title)}
           <details class="wiki-section">
             <summary>{s.title}</summary>
-            <p class="section-text">{s.text}</p>
+            <div class="section-text">
+              {#each sectionBlocks(s.text) as block, i (i)}
+                {#if block.kind === "sub"}
+                  <p class="subhead">{block.text}</p>
+                {:else}
+                  <p>{block.text}</p>
+                {/if}
+              {/each}
+            </div>
           </details>
         {/each}
         <p class="wiki-attrib muted">
@@ -356,7 +386,7 @@
         <p class="muted">
           No Wikipedia article for this species{en.resolution === "no_mapping"
             ? " (no Wikidata mapping)"
-            : ""} — facts above come from Wikidata where available.
+            : ""}{hasFacts ? " — facts above come from Wikidata." : "."}
         </p>
       {:else}
         <p class="muted">No enrichment data fetched yet for this species.</p>
@@ -449,9 +479,41 @@
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.03em;
-    background: var(--seen-bg);
-    color: var(--seen-text);
     vertical-align: middle;
+    /* Unknown/unmapped statuses fall back to neutral, never all-clear. */
+    background: #e9ecef;
+    color: #343a40;
+  }
+  /* Per-status tokens (GROK P1: EN in seen-green read as all-clear) —
+     color + text, AAA-contrast pairs, escalating warmth with threat. */
+  .iucn.s-lc {
+    background: #d8ecd9;
+    color: #1e4620;
+  }
+  .iucn.s-nt {
+    background: #e8ecc9;
+    color: #4a4d1d;
+  }
+  .iucn.s-vu {
+    background: #fde8c8;
+    color: #7a4a06;
+  }
+  .iucn.s-en {
+    background: #fcd9cc;
+    color: #8a2c0d;
+  }
+  .iucn.s-cr {
+    background: #f8d0d4;
+    color: #8e1420;
+  }
+  .iucn.s-ew,
+  .iucn.s-ex {
+    background: #43464a;
+    color: #f4f5f6;
+  }
+  .iucn.s-dd {
+    background: #e9ecef;
+    color: #343a40;
   }
   .facts {
     margin-bottom: 8px;
@@ -492,20 +554,31 @@
   .wiki-license summary::-webkit-details-marker {
     display: none;
   }
+  /* Visible affordance (GROK: hidden marker + muted ::after read as static
+     headings) — accent-colored chevron, clearly a control. */
   .wiki-section summary::after,
   .wiki-license summary::after {
     content: "▸";
     margin-left: auto;
-    color: var(--muted);
+    padding-left: 12px;
+    color: var(--accent);
+    font-size: 1.1em;
   }
   .wiki-section[open] summary::after,
   .wiki-license[open] summary::after {
     content: "▾";
   }
   .section-text {
-    white-space: pre-line;
     line-height: 1.5;
     padding-bottom: 10px;
+  }
+  .section-text p {
+    margin: 0 0 10px;
+  }
+  .section-text .subhead {
+    font-weight: 700;
+    font-size: 0.92rem;
+    margin: 12px 0 6px;
   }
   .wiki-attrib {
     margin-top: 10px;
