@@ -24,23 +24,98 @@ exists (ac8a22a was an unrelated truncation fix). No FTS/extensions installed.
 
 ## Phase 0 — UI prototypes (Gaylon sign-off gate, approved 2026-08-17)
 
-Two static HTML mockups in `docs/mockups/` (the same pattern that designed V2's
-pages — index/dashboard/targets/trips/photos/species live there already; match
-their conventions and the app's real CSS variables/card styles):
+Two static HTML mockups as **siblings** of the existing V2 set in `docs/mockups/`
+(`dashboard.html`, `index.html`, `mockup.css`, `photos.html`, `species.html`,
+`targets.html`, `trips.html`). Match those conventions: shared `mockup.css`
+(extend it for new chip/details/attribution-mini classes — do not add a second
+design sheet), `viewport-fit=cover`, 18px base, white cards / `#e9ecef` / 8px
+radius, bottom nav <640px with `env(safe-area-inset-bottom)`, top-nav links
+≥640px. There is **no** 390px iframe or device frame in the existing set —
+review is "resize or DevTools" per `index.html` → "How to review
+responsiveness". Do not invent chrome the other pages don't have.
 
-- `docs/mockups/species-detail-enriched.html` — the species page with the two new
-  cards in proposed order (header → **About** [Wikipedia lead, `<details>`
-  sections, facts badges incl. IUCN chip, CC BY-SA attribution footer] → gallery →
-  forecast teaser → **Finding this bird** [field-craft text, grouped tag chips
-  with tide: chips visually distinct, "AI-generated … verify in the field" line,
-  owner refresh button] → nearby reports → upgraded Learn-more links). Use a real
-  worked example (a shorebird, e.g. Wandering Tattler or Marbled Godwit) with
-  realistic prose so card weight/length is honest. Show the no-enrichment
-  degraded state as a second variant section or annotation.
-- `docs/mockups/field-guide.html` — the /species browser: search box, tag chips
-  grouped by dimension (collapsed/expandable groups so 390px isn't a chip wall),
-  ranked results with Seen/Need badges, empty-state. Mobile-first: include a
-  390px-width framing note or media-query demo like the existing mockups.
+- `docs/mockups/species-detail-enriched.html` — enriched species page using the
+  **pinned field-first card order** and compact attribution below. Worked
+  example: **Marbled Godwit** (already in `photos.html`; mudflat + falling/low
+  tide so card weight is an honest td-47d6d5 case). No-enrichment degraded
+  state is a second annotated block on the **same** page (`photos.html`
+  unmatched-section pattern — no third file).
+- `docs/mockups/field-guide.html` — the `/species` browser: search box, dimension
+  groups, pinned active-filter row, ranked results with Seen/Need badges,
+  empty-state. Cross-link results to `species-detail-enriched.html` the way
+  `photos.html` already links `species.html`.
+- **Also update `docs/mockups/index.html`** — catalog both new screens and add
+  390×844 / 320×568 (+ text zoom) to the existing review notes.
+
+**Live nav chrome, not the stale mockup nav.** Current mockups still show
+Home / Targets / Trips / Photos. Live app (`src/routes/+layout.svelte`) is
+Home / Trips / Forecast / Photos + More (drawer). Phase-0 mockups use the
+**live** 4+More chrome so Gaylon reviews the real way in. Drawer-open state
+on `field-guide.html` shows `📖 Field guide` active.
+
+**Pinned UX contract (GROK 2026-08-17)** — mockups must demonstrate all of this
+before Phase 1 starts:
+
+1. **Card order is field-first, not encyclopedia-first.** The earlier proposal
+   (header → About → gallery → forecast → Finding → nearby → links) overloads a
+   page that already has 5 sections: an unclamped Wikipedia lead would push
+   forecast / nearby / field-craft below the fold on a 390px phone. Pinned
+   order:
+
+   header → gallery (if photos; omit the card when empty) → **Finding this
+   bird** → forecast teaser → nearby reports → **About** → Learn more.
+
+   Finding this bird sits with the other "how do I see this" cards. About is
+   the long-read. Gallery stays high (visual ID + Gaylon's photos).
+
+2. **About is clamped; wiki `<details>` start closed at every width.** Lead
+   shows ~6 lines (`display: -webkit-box; -webkit-box-orient: vertical;
+   -webkit-line-clamp: 6` **plus** a real "Read more" control that expands in
+   place — clamp is not the only path, and a screen reader must reach the full
+   lead). Whitelisted sections render as native `<details>`/`<summary>`,
+   **default closed on mobile AND desktop**. `<summary>` min-height 48px; hide
+   `::-webkit-details-marker` and provide a text disclosure affordance. Do not
+   use exclusive `name=` accordion (Safari support is recent and not required).
+   Finding this bird stays expanded (it is 2–4 sentences).
+
+3. **Attribution is a one-line footer + disclosure, not a legal wall.**
+   Visible line: `Wikipedia · CC BY-SA 4.0 · retrieved {date}` at 0.78rem
+   muted (same as page-level `.attribution`). Inside `<details>` "Source &
+   license": revision permalink (`…/index.php?title=<t>&oldid=<rev_id>`),
+   article URL, CC BY-SA 4.0 license URL, retrieval date, "excerpted and
+   sectioned" modification notice. Page-level eBird attribution stays at the
+   bottom and is **never** mixed into the Wikipedia block. The AI line lives
+   only on Finding this bird.
+
+4. **Field-guide chips at 390px — grouped, not a wall; 48px, not 44px.**
+   `mockup.css` `.chip` is 44px; `cs.md` requires ≥48px — these mockups use
+   48px (family rule wins). Dimensions are `<details>` groups, **all collapsed
+   by default**. Selected chips are **pinned in an "Active filters" row above
+   results** so they stay visible when groups collapse. GET form; `?tags=`
+   repeatable; AND semantics (`tags @> $tags`) labeled "Match all selected
+   tags". Search input `font-size: 1rem` (prevents iOS focus zoom). Tide chips:
+   distinct token **plus** a "Tide" text prefix (color + text, AAA — never
+   color alone). Empty state + Seen/Need badges. Long `com_name`s wrap; no
+   horizontal overflow at 320 or 390, including text zoom.
+
+5. **Nav: drawer-only, Help pattern.** Do not add a 5th primary tab. Bottom
+   nav is already 4+More; the Forecast charter already strained 320/390 with
+   text zoom. Drawer item `📖 Field guide` (all roles, including viewer).
+   Discoverability: "Browse field guide →" on the species page (Finding / About
+   cards). `isActive` for this item must be an **exact** `/species` (or
+   `/species/`) match — today's `path.startsWith(href)` would light Field guide
+   on every `/species/[code]` page. Species-detail return links from a guide
+   hit go back to `/species?q=&tags=`, not Home.
+
+6. **Refresh control is admin-only in the mockup** (CODEX1 #5). Annotate
+   "admin sees this; viewer/user do not". No "owner refresh" — that role does
+   not exist.
+
+7. **Safari/phone checklist the mockups must survive:** 390×844 and 320×568
+   portrait, 844×390 landscape, plus text zoom; no `100vh` (iOS toolbar);
+   `touch-action: manipulation`; inputs ≥16px; IUCN chip is color + text
+   (CR/EN/VU/NT/LC) with AAA tokens. Stub/no-article About shows facts badges
+   + a muted "No Wikipedia article" line, not a broken empty card.
 
 Deliverable: Gaylon reviews the mockups (rendered via SendUserFile/browser) and
 signs off or redlines BEFORE Phase 1 schema/pipeline work begins. Mockups commit
@@ -142,40 +217,62 @@ to the repo (docs-only commit; no review cycle needed beyond his eyes).
   Phase 2) — otherwise Phase 1 would re-enqueue every fresh wiki row daily forever.
 - dedupKeys.enrichChunk(codes)/enrichSpeciesOne(code)/scanEnrichment; TYPE_NAMES.
 
-**Species page (`src/routes/species/[code]/`):** loader adds `getEnrichment(code)`;
-new **About card** (extract paragraph; sections as `<details>` collapsibles; facts
-badges incl. IUCN chip). **Attribution block (CODEX1 #8, license-required):**
-rendered wherever the stored prose renders — links the exact revision permalink
+**Species page (`src/routes/species/[code]/`):** loader adds `getEnrichment(code)`.
+**Pinned card order (GROK):** header → gallery (omit when empty) → Finding this
+bird (Phase 2; omit when no AI row) → forecast teaser → nearby → **About** →
+Learn more. **About card:** clamped lead (~6 lines + in-place Read more);
+sections as native `<details>` default-closed at every width; facts badges incl.
+IUCN chip (color + text). "Browse field guide →" links to `/species`.
+**Attribution block (CODEX1 #8, license-required, GROK compact render):**
+wherever the stored prose renders, a one-line muted footer
+(`Wikipedia · CC BY-SA 4.0 · retrieved {date}`) plus a `<details>` "Source &
+license" that holds the required set — revision permalink
 (`.../index.php?title=<t>&oldid=<rev_id>`, which carries contributor credit via
 history), the article itself, the CC BY-SA 4.0 license URL, the retrieval date,
-and an explicit "excerpted and sectioned" modification notice. The AI field craft
-is NEVER presented as Wikipedia text — separately labeled, and the plan documents
-the licensing position: model output derived from CC BY-SA prose is treated as an
-adaptation, shown with its own source-pointing label. Upgrade "Learn more" links
-to direct iNat taxon / xeno-canto species URLs when cross_ids present (link-out
-only). **Refresh action is explicitly ADMIN-gated server-side (CODEX1 #5)** — it
-spends communal Wikimedia/Anthropic quota and mutates a global row; "owner-only"
-is not a role in this app and the viewer hook is not an authorization system. The
-action re-validates the code against taxonomy (category='species') before
-enqueueing {codes:[code], force:true}. Loaders never enqueue (house invariant).
-Missing row → page degrades to today's behavior.
+and an explicit "excerpted and sectioned" modification notice. The page-level
+eBird attribution is separate and is never mixed into this block. The AI field
+craft is NEVER presented as Wikipedia text — separately labeled, and the plan
+documents the licensing position: model output derived from CC BY-SA prose is
+treated as an adaptation, shown with its own source-pointing label. Upgrade
+"Learn more" links to direct iNat taxon / xeno-canto species URLs when cross_ids
+present (link-out only). **Refresh action is explicitly ADMIN-gated server-side
+(CODEX1 #5)** — it spends communal Wikimedia/Anthropic quota and mutates a
+global row; "owner-only" is not a role in this app and the viewer hook is not an
+authorization system. The action re-validates the code against taxonomy
+(category='species') before enqueueing {codes:[code], force:true}. Loaders never
+enqueue (house invariant). Missing row → page degrades to today's behavior.
 
 ## Phase 2 — AI tags + "Finding this bird" (td-47d6d5)
 
 - `src/lib/species-tags.ts` (client-safe): controlled vocabulary as
   `dimension:value` flat tags — habitat: (forest, woodland-edge, grassland,
-  shrubland, desert, freshwater-marsh, saltmarsh, mudflat, beach, rocky-shore,
-  open-ocean, lake-pond, river-stream, urban-suburban, farmland, alpine-tundra);
-  forage: (aerial-insectivore, foliage-gleaner, ground-forager, bark-forager,
-  probing-shorebird, dabbler, diver, plunge-diver, hunter, scavenger, nectar,
-  seeds-fruit); **tide:** (falling, low, rising, high-roost, tide-independent —
-  coastal species only, the td-47d6d5 payload); time: (dawn-peak, diurnal,
-  crepuscular, nocturnal); movement: (resident, short-distance-migrant,
-  long-distance-migrant, irruptive, pelagic); find: (conspicuous, secretive,
-  heard-more-than-seen, flocking, solitary, feeder-visitor). NO seasonality
+  shrubland, desert, freshwater-marsh, saltmarsh, mangrove, mudflat, beach,
+  rocky-shore, jetty-pier, open-ocean, lake-pond, river-stream, riparian,
+  conifer, urban-suburban, farmland, alpine-tundra); forage:
+  (aerial-insectivore, sallying-flycatcher, foliage-gleaner, ground-forager,
+  bark-forager, stalking-wader, probing-shorebird, dabbler, diver, plunge-diver,
+  hunter, scavenger, nectar, seeds-fruit); **tide:** (falling, low, rising,
+  mid-tide, high-roost, tide-independent — coastal species only, the td-47d6d5
+  payload); time: (dawn-peak, dusk-peak, diurnal, crepuscular, nocturnal);
+  movement: (resident, short-distance-migrant, long-distance-migrant,
+  altitudinal, irruptive); find: (conspicuous, secretive, heard-more-than-seen,
+  flocking, solitary, feeder-visitor, canopy, overhead-flight). NO seasonality
   dimension — species_frequency curves answer that better regionally.
-  `validateTags` enforces membership in code (model output never trusted; drops
-  logged in job events), ≤12 tags; `groupTags`/`tagLabel` for chips.
+  **GROK vocabulary notes (Gaylon still tunes values, not schema):**
+  `mangrove` is not saltmarsh (FL/tropical); `riparian` is the corridor, not
+  the water; `conifer` is the warbler/finch query; `jetty-pier` is the
+  turnstone/purple-sandpiper rock; `stalking-wader` is herons/egrets (they are
+  not probing-shorebirds); `sallying-flycatcher` is pewees/kingbirds, not
+  swallow-style aerial-insectivores; `mid-tide` is rocks/jetties, not
+  mudflats; `dusk-peak` is not the same as `dawn-peak` (nighthawks vs
+  chorus); `altitudinal` is mountain species. **`pelagic` is not a movement
+  value** — that query is `habitat:open-ocean` (plus field_craft / a future
+  find: value if Gaylon wants a boat-trip chip). `high-roost` stays under
+  tide: even though it is a behavior, because "where do they go at high
+  tide" is the useful chip. `validateTags` enforces membership in code
+  (model output never trusted; drops logged in job events), ≤12 tags;
+  `groupTags`/`tagLabel` for chips. Tide labels always include the word
+  "Tide" so the distinct token is not color-alone.
 - `src/lib/server/ai-enrichment.ts` — modeled on ai-guidance.ts: direct Anthropic
   fetch, Sonnet 4.6, 30s timeout, JSON-only response `{"tags":[...],
   "field_craft":"..."}`. System prompt: annotate from the provided Wikipedia text +
@@ -187,9 +284,12 @@ Missing row → page degrades to today's behavior.
   $0.018/species → $9–27 one-time for 500–1500 species; regenerates only when
   ai_source_rev_id <> wikipedia_rev_id or manual force (aiOnly batches retry
   AI-stage failures without refetching wiki).
-- **"Finding this bird" card** after the forecast teaser: field_craft text, grouped
-  tag chips (tide chips visually distinct), muted "AI-generated from the Wikipedia
-  article · {date} · verify in the field", owner refresh button.
+- **"Finding this bird" card** after the gallery and **before** the forecast
+  teaser (pinned order above): field_craft text, grouped tag chips (tide chips
+  visually distinct **and** prefixed "Tide"), muted "AI-generated from the
+  Wikipedia article · {date} · verify in the field", **admin** refresh button
+  (same gate as Phase 1; omit for viewer/user). Omit the whole card when no
+  AI row exists — do not render an empty "Finding this bird" shell.
 
 ## Phase 3 — Field guide (search)
 
@@ -202,10 +302,17 @@ Missing row → page degrades to today's behavior.
   taxonomy_cache + seen_species (Seen/Need Badge per row). A valid substring name
   hit can never be hidden by an unrelated prose hit. `/species` + `/species/[code]`
   coexist in SvelteKit.
-- `src/routes/species/+page.svelte`: search box (GET form), tag chips grouped by
-  dimension, results → `/species/[code]`. Answers "probes mudflats at a falling
-  tide" directly.
-- Nav: drawer + primary-tab decision at implementation — **"📖 Field guide"**.
+- `src/routes/species/+page.svelte`: search box (GET form, `font-size: 1rem`),
+  tag chips grouped by dimension as collapsed `<details>` (48px summaries and
+  chips), pinned "Active filters" row above results, AND label ("Match all
+  selected tags"), results → `/species/[code]` with return-to the current
+  `?q=&tags=` query. Answers "probes mudflats at a falling tide" directly.
+- Nav (pinned, GROK): **drawer-only**, Help pattern — a standalone drawer
+  `<a href="/species">` after the `drawerItems` loop (same place Help already
+  lives), so every role including viewer sees it and it never enters
+  `primaryItems`. Bottom nav stays 4+More. `isActive` for this href is an
+  exact `/species` match so `/species/[code]` does not highlight it. In-page
+  "Browse field guide →" on the species detail page is the other entry.
   Relieves Forecast (finder keeps its where/when job; cross-link later if wanted).
 
 ## Decisions made (not open)
@@ -213,6 +320,11 @@ Missing row → page degrades to today's behavior.
 - No-article species: facts + links only, NO AI from model knowledge alone.
 - AI attribution line: "AI-generated from the Wikipedia article · verify in the field".
 - Tag vocabulary above is v1; Gaylon tunes values in review, not schema.
+- Species-page card order is field-first (gallery → Finding → forecast → nearby → About → links). About lead is clamped; wiki `<details>` default-closed at every width.
+- Wikipedia attribution renders as a one-line footer + "Source & license" `<details>` (required permalink / license / date / modification notice live inside the disclosure).
+- Field guide nav is drawer-only (Help pattern). No 5th primary tab. `isActive` is exact `/species`.
+- Field-guide chips are 48px, grouped, collapsed-by-default, with a pinned active-filter row and labeled AND semantics.
+- Refresh is admin-gated on every surface (mockup + Phase 1 + Phase 2). No owner-refresh control.
 
 ## Scope/stale SQL contract (CODEX1 #9 — pinned by real-DB tests)
 
@@ -241,9 +353,17 @@ successor atomicity + lost-chain reconciliation + no-work-still-reschedules, and
 a queue-fairness test (a user job enqueued mid-campaign runs between chunks).
 Route-level auth tests: viewer GET renders, viewer/user POST refresh rejected,
 admin POST accepted; attribution links (revision permalink + license URL +
-retrieval date + modification notice) asserted in rendered output. Live
-`npm run dev:test` + worker: enqueue small chunk from the admin refresh action,
-watch /admin events, cancel mid-chunk, drain-requeue. Deploy via
+retrieval date + modification notice) asserted in rendered output (they may
+live inside the Source & license `<details>` — the test opens it). UI
+assertions: About lead is clamped until Read more; wiki `<details>` start
+closed; Finding this bird omitted when no AI row; Field guide `isActive` is
+exact `/species` (a `/species/[code]` render must not mark it active); GET
+`?tags=` AND-filters; chip/summary tap targets ≥48px. Live `npm run dev:test`
++ worker: enqueue small chunk from the admin refresh action, watch /admin
+events, cancel mid-chunk, drain-requeue. Phase 0 / Phase 3 Safari pass
+(marcus): 390×844, 320×568, 844×390, text zoom — no horizontal overflow, no
+iOS input zoom, tide chips are color+text, drawer Field guide reaches
+`/species`, return-from-result restores `?q=&tags=`. Deploy via
 scripts/deploy-to-DO.sh (migration + worker rebuild automatic).
 
 ## Workflow rules (standing)
@@ -263,6 +383,23 @@ atomicity + ensure-at-startup-and-idle-tick, revision-permalink attribution,
 pinned scope-SQL contract, upstream bounds (AbortSignal/Retry-After/WDQS rank
 filtering), no_article-as-success unit accounting, expanded test matrix,
 cost corrected to $9–27, name-union search.
+
+GROK plan review folded in 2026-08-17 (UX/Safari/mobile; design only, no
+code): field-first card order (About after the find/forecast/nearby cluster;
+gallery stays high); About `line-clamp` + Read more and wiki `<details>`
+default-closed at every width; compact Wikipedia attribution (one-line footer
++ Source & license disclosure) so the license-required permalink set does not
+dominate a 390px card; Field guide chips 48px (not mockup.css's 44px),
+collapsed dimension groups, pinned active-filter row, labeled AND; nav pinned
+drawer-only (Help pattern) with exact `/species` `isActive` so detail pages
+do not light the item; admin-only refresh on every surface; Phase-0 file list
+corrected to the real `docs/mockups/` shape (siblings + shared `mockup.css` +
+`index.html` catalog; no 390px frame exists in the current set; live 4+More
+chrome, not the stale Targets nav; Marbled Godwit + same-page degraded
+variant); tag v1 additions (`mangrove`, `conifer`, `riparian`, `jetty-pier`,
+`stalking-wader`, `sallying-flycatcher`, `mid-tide`, `dusk-peak`,
+`altitudinal`, `canopy`, `overhead-flight`) and `pelagic` dropped from
+movement (use `habitat:open-ocean`). Gaylon still tunes vocabulary in review.
 
 ## Cost/scale summary
 
