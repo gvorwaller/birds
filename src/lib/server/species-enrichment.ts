@@ -318,6 +318,46 @@ export async function getEnrichment(code: string): Promise<EnrichmentRow | null>
 	return r.rows[0] ?? null;
 }
 
+export interface AiStageInput {
+	extract: string;
+	sections: { title: string; text: string }[];
+	revId: number;
+	aiStatus: string | null;
+	aiSourceRevId: number | null;
+	aiAttemptedAt: string | null;
+}
+
+/**
+ * Everything the AI stage needs for a species whose wiki data is already
+ * stored (the fresh-skip path). Null when there is no usable prose.
+ */
+export async function aiStageInputFor(code: string): Promise<AiStageInput | null> {
+	const r = await query<{
+		wikipedia_extract: string | null;
+		wikipedia_sections: { title: string; text: string }[];
+		wikipedia_rev_id: string | null;
+		ai_status: string | null;
+		ai_source_rev_id: string | null;
+		ai_attempted_at: string | null;
+	}>(
+		`SELECT wikipedia_extract, wikipedia_sections, wikipedia_rev_id::text,
+		        ai_status, ai_source_rev_id::text, ai_attempted_at::text
+		   FROM species_enrichment
+		  WHERE species_code = $1 AND wiki_status = 'ok' AND wikipedia_extract IS NOT NULL`,
+		[code]
+	);
+	const row = r.rows[0];
+	if (!row || row.wikipedia_rev_id == null) return null;
+	return {
+		extract: row.wikipedia_extract as string,
+		sections: row.wikipedia_sections ?? [],
+		revId: Number(row.wikipedia_rev_id),
+		aiStatus: row.ai_status,
+		aiSourceRevId: row.ai_source_rev_id == null ? null : Number(row.ai_source_rev_id),
+		aiAttemptedAt: row.ai_attempted_at
+	};
+}
+
 /** Per-species freshness check used by chunk handlers (idempotent overlap). */
 export async function wikiFresh(code: string): Promise<boolean> {
 	const r = await query<{ fresh: boolean }>(

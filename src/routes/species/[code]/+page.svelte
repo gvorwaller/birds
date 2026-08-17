@@ -9,6 +9,7 @@
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { sectionBlocks } from "$lib/wiki-render";
+  import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
   import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
@@ -82,6 +83,14 @@
   // of hiding it for the whole retry window (CODEX1 P1 #3).
   const hasProse = $derived(!!en?.wikipedia_extract);
   const proseStale = $derived(hasProse && en?.wiki_status === "error");
+  // "Finding this bird" (Phase 2): render only when AI content exists —
+  // never an empty shell (GROK contract). The single refresh button lives
+  // here when the card exists, on About otherwise.
+  const hasFieldCraft = $derived(!!en?.field_craft);
+  const tagGroups = $derived(groupTags(en?.tags ?? []));
+  const aiGeneratedOn = $derived(
+    en?.ai_generated_at ? new Date(en.ai_generated_at).toLocaleDateString() : null,
+  );
   const hasFacts = $derived(
     !!en && (en.iucn_status != null || massBadge != null || wingspanBadge != null),
   );
@@ -187,6 +196,56 @@
             </a>
           {/each}
         </div>
+      {/if}
+    </section>
+  {/if}
+
+  {#if hasFieldCraft}
+    <section class="card">
+      <h2>Finding this bird</h2>
+      {#if form && "message" in form && form.message}
+        <p class="ok">{form.message}</p>
+      {/if}
+      {#if form && "error" in form && form.error}
+        <p class="err" role="alert">{form.error}</p>
+      {/if}
+      <p class="fieldcraft">{en?.field_craft}</p>
+      {#if tagGroups.length > 0}
+        <div class="taggroups">
+          {#each tagGroups as g (g.dimension)}
+            <div class="taggroup">
+              <span class="tagdim muted">{dimensionLabel(g.dimension)}</span>
+              <span class="tagchips">
+                {#each g.values as v (v)}
+                  <span class="tag" class:tag-tide={g.dimension === "tide"}>
+                    {tagLabel(g.dimension, v)}
+                  </span>
+                {/each}
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <p class="ai-attrib muted">
+        AI-generated from the Wikipedia article{#if aiGeneratedOn}&nbsp;·
+          {aiGeneratedOn}{/if} · verify in the field
+      </p>
+      {#if data.isAdmin}
+        <form
+          method="POST"
+          action="?/refresh_enrichment"
+          use:enhance={() => {
+            refreshBusy = true;
+            return async ({ update }) => {
+              await update();
+              refreshBusy = false;
+            };
+          }}
+        >
+          <button type="submit" class="secondary" disabled={refreshBusy}>
+            {refreshBusy ? "Queuing…" : "↻ Refresh species data"}
+          </button>
+        </form>
       {/if}
     </section>
   {/if}
@@ -391,7 +450,9 @@
       {:else}
         <p class="muted">No enrichment data fetched yet for this species.</p>
       {/if}
-      {#if data.isAdmin}
+      {#if data.isAdmin && !hasFieldCraft}
+        <!-- Single refresh control: lives on Finding this bird when that
+             card exists, here otherwise. -->
         <form
           method="POST"
           action="?/refresh_enrichment"
@@ -517,6 +578,57 @@
   }
   .facts {
     margin-bottom: 8px;
+  }
+  /* --- Finding this bird (Phase 2) --- */
+  .fieldcraft {
+    line-height: 1.55;
+    margin-bottom: 12px;
+  }
+  .taggroups {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .taggroup {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .tagdim {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 84px;
+  }
+  .tagchips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    min-height: 32px;
+    border-radius: 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    background: #e9f1ec;
+    color: #1d4a35;
+    border: 1px solid #c4d9cd;
+  }
+  /* Tide chips: distinct token + the word "Tide" in the label (color+text,
+     never color alone) — the td-47d6d5 payload. */
+  .tag.tag-tide {
+    background: #dcebf7;
+    color: #163e5e;
+    border: 1px solid #b3d1e8;
+  }
+  .ai-attrib {
+    font-size: 0.78rem;
   }
   .lead {
     white-space: pre-line;

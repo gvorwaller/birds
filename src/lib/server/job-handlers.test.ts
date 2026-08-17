@@ -183,6 +183,7 @@ vi.mock("$server/push", () => ({
 const enrichMocks = vi.hoisted(() => ({
   fetchWikidataBatch: vi.fn<(codes: readonly string[]) => Promise<Map<string, unknown>>>(),
   fetchArticlePlaintext: vi.fn<(title: string) => Promise<unknown>>(),
+  generateSpeciesAnnotation: vi.fn<(input: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock("$server/wikidata", async (importOriginal) => {
@@ -192,6 +193,10 @@ vi.mock("$server/wikidata", async (importOriginal) => {
 vi.mock("$server/wikipedia", async (importOriginal) => {
   const real = await importOriginal<typeof import("./wikipedia")>();
   return { ...real, fetchArticlePlaintext: enrichMocks.fetchArticlePlaintext };
+});
+vi.mock("$server/ai-enrichment", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./ai-enrichment")>();
+  return { ...real, generateSpeciesAnnotation: enrichMocks.generateSpeciesAnnotation };
 });
 
 vi.mock("$server/crypto", () => ({
@@ -1360,5 +1365,176 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
       runAfterMs: number;
     };
     expect(successor.runAfterMs).toBe(ENRICH_SCAN_IDLE_MS);
+  });
+});
+
+const { EnrichmentAiError } = await import("./ai-enrichment");
+
+describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
+  const TAXA_ROW = {
+    species_code: "margod",
+    com_name: "Marbled Godwit",
+    sci_name: "Limosa fedoa",
+    family: "Scolopacidae",
+  };
+  const ANNOTATION = {
+    tags: ["habitat:mudflat", "tide:falling"],
+    fieldCraft: "Scan exposed flats on a falling tide.",
+    droppedTags: [],
+  };
+
+  beforeEach(() => {
+    enrichMocks.fetchWikidataBatch.mockReset();
+    enrichMocks.fetchArticlePlaintext.mockReset();
+    enrichMocks.generateSpeciesAnnotation.mockReset();
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: false }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        [
+          "margod",
+          {
+            speciesCode: "margod",
+            qid: "Q1",
+            enwikiTitle: "Marbled godwit",
+            iucnStatus: null,
+            massKgMin: null,
+            massKgMax: null,
+            wingspanMMin: null,
+            wingspanMMax: null,
+            inatTaxonId: null,
+            xenoCantoId: null,
+          },
+        ],
+      ]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext.mockResolvedValue({
+      title: "Marbled godwit",
+      revId: 77,
+      extract: "prose",
+      sections: [],
+    });
+  });
+
+  it("AI runs after a wiki fetch: annotation persisted with the source revision", async () => {
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
+    expect(aiWrite?.params?.slice(0, 3)).toEqual([
+      "margod",
+      "Scan exposed flats on a falling tide.",
+      ["habitat:mudflat", "tide:falling"],
+    ]);
+    expect(aiWrite?.params?.[4]).toBe(77); // ai_source_rev_id = fetched revision
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, aiOk: 1, aiFailed: [] });
+  });
+
+  it("AI failure NEVER fails the unit or retries the job — ai_status carries the retry state", async () => {
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service error (500).", 500, false),
+    );
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(db.calls.some((c) => c.text.includes("ai_status = 'error'"))).toBe(true);
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect((oks[0][2] as { outcome: string }).outcome).toBe("ok"); // wiki unit still ok
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ aiFailed: ["margod"] });
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("Anthropic 429 stops AI for the batch; wiki work continues; no unit failures", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        ["margod", { speciesCode: "margod", qid: "Q1", enwikiTitle: "A", iucnStatus: null, massKgMin: null, massKgMax: null, wingspanMMin: null, wingspanMMax: null, inatTaxonId: null, xenoCantoId: null }],
+        ["grycat", { speciesCode: "grycat", qid: "Q2", enwikiTitle: "B", iucnStatus: null, massKgMin: null, massKgMax: null, wingspanMMin: null, wingspanMMax: null, inatTaxonId: null, xenoCantoId: null }],
+      ]) as never,
+    );
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: false }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW, { ...TAXA_ROW, species_code: "grycat" }] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service rate-limited.", 429, true),
+    );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat"] } }),
+      ctx,
+    );
+    // First 429 flips the batch flag — only ONE AI attempt total.
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      ok: 2,
+      aiRateLimited: true,
+      aiFailed: [],
+    });
+  });
+
+  it("ai_only path: wiki-fresh unit with missing AI gets annotated WITHOUT a Wikipedia refetch", async () => {
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: true }] }; // wiki fresh
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: null,
+              ai_source_rev_id: null,
+              ai_attempted_at: null,
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.fetchArticlePlaintext).not.toHaveBeenCalled();
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect((oks[0][2] as { outcome: string }).outcome).toBe("ai_only");
+    const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
+    expect(aiWrite?.params?.[4]).toBe(55); // stored revision, not a refetch
+  });
+
+  it("wiki-fresh unit with FRESH AI stays a plain fresh skip", async () => {
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: "ok",
+              ai_source_rev_id: "55",
+              ai_attempted_at: null,
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).not.toHaveBeenCalled();
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect((skips[0][2] as { reason: string }).reason).toBe("fresh");
   });
 });

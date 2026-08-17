@@ -61,13 +61,21 @@ import {
 } from '$server/wikidata';
 import { fetchArticlePlaintext, WikipediaError } from '$server/wikipedia';
 import {
+	aiStageInputFor,
 	enrichmentScope,
+	markAiError,
 	markWikiError,
 	markWikiNoArticle,
 	staleCodes,
+	upsertAiData,
 	upsertResolution,
 	upsertWikiOk
 } from '$server/species-enrichment';
+import {
+	generateSpeciesAnnotation,
+	EnrichmentAiError,
+	AI_MODEL
+} from '$server/ai-enrichment';
 
 export interface WorkerContext {
 	/** True once SIGTERM/SIGINT received — jobs wind down and requeue. */
@@ -685,8 +693,8 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 // Species enrichment (plan: docs/2026-08-17-species-enrichment-plan.md)
 // ---------------------------------------------------------------------------
 
-/** Phase 2 flips this on — until then AI-missing rows are NOT stale (CODEX1 #6). */
-export const AI_STAGE_ENABLED = false;
+/** Phase 2: ON. AI-missing rows with prose now count as stale (CODEX1 #6). */
+export const AI_STAGE_ENABLED = true;
 
 export const ENRICH_CHUNK_SIZE = 30;
 /** Chunks enqueued per scan pass — bounds hub noise AND queue occupancy. */
@@ -838,12 +846,77 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		return;
 	}
 
+	// Taxonomy names for the AI prompt — one query for the whole chunk.
+	const taxa = new Map<string, { com_name: string; sci_name: string; family: string | null }>();
+	if (AI_STAGE_ENABLED) {
+		const t = await query<{
+			species_code: string;
+			com_name: string;
+			sci_name: string;
+			family: string | null;
+		}>(
+			`SELECT species_code, com_name, sci_name, family
+			   FROM taxonomy_cache WHERE species_code = ANY($1)`,
+			[codes]
+		);
+		for (const r of t.rows) taxa.set(r.species_code, r);
+	}
+
 	const startedAt = Date.now();
-	const counts = { ok: 0, noArticle: 0, noMapping: 0, noSitelink: 0, fresh: 0 };
+	const counts = { ok: 0, noArticle: 0, noMapping: 0, noSitelink: 0, fresh: 0, aiOk: 0 };
 	const failed: string[] = [];
+	const aiFailed: string[] = [];
 	let cancelSeen = false;
 	let rateLimit: EnrichRateLimited | null = null;
+	/** Anthropic 429: stop AI attempts for the batch; untouched rows stay
+	 * AI-stale and the next scan re-picks them (never a unit failure). */
+	let aiRateLimited = false;
 	let budgetRemainder: string[] = [];
+
+	/** AI stage for one species with stored/known prose. AI failures never
+	 * fail the unit — the wiki data is the correctness anchor; ai_status
+	 * carries the retry state for later scans (plan Phase 2). */
+	const runAiStage = async (
+		code: string,
+		prose: { extract: string; sections: { title: string; text: string }[]; revId: number }
+	): Promise<void> => {
+		if (!AI_STAGE_ENABLED || aiRateLimited) return;
+		const t = taxa.get(code);
+		if (!t) return;
+		try {
+			const ann = await generateSpeciesAnnotation({
+				comName: t.com_name,
+				sciName: t.sci_name,
+				family: t.family,
+				extract: prose.extract,
+				sections: prose.sections
+			});
+			await upsertAiData(code, {
+				fieldCraft: ann.fieldCraft,
+				tags: ann.tags,
+				model: AI_MODEL,
+				sourceRevId: prose.revId
+			});
+			counts.aiOk++;
+			if (ann.droppedTags.length > 0) {
+				// Vocabulary gaps surface in events, never silently (plan rule).
+				await recordEvent(job.id, 'progress', { code, droppedTags: ann.droppedTags });
+			}
+		} catch (err) {
+			if (err instanceof EnrichmentAiError && err.rateLimited) {
+				aiRateLimited = true;
+				await recordEvent(job.id, 'progress', { aiRateLimited: true, from: code });
+				return;
+			}
+			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+				0,
+				200
+			);
+			await markAiError(code, message).catch(() => {});
+			aiFailed.push(code);
+			await recordEvent(job.id, 'unit_failed', { code, stage: 'ai', error: message });
+		}
+	};
 
 	for (let i = 0; i < codes.length; i++) {
 		const code = codes[i];
@@ -875,9 +948,36 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				[code, force, job.enqueued_at]
 			);
 			if (fresh.rows[0]?.skip === true) {
-				counts.fresh++;
-				progress.unitsSkipped++;
-				await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+				// Wiki is fresh — but the AI stage may still be missing, behind
+				// the stored revision, past its error window, or forced. This is
+				// how the whole pre-Phase-2 corpus gets annotated without a
+				// single wasted Wikipedia refetch.
+				let aiRan = false;
+				if (AI_STAGE_ENABLED && !aiRateLimited) {
+					const ai = await aiStageInputFor(code);
+					const errorRetryDue =
+						ai?.aiStatus === 'error' &&
+						(ai.aiAttemptedAt == null ||
+							Date.now() - new Date(ai.aiAttemptedAt).getTime() > 7 * 86_400_000);
+					const aiDue =
+						ai != null &&
+						(force ||
+							ai.aiStatus == null ||
+							(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId) ||
+							errorRetryDue);
+					if (aiDue) {
+						await runAiStage(code, ai);
+						aiRan = true;
+					}
+				}
+				if (aiRan) {
+					progress.unitsDone++;
+					await recordEvent(job.id, 'unit_ok', { code, outcome: 'ai_only' });
+				} else {
+					counts.fresh++;
+					progress.unitsSkipped++;
+					await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+				}
 			} else {
 				const row = resolved.get(code) ?? null;
 				await upsertResolution(code, row);
@@ -904,6 +1004,11 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							await unitOk('no_article');
 						} else {
 							await upsertWikiOk(code, article);
+							await runAiStage(code, {
+								extract: article.extract,
+								sections: article.sections,
+								revId: article.revId
+							});
 							counts.ok++;
 							await unitOk('ok');
 						}
@@ -935,7 +1040,13 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		if (cancelRequested) cancelSeen = true;
 	}
 
-	const summary = { ...counts, failed, remainder: budgetRemainder.length };
+	const summary = {
+		...counts,
+		failed,
+		aiFailed,
+		aiRateLimited,
+		remainder: budgetRemainder.length
+	};
 
 	if (cancelSeen) {
 		await cancelRunningJob(job.id, attempts, summary);
