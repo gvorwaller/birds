@@ -1732,3 +1732,88 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     for (const p of ai) expect(p.dedupKey).toMatch(/^enrich_species_ai:/);
   });
 });
+
+describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
+  const TAXA_ROW = {
+    species_code: "margod",
+    com_name: "Marbled Godwit",
+    sci_name: "Limosa fedoa",
+    family: "Scolopacidae",
+  };
+  const AI_INPUT_ROW = {
+    wikipedia_extract: "stored prose",
+    wikipedia_sections: [],
+    wikipedia_rev_id: "55",
+    ai_status: null,
+    ai_source_rev_id: null,
+    ai_attempted_at: null,
+  };
+  const ANNOTATION = {
+    tags: ["habitat:mudflat"],
+    fieldCraft: "Craft.",
+    droppedTags: [],
+  };
+
+  beforeEach(() => {
+    enrichMocks.fetchWikidataBatch.mockReset();
+    enrichMocks.fetchArticlePlaintext.mockReset();
+    enrichMocks.generateSpeciesAnnotation.mockReset();
+  });
+
+  it("aiOnly wall-budget spillover PRESERVES the route: aiOnly payload + enrich_species_ai key, no WDQS/Wikipedia", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      db.handler = (text) => {
+        if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+          return { rows: [TAXA_ROW, { ...TAXA_ROW, species_code: "grycat" }] };
+        if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+          return { rows: [AI_INPUT_ROW] };
+        if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+        return undefined;
+      };
+      // First AI call succeeds but burns past the wall budget.
+      enrichMocks.generateSpeciesAnnotation.mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 11 * 60_000);
+        return ANNOTATION;
+      });
+      await runJob(
+        jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat"], aiOnly: true } }),
+        ctx,
+      );
+      expect(enrichMocks.fetchWikidataBatch).not.toHaveBeenCalled();
+      expect(enrichMocks.fetchArticlePlaintext).not.toHaveBeenCalled();
+      const spill = mocks.enqueueJob.mock.calls.find((c) =>
+        ((c[0] as { label: string }).label ?? "").includes("spillover"),
+      );
+      expect(spill).toBeDefined();
+      const arg = spill![0] as { payload: { codes: string[]; aiOnly?: boolean }; dedupKey: string };
+      expect(arg.payload.aiOnly).toBe(true);
+      expect(arg.payload.codes).toEqual(["grycat"]);
+      expect(arg.dedupKey).toMatch(/^enrich_species_ai:[0-9a-f]{16}$/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aiOnly unexpected input-read failure = AI-stage failure: no wiki-error stamp, no green complete", async () => {
+    db.handler = (text) => {
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        throw new Error("db read exploded");
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+    // AI-stage failure, never a wiki one.
+    expect(db.calls.some((c) => c.text.includes("wiki_status = 'error'"))).toBe(false);
+    expect(db.calls.some((c) => c.text.includes("ai_status = 'error'"))).toBe(true);
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect((fails[0][2] as { stage: string }).stage).toBe("ai");
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+  });
+});

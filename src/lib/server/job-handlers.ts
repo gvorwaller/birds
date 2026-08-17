@@ -1018,29 +1018,44 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				// AI-only route (CODEX1 Phase-2 P1 #2): stored prose in, no WDQS,
 				// no Wikipedia. Error rows are ALWAYS due here — this job exists
 				// because they failed; the row's max_attempts bounds retries.
-				if (aiRateLimited) {
-					aiPending.push(code);
-					progress.unitsSkipped++;
-					await recordEvent(job.id, 'unit_skipped', { code, reason: 'ai_rate_limited' });
-				} else {
-					const ai = await aiStageInputFor(code);
-					if (ai == null) {
+				// STAGE-AWARE failure handling (CODEX1 round 2 P1 #2): an
+				// unexpected read/input failure here is an AI-stage failure —
+				// it must never reach the outer catch, which would stamp a
+				// bogus wiki error and dodge the aiOnly aggregate.
+				try {
+					if (aiRateLimited) {
+						aiPending.push(code);
 						progress.unitsSkipped++;
-						await recordEvent(job.id, 'unit_skipped', { code, reason: 'no-prose' });
+						await recordEvent(job.id, 'unit_skipped', { code, reason: 'ai_rate_limited' });
 					} else {
-						const aiDue =
-							force ||
-							ai.aiStatus == null ||
-							ai.aiStatus === 'error' ||
-							(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId);
-						if (!aiDue) {
-							counts.fresh++;
+						const ai = await aiStageInputFor(code);
+						if (ai == null) {
 							progress.unitsSkipped++;
-							await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+							await recordEvent(job.id, 'unit_skipped', { code, reason: 'no-prose' });
 						} else {
-							await accountAiAttempt(code, await runAiStage(code, ai));
+							const aiDue =
+								force ||
+								ai.aiStatus == null ||
+								ai.aiStatus === 'error' ||
+								(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId);
+							if (!aiDue) {
+								counts.fresh++;
+								progress.unitsSkipped++;
+								await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+							} else {
+								await accountAiAttempt(code, await runAiStage(code, ai));
+							}
 						}
 					}
+				} catch (err) {
+					const message = sanitizeErrorText(
+						err instanceof Error ? err.message : String(err)
+					).slice(0, 200);
+					await markAiError(code, message).catch(() => {});
+					aiFailed.push(code);
+					progress.unitsFailed++;
+					progress.lastError = message;
+					await recordEvent(job.id, 'unit_failed', { code, stage: 'ai', error: message });
 				}
 			} else {
 			// Skip-if-fresh (idempotent overlap); force skips only rows already
@@ -1174,15 +1189,23 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	}
 	if (budgetRemainder.length > 0) {
 		// Spill the un-started remainder into its own chunk; this job then
-		// completes honestly with what it actually did.
+		// completes honestly with what it actually did. The spill PRESERVES
+		// the route (CODEX1 round 2 P1 #1): an aiOnly remainder stays aiOnly
+		// in its own dedup namespace — never demoted to a wiki chunk.
 		await enqueueJob({
 			type: 'enrich_species',
-			payload: { codes: budgetRemainder, ...(force ? { force } : {}) },
-			dedupKey: dedupKeys.enrichChunk(budgetRemainder),
+			payload: {
+				codes: budgetRemainder,
+				...(force ? { force } : {}),
+				...(aiOnly ? { aiOnly } : {})
+			},
+			dedupKey: aiOnly
+				? dedupKeys.enrichAiChunk(budgetRemainder)
+				: dedupKeys.enrichChunk(budgetRemainder),
 			requestedBy: job.requested_by,
-			label: `${budgetRemainder.length} species (spillover)`
+			label: `${budgetRemainder.length} species (spillover${aiOnly ? ', AI' : ''})`
 		});
-		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
+		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length, aiOnly });
 	}
 	// aiOnly aggregate (CODEX1 Phase-2 P1 #1): AI work IS this job's work —
 	// failures retry the row (errors are always due on the next attempt) and
@@ -1203,20 +1226,24 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			}
 			return;
 		}
-		if (aiFailed.length > 0) {
+		// aiFailed is the expected bucket; `failed` is belt-and-braces (the
+		// stage-aware catch should make it unreachable in aiOnly) — either
+		// way, failures never complete green (CODEX1 round 2 P1 #2).
+		const aiOnlyFailures = aiFailed.length + failed.length;
+		if (aiOnlyFailures > 0) {
 			if (attempts < job.max_attempts) {
 				await scheduleRetry(
 					job.id,
 					attempts,
 					retryDelayMs(attempts, 'transient'),
-					`${aiFailed.length} AI annotations failed`,
+					`${aiOnlyFailures} AI annotations failed`,
 					summary
 				);
 			} else {
 				await failJob(
 					job.id,
 					attempts,
-					`${aiFailed.length} AI annotations failed after ${attempts} attempts`,
+					`${aiOnlyFailures} AI annotations failed after ${attempts} attempts`,
 					summary
 				);
 			}
