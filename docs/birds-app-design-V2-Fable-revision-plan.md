@@ -5,8 +5,12 @@
 
 ## Future items (not yet built)
 
-**Decision needed before building:**
-- **Need-alert notifications** — "a high-priority need was just reported near home." Needs a channel decision — **email** (wire an email sender) or **web push** (VAPID keys) — plus a background poller/worker (the app currently has no worker process).
+> **Shipped 2026-08-16:** Need-alert notifications (formerly the "decision
+> needed" item here) — Web Push from the installed PWA (not email, not ntfy),
+> delivered by the `birds-worker` job-queue worker as a recurring 30-min scan;
+> radius/re-alert-window prefs, per-device enrollment with named device list
+> and per-device remove, and a persistent `/alerts` history page. Details:
+> td-3b6e08's completed section and `docs/devlog/2026-08-16.md`.
 
 **Deferred (low urgency, on hold per owner):**
 - Deeper taxonomy handling — subspecies / hybrids / eBird taxonomy splits over time.
