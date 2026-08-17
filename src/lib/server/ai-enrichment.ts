@@ -13,6 +13,7 @@
  */
 import { env } from '$env/dynamic/private';
 import { TAG_VOCABULARY, TAG_DIMENSIONS, validateTags, MAX_TAGS } from '$lib/species-tags';
+import { parseRetryAfterMs } from '$server/wikidata';
 import type { WikiSection } from '$server/wikipedia';
 
 export const AI_MODEL = 'claude-sonnet-4-6';
@@ -24,7 +25,9 @@ export class EnrichmentAiError extends Error {
 	constructor(
 		message: string,
 		public status: number,
-		public rateLimited: boolean
+		public rateLimited: boolean,
+		/** Parsed Retry-After when Anthropic sent one (CODEX1 P2 #3). */
+		public retryAfterMs: number | null = null
 	) {
 		super(message);
 		this.name = 'EnrichmentAiError';
@@ -129,7 +132,12 @@ export async function generateSpeciesAnnotation(
 		throw new EnrichmentAiError('Could not reach the AI service.', 0, false);
 	}
 	if (res.status === 429) {
-		throw new EnrichmentAiError('AI service rate-limited.', 429, true);
+		throw new EnrichmentAiError(
+			'AI service rate-limited.',
+			429,
+			true,
+			parseRetryAfterMs(res.headers.get('retry-after'))
+		);
 	}
 	if (res.status === 401) {
 		throw new EnrichmentAiError('AI API key missing or invalid.', 401, false);
@@ -165,6 +173,12 @@ export function parseAnnotation(text: string): SpeciesAnnotation {
 		throw new EnrichmentAiError('AI response was not readable JSON.', 0, false);
 	}
 	const { tags, dropped } = validateTags(parsed.tags);
+	// The prompt requires EXACTLY ONE tide value for tidal species —
+	// contradictory cardinality is code-enforceable and rejected as invalid
+	// output rather than persisted (CODEX1 P2 #4).
+	if (tags.filter((t) => t.startsWith('tide:')).length > 1) {
+		throw new EnrichmentAiError('AI response had contradictory tide tags.', 0, false);
+	}
 	const fieldCraft =
 		typeof parsed.field_craft === 'string'
 			? parsed.field_craft.trim().slice(0, FIELD_CRAFT_MAX_CHARS)

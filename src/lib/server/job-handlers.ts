@@ -61,15 +61,16 @@ import {
 } from '$server/wikidata';
 import { fetchArticlePlaintext, WikipediaError } from '$server/wikipedia';
 import {
+	aiDueCodes,
 	aiStageInputFor,
 	enrichmentScope,
 	markAiError,
 	markWikiError,
 	markWikiNoArticle,
-	staleCodes,
 	upsertAiData,
 	upsertResolution,
-	upsertWikiOk
+	upsertWikiOk,
+	wikiStaleCodes
 } from '$server/species-enrichment';
 import {
 	generateSpeciesAnnotation,
@@ -710,6 +711,13 @@ export const ENRICH_SCAN_IDLE_MS = 24 * 60 * 60_000;
 interface EnrichPayload {
 	codes: string[];
 	force?: boolean;
+	/**
+	 * AI-only chunk: reads STORED prose, never touches WDQS or Wikipedia —
+	 * the durable retry/backfill primitive for the AI stage (CODEX1 Phase-2
+	 * P1 #2). Error rows are always due here (the job exists because they
+	 * failed); bounded by the row's own max_attempts.
+	 */
+	aiOnly?: boolean;
 }
 
 function enrichScanParams(adminId: number, runAfterMs: number) {
@@ -741,13 +749,20 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 	const attempts = job.attempts;
 	await recordEvent(job.id, 'claimed', { attempt: attempts });
 	try {
-		const [missing, stale] = [await enrichmentScope(), await staleCodes(AI_STAGE_ENABLED)];
-		const all = [...new Set([...missing, ...stale])].sort();
+		// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
+		// the full pipeline; AI-only work (wiki current, AI due) becomes
+		// aiOnly chunks that never touch WDQS/Wikipedia.
+		const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
+		const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
+		const wikiSet = new Set(wikiWork);
+		const aiWork = AI_STAGE_ENABLED
+			? (await aiDueCodes()).filter((c) => !wikiSet.has(c)).sort()
+			: [];
 		const adminId = await lowestAdminId();
 		let enqueued = 0;
 		let deduped = 0;
-		for (let i = 0; i < all.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
-			const codes = all.slice(i, i + ENRICH_CHUNK_SIZE);
+		for (let i = 0; i < wikiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+			const codes = wikiWork.slice(i, i + ENRICH_CHUNK_SIZE);
 			const r = await enqueueJob({
 				type: 'enrich_species',
 				payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
@@ -758,11 +773,34 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 			if (r.deduped) deduped++;
 			else enqueued++;
 		}
-		const remaining = Math.max(0, all.length - (enqueued + deduped) * ENRICH_CHUNK_SIZE);
-		const summary = { candidates: all.length, chunksEnqueued: enqueued, deduped, remaining };
+		for (let i = 0; i < aiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+			const codes = aiWork.slice(i, i + ENRICH_CHUNK_SIZE);
+			const r = await enqueueJob({
+				type: 'enrich_species',
+				payload: { codes, aiOnly: true } satisfies EnrichPayload as unknown as Record<
+					string,
+					unknown
+				>,
+				dedupKey: dedupKeys.enrichAiChunk(codes),
+				requestedBy: adminId,
+				label: `${codes.length} species (AI)`
+			});
+			if (r.deduped) deduped++;
+			else enqueued++;
+		}
+		const total = wikiWork.length + aiWork.length;
+		const remaining = Math.max(0, total - (enqueued + deduped) * ENRICH_CHUNK_SIZE);
+		const summary = {
+			candidates: total,
+			wikiCandidates: wikiWork.length,
+			aiCandidates: aiWork.length,
+			chunksEnqueued: enqueued,
+			deduped,
+			remaining
+		};
 		// Fast cadence while a backlog exists (cold run drains in hours, not
 		// days); daily heartbeat once caught up.
-		const runAfterMs = all.length > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;
+		const runAfterMs = total > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;
 		await terminalizeAndReschedule(
 			job.id,
 			attempts,
@@ -801,6 +839,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	const payload = job.payload as unknown as EnrichPayload;
 	const codes = [...new Set(payload.codes ?? [])];
 	const force = payload.force === true;
+	const aiOnly = payload.aiOnly === true;
 	// Hard ≤ chunk-size cap (CODEX1 P2 #5): larger payloads violate the
 	// queue-fairness bound (and >50 would poison-loop on the SPARQL batch
 	// limit) — terminal, not retryable.
@@ -822,29 +861,34 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 
 	// Resolution stage: ONE batched SPARQL request refreshes facts for the
 	// whole chunk. Nothing has been attempted per-unit yet, so a transient
-	// failure retries the whole row.
-	let resolved: Map<string, WikidataSpeciesRow>;
-	try {
-		resolved = await fetchWikidataBatch(codes);
-	} catch (err) {
-		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
-		const rateLimited = err instanceof WikidataError && err.rateLimited;
-		const retryAfter =
-			err instanceof WikidataError && err.retryAfterMs != null ? err.retryAfterMs : null;
-		if (attempts < job.max_attempts) {
-			await scheduleRetry(
-				job.id,
-				attempts,
-				rateLimited
-					? (retryAfter ?? RATE_LIMIT_RETRY_DELAY_MS)
-					: retryDelayMs(attempts, 'transient'),
-				message
+	// failure retries the whole row. aiOnly chunks SKIP this entirely —
+	// stored-prose annotation must not be hostage to WDQS availability.
+	let resolved: Map<string, WikidataSpeciesRow> = new Map();
+	if (!aiOnly)
+		try {
+			resolved = await fetchWikidataBatch(codes);
+		} catch (err) {
+			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+				0,
+				300
 			);
-		} else {
-			await failJob(job.id, attempts, message);
+			const rateLimited = err instanceof WikidataError && err.rateLimited;
+			const retryAfter =
+				err instanceof WikidataError && err.retryAfterMs != null ? err.retryAfterMs : null;
+			if (attempts < job.max_attempts) {
+				await scheduleRetry(
+					job.id,
+					attempts,
+					rateLimited
+						? (retryAfter ?? RATE_LIMIT_RETRY_DELAY_MS)
+						: retryDelayMs(attempts, 'transient'),
+					message
+				);
+			} else {
+				await failJob(job.id, attempts, message);
+			}
+			return;
 		}
-		return;
-	}
 
 	// Taxonomy names for the AI prompt — one query for the whole chunk.
 	const taxa = new Map<string, { com_name: string; sci_name: string; family: string | null }>();
@@ -866,23 +910,34 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	const counts = { ok: 0, noArticle: 0, noMapping: 0, noSitelink: 0, fresh: 0, aiOk: 0 };
 	const failed: string[] = [];
 	const aiFailed: string[] = [];
+	/** AI-due codes never attempted (rate-limit stop / skipped-under-flag) —
+	 * remediated by a narrowed aiOnly chunk, never silently left to cadence. */
+	const aiPending: string[] = [];
 	let cancelSeen = false;
 	let rateLimit: EnrichRateLimited | null = null;
-	/** Anthropic 429: stop AI attempts for the batch; untouched rows stay
-	 * AI-stale and the next scan re-picks them (never a unit failure). */
 	let aiRateLimited = false;
+	let aiRetryAfterMs: number | null = null;
 	let budgetRemainder: string[] = [];
 
-	/** AI stage for one species with stored/known prose. AI failures never
-	 * fail the unit — the wiki data is the correctness anchor; ai_status
-	 * carries the retry state for later scans (plan Phase 2). */
+	type AiOutcome = 'ok' | 'error' | 'rate_limited' | 'no_taxonomy' | 'disabled';
+
+	/**
+	 * AI stage for one species with stored/known prose. Returns a
+	 * discriminated outcome — the CALLER accounts truthfully (CODEX1 Phase-2
+	 * P1 #1): only 'ok' may become a done unit.
+	 */
 	const runAiStage = async (
 		code: string,
 		prose: { extract: string; sections: { title: string; text: string }[]; revId: number }
-	): Promise<void> => {
-		if (!AI_STAGE_ENABLED || aiRateLimited) return;
+	): Promise<AiOutcome> => {
+		if (!AI_STAGE_ENABLED) return 'disabled';
 		const t = taxa.get(code);
-		if (!t) return;
+		if (!t) {
+			// Explicit, not silent (CODEX1 #5) — scope normally excludes these;
+			// reaching here means a taxonomy race worth seeing in events.
+			await recordEvent(job.id, 'progress', { code, aiSkipped: 'no-taxonomy' });
+			return 'no_taxonomy';
+		}
 		try {
 			const ann = await generateSpeciesAnnotation({
 				comName: t.com_name,
@@ -902,11 +957,13 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				// Vocabulary gaps surface in events, never silently (plan rule).
 				await recordEvent(job.id, 'progress', { code, droppedTags: ann.droppedTags });
 			}
+			return 'ok';
 		} catch (err) {
 			if (err instanceof EnrichmentAiError && err.rateLimited) {
 				aiRateLimited = true;
+				aiRetryAfterMs = err.retryAfterMs;
 				await recordEvent(job.id, 'progress', { aiRateLimited: true, from: code });
-				return;
+				return 'rate_limited';
 			}
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
 				0,
@@ -915,6 +972,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			await markAiError(code, message).catch(() => {});
 			aiFailed.push(code);
 			await recordEvent(job.id, 'unit_failed', { code, stage: 'ai', error: message });
+			return 'error';
 		}
 	};
 
@@ -936,7 +994,55 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			progress.unitsDone++;
 			await recordEvent(job.id, 'unit_ok', { code, outcome });
 		};
+		/** Truthful accounting for an attempted AI stage (CODEX1 Phase-2 P1 #1):
+		 * only 'ok' becomes a done unit; errors are failed units; a rate-limit
+		 * stop parks the code for the narrowed remediation chunk. */
+		const accountAiAttempt = async (aiCode: string, outcome: AiOutcome): Promise<void> => {
+			if (outcome === 'ok') {
+				progress.unitsDone++;
+				await recordEvent(job.id, 'unit_ok', { code: aiCode, outcome: 'ai_only' });
+			} else if (outcome === 'error') {
+				progress.unitsFailed++; // unit_failed already recorded by runAiStage
+			} else if (outcome === 'rate_limited') {
+				aiPending.push(aiCode);
+				progress.unitsSkipped++;
+				await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: 'ai_rate_limited' });
+			} else {
+				progress.unitsSkipped++;
+				await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: outcome });
+			}
+		};
+
 		try {
+			if (aiOnly) {
+				// AI-only route (CODEX1 Phase-2 P1 #2): stored prose in, no WDQS,
+				// no Wikipedia. Error rows are ALWAYS due here — this job exists
+				// because they failed; the row's max_attempts bounds retries.
+				if (aiRateLimited) {
+					aiPending.push(code);
+					progress.unitsSkipped++;
+					await recordEvent(job.id, 'unit_skipped', { code, reason: 'ai_rate_limited' });
+				} else {
+					const ai = await aiStageInputFor(code);
+					if (ai == null) {
+						progress.unitsSkipped++;
+						await recordEvent(job.id, 'unit_skipped', { code, reason: 'no-prose' });
+					} else {
+						const aiDue =
+							force ||
+							ai.aiStatus == null ||
+							ai.aiStatus === 'error' ||
+							(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId);
+						if (!aiDue) {
+							counts.fresh++;
+							progress.unitsSkipped++;
+							await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+						} else {
+							await accountAiAttempt(code, await runAiStage(code, ai));
+						}
+					}
+				}
+			} else {
 			// Skip-if-fresh (idempotent overlap); force skips only rows already
 			// refreshed since THIS job row was enqueued (retry ≠ redo).
 			const fresh = await query<{ skip: boolean }>(
@@ -952,27 +1058,23 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				// the stored revision, past its error window, or forced. This is
 				// how the whole pre-Phase-2 corpus gets annotated without a
 				// single wasted Wikipedia refetch.
-				let aiRan = false;
-				if (AI_STAGE_ENABLED && !aiRateLimited) {
-					const ai = await aiStageInputFor(code);
-					const errorRetryDue =
-						ai?.aiStatus === 'error' &&
-						(ai.aiAttemptedAt == null ||
-							Date.now() - new Date(ai.aiAttemptedAt).getTime() > 7 * 86_400_000);
-					const aiDue =
-						ai != null &&
-						(force ||
-							ai.aiStatus == null ||
-							(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId) ||
-							errorRetryDue);
-					if (aiDue) {
-						await runAiStage(code, ai);
-						aiRan = true;
-					}
-				}
-				if (aiRan) {
-					progress.unitsDone++;
-					await recordEvent(job.id, 'unit_ok', { code, outcome: 'ai_only' });
+				const ai = AI_STAGE_ENABLED ? await aiStageInputFor(code) : null;
+				const errorRetryDue =
+					ai?.aiStatus === 'error' &&
+					(ai.aiAttemptedAt == null ||
+						Date.now() - new Date(ai.aiAttemptedAt).getTime() > 7 * 86_400_000);
+				const aiDue =
+					ai != null &&
+					(force ||
+						ai.aiStatus == null ||
+						(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId) ||
+						errorRetryDue);
+				if (aiDue && aiRateLimited) {
+					aiPending.push(code);
+					progress.unitsSkipped++;
+					await recordEvent(job.id, 'unit_skipped', { code, reason: 'ai_rate_limited' });
+				} else if (aiDue && ai != null) {
+					await accountAiAttempt(code, await runAiStage(code, ai));
 				} else {
 					counts.fresh++;
 					progress.unitsSkipped++;
@@ -1004,11 +1106,19 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							await unitOk('no_article');
 						} else {
 							await upsertWikiOk(code, article);
-							await runAiStage(code, {
-								extract: article.extract,
-								sections: article.sections,
-								revId: article.revId
-							});
+							// Wiki success is the unit's anchor; a failed AI stage is
+							// recorded in aiFailed and remediated by a narrowed
+							// aiOnly chunk at completion — never silently green.
+							if (aiRateLimited) {
+								aiPending.push(code);
+							} else {
+								const aiOut = await runAiStage(code, {
+									extract: article.extract,
+									sections: article.sections,
+									revId: article.revId
+								});
+								if (aiOut === 'rate_limited') aiPending.push(code);
+							}
 							counts.ok++;
 							await unitOk('ok');
 						}
@@ -1024,6 +1134,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 						throw err;
 					}
 				}
+			}
 			}
 		} catch (err) {
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
@@ -1044,6 +1155,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		...counts,
 		failed,
 		aiFailed,
+		aiPending,
 		aiRateLimited,
 		remainder: budgetRemainder.length
 	};
@@ -1072,6 +1184,48 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		});
 		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
 	}
+	// aiOnly aggregate (CODEX1 Phase-2 P1 #1): AI work IS this job's work —
+	// failures retry the row (errors are always due on the next attempt) and
+	// exhaustion fails honestly; a 429 stop retries after the server's
+	// Retry-After. Never a green complete over an unannotated chunk.
+	if (aiOnly) {
+		if (aiRateLimited) {
+			if (attempts < job.max_attempts) {
+				await scheduleRetry(
+					job.id,
+					attempts,
+					aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS,
+					'AI rate limit',
+					summary
+				);
+			} else {
+				await failJob(job.id, attempts, 'AI rate limit — retries exhausted', summary);
+			}
+			return;
+		}
+		if (aiFailed.length > 0) {
+			if (attempts < job.max_attempts) {
+				await scheduleRetry(
+					job.id,
+					attempts,
+					retryDelayMs(attempts, 'transient'),
+					`${aiFailed.length} AI annotations failed`,
+					summary
+				);
+			} else {
+				await failJob(
+					job.id,
+					attempts,
+					`${aiFailed.length} AI annotations failed after ${attempts} attempts`,
+					summary
+				);
+			}
+			return;
+		}
+		await completeJob(job.id, attempts, summary);
+		return;
+	}
+
 	// Aggregate rule (CODEX1 P1 #2): ANY transient unit failure retries the
 	// row — the retry is NATURALLY narrowed to the failed codes because
 	// successes are freshness-skipped on the next attempt (error rows are
@@ -1096,6 +1250,24 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			);
 		}
 		return;
+	}
+	// Wiki work succeeded; AI holes get a DURABLE narrowed remediation chunk
+	// (CODEX1 Phase-2 P1 #1/#2/P2 #3) — completion is honest because the
+	// remaining work is enqueued, not left to scanner cadence.
+	const remediation = [...new Set([...aiFailed, ...aiPending])].sort();
+	if (remediation.length > 0) {
+		await enqueueJob({
+			type: 'enrich_species',
+			payload: { codes: remediation, aiOnly: true } satisfies EnrichPayload as unknown as Record<
+				string,
+				unknown
+			>,
+			dedupKey: dedupKeys.enrichAiChunk(remediation),
+			requestedBy: job.requested_by,
+			label: `${remediation.length} species (AI remediation)`,
+			runAfterMs: aiRateLimited ? (aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS) : 0
+		});
+		await recordEvent(job.id, 'progress', { aiRemediation: remediation.length });
 	}
 	await completeJob(job.id, attempts, summary);
 }

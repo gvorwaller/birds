@@ -367,11 +367,15 @@
           </span>
         {/if}
       </h2>
-      {#if form && "message" in form && form.message}
-        <p class="ok">{form.message}</p>
-      {/if}
-      {#if form && "error" in form && form.error}
-        <p class="err" role="alert">{form.error}</p>
+      <!-- Refresh flash lives with the refresh button: here only when the
+           Finding card (which owns the button then) doesn't exist (GROK). -->
+      {#if !hasFieldCraft}
+        {#if form && "message" in form && form.message}
+          <p class="ok">{form.message}</p>
+        {/if}
+        {#if form && "error" in form && form.error}
+          <p class="err" role="alert">{form.error}</p>
+        {/if}
       {/if}
       {#if hasFacts && (massBadge || wingspanBadge)}
         <p class="facts muted">
@@ -602,6 +606,7 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     min-width: 84px;
+    white-space: nowrap; /* "TIME OF DAY" must not wrap at 320px (GROK) */
   }
   .tagchips {
     display: flex;

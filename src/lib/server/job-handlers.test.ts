@@ -1538,3 +1538,197 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     expect((skips[0][2] as { reason: string }).reason).toBe("fresh");
   });
 });
+
+describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-review)", () => {
+  const TAXA_ROW = {
+    species_code: "margod",
+    com_name: "Marbled Godwit",
+    sci_name: "Limosa fedoa",
+    family: "Scolopacidae",
+  };
+  const ANNOTATION = {
+    tags: ["habitat:mudflat", "tide:falling"],
+    fieldCraft: "Scan exposed flats on a falling tide.",
+    droppedTags: [],
+  };
+  /** Routing for a wiki-FRESH row whose AI is missing. */
+  const freshAiDueDb = () => {
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: null,
+              ai_source_rev_id: null,
+              ai_attempted_at: null,
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+  };
+
+  beforeEach(() => {
+    enrichMocks.fetchWikidataBatch.mockReset();
+    enrichMocks.fetchArticlePlaintext.mockReset();
+    enrichMocks.generateSpeciesAnnotation.mockReset();
+  });
+
+  it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service error (500).", 500, false),
+    );
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    // Truthful accounting: the attempted AI-only unit failed.
+    expect(mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok")).toHaveLength(0);
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(fails).toHaveLength(1);
+    expect((fails[0][2] as { stage: string }).stage).toBe("ai");
+    // Wiki work is intact, so the row completes — but ONLY alongside the
+    // durable narrowed remediation chunk.
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    const remediation = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { payload: { aiOnly?: boolean } }).payload?.aiOnly === true,
+    );
+    expect(remediation).toBeDefined();
+    expect((remediation![0] as { payload: { codes: string[] } }).payload.codes).toEqual([
+      "margod",
+    ]);
+    expect((remediation![0] as { dedupKey: string }).dedupKey).toMatch(
+      /^enrich_species_ai:[0-9a-f]{16}$/,
+    );
+  });
+
+  it("fresh-wiki + first-call 429: unit parked (no unit_ok), remediation enqueued with the Retry-After delay", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service rate-limited.", 429, true, 120_000),
+    );
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok")).toHaveLength(0);
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect((skips[0][2] as { reason: string }).reason).toBe("ai_rate_limited");
+    const remediation = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { payload: { aiOnly?: boolean } }).payload?.aiOnly === true,
+    );
+    expect((remediation![0] as { runAfterMs: number }).runAfterMs).toBe(120_000);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      aiPending: ["margod"],
+      aiRateLimited: true,
+    });
+  });
+
+  it("aiOnly happy path: stored prose annotated, NO WDQS, NO Wikipedia", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+    expect(enrichMocks.fetchWikidataBatch).not.toHaveBeenCalled();
+    expect(enrichMocks.fetchArticlePlaintext).not.toHaveBeenCalled();
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect((oks[0][2] as { outcome: string }).outcome).toBe("ai_only");
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ aiOk: 1, aiFailed: [] });
+  });
+
+  it("aiOnly with ERROR rows: always due (no 7d wait) — the job exists because they failed", async () => {
+    db.handler = (text) => {
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: "error",
+              ai_source_rev_id: null,
+              ai_attempted_at: new Date().toISOString(), // JUST failed
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("aiOnly all-fail → scheduleRetry with transient backoff; exhaustion → failJob", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service error (500).", 500, false),
+    );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+
+    mocks.scheduleRetry.mockClear();
+    await runJob(
+      jobRow({
+        type: "enrich_species",
+        payload: { codes: ["margod"], aiOnly: true },
+        attempts: 4,
+      }),
+      ctx,
+    );
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("aiOnly 429 → scheduleRetry honoring Retry-After (durable rate-limit ownership)", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(
+      new EnrichmentAiError("AI service rate-limited.", 429, true, 90_000),
+    );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(90_000);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("scanner partitions: wiki-due → normal chunks, AI-due → aiOnly chunks with distinct keys", async () => {
+    db.handler = (text) => {
+      // enrichmentScope + wikiStaleCodes both hit taxonomy_cache tc; aiDueCodes too.
+      if (text.includes("se.ai_status IS NULL"))
+        return { rows: [{ species_code: "aidue1" }, { species_code: "aidue2" }] };
+      if (text.includes("FROM taxonomy_cache tc"))
+        return { rows: [{ species_code: "wikidue1" }] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
+    const payloads = mocks.enqueueJob.mock.calls.map((c) => c[0] as {
+      payload: { codes: string[]; aiOnly?: boolean };
+      dedupKey: string;
+    });
+    const wiki = payloads.filter((p) => !p.payload.aiOnly);
+    const ai = payloads.filter((p) => p.payload.aiOnly);
+    expect(wiki.flatMap((p) => p.payload.codes)).toContain("wikidue1");
+    expect(ai.flatMap((p) => p.payload.codes)).toEqual(["aidue1", "aidue2"]);
+    for (const p of ai) expect(p.dedupKey).toMatch(/^enrich_species_ai:/);
+  });
+});

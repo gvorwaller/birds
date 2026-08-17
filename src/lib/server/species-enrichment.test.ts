@@ -20,7 +20,8 @@ import {
   iucnCode,
   markWikiError,
   markWikiNoArticle,
-  staleCodes,
+  wikiStaleCodes,
+  aiDueCodes,
   upsertAiData,
   upsertResolution,
   upsertWikiOk,
@@ -321,8 +322,8 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
       const row = await getEnrichment(CODE);
       expect(row?.resolution).toBe("no_mapping");
       expect(await enrichmentScope()).not.toContain(CODE);
-      expect(await staleCodes(false)).not.toContain(CODE);
-      expect(await staleCodes(true)).not.toContain(CODE); // no prose → no AI work either
+      expect(await wikiStaleCodes()).not.toContain(CODE);
+      expect(await aiDueCodes()).not.toContain(CODE); // no prose → no AI work either
     } finally {
       await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
       await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
@@ -350,28 +351,30 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     try {
       // Never attempted → in scope.
       expect(await enrichmentScope()).toContain(CODE);
-      // Freshly fetched → out of scope, not stale.
+      // Freshly fetched → out of scope, wiki not stale — but AI-due (the
+      // partitioned queries replace the old staleCodes(aiEnabled) API).
       await upsertWikiOk(CODE, { title: "T", revId: 1, extract: "x", sections: [] });
       expect(await enrichmentScope()).not.toContain(CODE);
-      expect(await staleCodes(false)).not.toContain(CODE);
-      // AI-missing counts as stale ONLY when the AI stage is enabled.
-      expect(await staleCodes(true)).toContain(CODE);
-      // Old fetch → stale regardless.
+      expect(await wikiStaleCodes()).not.toContain(CODE);
+      expect(await aiDueCodes()).toContain(CODE); // AI never attempted
+      // Old fetch → wiki-stale, and NOT ai-due (stale prose is refetched
+      // first; the annotation follows the fresh revision).
       await query(
         `UPDATE species_enrichment SET wiki_fetched_at = NOW() - INTERVAL '181 days'
           WHERE species_code = $1`,
         [CODE],
       );
-      expect(await staleCodes(false)).toContain(CODE);
+      expect(await wikiStaleCodes()).toContain(CODE);
+      expect(await aiDueCodes()).not.toContain(CODE);
       // Error rows retry only after their window.
       await markWikiError(CODE, "boom");
-      expect(await staleCodes(false)).not.toContain(CODE); // fresh error
+      expect(await wikiStaleCodes()).not.toContain(CODE); // fresh error
       await query(
         `UPDATE species_enrichment SET wiki_fetched_at = NOW() - INTERVAL '8 days'
           WHERE species_code = $1`,
         [CODE],
       );
-      expect(await staleCodes(false)).toContain(CODE);
+      expect(await wikiStaleCodes()).toContain(CODE);
     } finally {
       await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
       await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);

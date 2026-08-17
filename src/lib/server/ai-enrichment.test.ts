@@ -21,6 +21,17 @@ describe("parseAnnotation (pure response parser)", () => {
     expect(out.fieldCraft).toHaveLength(FIELD_CRAFT_MAX_CHARS);
   });
 
+  it("rejects contradictory tide cardinality — at most ONE tide tag (CODEX1 P2 #4)", () => {
+    expect(() =>
+      parseAnnotation(
+        '{"tags": ["tide:low", "tide:high-roost"], "field_craft": "Contradictory."}',
+      ),
+    ).toThrow(/contradictory tide/);
+    // Exactly one is fine.
+    const ok = parseAnnotation('{"tags": ["tide:low"], "field_craft": "Fine."}');
+    expect(ok.tags).toEqual(["tide:low"]);
+  });
+
   it("throws typed errors on junk or empty field craft", () => {
     expect(() => parseAnnotation("no json here")).toThrow(EnrichmentAiError);
     expect(() => parseAnnotation('{"tags": ["habitat:mudflat"]}')).toThrow(/no field craft/);

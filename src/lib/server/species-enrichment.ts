@@ -256,18 +256,12 @@ export async function enrichmentScope(): Promise<string[]> {
 }
 
 /**
- * In-scope codes whose enrichment is stale: wiki refresh (180d), error retry
- * (7d), and — only when the AI stage is enabled (CODEX1 #6) — AI missing,
- * AI behind the fetched revision, or AI error past its retry window.
+ * In-scope codes whose WIKI stage is stale: refresh window (180d) or error
+ * retry window (7d). AI-due codes are a SEPARATE partition (aiDueCodes) so
+ * the scanner can enqueue them as aiOnly chunks that never touch WDQS or
+ * Wikipedia (CODEX1 Phase-2 P1 #2).
  */
-export async function staleCodes(aiEnabled: boolean): Promise<string[]> {
-	const aiClause = aiEnabled
-		? `OR (se.wiki_status = 'ok' AND se.wikipedia_extract IS NOT NULL AND (
-		       (se.ai_status IS NULL)
-		    OR (se.ai_status = 'ok' AND se.ai_source_rev_id IS DISTINCT FROM se.wikipedia_rev_id)
-		    OR (se.ai_status = 'error' AND se.ai_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
-		   ))`
-		: '';
+export async function wikiStaleCodes(): Promise<string[]> {
 	const r = await query<{ species_code: string }>(
 		`${SCOPE_SQL}
 		 AND EXISTS (
@@ -278,7 +272,31 @@ export async function staleCodes(aiEnabled: boolean): Promise<string[]> {
 		             AND se.wiki_fetched_at < NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
 		         OR (se.wiki_status = 'error'
 		             AND se.wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
-		         ${aiClause}
+		      )
+		 )
+		 ORDER BY 1`
+	);
+	return r.rows.map((x) => x.species_code);
+}
+
+/**
+ * In-scope codes whose wiki data is CURRENT but whose AI stage is due:
+ * never annotated, behind the stored revision, or an error past its retry
+ * window. Only meaningful when the AI stage is enabled (CODEX1 #6 —
+ * callers gate).
+ */
+export async function aiDueCodes(): Promise<string[]> {
+	const r = await query<{ species_code: string }>(
+		`${SCOPE_SQL}
+		 AND EXISTS (
+		   SELECT 1 FROM species_enrichment se
+		    WHERE se.species_code = tc.species_code
+		      AND se.wiki_status = 'ok' AND se.wikipedia_extract IS NOT NULL
+		      AND se.wiki_fetched_at >= NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days'
+		      AND (
+		            se.ai_status IS NULL
+		         OR (se.ai_status = 'ok' AND se.ai_source_rev_id IS DISTINCT FROM se.wikipedia_rev_id)
+		         OR (se.ai_status = 'error' AND se.ai_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
 		      )
 		 )
 		 ORDER BY 1`

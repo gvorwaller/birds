@@ -164,6 +164,7 @@ export const dedupKeys = {
 	// different codes are distinct jobs — a constant key would silently drop
 	// newly-scoped codes because enqueueJob dedup never merges payloads.
 	enrichChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species', codes),
+	enrichAiChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species_ai', codes),
 	enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
 	scanEnrichment: () => 'scan_enrichment:global'
 } as const;

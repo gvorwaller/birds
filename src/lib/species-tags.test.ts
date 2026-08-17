@@ -53,8 +53,11 @@ describe("species tag vocabulary (plan Phase 2, GROK v1)", () => {
     for (const added of ["mangrove", "riparian", "conifer", "jetty-pier"])
       expect(TAG_VOCABULARY.habitat).toContain(added);
     expect(TAG_VOCABULARY.forage).toContain("stalking-wader");
+    expect(TAG_VOCABULARY.forage).toContain("sallying-flycatcher");
     expect(TAG_VOCABULARY.tide).toContain("mid-tide");
     expect(TAG_VOCABULARY.time).toContain("dusk-peak");
     expect(TAG_VOCABULARY.movement).toContain("altitudinal");
+    expect(TAG_VOCABULARY.find).toContain("canopy");
+    expect(TAG_VOCABULARY.find).toContain("overhead-flight");
   });
 });
