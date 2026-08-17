@@ -347,19 +347,26 @@ export async function searchEnrichment(
 		    AND (NOT $1
 		         OR tc.com_name ILIKE $2 OR tc.sci_name ILIKE $2
 		         OR se.search_tsv @@ websearch_to_tsquery('english', $3))
-		  ORDER BY name_tier, rank DESC NULLS LAST, tc.com_name
+		  ORDER BY name_tier, rank DESC NULLS LAST, tc.com_name, tc.species_code
 		  LIMIT 50`,
 		[hasQ, like, query_, seenUserId, [...tags]]
 	);
 	return r.rows.map(({ name_tier: _t, rank: _r, ...row }) => row);
 }
 
-/** Counts for the Field guide intro/empty state. */
+/**
+ * Counts for the Field guide intro — the SEARCHABLE corpus, not raw
+ * enrichment rows: species_enrichment retains retired codes (no taxonomy
+ * FK by design), so the count applies the same taxonomy join + category
+ * filter as searchEnrichment (CODEX1 Phase-3 #2).
+ */
 export async function guideCounts(): Promise<{ enriched: number; annotated: number }> {
 	const r = await query<{ enriched: string; annotated: string }>(
-		`SELECT COUNT(*) FILTER (WHERE wikipedia_extract IS NOT NULL) AS enriched,
-		        COUNT(*) FILTER (WHERE ai_status = 'ok') AS annotated
-		   FROM species_enrichment`
+		`SELECT COUNT(*) FILTER (WHERE se.wikipedia_extract IS NOT NULL) AS enriched,
+		        COUNT(*) FILTER (WHERE se.ai_status = 'ok') AS annotated
+		   FROM species_enrichment se
+		   JOIN taxonomy_cache tc USING (species_code)
+		  WHERE tc.category = 'species'`
 	);
 	return {
 		enriched: Number(r.rows[0]?.enriched ?? 0),

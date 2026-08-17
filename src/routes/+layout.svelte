@@ -3,6 +3,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { jobsPoll } from '$lib/job-poll.svelte';
+	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -117,7 +118,7 @@
 				     not light this item. -->
 				<a
 					href="/species"
-					class:active={$page.url.pathname === '/species' || $page.url.pathname === '/species/'}
+					class:active={isFieldGuideActive($page.url.pathname)}
 					onclick={() => (menuOpen = false)}
 				>
 					<span class="ico">📖</span>Field guide
