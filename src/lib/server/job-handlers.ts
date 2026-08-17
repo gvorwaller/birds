@@ -45,6 +45,7 @@ import {
 	updateProgress
 } from '$server/jobs';
 import {
+	dedupKeys,
 	jobOutcome,
 	RATE_LIMIT_RETRY_DELAY_MS,
 	retryDelayMs,
@@ -52,6 +53,21 @@ import {
 	type JobProgress,
 	type JobRow
 } from '$server/job-policy';
+import {
+	fetchWikidataBatch,
+	validSpeciesCode,
+	WikidataError,
+	type WikidataSpeciesRow
+} from '$server/wikidata';
+import { fetchArticlePlaintext, WikipediaError } from '$server/wikipedia';
+import {
+	enrichmentScope,
+	markWikiError,
+	markWikiNoArticle,
+	staleCodes,
+	upsertResolution,
+	upsertWikiOk
+} from '$server/species-enrichment';
 
 export interface WorkerContext {
 	/** True once SIGTERM/SIGINT received — jobs wind down and requeue. */
@@ -665,6 +681,292 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Species enrichment (plan: docs/2026-08-17-species-enrichment-plan.md)
+// ---------------------------------------------------------------------------
+
+/** Phase 2 flips this on — until then AI-missing rows are NOT stale (CODEX1 #6). */
+export const AI_STAGE_ENABLED = false;
+
+export const ENRICH_CHUNK_SIZE = 30;
+/** Chunks enqueued per scan pass — bounds hub noise AND queue occupancy. */
+export const ENRICH_CHUNKS_PER_SCAN = 8;
+/** Wall budget per chunk job: past this, no NEW network side effect starts. */
+export const ENRICH_WALL_BUDGET_MS = 10 * 60_000;
+/** Politeness between Wikipedia fetches (serial; Wikimedia etiquette + UA). */
+const WIKI_POLITENESS_MS = 400;
+/** Successor cadence: fast while work remains, daily once drained. */
+export const ENRICH_SCAN_DRAIN_MS = 15 * 60_000;
+export const ENRICH_SCAN_IDLE_MS = 24 * 60 * 60_000;
+
+interface EnrichPayload {
+	codes: string[];
+	force?: boolean;
+}
+
+function enrichScanParams(adminId: number, runAfterMs: number) {
+	return {
+		type: 'scan_enrichment' as const,
+		payload: {},
+		dedupKey: dedupKeys.scanEnrichment(),
+		requestedBy: adminId,
+		label: 'daily',
+		runAfterMs
+	};
+}
+
+/** Chain reconciliation — worker startup + idle tick, beside the alert scan. */
+export async function ensureEnrichmentScan(): Promise<void> {
+	if (await hasActiveJob(dedupKeys.scanEnrichment())) return;
+	const adminId = await lowestAdminId();
+	await enqueueJob(enrichScanParams(adminId, 10_000));
+}
+
+/**
+ * Recurring singleton: computes what's missing/stale and enqueues BOUNDED
+ * enrich_species chunks (CODEX1 #1: heavy work never lives in the recurring
+ * job — chunks interleave with user jobs under the single-worker lock).
+ * Content-hash dedup per chunk (CODEX1 #2) makes re-enqueues of identical
+ * remainders no-ops rather than lost or duplicated work.
+ */
+async function runScanEnrichment(job: JobRow): Promise<void> {
+	const attempts = job.attempts;
+	await recordEvent(job.id, 'claimed', { attempt: attempts });
+	try {
+		const [missing, stale] = [await enrichmentScope(), await staleCodes(AI_STAGE_ENABLED)];
+		const all = [...new Set([...missing, ...stale])].sort();
+		const adminId = await lowestAdminId();
+		let enqueued = 0;
+		let deduped = 0;
+		for (let i = 0; i < all.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+			const codes = all.slice(i, i + ENRICH_CHUNK_SIZE);
+			const r = await enqueueJob({
+				type: 'enrich_species',
+				payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
+				dedupKey: dedupKeys.enrichChunk(codes),
+				requestedBy: adminId,
+				label: `${codes.length} species`
+			});
+			if (r.deduped) deduped++;
+			else enqueued++;
+		}
+		const remaining = Math.max(0, all.length - (enqueued + deduped) * ENRICH_CHUNK_SIZE);
+		const summary = { candidates: all.length, chunksEnqueued: enqueued, deduped, remaining };
+		// Fast cadence while a backlog exists (cold run drains in hours, not
+		// days); daily heartbeat once caught up.
+		const runAfterMs = all.length > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;
+		await terminalizeAndReschedule(
+			job.id,
+			attempts,
+			{ kind: 'complete', result: summary },
+			enrichScanParams(adminId, runAfterMs)
+		);
+	} catch (err) {
+		// Scanner transient failure retries the SAME row — never a false
+		// success, never a lost chain (idle-tick ensure is the backstop).
+		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+			0,
+			300
+		);
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
+		} else {
+			await failJob(job.id, attempts, message);
+		}
+	}
+}
+
+class EnrichRateLimited extends Error {
+	constructor(public retryAfterMs: number) {
+		super('upstream rate limit');
+	}
+}
+
+/**
+ * One bounded chunk (≤30 species): SPARQL batch resolution, then serial
+ * polite Wikipedia fetches. Per-species freshness makes overlapping chunks
+ * idempotent; `force` bypasses freshness EXCEPT for rows already refreshed
+ * since this job row was enqueued (so a retry never redoes force successes).
+ */
+async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> {
+	const attempts = job.attempts;
+	const payload = job.payload as unknown as EnrichPayload;
+	const codes = [...new Set(payload.codes ?? [])];
+	const force = payload.force === true;
+	if (codes.length === 0 || codes.length > ENRICH_CHUNK_SIZE * 2 || !codes.every(validSpeciesCode)) {
+		await failJob(job.id, attempts, 'invalid enrich_species payload');
+		return;
+	}
+	await recordEvent(job.id, 'claimed', { attempt: attempts, codes: codes.length });
+
+	const progress: JobProgress = {
+		phase: 'fetching',
+		unitsTotal: codes.length,
+		unitsDone: 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	};
+	await updateProgress(job.id, progress);
+
+	// Resolution stage: ONE batched SPARQL request refreshes facts for the
+	// whole chunk. Nothing has been attempted per-unit yet, so a transient
+	// failure retries the whole row.
+	let resolved: Map<string, WikidataSpeciesRow>;
+	try {
+		resolved = await fetchWikidataBatch(codes);
+	} catch (err) {
+		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
+		const rateLimited = err instanceof WikidataError && err.rateLimited;
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(
+				job.id,
+				attempts,
+				rateLimited ? RATE_LIMIT_RETRY_DELAY_MS : retryDelayMs(attempts, 'transient'),
+				message
+			);
+		} else {
+			await failJob(job.id, attempts, message);
+		}
+		return;
+	}
+
+	const startedAt = Date.now();
+	const counts = { ok: 0, noArticle: 0, noMapping: 0, noSitelink: 0, fresh: 0 };
+	const failed: string[] = [];
+	let cancelSeen = false;
+	let rateLimit: EnrichRateLimited | null = null;
+	let budgetRemainder: string[] = [];
+
+	for (let i = 0; i < codes.length; i++) {
+		const code = codes[i];
+		if (ctx.isDraining()) {
+			await requeueInterrupted(job.id, attempts);
+			return;
+		}
+		if (cancelSeen) break;
+		// Wall budget (CODEX1 #1): never START a new unit past the budget —
+		// the remainder becomes a fresh content-hashed chunk so this job ends
+		// promptly and user jobs interleave.
+		if (Date.now() - startedAt > ENRICH_WALL_BUDGET_MS) {
+			budgetRemainder = codes.slice(i);
+			break;
+		}
+		const unitOk = async (outcome: string) => {
+			progress.unitsDone++;
+			await recordEvent(job.id, 'unit_ok', { code, outcome });
+		};
+		try {
+			// Skip-if-fresh (idempotent overlap); force skips only rows already
+			// refreshed since THIS job row was enqueued (retry ≠ redo).
+			const fresh = await query<{ skip: boolean }>(
+				`SELECT (wiki_status IN ('ok','no_article') AND (
+				          ($2 = false AND wiki_fetched_at > NOW() - INTERVAL '180 days')
+				       OR ($2 = true  AND wiki_fetched_at > $3::timestamptz)
+				        )) AS skip
+				   FROM species_enrichment WHERE species_code = $1`,
+				[code, force, job.enqueued_at]
+			);
+			if (fresh.rows[0]?.skip === true) {
+				counts.fresh++;
+				progress.unitsSkipped++;
+				await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+			} else {
+				const row = resolved.get(code) ?? null;
+				await upsertResolution(code, row);
+				if (row == null) {
+					counts.noMapping++;
+					await unitOk('no_mapping');
+				} else if (!row.enwikiTitle) {
+					counts.noSitelink++;
+					await unitOk('no_sitelink');
+				} else {
+					// Politeness gap before every Wikipedia hit (serial batch).
+					await new Promise((r) => setTimeout(r, WIKI_POLITENESS_MS));
+					try {
+						const article = await fetchArticlePlaintext(row.enwikiTitle);
+						if (article == null) {
+							await markWikiNoArticle(code);
+							counts.noArticle++;
+							await unitOk('no_article');
+						} else {
+							await upsertWikiOk(code, article);
+							counts.ok++;
+							await unitOk('ok');
+						}
+					} catch (err) {
+						if (err instanceof WikipediaError && err.rateLimited) {
+							// Stop the batch — remaining units keep their state and
+							// the whole row retries after the rate-limit delay.
+							rateLimit = new EnrichRateLimited(RATE_LIMIT_RETRY_DELAY_MS);
+							budgetRemainder = codes.slice(i);
+							break;
+						}
+						throw err;
+					}
+				}
+			}
+		} catch (err) {
+			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+				0,
+				200
+			);
+			await markWikiError(code, message).catch(() => {});
+			failed.push(code);
+			progress.unitsFailed++;
+			progress.lastError = message;
+			await recordEvent(job.id, 'unit_failed', { code, error: message });
+		}
+		const { cancelRequested } = await updateProgress(job.id, progress);
+		if (cancelRequested) cancelSeen = true;
+	}
+
+	const summary = { ...counts, failed, remainder: budgetRemainder.length };
+
+	if (cancelSeen) {
+		await cancelRunningJob(job.id, attempts, summary);
+		return;
+	}
+	if (rateLimit) {
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(job.id, attempts, rateLimit.retryAfterMs, 'wikipedia rate limit', summary);
+		} else {
+			await failJob(job.id, attempts, 'wikipedia rate limit — retries exhausted');
+		}
+		return;
+	}
+	if (budgetRemainder.length > 0) {
+		// Spill the un-started remainder into its own chunk; this job then
+		// completes honestly with what it actually did.
+		await enqueueJob({
+			type: 'enrich_species',
+			payload: { codes: budgetRemainder, ...(force ? { force } : {}) },
+			dedupKey: dedupKeys.enrichChunk(budgetRemainder),
+			requestedBy: job.requested_by,
+			label: `${budgetRemainder.length} species (spillover)`
+		});
+		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
+	}
+	const attempted = codes.length - counts.fresh - budgetRemainder.length;
+	// Aggregate rule: every attempted unit failing is a transient batch
+	// problem (network/upstream), not success.
+	if (attempted > 0 && failed.length === attempted && attempts < job.max_attempts) {
+		await scheduleRetry(
+			job.id,
+			attempts,
+			retryDelayMs(attempts, 'transient'),
+			'every attempted species failed',
+			summary
+		);
+		return;
+	}
+	if (attempted > 0 && failed.length === attempted) {
+		await failJob(job.id, attempts, 'every attempted species failed', summary);
+		return;
+	}
+	await completeJob(job.id, attempts, summary);
+}
+
 /** Dispatch a claimed job. Never throws — failures become failJob. */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
@@ -707,6 +1009,14 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'scan_need_alerts': {
 				await runNeedAlertScan(job);
+				return;
+			}
+			case 'scan_enrichment': {
+				await runScanEnrichment(job);
+				return;
+			}
+			case 'enrich_species': {
+				await runEnrichSpecies(job, ctx);
 				return;
 			}
 			case 'sync_taxonomy': {

@@ -16,7 +16,7 @@ process.env.BIRDS_DB_APP_NAME = 'birds-worker';
 
 import pg from 'pg';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory } from '$server/jobs';
-import { runJob, ensureNeedAlertScan } from '$server/job-handlers';
+import { runJob, ensureNeedAlertScan, ensureEnrichmentScan } from '$server/job-handlers';
 
 declare const __GIT_SHA__: string;
 const VERSION = typeof __GIT_SHA__ === 'string' ? __GIT_SHA__ : 'dev';
@@ -86,6 +86,12 @@ async function main(): Promise<void> {
 			err instanceof Error ? err.message : err
 		);
 	});
+	await ensureEnrichmentScan().catch((err) => {
+		console.error(
+			'[birds-worker] startup enrichment ensure failed:',
+			err instanceof Error ? err.message : err
+		);
+	});
 	await markWorkerStarted(process.pid, VERSION);
 	console.log(`[birds-worker] started pid=${process.pid} version=${VERSION}`);
 
@@ -125,6 +131,12 @@ async function main(): Promise<void> {
 			await ensureNeedAlertScan().catch((err) => {
 				console.error(
 					'[birds-worker] scan reconciliation failed:',
+					err instanceof Error ? err.message : err
+				);
+			});
+			await ensureEnrichmentScan().catch((err) => {
+				console.error(
+					'[birds-worker] enrichment reconciliation failed:',
 					err instanceof Error ? err.message : err
 				);
 			});

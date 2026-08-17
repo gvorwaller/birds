@@ -6,7 +6,9 @@
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { windowPhrase } from "$lib/time-windows";
-  import type { PageData } from "./$types";
+  import { enhance } from "$app/forms";
+  import { jobsPoll } from "$lib/job-poll.svelte";
+  import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
     "January",
@@ -23,12 +25,69 @@
     "December",
   ];
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
 
   let isViewer = $derived(data.user?.role === "viewer");
   // Reports are centered on the place Home was showing, or the saved home.
   let originName = $derived(data.originLabel ?? "home");
+
+  // --- Species enrichment (About card) ------------------------------------
+  let aboutExpanded = $state(false);
+  let refreshBusy = $state(false);
+  const en = $derived(data.enrichment);
+
+  // Track a queued manual refresh so the layout job chip picks it up.
+  $effect(() => {
+    const q = form && "queued" in form && form.queued ? form.queued : null;
+    if (q) jobsPoll.track(q.jobId);
+  });
+
+  const IUCN_LABELS: Record<string, string> = {
+    LC: "Least Concern",
+    NT: "Near Threatened",
+    VU: "Vulnerable",
+    EN: "Endangered",
+    CR: "Critically Endangered",
+    EW: "Extinct in the Wild",
+    EX: "Extinct",
+    DD: "Data Deficient",
+  };
+
+  /**
+   * Wikidata quantity claims can carry junk alongside real values (verified:
+   * Gray Catbird has a 3.8 g best-rank mass) — only badge a range whose
+   * spread is plausible (max ≤ 3× min), else stay silent rather than wrong.
+   */
+  function rangeBadge(
+    min: number | undefined,
+    max: number | undefined,
+    unit: string,
+  ): string | null {
+    if (min == null || max == null || min <= 0) return null;
+    if (max / min > 3) return null;
+    const lo = Math.round(min);
+    const hi = Math.round(max);
+    return lo === hi ? `${lo} ${unit}` : `${lo}–${hi} ${unit}`;
+  }
+  const massBadge = $derived(
+    rangeBadge(en?.facts?.mass_g_min, en?.facts?.mass_g_max, "g"),
+  );
+  const wingspanBadge = $derived(
+    rangeBadge(en?.facts?.wingspan_cm_min, en?.facts?.wingspan_cm_max, "cm"),
+  );
+  const hasProse = $derived(en?.wiki_status === "ok" && !!en?.wikipedia_extract);
+  const hasFacts = $derived(
+    !!en && (en.iucn_status != null || massBadge != null || wingspanBadge != null),
+  );
+  const retrievedOn = $derived(
+    en?.wiki_fetched_at ? new Date(en.wiki_fetched_at).toLocaleDateString() : null,
+  );
+  const revisionPermalink = $derived(
+    en?.wikipedia_title && en?.wikipedia_rev_id
+      ? `https://en.wikipedia.org/w/index.php?title=${encodeURIComponent(en.wikipedia_title.replace(/ /g, "_"))}&oldid=${en.wikipedia_rev_id}`
+      : null,
+  );
 
   const links = $derived([
     {
@@ -49,12 +108,17 @@
     {
       label: "xeno-canto ↗",
       sub: "sound recordings",
-      href: `https://xeno-canto.org/explore?query=${encodeURIComponent(data.taxon.sci_name)}`,
+      // Direct species page when the enrichment cross-ID is known.
+      href: en?.cross_ids?.xeno_canto_id
+        ? `https://xeno-canto.org/species/${encodeURIComponent(en.cross_ids.xeno_canto_id)}`
+        : `https://xeno-canto.org/explore?query=${encodeURIComponent(data.taxon.sci_name)}`,
     },
     {
       label: "iNaturalist ↗",
       sub: "observations & range",
-      href: `https://www.inaturalist.org/taxa/search?q=${encodeURIComponent(data.taxon.sci_name)}`,
+      href: en?.cross_ids?.inat_taxon_id
+        ? `https://www.inaturalist.org/taxa/${encodeURIComponent(en.cross_ids.inat_taxon_id)}`
+        : `https://www.inaturalist.org/taxa/search?q=${encodeURIComponent(data.taxon.sci_name)}`,
     },
   ]);
 </script>
@@ -215,6 +279,98 @@
     {/if}
   </section>
 
+  {#if en || data.isAdmin}
+    <section class="card">
+      <h2>
+        About {data.taxon.com_name}
+        {#if en?.iucn_status}
+          <span class="iucn" title={IUCN_LABELS[en.iucn_status] ?? en.iucn_status}>
+            {en.iucn_status} · {IUCN_LABELS[en.iucn_status] ?? "IUCN status"}
+          </span>
+        {/if}
+      </h2>
+      {#if form && "message" in form && form.message}
+        <p class="ok">{form.message}</p>
+      {/if}
+      {#if form && "error" in form && form.error}
+        <p class="err" role="alert">{form.error}</p>
+      {/if}
+      {#if hasFacts && (massBadge || wingspanBadge)}
+        <p class="facts muted">
+          {#if massBadge}Mass {massBadge}{/if}
+          {#if massBadge && wingspanBadge}·{/if}
+          {#if wingspanBadge}Wingspan {wingspanBadge}{/if}
+        </p>
+      {/if}
+      {#if hasProse}
+        <p class="lead" class:clamped={!aboutExpanded}>{en?.wikipedia_extract}</p>
+        {#if !aboutExpanded}
+          <button type="button" class="readmore" onclick={() => (aboutExpanded = true)}>
+            Read more
+          </button>
+        {/if}
+        {#each en?.wikipedia_sections ?? [] as s (s.title)}
+          <details class="wiki-section">
+            <summary>{s.title}</summary>
+            <p class="section-text">{s.text}</p>
+          </details>
+        {/each}
+        <p class="wiki-attrib muted">
+          Wikipedia · CC BY-SA 4.0{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}
+        </p>
+        <details class="wiki-license">
+          <summary>Source &amp; license</summary>
+          <p class="muted">
+            Text excerpted, sectioned, and length-capped from the Wikipedia
+            article
+            {#if revisionPermalink}
+              <a href={revisionPermalink} target="_blank" rel="noopener"
+                >"{en?.wikipedia_title}" (this revision)</a
+              >{:else}"{en?.wikipedia_title}"{/if}
+            {#if en?.wikipedia_url}
+              ·
+              <a href={en.wikipedia_url} target="_blank" rel="noopener"
+                >current article</a
+              >
+            {/if}
+            · licensed
+            <a
+              href="https://creativecommons.org/licenses/by-sa/4.0/"
+              target="_blank"
+              rel="noopener">CC BY-SA 4.0</a
+            >{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}. Authors are
+            credited via the revision history linked above.
+          </p>
+        </details>
+      {:else if en}
+        <p class="muted">
+          No Wikipedia article for this species{en.resolution === "no_mapping"
+            ? " (no Wikidata mapping)"
+            : ""} — facts above come from Wikidata where available.
+        </p>
+      {:else}
+        <p class="muted">No enrichment data fetched yet for this species.</p>
+      {/if}
+      {#if data.isAdmin}
+        <form
+          method="POST"
+          action="?/refresh_enrichment"
+          use:enhance={() => {
+            refreshBusy = true;
+            return async ({ update }) => {
+              await update();
+              refreshBusy = false;
+            };
+          }}
+        >
+          <button type="submit" class="secondary" disabled={refreshBusy}>
+            {refreshBusy ? "Queuing…" : "↻ Refresh species data"}
+          </button>
+        </form>
+      {/if}
+    </section>
+  {/if}
+
   <section class="card">
     <h2>Learn more</h2>
     {#each links as l (l.href)}
@@ -236,7 +392,11 @@
     · photos on
     <a href="https://gaylon.photos/birds" target="_blank" rel="noopener"
       >gaylon.photos</a
-    >
+    >{#if hasProse}
+      · species text from
+      <a href="https://en.wikipedia.org" target="_blank" rel="noopener"
+        >Wikipedia</a
+      > (CC BY-SA 4.0){/if}
   </p>
 </div>
 
@@ -270,6 +430,100 @@
   .card h2 {
     font-size: 1.05rem;
     margin-bottom: 10px;
+  }
+  /* --- About card (species enrichment) --- */
+  .iucn {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    background: var(--seen-bg);
+    color: var(--seen-text);
+    vertical-align: middle;
+  }
+  .facts {
+    margin-bottom: 8px;
+  }
+  .lead {
+    white-space: pre-line;
+    line-height: 1.5;
+  }
+  .lead.clamped {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    overflow: hidden;
+  }
+  .readmore {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
+    padding: 8px 0;
+    min-height: 48px;
+    cursor: pointer;
+  }
+  .wiki-section {
+    border-top: 1px solid var(--border);
+  }
+  .wiki-section summary,
+  .wiki-license summary {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+  }
+  .wiki-section summary::-webkit-details-marker,
+  .wiki-license summary::-webkit-details-marker {
+    display: none;
+  }
+  .wiki-section summary::after,
+  .wiki-license summary::after {
+    content: "▸";
+    margin-left: auto;
+    color: var(--muted);
+  }
+  .wiki-section[open] summary::after,
+  .wiki-license[open] summary::after {
+    content: "▾";
+  }
+  .section-text {
+    white-space: pre-line;
+    line-height: 1.5;
+    padding-bottom: 10px;
+  }
+  .wiki-attrib {
+    margin-top: 10px;
+    font-size: 0.78rem;
+  }
+  .wiki-license summary {
+    font-weight: 400;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .ok {
+    color: var(--seen-text);
+  }
+  .err {
+    color: var(--danger);
+  }
+  button.secondary {
+    min-height: 48px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-weight: 600;
+    margin-top: 10px;
+  }
+  button.secondary:disabled {
+    opacity: 0.5;
   }
   .card-head {
     display: flex;

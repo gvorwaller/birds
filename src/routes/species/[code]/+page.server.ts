@@ -1,5 +1,9 @@
-import { error } from "@sveltejs/kit";
-import type { PageServerLoad } from "./$types";
+import { error, fail } from "@sveltejs/kit";
+import type { Actions, PageServerLoad } from "./$types";
+import { getEnrichment } from "$server/species-enrichment";
+import { validSpeciesCode } from "$server/wikidata";
+import { enqueueJob } from "$server/jobs";
+import { dedupKeys } from "$server/job-policy";
 import { query } from "$lib/db";
 import {
   getEbirdApiKey,
@@ -171,8 +175,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     };
   }
 
+  const enrichment = await getEnrichment(code);
+
   return {
     taxon: t,
+    enrichment,
+    isAdmin: locals.user!.role === "admin",
     seen: seen.rows[0] ?? null,
     forecastTeaser,
     photos: photos.rows,
@@ -187,4 +195,43 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     backDays,
     returnLink,
   };
+};
+
+export const actions: Actions = {
+  /**
+   * Force-refresh this species' enrichment via the queue. ADMIN-gated
+   * server-side (CODEX1 plan #5): it spends communal Wikimedia/Anthropic
+   * quota and mutates a global row — "owner" is not a role in this app and
+   * the viewer hook is not an authorization system.
+   */
+  refresh_enrichment: async ({ locals, params }) => {
+    if (locals.user!.role !== "admin") {
+      return fail(403, { error: "Admins only." });
+    }
+    const code = params.code;
+    if (!validSpeciesCode(code)) {
+      return fail(400, { error: "Invalid species code." });
+    }
+    const taxon = await query<{ category: string }>(
+      "SELECT category FROM taxonomy_cache WHERE species_code = $1",
+      [code],
+    );
+    if (taxon.rows[0]?.category !== "species") {
+      return fail(400, { error: "Not an enrichable species." });
+    }
+    const r = await enqueueJob({
+      type: "enrich_species",
+      payload: { codes: [code], force: true },
+      dedupKey: dedupKeys.enrichSpeciesOne(code),
+      requestedBy: locals.user!.id,
+      label: "1 species (manual refresh)",
+    });
+    return {
+      ok: true as const,
+      queued: { jobId: r.jobId, deduped: r.deduped, label: "Species refresh" },
+      message: r.deduped
+        ? "A refresh for this species is already queued."
+        : "Refresh queued — new data appears when the background job finishes.",
+    };
+  },
 };

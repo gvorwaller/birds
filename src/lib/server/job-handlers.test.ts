@@ -180,12 +180,28 @@ vi.mock("$server/push", () => ({
   PushError: pushMocks.FakePushError,
   vapidPublicKey: () => "test-vapid-pub",
 }));
+const enrichMocks = vi.hoisted(() => ({
+  fetchWikidataBatch: vi.fn<(codes: readonly string[]) => Promise<Map<string, unknown>>>(),
+  fetchArticlePlaintext: vi.fn<(title: string) => Promise<unknown>>(),
+}));
+
+vi.mock("$server/wikidata", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./wikidata")>();
+  return { ...real, fetchWikidataBatch: enrichMocks.fetchWikidataBatch };
+});
+vi.mock("$server/wikipedia", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./wikipedia")>();
+  return { ...real, fetchArticlePlaintext: enrichMocks.fetchArticlePlaintext };
+});
+
 vi.mock("$server/crypto", () => ({
   decryptSecret: (v: string) => v.replace(/^enc-/, ""),
   encryptSecret: (v: string) => `enc-${v}`,
 }));
 
-const { runJob, ensureNeedAlertScan } = await import("./job-handlers");
+const { runJob, ensureNeedAlertScan, ENRICH_SCAN_DRAIN_MS, ENRICH_SCAN_IDLE_MS } = await import(
+  "./job-handlers"
+);
 const { RATE_LIMIT_RETRY_DELAY_MS, TRANSIENT_RETRY_DELAYS_MS } = await import(
   "./job-policy"
 );
@@ -1096,5 +1112,212 @@ describe("runJob — dispatch", () => {
     await runJob(jobRow({ type: "mystery_job" }), ctx);
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.failJob.mock.calls[0][2]).toMatch(/no handler/);
+  });
+});
+
+const { WikidataError } = await import("./wikidata");
+const { WikipediaError } = await import("./wikipedia");
+
+describe("runJob — species enrichment (plan Phase 1)", () => {
+
+  const WD = (code: string, title: string | null) => ({
+    speciesCode: code,
+    qid: "Q1",
+    enwikiTitle: title,
+    iucnStatus: "least concern",
+    massKgMin: null,
+    massKgMax: null,
+    wingspanMMin: null,
+    wingspanMMax: null,
+    inatTaxonId: null,
+    xenoCantoId: null,
+  });
+
+  beforeEach(() => {
+    enrichMocks.fetchWikidataBatch.mockReset();
+    enrichMocks.fetchArticlePlaintext.mockReset();
+    // Freshness probe: default NOT fresh (attempt every unit).
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: false }] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+  });
+
+  it("chunk happy path: mixed outcomes (ok / no_article / no_mapping) complete with stage counts", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        ["margod", WD("margod", "Marbled godwit")],
+        ["grycat", WD("grycat", "Gray catbird")],
+        // "ghost1" absent → no_mapping
+      ]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext
+      .mockResolvedValueOnce({
+        title: "Marbled godwit",
+        revId: 7,
+        extract: "prose",
+        sections: [],
+      })
+      .mockResolvedValueOnce(null); // catbird article missing → no_article
+
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat", "ghost1"] } }),
+      ctx,
+    );
+
+    // All three are units with NAMED outcomes — none are skips (CODEX1 #11).
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect(oks.map((c) => (c[2] as { outcome: string }).outcome).sort()).toEqual([
+      "no_article",
+      "no_mapping",
+      "ok",
+    ]);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      ok: 1,
+      noArticle: 1,
+      noMapping: 1,
+      failed: [],
+    });
+    // Resolution + prose writes reached the DB gateway.
+    expect(db.calls.some((c) => c.text.includes("INSERT INTO species_enrichment"))).toBe(true);
+  });
+
+  it("SPARQL transient failure → whole-job retry, nothing attempted", async () => {
+    enrichMocks.fetchWikidataBatch.mockRejectedValue(
+      new WikidataError("Wikidata query failed (HTTP 503)", 503, false),
+    );
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchArticlePlaintext).not.toHaveBeenCalled();
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("wikipedia 429 stops the batch → rate-limit retry (Retry-After semantics)", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        ["margod", WD("margod", "Marbled godwit")],
+        ["grycat", WD("grycat", "Gray catbird")],
+      ]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext.mockRejectedValue(
+      new WikipediaError("Wikipedia query failed (HTTP 429)", 429, true),
+    );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat"] } }),
+      ctx,
+    );
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(RATE_LIMIT_RETRY_DELAY_MS);
+    // Only ONE wiki fetch happened — the batch stopped, it did not spray.
+    expect(enrichMocks.fetchArticlePlaintext).toHaveBeenCalledTimes(1);
+  });
+
+  it("per-unit transient failure records unit_failed + wiki error row; batch continues and completes", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        ["margod", WD("margod", "Marbled godwit")],
+        ["grycat", WD("grycat", "Gray catbird")],
+      ]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext
+      .mockRejectedValueOnce(new WikipediaError("Wikipedia unreachable: boom", 0, false))
+      .mockResolvedValueOnce({ title: "Gray catbird", revId: 9, extract: "p", sections: [] });
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat"] } }),
+      ctx,
+    );
+    const fails = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(fails).toHaveLength(1);
+    expect((fails[0][2] as { code: string }).code).toBe("margod");
+    expect(db.calls.some((c) => c.text.includes("wiki_status = 'error'"))).toBe(true);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, failed: ["margod"] });
+  });
+
+  it("EVERY attempted unit failing → transient retry, not a green complete", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["margod", WD("margod", "Marbled godwit")]]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext.mockRejectedValue(
+      new WikipediaError("Wikipedia unreachable: boom", 0, false),
+    );
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("cancel observed mid-chunk → cancelRunningJob with partial summary", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([
+        ["margod", WD("margod", "Marbled godwit")],
+        ["grycat", WD("grycat", "Gray catbird")],
+      ]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext.mockResolvedValue({
+      title: "T",
+      revId: 1,
+      extract: "p",
+      sections: [],
+    });
+    mocks.updateProgress.mockResolvedValue({ cancelRequested: true });
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "grycat"] } }),
+      ctx,
+    );
+    expect(mocks.cancelRunningJob).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchArticlePlaintext).toHaveBeenCalledTimes(1); // second unit never started
+  });
+
+  it("invalid payload (bad codes) → terminal failJob, no network", async () => {
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ['evil"} UNION'] } }),
+      ctx,
+    );
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchWikidataBatch).not.toHaveBeenCalled();
+  });
+
+  it("scan_enrichment enqueues bounded content-hashed chunks and reschedules FAST while work remains", async () => {
+    const codes = Array.from({ length: 70 }, (_, i) => `spcode${i}`);
+    db.handler = (text) => {
+      if (text.includes("FROM taxonomy_cache tc"))
+        return { rows: codes.map((c) => ({ species_code: c })) };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
+    // 70 codes → 3 chunks (30/30/10), each with a distinct content-hash key.
+    expect(mocks.enqueueJob).toHaveBeenCalledTimes(3);
+    const keys = mocks.enqueueJob.mock.calls.map(
+      (c) => (c[0] as { dedupKey: string }).dedupKey,
+    );
+    expect(new Set(keys).size).toBe(3);
+    for (const k of keys) expect(k).toMatch(/^enrich_species:[0-9a-f]{16}$/);
+    const sizes = mocks.enqueueJob.mock.calls.map(
+      (c) => ((c[0] as { payload: { codes: string[] } }).payload.codes ?? []).length,
+    );
+    expect(sizes).toEqual([30, 30, 10]);
+    // Successor scheduled at the drain cadence (backlog exists).
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
+    const successor = mocks.terminalizeAndReschedule.mock.calls[0][3] as {
+      runAfterMs: number;
+    };
+    expect(successor.runAfterMs).toBe(ENRICH_SCAN_DRAIN_MS);
+  });
+
+  it("scan with nothing to do → zero chunks, successor at the DAILY cadence", async () => {
+    db.handler = (text) => {
+      if (text.includes("FROM taxonomy_cache tc")) return { rows: [] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+    const successor = mocks.terminalizeAndReschedule.mock.calls[0][3] as {
+      runAfterMs: number;
+    };
+    expect(successor.runAfterMs).toBe(ENRICH_SCAN_IDLE_MS);
   });
 });

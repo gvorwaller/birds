@@ -24,7 +24,9 @@ export type JobType =
 	| 'retry_loc'
 	| 'sync_lifelist'
 	| 'sync_taxonomy'
-	| 'scan_need_alerts';
+	| 'scan_need_alerts'
+	| 'enrich_species'
+	| 'scan_enrichment';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -32,7 +34,10 @@ export type JobType =
  * reconciliation would resurrect them anyway) — disable the FEATURE in
  * Settings instead of killing the scheduler.
  */
-export const RECURRING_TYPES: ReadonlySet<string> = new Set(['scan_need_alerts']);
+export const RECURRING_TYPES: ReadonlySet<string> = new Set([
+	'scan_need_alerts',
+	'scan_enrichment'
+]);
 
 export type JobEventAction =
 	| 'enqueued'

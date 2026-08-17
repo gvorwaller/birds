@@ -159,7 +159,13 @@ export const dedupKeys = {
 	retryLoc: (locCode: string) => `retry_loc:${locCode}`,
 	syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
 	syncTaxonomy: () => 'sync_taxonomy:global',
-	scanNeedAlerts: () => 'scan_need_alerts:global'
+	scanNeedAlerts: () => 'scan_need_alerts:global',
+	// Content-hashed per chunk (CODEX1 plan #2): identical chunk dedups,
+	// different codes are distinct jobs — a constant key would silently drop
+	// newly-scoped codes because enqueueJob dedup never merges payloads.
+	enrichChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species', codes),
+	enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
+	scanEnrichment: () => 'scan_enrichment:global'
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -302,7 +308,9 @@ const TYPE_NAMES: Record<string, string> = {
 	retry_loc: 'Retry load',
 	sync_lifelist: 'Sync life list',
 	sync_taxonomy: 'Sync taxonomy',
-	scan_need_alerts: 'Need-alert scan (system)'
+	scan_need_alerts: 'Need-alert scan (system)',
+	enrich_species: 'Enrich species data',
+	scan_enrichment: 'Enrichment scan (system)'
 };
 
 export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {
