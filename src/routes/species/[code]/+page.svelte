@@ -10,6 +10,7 @@
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { sectionBlocks } from "$lib/wiki-render";
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
+  import { allAboutBirdsUrl } from "$lib/species-links";
   import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
@@ -123,7 +124,8 @@
     {
       label: "All About Birds ↗",
       sub: "ID tips, life history",
-      href: `https://www.allaboutbirds.org/guide/${data.taxon.com_name.replace(/\s+/g, "_")}`,
+      // Cornell slugs strip punctuation — "Anna's" → Annas (td-09fdc0).
+      href: allAboutBirdsUrl(data.taxon.com_name),
     },
     {
       label: "Macaulay Library ↗",
