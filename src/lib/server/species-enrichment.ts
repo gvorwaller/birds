@@ -304,6 +304,69 @@ export async function aiDueCodes(): Promise<string[]> {
 	return r.rows.map((x) => x.species_code);
 }
 
+export interface GuideResult {
+	species_code: string;
+	com_name: string;
+	sci_name: string;
+	family: string | null;
+	tags: string[];
+	iucn_status: string | null;
+	field_craft: string | null;
+	seen: boolean;
+}
+
+/**
+ * Field-guide search (plan Phase 3). Name matches UNION with FTS — never a
+ * fallback, so a valid substring name hit can't be hidden by unrelated prose
+ * hits (CODEX1 plan note). Deterministic rank: name-tier first, then
+ * ts_rank_cd, then com_name. Tags are AND semantics (tags @> $tags).
+ * seenUserId is the SCOPE user (viewers read their owner's badges).
+ */
+export async function searchEnrichment(
+	q: string,
+	tags: readonly string[],
+	seenUserId: number
+): Promise<GuideResult[]> {
+	const query_ = q.trim().slice(0, 200);
+	const hasQ = query_.length > 0;
+	const like = `%${query_.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+	const r = await query<GuideResult & { name_tier: number; rank: number }>(
+		`SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+		        se.tags, se.iucn_status, se.field_craft,
+		        (ss.species_code IS NOT NULL) AS seen,
+		        CASE WHEN $1 AND (tc.com_name ILIKE $2 OR tc.sci_name ILIKE $2)
+		             THEN 0 ELSE 1 END AS name_tier,
+		        CASE WHEN $1 THEN ts_rank_cd(se.search_tsv, websearch_to_tsquery('english', $3))
+		             ELSE 0 END AS rank
+		   FROM species_enrichment se
+		   JOIN taxonomy_cache tc USING (species_code)
+		   LEFT JOIN seen_species ss
+		     ON ss.user_id = $4 AND ss.species_code = se.species_code
+		  WHERE tc.category = 'species'
+		    AND ($5::text[] = '{}' OR se.tags @> $5::text[])
+		    AND (NOT $1
+		         OR tc.com_name ILIKE $2 OR tc.sci_name ILIKE $2
+		         OR se.search_tsv @@ websearch_to_tsquery('english', $3))
+		  ORDER BY name_tier, rank DESC NULLS LAST, tc.com_name
+		  LIMIT 50`,
+		[hasQ, like, query_, seenUserId, [...tags]]
+	);
+	return r.rows.map(({ name_tier: _t, rank: _r, ...row }) => row);
+}
+
+/** Counts for the Field guide intro/empty state. */
+export async function guideCounts(): Promise<{ enriched: number; annotated: number }> {
+	const r = await query<{ enriched: string; annotated: string }>(
+		`SELECT COUNT(*) FILTER (WHERE wikipedia_extract IS NOT NULL) AS enriched,
+		        COUNT(*) FILTER (WHERE ai_status = 'ok') AS annotated
+		   FROM species_enrichment`
+	);
+	return {
+		enriched: Number(r.rows[0]?.enriched ?? 0),
+		annotated: Number(r.rows[0]?.annotated ?? 0)
+	};
+}
+
 export interface EnrichmentRow {
 	species_code: string;
 	wikidata_qid: string | null;

@@ -89,3 +89,17 @@ describe("safeReturnTo", () => {
     });
   });
 });
+
+describe("Field guide returnTo (plan Phase 3)", () => {
+  it("labels /species exact-or-query as Field guide; detail pages fall through to Back", () => {
+    expect(safeReturnTo("/species")).toEqual({ href: "/species", label: "Field guide" });
+    expect(safeReturnTo("/species?q=mudflat&tags=tide%3Alow")).toEqual({
+      href: "/species?q=mudflat&tags=tide%3Alow",
+      label: "Field guide",
+    });
+    expect(safeReturnTo("/species/margod")).toEqual({
+      href: "/species/margod",
+      label: "Back",
+    });
+  });
+});

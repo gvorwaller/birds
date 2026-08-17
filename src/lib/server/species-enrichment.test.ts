@@ -22,6 +22,7 @@ import {
   markWikiNoArticle,
   wikiStaleCodes,
   aiDueCodes,
+  searchEnrichment,
   upsertAiData,
   upsertResolution,
   upsertWikiOk,
@@ -379,6 +380,88 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
       await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
       await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
       await wipe();
+    }
+  });
+});
+
+describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
+  const A = "gidetst1"; // "Testfinch" — name match target
+  const B = "gidetst2"; // prose/tag match target
+  let uid = 0;
+
+  async function seed() {
+    uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
+    for (const [code, com, sci] of [
+      [A, "Golden Testfinch", "Testus aureus"],
+      [B, "Plain Prosebird", "Testus prosus"],
+    ]) {
+      await query(
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+         VALUES ($1, $2, $3, 'species', 'Testidae')
+         ON CONFLICT (species_code) DO UPDATE SET com_name = $2, sci_name = $3, category = 'species'`,
+        [code, com, sci],
+      );
+    }
+    await upsertWikiOk(A, { title: "A", revId: 1, extract: "A quiet upland bird.", sections: [] });
+    await upsertWikiOk(B, {
+      title: "B",
+      revId: 1,
+      extract: "A testfinch-like skulker of dense reedbeds.",
+      sections: [],
+    });
+    await upsertAiData(B, {
+      fieldCraft: "Listen at dawn in reedbeds.",
+      tags: ["habitat:freshwater-marsh", "find:heard-more-than-seen"],
+      model: "m",
+      sourceRevId: 1,
+    });
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source) VALUES ($1, $2, 'manual')
+       ON CONFLICT DO NOTHING`,
+      [uid, A],
+    );
+  }
+  async function unseed() {
+    await query(`DELETE FROM seen_species WHERE species_code IN ($1, $2)`, [A, B]);
+    await query(`DELETE FROM species_enrichment WHERE species_code IN ($1, $2)`, [A, B]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code IN ($1, $2)`, [A, B]);
+  }
+
+  it("name matches UNION prose matches, name tier ranks first; tags AND-filter; seen badge scoped", async () => {
+    await seed();
+    try {
+      // "testfinch" hits A by NAME and B by PROSE — union, name first.
+      const both = await searchEnrichment("testfinch", [], uid);
+      const codes = both.map((r) => r.species_code);
+      expect(codes).toContain(A);
+      expect(codes).toContain(B);
+      expect(codes.indexOf(A)).toBeLessThan(codes.indexOf(B)); // name tier wins
+      expect(both.find((r) => r.species_code === A)?.seen).toBe(true);
+      expect(both.find((r) => r.species_code === B)?.seen).toBe(false);
+
+      // Tag AND semantics: both tags → B only; adding a non-matching tag → none.
+      const tagged = await searchEnrichment(
+        "",
+        ["habitat:freshwater-marsh", "find:heard-more-than-seen"],
+        uid,
+      );
+      // CONTAINS, not equals: real AI annotations on the shared test
+      // cluster legitimately match too (American Bittern carries exactly
+      // these two tags — the vocabulary working as designed).
+      expect(tagged.map((r) => r.species_code)).toContain(B);
+      expect(tagged.map((r) => r.species_code)).not.toContain(A);
+      const none = await searchEnrichment(
+        "",
+        ["habitat:freshwater-marsh", "tide:low"],
+        uid,
+      );
+      expect(none.map((r) => r.species_code)).not.toContain(B);
+
+      // Tag search finds the AI lexemes through FTS too.
+      const fts = await searchEnrichment("reedbeds dawn", [], uid);
+      expect(fts.map((r) => r.species_code)).toContain(B);
+    } finally {
+      await unseed();
     }
   });
 });

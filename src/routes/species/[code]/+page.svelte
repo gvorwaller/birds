@@ -228,7 +228,8 @@
       {/if}
       <p class="ai-attrib muted">
         AI-generated from the Wikipedia article{#if aiGeneratedOn}&nbsp;·
-          {aiGeneratedOn}{/if} · verify in the field
+          {aiGeneratedOn}{/if} · verify in the field ·
+        <a href="/species">Browse field guide →</a>
       </p>
       {#if data.isAdmin}
         <form
@@ -450,6 +451,7 @@
           No Wikipedia article for this species{en.resolution === "no_mapping"
             ? " (no Wikidata mapping)"
             : ""}{hasFacts ? " — facts above come from Wikidata." : "."}
+          <a href="/species">Browse field guide →</a>
         </p>
       {:else}
         <p class="muted">No enrichment data fetched yet for this species.</p>

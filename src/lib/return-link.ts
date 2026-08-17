@@ -56,6 +56,11 @@ export function safeReturnTo(raw: string | null | undefined): ReturnLink {
     raw === LEGACY_HOME_PATH ||
     raw.startsWith(`${LEGACY_HOME_PATH}?`);
   if (isHome) return { href: raw, label: HOME_LABEL };
+  // The Field guide is exact-or-query only — "/species/..." is a species
+  // DETAIL page and must fall through to "Back", not read as the guide.
+  if (raw === "/species" || raw.startsWith("/species?")) {
+    return { href: raw, label: "Field guide" };
+  }
   // Most-specific prefix first (the list is ordered that way).
   for (const [path, label] of LABELED_PATHS) {
     if (raw === path || raw.startsWith(`${path}?`) || raw.startsWith(`${path}/`)) {

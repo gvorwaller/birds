@@ -112,6 +112,16 @@
 						<span class="ico">{item.ico}</span>{item.label}
 					</a>
 				{/each}
+				<!-- Field guide — drawer only (all roles), never a 5th primary tab
+				     (GROK contract). EXACT match: /species/[code] detail pages must
+				     not light this item. -->
+				<a
+					href="/species"
+					class:active={$page.url.pathname === '/species' || $page.url.pathname === '/species/'}
+					onclick={() => (menuOpen = false)}
+				>
+					<span class="ico">📖</span>Field guide
+				</a>
 				<!-- Reference-only Help link — drawer only (all roles), not a primary tab. -->
 				<a
 					href="/help"
