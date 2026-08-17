@@ -397,6 +397,69 @@
 			</div>
 		{/if}
 
+		<!-- Field guide -->
+		<button
+			class="toggle"
+			class:open={open === 'guide'}
+			aria-expanded={open === 'guide'}
+			onclick={() => toggle('guide')}
+		>
+			<span class="ico">📖</span>
+			<span class="title">Field guide</span>
+			<span class="chev">{open === 'guide' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'guide'}
+			<div class="body">
+				<p>
+					The <a href="/species">Field guide</a> (menu → 📖 Field guide) is a
+					searchable knowledge base of every species in your world — your life
+					list, loaded forecast areas, and photos. Each species carries real
+					article text from Wikipedia, quick facts (conservation status, size),
+					and AI-written field craft: when, where, and how to actually find the
+					bird.
+				</p>
+				<ul>
+					<li>
+						<strong>Search anything</strong> — a name ("godwit"), or words
+						from how you'd describe a bird ("granary trees", "probes
+						mudflats"). Name matches always rank first.
+					</li>
+					<li>
+						<strong>Or filter by tags</strong> — open a dimension (Habitat,
+						Foraging, Tide, Time of day, Movement, Finding) and tap chips.
+						Multiple chips must ALL match, so
+						<em>habitat: mudflat</em> + <em>Tide: low</em> answers "which
+						shorebirds should I look for on a falling tide?" Tap a selected
+						chip (or its ✕ in the Active filters row) to remove it.
+					</li>
+					<li>
+						<strong>Tide tags</strong> are the shorebird special: every
+						coastal species gets exactly one — the stage when it's most
+						findable — and its field craft explains why.
+					</li>
+					<li>
+						Results show your <strong>Seen/Need</strong> badge and tap
+						through to the full species page; the back link returns to your
+						exact search.
+					</li>
+					<li>
+						On any species page, the <strong>About</strong> card holds the
+						article text (tap section headings to expand) and the
+						<strong>Finding this bird</strong> card holds the field craft and
+						tags. The field craft is
+						<strong>AI-generated from the article — verify in the field</strong>;
+						treat it as a knowledgeable friend's hunch, not gospel.
+					</li>
+					<li>
+						Coverage grows by itself: new lifers, newly loaded counties, and
+						new photos are enriched within a day (sooner while a backlog is
+						draining). Species without an English Wikipedia article show
+						facts and links only.
+					</li>
+				</ul>
+			</div>
+		{/if}
+
 		<!-- Need alerts -->
 		<button
 			class="toggle"
