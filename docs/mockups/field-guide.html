@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Field Guide — birds.gaylon.photos mockup</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+
+<!-- Top nav (tablet/desktop ≥640px) -->
+<nav class="top-nav">
+  <button class="hamburger" aria-label="Open menu" onclick="document.getElementById('drawer').classList.add('open'); document.getElementById('scrim').classList.add('open');">
+    <span></span><span></span><span></span>
+  </button>
+  <a class="brand" href="index.html"><span>🪶</span> birds.gaylon.photos</a>
+  <div class="links">
+    <a href="dashboard.html">Home</a>
+    <a href="trips.html">Trips</a>
+    <a href="dashboard.html">Forecast</a>
+    <a href="photos.html">Photos</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="user">gaylon</span>
+</nav>
+
+<!-- Hamburger drawer (Demonstrating drawer-open state with 📖 Field guide active) -->
+<button id="scrim" class="scrim" aria-label="Close menu" onclick="document.getElementById('drawer').classList.remove('open'); document.getElementById('scrim').classList.remove('open');"></button>
+<div id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="Navigation">
+  <div class="drawer-head">
+    <span class="brand"><span>🪶</span> birds</span>
+    <button class="close" aria-label="Close menu" onclick="document.getElementById('drawer').classList.remove('open'); document.getElementById('scrim').classList.remove('open');">✕</button>
+  </div>
+  <nav class="drawer-links">
+    <a href="dashboard.html"><span class="ico">🏠</span>Home</a>
+    <a href="trips.html"><span class="ico">🗺️</span>Trips</a>
+    <a href="dashboard.html"><span class="ico">📅</span>Forecast</a>
+    <a href="photos.html"><span class="ico">📷</span>Photos</a>
+    <!-- Standalone drawer item for Field Guide (Help pattern, exact /species match) -->
+    <a href="field-guide.html" class="active"><span class="ico">📖</span>Field guide</a>
+    <a href="#"><span class="ico">🔔</span>Alerts</a>
+    <a href="#"><span class="ico">⚙️</span>Settings</a>
+    <a href="#"><span class="ico">🔧</span>Admin</a>
+    <a href="#"><span class="ico">❓</span>Help</a>
+  </nav>
+  <div class="drawer-foot">
+    <div class="who">Signed in as Gaylon Vorwaller · admin</div>
+    <button class="signout">Sign out</button>
+  </div>
+</div>
+
+<main class="page">
+  <header class="page-head">
+    <h1>📖 Field Guide</h1>
+    <div class="sub">
+      Browse and filter species across natural history, feeding strategies, tide dependencies, and habitats
+    </div>
+  </header>
+
+  <!-- Search and Tag Dimension Filters Card -->
+  <section class="card">
+    <form method="GET" action="field-guide.html" onsubmit="event.preventDefault();">
+      <!-- Search Input (font-size >= 1rem prevents iOS auto-zoom) -->
+      <div style="margin-bottom:12px;">
+        <label for="species-search" style="display:block; font-weight:700; font-size:0.89rem; margin-bottom:4px;">
+          Search species name, family, or behavior
+        </label>
+        <input
+          id="species-search"
+          type="search"
+          name="q"
+          placeholder="e.g. Godwit, probe, mudflat, Limosa..."
+          value="probe"
+          style="width:100%; min-height:48px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:1rem;"
+        >
+      </div>
+
+      <!-- Tag Dimension Groups (native <details>, DEFAULT-CLOSED, 48px summaries and chips) -->
+      <div style="border-top:1px solid var(--border); margin-top:8px;">
+        <!-- Habitat Dimension -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Habitat (20)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip on">habitat: mudflat</button>
+            <button type="button" class="chip">habitat: beach</button>
+            <button type="button" class="chip">habitat: saltmarsh</button>
+            <button type="button" class="chip">habitat: freshwater-marsh</button>
+            <button type="button" class="chip">habitat: mangrove</button>
+            <button type="button" class="chip">habitat: rocky-shore</button>
+            <button type="button" class="chip">habitat: jetty-pier</button>
+            <button type="button" class="chip">habitat: open-ocean</button>
+            <button type="button" class="chip">habitat: lake-pond</button>
+            <button type="button" class="chip">habitat: river-stream</button>
+            <button type="button" class="chip">habitat: riparian</button>
+            <button type="button" class="chip">habitat: forest</button>
+            <button type="button" class="chip">habitat: woodland-edge</button>
+            <button type="button" class="chip">habitat: grassland</button>
+            <button type="button" class="chip">habitat: shrubland</button>
+            <button type="button" class="chip">habitat: desert</button>
+            <button type="button" class="chip">habitat: conifer</button>
+            <button type="button" class="chip">habitat: alpine-tundra</button>
+            <button type="button" class="chip">habitat: farmland</button>
+            <button type="button" class="chip">habitat: urban-suburban</button>
+          </div>
+        </details>
+
+        <!-- Forage Dimension -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Foraging Strategy (14)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip on">forage: probing-shorebird</button>
+            <button type="button" class="chip">forage: stalking-wader</button>
+            <button type="button" class="chip">forage: aerial-insectivore</button>
+            <button type="button" class="chip">forage: sallying-flycatcher</button>
+            <button type="button" class="chip">forage: foliage-gleaner</button>
+            <button type="button" class="chip">forage: ground-forager</button>
+            <button type="button" class="chip">forage: bark-forager</button>
+            <button type="button" class="chip">forage: dabbler</button>
+            <button type="button" class="chip">forage: diver</button>
+            <button type="button" class="chip">forage: plunge-diver</button>
+            <button type="button" class="chip">forage: hunter</button>
+            <button type="button" class="chip">forage: scavenger</button>
+            <button type="button" class="chip">forage: nectar</button>
+            <button type="button" class="chip">forage: seeds-fruit</button>
+          </div>
+        </details>
+
+        <!-- Tide Dimension (Distinct token + "Tide:" prefix) -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Tide Preference — Coastal Species (6)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip chip-tide on"><span class="chip-prefix">Tide:</span> falling</button>
+            <button type="button" class="chip chip-tide"><span class="chip-prefix">Tide:</span> low</button>
+            <button type="button" class="chip chip-tide"><span class="chip-prefix">Tide:</span> rising</button>
+            <button type="button" class="chip chip-tide"><span class="chip-prefix">Tide:</span> mid-tide</button>
+            <button type="button" class="chip chip-tide"><span class="chip-prefix">Tide:</span> high-roost</button>
+            <button type="button" class="chip chip-tide"><span class="chip-prefix">Tide:</span> tide-independent</button>
+          </div>
+        </details>
+
+        <!-- Time Dimension -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Activity Time (5)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip">time: dawn-peak</button>
+            <button type="button" class="chip">time: dusk-peak</button>
+            <button type="button" class="chip">time: diurnal</button>
+            <button type="button" class="chip">time: crepuscular</button>
+            <button type="button" class="chip">time: nocturnal</button>
+          </div>
+        </details>
+
+        <!-- Movement Dimension -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Movement Pattern (5)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip">movement: resident</button>
+            <button type="button" class="chip">movement: short-distance-migrant</button>
+            <button type="button" class="chip">movement: long-distance-migrant</button>
+            <button type="button" class="chip">movement: altitudinal</button>
+            <button type="button" class="chip">movement: irruptive</button>
+          </div>
+        </details>
+
+        <!-- Finding Dimension -->
+        <details class="dimension-details">
+          <summary class="dimension-summary">
+            <span>Finding Habit (8)</span>
+            <span class="affordance">›</span>
+          </summary>
+          <div class="chip-group" style="padding-bottom:12px;">
+            <button type="button" class="chip">find: conspicuous</button>
+            <button type="button" class="chip">find: secretive</button>
+            <button type="button" class="chip">find: heard-more-than-seen</button>
+            <button type="button" class="chip">find: flocking</button>
+            <button type="button" class="chip">find: solitary</button>
+            <button type="button" class="chip">find: feeder-visitor</button>
+            <button type="button" class="chip">find: canopy</button>
+            <button type="button" class="chip">find: overhead-flight</button>
+          </div>
+        </details>
+      </div>
+    </form>
+  </section>
+
+  <!-- Pinned "Active filters" row above results -->
+  <section class="card" style="background:#fcfdfd; border-color:#d0e2ec;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+      <span style="font-weight:700; font-size:0.88rem; color:var(--text);">
+        Active filters (3 tags):
+      </span>
+      <span style="font-size:0.80rem; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:4px 8px; border-radius:4px;">
+        Match all selected tags (AND)
+      </span>
+    </div>
+
+    <div class="chip-group" style="margin-bottom:8px;">
+      <span class="chip on">habitat: mudflat <span class="chip-remove" aria-label="Remove filter">✕</span></span>
+      <span class="chip on">forage: probing-shorebird <span class="chip-remove" aria-label="Remove filter">✕</span></span>
+      <span class="chip chip-tide on"><span class="chip-prefix">Tide:</span> falling <span class="chip-remove" aria-label="Remove filter">✕</span></span>
+      <button class="btn small" style="min-height:48px; border-radius:24px; padding:0 14px; font-size:0.82rem; color:var(--danger);" onclick="alert('Cleared all active filters')">
+        Clear all
+      </button>
+    </div>
+  </section>
+
+  <!-- Ranked Results List with Seen/Need Badges -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Results (4 species)</h2>
+      <span style="color:var(--muted); font-size:0.83rem;">Ranked by name match &amp; tag relevance</span>
+    </div>
+
+    <!-- Result 1: Marbled Godwit -->
+    <div class="obs">
+      <div class="grow">
+        <div class="name">
+          <a href="species-detail-enriched.html?q=probe&amp;tags=habitat:mudflat,forage:probing-shorebird,tide:falling">
+            Marbled Godwit
+          </a>
+          <span class="badge seen">Seen</span>
+        </div>
+        <div class="meta">
+          <em>Limosa fedoa</em> · Sandpipers and Allies (Scolopacidae)
+        </div>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:4px; line-height:1.4;">
+          Large shorebird probing intertidal mudflats and beaches on falling and low tides for benthic invertebrates.
+        </p>
+        <div class="chip-group" style="margin-top:6px; margin-bottom:0;">
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">habitat: mudflat</span>
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">forage: probing-shorebird</span>
+          <span class="chip chip-tide on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;"><span class="chip-prefix">Tide:</span> falling</span>
+        </div>
+      </div>
+      <div class="right">
+        <span style="font-size:0.83rem; font-weight:700; color:var(--accent);">Match 100%</span>
+        <div class="when">2 photos</div>
+      </div>
+    </div>
+
+    <!-- Result 2: Short-billed Dowitcher -->
+    <div class="obs">
+      <div class="grow">
+        <div class="name">
+          <a href="species-detail-enriched.html?q=probe&amp;tags=habitat:mudflat,forage:probing-shorebird,tide:falling">
+            Short-billed Dowitcher
+          </a>
+          <span class="badge seen">Seen</span>
+        </div>
+        <div class="meta">
+          <em>Limnodromus griseus</em> · Sandpipers and Allies (Scolopacidae)
+        </div>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:4px; line-height:1.4;">
+          Rapid sewing-machine probing motion in tidal mudflats and coastal lagoons during ebb tide.
+        </p>
+        <div class="chip-group" style="margin-top:6px; margin-bottom:0;">
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">habitat: mudflat</span>
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">forage: probing-shorebird</span>
+          <span class="chip chip-tide on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;"><span class="chip-prefix">Tide:</span> falling</span>
+        </div>
+      </div>
+      <div class="right">
+        <span style="font-size:0.83rem; font-weight:700; color:var(--accent);">Match 100%</span>
+        <div class="when">1 photo</div>
+      </div>
+    </div>
+
+    <!-- Result 3: Long-billed Curlew -->
+    <div class="obs">
+      <div class="grow">
+        <div class="name">
+          <a href="species-detail-enriched.html?q=probe&amp;tags=habitat:mudflat,forage:probing-shorebird,tide:falling">
+            Long-billed Curlew
+          </a>
+          <span class="badge need">Need</span>
+        </div>
+        <div class="meta">
+          <em>Numenius americanus</em> · Sandpipers and Allies (Scolopacidae)
+        </div>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:4px; line-height:1.4;">
+          Enormous decurved bill used to extract deep burrowing shrimp and crabs from tidal mudflats.
+        </p>
+        <div class="chip-group" style="margin-top:6px; margin-bottom:0;">
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">habitat: mudflat</span>
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">forage: probing-shorebird</span>
+          <span class="chip chip-tide on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;"><span class="chip-prefix">Tide:</span> falling</span>
+        </div>
+      </div>
+      <div class="right">
+        <span style="font-size:0.83rem; font-weight:700; color:var(--accent);">Match 100%</span>
+        <div class="when">Target</div>
+      </div>
+    </div>
+
+    <!-- Result 4: Red Knot -->
+    <div class="obs">
+      <div class="grow">
+        <div class="name">
+          <a href="species-detail-enriched.html?q=probe&amp;tags=habitat:mudflat,forage:probing-shorebird,tide:falling">
+            Red Knot
+          </a>
+          <span class="badge need">Need</span>
+          <span class="badge badge-iucn-nt" style="font-size:0.68rem;">NT · Near Threatened</span>
+        </div>
+        <div class="meta">
+          <em>Calidris canutus</em> · Sandpipers and Allies (Scolopacidae)
+        </div>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:4px; line-height:1.4;">
+          Medium sandpiper probing tidal mud and wave-wash zones for horseshoe crab eggs and coquina clams.
+        </p>
+        <div class="chip-group" style="margin-top:6px; margin-bottom:0;">
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">habitat: mudflat</span>
+          <span class="chip on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;">forage: probing-shorebird</span>
+          <span class="chip chip-tide on" style="font-size:0.75rem; min-height:36px; padding:4px 10px;"><span class="chip-prefix">Tide:</span> falling</span>
+        </div>
+      </div>
+      <div class="right">
+        <span style="font-size:0.83rem; font-weight:700; color:var(--accent);">Match 100%</span>
+        <div class="when">Target</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════════ -->
+  <!-- EMPTY STATE (Annotated Reference Block on Same Page)                      -->
+  <!-- ══════════════════════════════════════════════════════════════════════════ -->
+  <section class="card" style="border:2px dashed #b6e4ef; background:#fbfdff; margin-top:32px;">
+    <div class="card-head">
+      <h2 style="color:#055160;">Empty State Variant: No Matching Species</h2>
+      <span class="badge need" style="background:#e8f2ff; color:#055160; border:1px solid #b6e4ef;">Prototype Reference Block</span>
+    </div>
+    <p style="color:var(--muted); font-size:0.85rem; margin-bottom:12px;">
+      <em>Note for Gaylon: When a query or strict combination of tags yields zero matching taxa, the browser renders an actionable empty state encouraging tag broadening rather than a blank screen.</em>
+    </p>
+
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:32px 16px; text-align:center;">
+      <div style="font-size:2rem; margin-bottom:8px;">🔍</div>
+      <h3 style="font-size:1.1rem; margin-bottom:6px;">No species match all selected filters</h3>
+      <p style="color:var(--muted); font-size:0.9rem; max-width:480px; margin:0 auto 16px;">
+        No species currently match <strong>"alpine-tundra"</strong> + <strong>"Tide: falling"</strong> + <strong>"hunter"</strong> under the strict AND criteria. Try removing one or more tag dimensions.
+      </p>
+      <div style="display:flex; justify-content:center; gap:8px;">
+        <button class="btn primary small" onclick="alert('Reset filters')">Reset all filters</button>
+        <a class="btn small" href="field-guide.html">Browse all species</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Drawer Control Helper for Prototype Review -->
+  <section class="card" style="background:#f8f9fa; border:1px solid #dee2e6; margin-top:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <span style="font-size:0.85rem; font-weight:600; color:var(--muted);">
+        Prototype interactive test: Test the live navigation drawer
+      </span>
+      <button class="btn small" onclick="document.getElementById('drawer').classList.toggle('open'); document.getElementById('scrim').classList.toggle('open');">
+        ☰ Toggle Navigation Drawer
+      </button>
+    </div>
+  </section>
+
+  <p class="attribution">
+    Data from <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a> · species knowledge enriched with <a href="https://wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> &amp; AI field craft
+  </p>
+</main>
+
+<!-- Bottom nav (phone <640px) — Live 4 + More chrome -->
+<nav class="bottom-nav">
+  <a href="dashboard.html"><span class="ico">🏠</span>Home</a>
+  <a href="trips.html"><span class="ico">🗺️</span>Trips</a>
+  <a href="dashboard.html"><span class="ico">📅</span>Forecast</a>
+  <a href="photos.html"><span class="ico">📷</span>Photos</a>
+  <button class="more-btn" aria-label="More" onclick="document.getElementById('drawer').classList.add('open'); document.getElementById('scrim').classList.add('open');">
+    <span class="ico">☰</span>More
+  </button>
+</nav>
+
+</body>
+</html>

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Species: Marbled Godwit (Enriched) — birds.gaylon.photos mockup</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+
+<!-- Top nav (tablet/desktop ≥640px) -->
+<nav class="top-nav">
+  <button class="hamburger" aria-label="Open menu" onclick="document.getElementById('drawer').classList.add('open'); document.getElementById('scrim').classList.add('open');">
+    <span></span><span></span><span></span>
+  </button>
+  <a class="brand" href="index.html"><span>🪶</span> birds.gaylon.photos</a>
+  <div class="links">
+    <a href="dashboard.html">Home</a>
+    <a href="trips.html">Trips</a>
+    <a href="dashboard.html">Forecast</a>
+    <a href="photos.html">Photos</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="user">gaylon</span>
+</nav>
+
+<!-- Hamburger drawer (all widths) -->
+<button id="scrim" class="scrim" aria-label="Close menu" onclick="document.getElementById('drawer').classList.remove('open'); document.getElementById('scrim').classList.remove('open');"></button>
+<div id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="Navigation">
+  <div class="drawer-head">
+    <span class="brand"><span>🪶</span> birds</span>
+    <button class="close" aria-label="Close menu" onclick="document.getElementById('drawer').classList.remove('open'); document.getElementById('scrim').classList.remove('open');">✕</button>
+  </div>
+  <nav class="drawer-links">
+    <a href="dashboard.html"><span class="ico">🏠</span>Home</a>
+    <a href="trips.html"><span class="ico">🗺️</span>Trips</a>
+    <a href="dashboard.html"><span class="ico">📅</span>Forecast</a>
+    <a href="photos.html"><span class="ico">📷</span>Photos</a>
+    <a href="field-guide.html"><span class="ico">📖</span>Field guide</a>
+    <a href="#"><span class="ico">🔔</span>Alerts</a>
+    <a href="#"><span class="ico">⚙️</span>Settings</a>
+    <a href="#"><span class="ico">🔧</span>Admin</a>
+    <a href="#"><span class="ico">❓</span>Help</a>
+  </nav>
+  <div class="drawer-foot">
+    <div class="who">Signed in as Gaylon Vorwaller · admin</div>
+    <button class="signout">Sign out</button>
+  </div>
+</div>
+
+<main class="page">
+  <!-- 1. Header -->
+  <header class="page-head">
+    <div class="sub"><a href="field-guide.html">← Field guide</a></div>
+    <h1>Marbled Godwit <span class="badge seen">Seen</span></h1>
+    <div class="sub">
+      <em>Limosa fedoa</em> · eBird code <code>margod</code> · Sandpipers and Allies (Scolopacidae) · first seen Oct 14, 2022
+    </div>
+  </header>
+
+  <!-- 2. Gallery (omit when empty; Marbled Godwit has 2 photos on gaylon.photos) -->
+  <section class="card">
+    <h2>Your photos <span style="color:var(--muted); font-weight:400; font-size:0.85rem">2 on gaylon.photos</span></h2>
+    <div class="photo-strip">
+      <a href="https://gaylon.photos/birds/photo/P1000815-a3f67e1f" target="_blank" rel="noopener">
+        <img loading="lazy" alt="Marbled Godwit, Oct 2022" src="https://gaylonphotos.sfo3.cdn.digitaloceanspaces.com/birds/thumbs/P1000815-a3f67e1f.jpg">
+      </a>
+      <a href="https://gaylon.photos/birds/photo/IMG_1513-eb9cc4eb" target="_blank" rel="noopener">
+        <img loading="lazy" alt="Marbled Godwit, 2023" src="https://gaylonphotos.sfo3.cdn.digitaloceanspaces.com/birds/thumbs/IMG_1513-eb9cc4eb.jpg">
+      </a>
+    </div>
+    <div class="sub" style="color:var(--muted); font-size:0.83rem; margin-top:8px">
+      Oct 14, 2022 · opens on gaylon.photos ↗
+    </div>
+  </section>
+
+  <!-- 3. Finding this bird (AI Field Craft & Tag Chips - td-47d6d5 centerpiece) -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Finding this bird</h2>
+      <a href="field-guide.html?tags=forage:probing-shorebird" style="font-size:0.85rem; font-weight:600;">Browse field guide →</a>
+    </div>
+
+    <!-- 2-4 hedged field-craft sentences that EXPLICITLY name falling/low tide -->
+    <p style="font-size:0.95rem; line-height:1.6; margin-bottom:12px;">
+      Look for Marbled Godwits actively foraging on expansive intertidal mudflats and sandy ocean beaches, most reliably during a <strong>falling tide</strong> and through <strong>low tide</strong> as freshly exposed wet substrate uncovers benthic invertebrates. Birds probe deeply with their long, slightly upturned, bicolored bills, often feeding in compact flocks alongside Willets and Short-billed Dowitchers. At high tide they typically gather into dense, resting communal roosts on upper beaches or coastal salt pannes.
+    </p>
+
+    <!-- Grouped tag chips using v1 vocabulary. Tide chips have distinct token AND "Tide" text prefix -->
+    <div class="chip-group" aria-label="Field craft tags">
+      <a class="chip" href="field-guide.html?tags=habitat:mudflat" title="Habitat: Mudflat">habitat: mudflat</a>
+      <a class="chip" href="field-guide.html?tags=habitat:beach" title="Habitat: Beach">habitat: beach</a>
+      <a class="chip" href="field-guide.html?tags=forage:probing-shorebird" title="Foraging method: Probing shorebird">forage: probing-shorebird</a>
+      <a class="chip chip-tide on" href="field-guide.html?tags=tide:falling" title="Optimal tide: Falling"><span class="chip-prefix">Tide:</span> falling</a>
+      <a class="chip chip-tide on" href="field-guide.html?tags=tide:low" title="Optimal tide: Low"><span class="chip-prefix">Tide:</span> low</a>
+      <a class="chip" href="field-guide.html?tags=time:diurnal" title="Activity time: Diurnal">time: diurnal</a>
+      <a class="chip" href="field-guide.html?tags=movement:short-distance-migrant" title="Movement: Short-distance migrant">movement: short-distance-migrant</a>
+      <a class="chip" href="field-guide.html?tags=find:flocking" title="Finding habit: Flocking">find: flocking</a>
+    </div>
+
+    <!-- Muted attribution line -->
+    <p style="color:var(--muted); font-size:0.78rem; margin-top:12px;">
+      AI-generated from the Wikipedia article · 2026-08-17 · verify in the field
+    </p>
+
+    <!-- Admin-only refresh button (annotated) -->
+    <div class="admin-control-box">
+      <button class="btn small" onclick="alert('Enqueued AI field-craft regeneration job for margod.')">
+        ⟳ Refresh AI field craft <span class="admin-badge">Admin</span>
+      </button>
+      <span class="admin-note">admin sees this; viewer/user do not</span>
+    </div>
+  </section>
+
+  <!-- 4. Forecast teaser -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Best time of year — Florida <span style="color:var(--muted); font-weight:400; font-size:0.85rem">among loaded states · peaks winter/migration</span></h2>
+    </div>
+    <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:10px; font-size:0.88rem;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span style="font-weight:600;">Checklist Frequency: Oct – Mar (Wintering &amp; Migration)</span>
+        <span style="color:var(--accent); font-weight:700;">Peak: Nov – Feb</span>
+      </div>
+      <div style="height:12px; background:#dde3e8; border-radius:6px; overflow:hidden; display:flex;">
+        <div style="width:25%; background:var(--accent);" title="Oct-Dec High"></div>
+        <div style="width:25%; background:var(--accent);" title="Jan-Mar High"></div>
+        <div style="width:25%; background:#b6e4ef;" title="Apr-Jun Low"></div>
+        <div style="width:25%; background:#dde3e8;" title="Jul-Sep Rare"></div>
+      </div>
+    </div>
+    <p style="margin-bottom:0;">
+      <a href="dashboard.html" style="font-size:0.89rem; font-weight:600;">Where should I go? — county &amp; hotspot forecast →</a>
+    </p>
+  </section>
+
+  <!-- 5. Nearby reports -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Recent reports near home — last 14 days</h2>
+      <span style="color:var(--muted); font-size:0.83rem; font-weight:600;">Radius 40 km</span>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="#">Huguenot Memorial Park</a> <span class="hotspot-badge" style="background:#e8f2ff; border:1px solid #bfd8ff; border-radius:999px; color:#165c9f; font-size:0.68rem; font-weight:800; padding:2px 7px; text-transform:uppercase;">eBird Hotspot ↗</span></div>
+        <div class="meta">14 birds · mudflats &amp; inlet sandbar · falling tide 9:30 am</div>
+      </div>
+      <div class="right">
+        <div class="dist">18.4 km</div>
+        <div class="when">today 10:15 am</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="#">Fort George Inlet — Bird Islands</a></div>
+        <div class="meta">6 birds · resting on tidal spit at high tide</div>
+      </div>
+      <div class="right">
+        <div class="dist">19.8 km</div>
+        <div class="when">yesterday 2:20 pm</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="#">Nassau Sound Fishing Pier State Recreation Site</a></div>
+        <div class="meta">2 birds · shoreline foraging</div>
+      </div>
+      <div class="right">
+        <div class="dist">27.1 km</div>
+        <div class="when">3 days ago</div>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+      <a class="btn primary" href="trips.html">+ Add to a trip</a>
+      <a class="btn" href="#">Best time chart (eBird) ↗</a>
+    </div>
+  </section>
+
+  <!-- 6. About (Clamped Lead, Whitelisted Details Default-Closed, Facts Badges, Compact Attribution) -->
+  <section class="card">
+    <div class="card-head">
+      <h2>About Marbled Godwit</h2>
+      <a href="field-guide.html" style="font-size:0.85rem; font-weight:600;">Browse field guide →</a>
+    </div>
+
+    <!-- Facts badges (IUCN chip color+text, mass, wingspan) -->
+    <div class="facts-row">
+      <div class="fact-item">
+        <span class="fact-label">IUCN Status:</span>
+        <span class="badge badge-iucn-lc">LC · Least Concern</span>
+      </div>
+      <div class="fact-item">
+        <span class="fact-label">Mass:</span>
+        <span class="fact-val">280–510 g</span>
+      </div>
+      <div class="fact-item">
+        <span class="fact-label">Wingspan:</span>
+        <span class="fact-val">70–82 cm</span>
+      </div>
+      <div class="fact-item">
+        <span class="fact-label">Length:</span>
+        <span class="fact-val">42–48 cm</span>
+      </div>
+    </div>
+
+    <!-- Wikipedia lead: clamped ~6 lines with in-place "Read more" toggle -->
+    <div id="wiki-lead" class="wiki-lead clamped">
+      The <strong>marbled godwit</strong> (<em>Limosa fedoa</em>) is a large shorebird in the sandpiper family, Scolopacidae. It is one of the four species of godwits, characterized by its long legs and very long, bicolored bill with a slight upward curve. Adults have mottled brown and buff plumage with distinctive cinnamon wing linings visible in flight. It breeds in the northern prairies of North America and winters along the Atlantic, Pacific, and Gulf coasts of the United States and Mexico. They feed by probing deeply into wet mud, sand, and shallow water for aquatic invertebrates, mollusks, worms, and crustaceans. Their populations declined drastically in the 19th century due to unregulated hunting and extensive loss of native prairie breeding habitat, but numbers have stabilized under modern conservation protections.
+    </div>
+    <button id="lead-toggle-btn" class="read-more-btn" onclick="
+      var el = document.getElementById('wiki-lead');
+      var btn = document.getElementById('lead-toggle-btn');
+      if (el.classList.contains('clamped')) {
+        el.classList.remove('clamped');
+        btn.textContent = 'Show less';
+      } else {
+        el.classList.add('clamped');
+        btn.textContent = 'Read more...';
+      }
+    ">Read more...</button>
+
+    <!-- Whitelisted sections as native <details>, DEFAULT-CLOSED on all screen widths -->
+    <div style="margin-top:12px;">
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Description</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>Adults have long blue-grey legs and a very long, slightly upturned pink bill with a dark tip. The neck, breast, and belly are pale brown with dark brown barring on the breast and flanks. The back is mottled dark brown and tawny. They show bright cinnamon wing linings in flight, which distinguishes them from other large shorebirds like the Long-billed Curlew.</p>
+        </div>
+      </details>
+
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Habitat</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>During the breeding season, Marbled Godwits nest in native shortgrass and mixed-grass prairie marshes and wetland edges in the northern Great Plains. On migration and during winter, they occupy coastal environments including tidal mudflats, sandy ocean beaches, salt marshes, and estuaries.</p>
+        </div>
+      </details>
+
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Behaviour</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>They are gregarious outside the nesting season, often roosting and foraging in sizable flocks. When resting during high tide, flocks gather on sandbars or upper beaches, standing tightly packed with bills tucked under their scapular feathers.</p>
+        </div>
+      </details>
+
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Feeding</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>These birds forage by walking steadily through wet sand or shallow water, repeatedly probing deep into the mud with their sensitive bill tips. Prey items include polychaete worms, bivalves, crabs, amphipods, and aquatic insect larvae. In inland prairie habitats, they also consume grasshoppers and seeds.</p>
+        </div>
+      </details>
+
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Breeding</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>Nesting occurs on the ground in open prairie grasslands, usually near wetland sloughs. The nest is a shallow scrape lined with dry grasses. A typical clutch consists of four olive-buff eggs marked with darker brown spots, incubated by both parents for roughly 24 to 26 days.</p>
+        </div>
+      </details>
+
+      <details class="wiki-details">
+        <summary class="wiki-summary">
+          <span>Migration</span>
+          <span class="affordance">›</span>
+        </summary>
+        <div class="wiki-content">
+          <p>Marbled Godwits migrate south in late summer to coastal wintering grounds extending along both coasts of North America southward to Central America. Large staging concentrations occur at major coastal estuaries such as Humboldt Bay and the Gulf of California.</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- Attribution: One-line footer + Source & license disclosure -->
+    <div class="attribution-mini">
+      <div class="attribution-line">
+        Wikipedia · CC BY-SA 4.0 · retrieved 2026-08-17
+      </div>
+      <details class="attribution-details">
+        <summary class="attribution-summary">Source &amp; license ▾</summary>
+        <div class="attribution-content">
+          <ul>
+            <li><strong>Revision Permalink:</strong> <a href="https://en.wikipedia.org/w/index.php?title=Marbled_godwit&amp;oldid=1238472910" target="_blank" rel="noopener">https://en.wikipedia.org/w/index.php?title=Marbled_godwit&amp;oldid=1238472910</a></li>
+            <li><strong>Article URL:</strong> <a href="https://en.wikipedia.org/wiki/Marbled_godwit" target="_blank" rel="noopener">https://en.wikipedia.org/wiki/Marbled_godwit</a></li>
+            <li><strong>License:</strong> <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)</a></li>
+            <li><strong>Retrieved:</strong> 2026-08-17</li>
+            <li><strong>Notice:</strong> Text excerpted, formatted into sections, and summarized from the original Wikipedia article under CC BY-SA 4.0.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <!-- Admin-only refresh button for Wikipedia data -->
+    <div class="admin-control-box">
+      <button class="btn small" onclick="alert('Enqueued Wikipedia/Wikidata refresh job for margod.')">
+        ⟳ Re-sync Wikipedia &amp; Wikidata <span class="admin-badge">Admin</span>
+      </button>
+      <span class="admin-note">admin sees this; viewer/user do not</span>
+    </div>
+  </section>
+
+  <!-- 7. Learn more (Direct external link-outs) -->
+  <section class="card">
+    <h2>Learn more</h2>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="https://ebird.org/species/margod" target="_blank" rel="noopener">eBird species page ↗</a></div>
+        <div class="meta">range maps, bar charts, photos, checklist history</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="https://www.allaboutbirds.org/guide/Marbled_Godwit" target="_blank" rel="noopener">All About Birds ↗</a></div>
+        <div class="meta">Cornell Lab identification tips, sounds, life history</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="https://search.macaulaylibrary.org/catalog?taxonCode=margod" target="_blank" rel="noopener">Macaulay Library ↗</a></div>
+        <div class="meta">media archive: photos, audio recordings, video</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="https://xeno-canto.org/explore?query=Limosa%20fedoa" target="_blank" rel="noopener">xeno-canto ↗</a></div>
+        <div class="meta">sound recordings &amp; sonograms from global field recordists</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="https://www.inaturalist.org/taxa/search?q=Limosa%20fedoa" target="_blank" rel="noopener">iNaturalist taxon ↗</a></div>
+        <div class="meta">community observations, phenology &amp; range maps</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════════ -->
+  <!-- DEGRADED NO-ENRICHMENT STATE (Annotated Reference Block on Same Page)     -->
+  <!-- ══════════════════════════════════════════════════════════════════════════ -->
+  <section class="card" style="border:2px dashed #b6e4ef; background:#fbfdff; margin-top:32px;">
+    <div class="card-head">
+      <h2 style="color:#055160;">Degraded State: Species Without Wikipedia Article</h2>
+      <span class="badge need" style="background:#e8f2ff; color:#055160; border:1px solid #b6e4ef;">Prototype Reference Block</span>
+    </div>
+    <p style="color:var(--muted); font-size:0.85rem; margin-bottom:12px;">
+      <em>Note for Gaylon: When a species has no Wikipedia article (or during initial pipeline ingest before resolution), the page degrades gracefully. Finding this bird is omitted entirely (no hallucinated AI without Wikipedia evidence), and the About card shows basic Wikidata facts plus a muted note — never an empty card shell or broken layout.</em>
+    </p>
+
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px;">
+      <h3 style="font-size:1rem; margin-bottom:8px;">About Tristan Albatross (<em>Diomedea dabbenena</em>)</h3>
+      <div class="facts-row">
+        <div class="fact-item">
+          <span class="fact-label">IUCN Status:</span>
+          <span class="badge badge-iucn-cr">CR · Critically Endangered</span>
+        </div>
+        <div class="fact-item">
+          <span class="fact-label">Mass:</span>
+          <span class="fact-val">6.8–7.3 kg</span>
+        </div>
+        <div class="fact-item">
+          <span class="fact-label">Wingspan:</span>
+          <span class="fact-val">305 cm</span>
+        </div>
+      </div>
+      <p style="color:var(--muted); font-size:0.89rem; font-style:italic; margin-top:8px; margin-bottom:0;">
+        No Wikipedia article is available for this species yet. Refer to external resources below for species identification and natural history.
+      </p>
+    </div>
+  </section>
+
+  <!-- Page-level eBird attribution (separate from Wikipedia block) -->
+  <p class="attribution">
+    Data from <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a> · photos on <a href="https://gaylon.photos/birds" target="_blank" rel="noopener">gaylon.photos</a>
+  </p>
+</main>
+
+<!-- Bottom nav (phone <640px) — Live 4 + More chrome -->
+<nav class="bottom-nav">
+  <a href="dashboard.html"><span class="ico">🏠</span>Home</a>
+  <a href="trips.html"><span class="ico">🗺️</span>Trips</a>
+  <a href="dashboard.html"><span class="ico">📅</span>Forecast</a>
+  <a href="photos.html"><span class="ico">📷</span>Photos</a>
+  <button class="more-btn" aria-label="More" onclick="document.getElementById('drawer').classList.add('open'); document.getElementById('scrim').classList.add('open');">
+    <span class="ico">☰</span>More
+  </button>
+</nav>
+
+</body>
+</html>

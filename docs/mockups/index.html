@@ -20,7 +20,7 @@
     gaylon.photos — real CDN thumbnails are hotlinked below), Postgres + madonnahist infrastructure patterns,
     and first-class responsive support for iPhone / iPad / desktop.
     The V1 design doc (<code>birds-app-design.md</code>) is deprecated; see
-    <code>birds-app-design-V2-Fable-revision-plan.md</code> for the V2 spec direction.
+    <code>birds-app-design-V2-Fable-revision-plan.md</code> and <code>2026-08-17-species-enrichment-plan.md</code> for specs.
   </p>
 </div>
 
@@ -53,7 +53,19 @@
     </div>
     <div class="obs">
       <div class="grow">
-        <div class="name"><a href="species.html">Species page (Roseate Spoonbill)</a></div>
+        <div class="name"><a href="species-detail-enriched.html">Enriched Species Detail (Marbled Godwit)</a> <span class="badge seen">New Phase 0</span></div>
+        <div class="meta">Field-first card order: header → gallery → "Finding this bird" (with falling/low tide craft and distinct Tide token chips) → forecast teaser → nearby reports → About (clamped Wikipedia lead, closed details, IUCN badges, compact CC BY-SA 4.0 footer + source disclosure) → Learn more. Includes degraded no-article state block.</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="field-guide.html">Field Guide (/species Browser)</a> <span class="badge seen">New Phase 0</span></div>
+        <div class="meta">Natural history browser: search input (font-size 1rem), collapsed tag dimension groups (48px summaries and chips), pinned active filters row with AND matching, ranked results with Seen/Need badges, empty state, and drawer navigation.</div>
+      </div>
+    </div>
+    <div class="obs">
+      <div class="grow">
+        <div class="name"><a href="species.html">Species page baseline (Roseate Spoonbill)</a></div>
         <div class="meta">Your photo strip, recent reports near home, add-to-trip, external resources (eBird / All About Birds / Macaulay / xeno-canto).</div>
       </div>
     </div>
@@ -62,19 +74,22 @@
   <div class="card">
     <h2>How to review responsiveness</h2>
     <p style="color:var(--muted); font-size:0.92rem">
-      Mobile-first with two breakpoints. Resize the window or use Chrome DevTools device toolbar:
+      Mobile-first with fluid layouts and breakpoints. Review on physical devices or Chrome/Safari DevTools device toolbar:
     </p>
-    <div class="obs"><div class="grow"><div class="name">iPhone (&lt; 640px)</div><div class="meta">Fixed bottom nav with safe-area inset, stacked map above list (map capped at 50vh), 48px tap targets, 18px base font.</div></div></div>
+    <div class="obs"><div class="grow"><div class="name">iPhone SE &amp; Mini (320×568, 375×667)</div><div class="meta">Fixed bottom nav with safe-area inset, 48px tap targets, 18px base font, wrapping chip rows, zero horizontal scroll, graceful layout at 200% text zoom.</div></div></div>
+    <div class="obs"><div class="grow"><div class="name">Standard iPhone (390×844) &amp; iPhone Plus/Pro Max</div><div class="meta">Comfortable single-column card flow, clamped 6-line Wikipedia lead with in-place expand, grouped dimension filters, bottom safe-area padding.</div></div></div>
+    <div class="obs"><div class="grow"><div class="name">Phone Landscape (844×390)</div><div class="meta">Scrollable drawer avoiding button clip, compact header spacing, no viewport lock (no 100vh bugs).</div></div></div>
     <div class="obs"><div class="grow"><div class="name">iPad (≥ 640px)</div><div class="meta">Top nav appears, bottom nav hides, 3-column photo grid.</div></div></div>
     <div class="obs"><div class="grow"><div class="name">Desktop / iPad landscape (≥ 1024px)</div><div class="meta">Map docks to a sticky right column beside the list, 4-column photo grid.</div></div></div>
   </div>
 
   <div class="card">
-    <h2>Family compliance notes</h2>
+    <h2>Family compliance &amp; Species Enrichment notes</h2>
     <div class="obs"><div class="grow"><div class="meta">Hand-written scoped CSS only (shared <code>mockup.css</code> stands in for component styles) — no Tailwind. White cards on #f8f9fa, 1px #e9ecef borders, 8px radius (gaylonphotos tokens).</div></div></div>
-    <div class="obs"><div class="grow"><div class="meta">WCAG AAA: all text ≥ 7:1 contrast incl. muted (#495057); every status is color + text label (NEED / SEEN / NOTABLE badges).</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">WCAG AAA: all text ≥ 7:1 contrast incl. muted (#495057); every status and tide indicator uses color + text label (CR/EN/VU/NT/LC badges, Tide: prefix).</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">Touch targets strictly ≥ 48px for chips, filter tags, accordion summaries, and action buttons. Inputs ≥ 16px font-size to prevent iOS focus zooming.</div></div></div>
     <div class="obs"><div class="grow"><div class="meta">Destructive actions use modal confirmation (see Delete trip on the Trips screen) — never toasts.</div></div></div>
-    <div class="obs"><div class="grow"><div class="meta">“Data from eBird.org” attribution on every screen using eBird data. Maps are Google Maps reusing the gaylon.photos key + Map ID (needs network to render).</div></div></div>
+    <div class="obs"><div class="grow"><div class="meta">Dual attribution: “Data from eBird.org” at page footer; “Wikipedia · CC BY-SA 4.0” footer with revision permalink disclosure on About; separate AI source line on Finding this bird.</div></div></div>
   </div>
 </main>
 
