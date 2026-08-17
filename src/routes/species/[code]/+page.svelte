@@ -496,15 +496,15 @@
   }
   .iucn.s-vu {
     background: #fde8c8;
-    color: #7a4a06;
+    color: #724200; /* ≥7:1 on this bg (GROK-measured AAA floor) */
   }
   .iucn.s-en {
     background: #fcd9cc;
-    color: #8a2c0d;
+    color: #842607;
   }
   .iucn.s-cr {
     background: #f8d0d4;
-    color: #8e1420;
+    color: #880e1a;
   }
   .iucn.s-ew,
   .iucn.s-ex {
