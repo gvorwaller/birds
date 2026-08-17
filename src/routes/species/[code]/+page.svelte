@@ -76,7 +76,11 @@
   const wingspanBadge = $derived(
     rangeBadge(en?.facts?.wingspan_cm_min, en?.facts?.wingspan_cm_max, "cm"),
   );
-  const hasProse = $derived(en?.wiki_status === "ok" && !!en?.wikipedia_extract);
+  // Gate on STORED prose, not the latest attempt's status — a transient
+  // refresh failure keeps serving the preserved last-good revision instead
+  // of hiding it for the whole retry window (CODEX1 P1 #3).
+  const hasProse = $derived(!!en?.wikipedia_extract);
+  const proseStale = $derived(hasProse && en?.wiki_status === "error");
   const hasFacts = $derived(
     !!en && (en.iucn_status != null || massBadge != null || wingspanBadge != null),
   );
@@ -303,6 +307,12 @@
         </p>
       {/if}
       {#if hasProse}
+        {#if proseStale}
+          <p class="muted">
+            ⚠ The last refresh failed — showing the previously fetched
+            article text.
+          </p>
+        {/if}
         <p class="lead" class:clamped={!aboutExpanded}>{en?.wikipedia_extract}</p>
         {#if !aboutExpanded}
           <button type="button" class="readmore" onclick={() => (aboutExpanded = true)}>

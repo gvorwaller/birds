@@ -793,7 +793,10 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	const payload = job.payload as unknown as EnrichPayload;
 	const codes = [...new Set(payload.codes ?? [])];
 	const force = payload.force === true;
-	if (codes.length === 0 || codes.length > ENRICH_CHUNK_SIZE * 2 || !codes.every(validSpeciesCode)) {
+	// Hard ≤ chunk-size cap (CODEX1 P2 #5): larger payloads violate the
+	// queue-fairness bound (and >50 would poison-loop on the SPARQL batch
+	// limit) — terminal, not retryable.
+	if (codes.length === 0 || codes.length > ENRICH_CHUNK_SIZE || !codes.every(validSpeciesCode)) {
 		await failJob(job.id, attempts, 'invalid enrich_species payload');
 		return;
 	}
@@ -818,11 +821,15 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	} catch (err) {
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
 		const rateLimited = err instanceof WikidataError && err.rateLimited;
+		const retryAfter =
+			err instanceof WikidataError && err.retryAfterMs != null ? err.retryAfterMs : null;
 		if (attempts < job.max_attempts) {
 			await scheduleRetry(
 				job.id,
 				attempts,
-				rateLimited ? RATE_LIMIT_RETRY_DELAY_MS : retryDelayMs(attempts, 'transient'),
+				rateLimited
+					? (retryAfter ?? RATE_LIMIT_RETRY_DELAY_MS)
+					: retryDelayMs(attempts, 'transient'),
 				message
 			);
 		} else {
@@ -875,9 +882,15 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				const row = resolved.get(code) ?? null;
 				await upsertResolution(code, row);
 				if (row == null) {
+					// Terminal data state — stamp the freshness clock via the
+					// no_article path or the scanner re-enqueues this code every
+					// pass forever (CODEX1 P1 #1). `resolution` keeps the
+					// no_mapping/no_article distinction for the UI.
+					await markWikiNoArticle(code);
 					counts.noMapping++;
 					await unitOk('no_mapping');
 				} else if (!row.enwikiTitle) {
+					await markWikiNoArticle(code);
 					counts.noSitelink++;
 					await unitOk('no_sitelink');
 				} else {
@@ -897,8 +910,9 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					} catch (err) {
 						if (err instanceof WikipediaError && err.rateLimited) {
 							// Stop the batch — remaining units keep their state and
-							// the whole row retries after the rate-limit delay.
-							rateLimit = new EnrichRateLimited(RATE_LIMIT_RETRY_DELAY_MS);
+							// the whole row retries after the server's Retry-After
+							// when it sent one (CODEX1 P2 #6).
+							rateLimit = new EnrichRateLimited(err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS);
 							budgetRemainder = codes.slice(i);
 							break;
 						}
@@ -947,21 +961,29 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		});
 		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
 	}
-	const attempted = codes.length - counts.fresh - budgetRemainder.length;
-	// Aggregate rule: every attempted unit failing is a transient batch
-	// problem (network/upstream), not success.
-	if (attempted > 0 && failed.length === attempted && attempts < job.max_attempts) {
-		await scheduleRetry(
-			job.id,
-			attempts,
-			retryDelayMs(attempts, 'transient'),
-			'every attempted species failed',
-			summary
-		);
-		return;
-	}
-	if (attempted > 0 && failed.length === attempted) {
-		await failJob(job.id, attempts, 'every attempted species failed', summary);
+	// Aggregate rule (CODEX1 P1 #2): ANY transient unit failure retries the
+	// row — the retry is NATURALLY narrowed to the failed codes because
+	// successes are freshness-skipped on the next attempt (error rows are
+	// not "fresh", so only they re-run; force successes are covered by the
+	// refreshed-since-enqueue check). Exhaustion fails honestly — persisted
+	// per-species data stays, but the job never reads green with holes.
+	if (failed.length > 0) {
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(
+				job.id,
+				attempts,
+				retryDelayMs(attempts, 'transient'),
+				`${failed.length} species failed transiently`,
+				summary
+			);
+		} else {
+			await failJob(
+				job.id,
+				attempts,
+				`${failed.length} species failed after ${attempts} attempts`,
+				summary
+			);
+		}
 		return;
 	}
 	await completeJob(job.id, attempts, summary);

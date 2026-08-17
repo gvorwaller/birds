@@ -1214,7 +1214,7 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(enrichMocks.fetchArticlePlaintext).toHaveBeenCalledTimes(1);
   });
 
-  it("per-unit transient failure records unit_failed + wiki error row; batch continues and completes", async () => {
+  it("MIXED failure (1 ok + 1 transient) → scheduleRetry, never a green complete (CODEX1 P1 #2)", async () => {
     enrichMocks.fetchWikidataBatch.mockResolvedValue(
       new Map([
         ["margod", WD("margod", "Marbled godwit")],
@@ -1232,20 +1232,61 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(fails).toHaveLength(1);
     expect((fails[0][2] as { code: string }).code).toBe("margod");
     expect(db.calls.some((c) => c.text.includes("wiki_status = 'error'"))).toBe(true);
-    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
-    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, failed: ["margod"] });
+    // The success is persisted; the FAILURE forces a retry of the row — the
+    // next attempt naturally narrows to margod (grycat is freshness-skipped).
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][4]).toMatchObject({ ok: 1, failed: ["margod"] });
   });
 
-  it("EVERY attempted unit failing → transient retry, not a green complete", async () => {
+  it("retry EXHAUSTION with failures → honest failJob (persisted data stays)", async () => {
     enrichMocks.fetchWikidataBatch.mockResolvedValue(
       new Map([["margod", WD("margod", "Marbled godwit")]]) as never,
     );
     enrichMocks.fetchArticlePlaintext.mockRejectedValue(
       new WikipediaError("Wikipedia unreachable: boom", 0, false),
     );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"] }, attempts: 4 }),
+      ctx,
+    );
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("oversize payload (31 codes) → terminal failJob, no network (CODEX1 P2 #5)", async () => {
+    const codes = Array.from({ length: 31 }, (_, i) => `spcode${i}`);
+    await runJob(jobRow({ type: "enrich_species", payload: { codes } }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchWikidataBatch).not.toHaveBeenCalled();
+  });
+
+  it("wikipedia Retry-After is honored over the default rate-limit delay (CODEX1 P2 #6)", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["margod", WD("margod", "Marbled godwit")]]) as never,
+    );
+    enrichMocks.fetchArticlePlaintext.mockRejectedValue(
+      new WikipediaError("Wikipedia query failed (HTTP 429)", 429, true, 90_000),
+    );
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
-    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(90_000);
+  });
+
+  it("terminal no_mapping/no_sitelink stamp the freshness clock (CODEX1 P1 #1 — no scanner loop)", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["grycat", WD("grycat", null)]]) as never, // mapped, no sitelink
+    );
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["grycat", "ghost1"] } }),
+      ctx,
+    );
+    // Both terminal paths wrote the no_article clock stamp.
+    const stamps = db.calls.filter((c) => c.text.includes("'no_article'"));
+    expect(stamps.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ noMapping: 1, noSitelink: 1 });
   });
 
   it("cancel observed mid-chunk → cancelRunningJob with partial summary", async () => {

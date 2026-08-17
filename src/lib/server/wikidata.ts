@@ -18,12 +18,25 @@ export const WIKIDATA_SPARQL_URL = 'https://query.wikidata.org/sparql';
 export const WIKIDATA_BATCH_SIZE = 50;
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** Parse a Retry-After header (seconds or HTTP-date), clamped to sane bounds. */
+export function parseRetryAfterMs(header: string | null): number | null {
+	if (!header) return null;
+	const MAX_MS = 2 * 60 * 60_000;
+	const secs = Number(header);
+	if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, MAX_MS);
+	const when = Date.parse(header);
+	if (Number.isFinite(when)) return Math.min(Math.max(when - Date.now(), 0), MAX_MS);
+	return null;
+}
+
 export class WikidataError extends Error {
 	constructor(
 		message: string,
 		public status: number,
 		/** 429 or explicit throttle — caller schedules a rate-limit retry. */
-		public rateLimited: boolean
+		public rateLimited: boolean,
+		/** Parsed Retry-After when the server sent one (CODEX1 P2 #6). */
+		public retryAfterMs: number | null = null
 	) {
 		super(message);
 		this.name = 'WikidataError';
@@ -73,8 +86,10 @@ WHERE {
   ?item wdt:P3444 ?ebird .
   OPTIONAL { ?item wdt:P141 ?iucnItem .
              ?iucnItem rdfs:label ?iucnLabel . FILTER(LANG(?iucnLabel) = "en") }
-  OPTIONAL { ?item p:P2067/psn:P2067/wikibase:quantityAmount ?massKg . }
-  OPTIONAL { ?item p:P2050/psn:P2050/wikibase:quantityAmount ?wsM . }
+  OPTIONAL { ?item p:P2067 ?massSt . ?massSt a wikibase:BestRank ;
+             psn:P2067/wikibase:quantityAmount ?massKg . }
+  OPTIONAL { ?item p:P2050 ?wsSt . ?wsSt a wikibase:BestRank ;
+             psn:P2050/wikibase:quantityAmount ?wsM . }
   OPTIONAL { ?item wdt:P3151 ?inatId . }
   OPTIONAL { ?item wdt:P2426 ?xcId . }
   OPTIONAL { ?articleUrl schema:about ?item ;
@@ -106,7 +121,7 @@ export function titleFromArticleUrl(url: string | null): string | null {
 	}
 }
 
-interface SparqlBinding {
+export interface SparqlBinding {
 	[k: string]: { value: string } | undefined;
 }
 
@@ -145,18 +160,33 @@ export async function fetchWikidataBatch(
 		);
 	}
 	if (!res.ok) {
-		throw new WikidataError(`Wikidata query failed (HTTP ${res.status})`, res.status, res.status === 429);
+		throw new WikidataError(
+			`Wikidata query failed (HTTP ${res.status})`,
+			res.status,
+			res.status === 429,
+			parseRetryAfterMs(res.headers.get('retry-after'))
+		);
 	}
 	const body = (await res.json()) as { results?: { bindings?: SparqlBinding[] } };
+	return parseSparqlBindings(body.results?.bindings ?? []);
+}
+
+/**
+ * Pure binding parser (fixture-tested). A code can map to duplicate QIDs
+ * (constraint violations happen) and endpoint row order is nondeterministic —
+ * the row with the numerically LOWEST QID wins, regardless of arrival order
+ * (CODEX1 P1 #4: deterministic duplicate resolution, never row-order wins).
+ */
+export function parseSparqlBindings(
+	bindings: readonly SparqlBinding[]
+): Map<string, WikidataSpeciesRow> {
 	const out = new Map<string, WikidataSpeciesRow>();
-	for (const b of body.results?.bindings ?? []) {
+	const qidNum = (qid: string) => Number(qid.replace(/^Q/, '')) || Number.MAX_SAFE_INTEGER;
+	for (const b of bindings) {
 		const code = b.ebird?.value;
 		const item = b.item?.value;
 		if (!code || !item) continue;
-		// Defensive: a code could theoretically map to 2 items — first
-		// (deterministic row order not guaranteed) wins, keep the earliest QID.
-		if (out.has(code)) continue;
-		out.set(code, {
+		const row: WikidataSpeciesRow = {
 			speciesCode: code,
 			qid: item.replace(/^.*\/(Q\d+)$/, '$1'),
 			enwikiTitle: titleFromArticleUrl(b.article?.value ?? null),
@@ -167,7 +197,9 @@ export async function fetchWikidataBatch(
 			wingspanMMax: numOrNull(b.wsMax?.value),
 			inatTaxonId: b.inat?.value ?? null,
 			xenoCantoId: b.xc?.value ?? null
-		});
+		};
+		const existing = out.get(code);
+		if (!existing || qidNum(row.qid) < qidNum(existing.qid)) out.set(code, row);
 	}
 	return out;
 }

@@ -9,6 +9,7 @@
  * contributor credit via history).
  */
 import { env } from '$env/dynamic/private';
+import { parseRetryAfterMs } from '$server/wikidata';
 
 const API_URL = 'https://en.wikipedia.org/w/api.php';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -38,7 +39,9 @@ export class WikipediaError extends Error {
 	constructor(
 		message: string,
 		public status: number,
-		public rateLimited: boolean
+		public rateLimited: boolean,
+		/** Parsed Retry-After when the server sent one (CODEX1 P2 #6). */
+		public retryAfterMs: number | null = null
 	) {
 		super(message);
 		this.name = 'WikipediaError';
@@ -150,7 +153,12 @@ export async function fetchArticlePlaintext(
 		);
 	}
 	if (!res.ok) {
-		throw new WikipediaError(`Wikipedia query failed (HTTP ${res.status})`, res.status, res.status === 429);
+		throw new WikipediaError(
+			`Wikipedia query failed (HTTP ${res.status})`,
+			res.status,
+			res.status === 429,
+			parseRetryAfterMs(res.headers.get('retry-after'))
+		);
 	}
 	const body = (await res.json()) as {
 		query?: {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSpeciesSparql, titleFromArticleUrl, validSpeciesCode } from "./wikidata";
+import {
+  buildSpeciesSparql,
+  parseRetryAfterMs,
+  parseSparqlBindings,
+  titleFromArticleUrl,
+  validSpeciesCode,
+} from "./wikidata";
 import {
   splitSections,
   articleUrl,
@@ -40,6 +46,35 @@ describe("wikidata pure helpers", () => {
     expect(q).toContain("wdt:P3444");
     expect(q).toContain("psn:P2067"); // normalized quantities, not raw wdt:
     expect(() => buildSpeciesSparql(['evil"} . ?x ?y ?z'])).toThrow(/invalid/);
+  });
+
+  it("buildSpeciesSparql filters quantities to BestRank statements (CODEX1 P1 #4)", () => {
+    const q = buildSpeciesSparql(["grycat"]);
+    expect(q).toContain("wikibase:BestRank");
+  });
+
+  it("parseSparqlBindings resolves duplicate QIDs deterministically — lowest QID wins in ANY row order", () => {
+    const row = (qid: string, inat: string) => ({
+      ebird: { value: "grycat" },
+      item: { value: `http://www.wikidata.org/entity/${qid}` },
+      inat: { value: inat },
+    });
+    const a = parseSparqlBindings([row("Q900", "high"), row("Q83", "low")]);
+    const b = parseSparqlBindings([row("Q83", "low"), row("Q900", "high")]);
+    expect(a.get("grycat")?.qid).toBe("Q83");
+    expect(b.get("grycat")?.qid).toBe("Q83");
+    expect(a.get("grycat")?.inatTaxonId).toBe("low");
+  });
+
+  it("parseRetryAfterMs handles seconds, dates, junk, and clamps", () => {
+    expect(parseRetryAfterMs("120")).toBe(120_000);
+    expect(parseRetryAfterMs("999999")).toBe(2 * 60 * 60_000); // clamped
+    expect(parseRetryAfterMs("garbage")).toBeNull();
+    expect(parseRetryAfterMs(null)).toBeNull();
+    const soon = new Date(Date.now() + 60_000).toUTCString();
+    const parsed = parseRetryAfterMs(soon);
+    expect(parsed).toBeGreaterThan(30_000);
+    expect(parsed).toBeLessThanOrEqual(61_000);
   });
 
   it("titleFromArticleUrl decodes enwiki URLs", () => {
@@ -209,6 +244,38 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     expect(row?.wiki_status).toBe("no_article");
     expect(row?.wiki_fetched_at).not.toBeNull();
     await wipe();
+  });
+
+  it("TERMINAL resolution outcomes (no_mapping/no_sitelink + clock) leave scope AND stale — no scanner loop (CODEX1 P1 #1)", async () => {
+    await wipe();
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Test Bird', 'Testus birdus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET category = 'species'`,
+      [CODE],
+    );
+    const uid = (
+      await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)
+    ).rows[0].id;
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source)
+       VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+      [uid, CODE],
+    );
+    try {
+      // The handler's terminal path: resolution write + no_article clock stamp.
+      await upsertResolution(CODE, null);
+      await markWikiNoArticle(CODE);
+      const row = await getEnrichment(CODE);
+      expect(row?.resolution).toBe("no_mapping");
+      expect(await enrichmentScope()).not.toContain(CODE);
+      expect(await staleCodes(false)).not.toContain(CODE);
+      expect(await staleCodes(true)).not.toContain(CODE); // no prose → no AI work either
+    } finally {
+      await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
+      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+      await wipe();
+    }
   });
 
   it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", async () => {
