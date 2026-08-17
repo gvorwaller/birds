@@ -1,8 +1,10 @@
 <script lang="ts">
   import { invalidateAll } from "$app/navigation";
-  import type { PageData } from "./$types";
+  import { enhance } from "$app/forms";
+  import type { ActionData, PageData } from "./$types";
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let nudgeBusy = $state(false);
 
   // Per-job event log, fetched on expand via the existing API.
   let openEvents = $state<Record<number, { at: string; action: string; details: unknown }[] | "loading" | "error">>({});
@@ -99,6 +101,32 @@
         </tbody>
       </table>
     </div>
+    <form
+      method="POST"
+      action="?/nudge_enrichment"
+      class="nudge"
+      use:enhance={() => {
+        nudgeBusy = true;
+        return async ({ update }) => {
+          await update();
+          nudgeBusy = false;
+        };
+      }}
+    >
+      <button type="submit" disabled={nudgeBusy}>
+        {nudgeBusy ? "Nudging…" : "⚡ Run enrichment scan now"}
+      </button>
+      <span class="muted">
+        Skips the idle 24h wait — queues any newly in-scope species (e.g.
+        after fresh hotspot loads).
+      </span>
+    </form>
+    {#if form && "message" in form && form.message}
+      <p class="ok">{form.message}</p>
+    {/if}
+    {#if form && "error" in form && form.error}
+      <p class="error" role="alert">{form.error}</p>
+    {/if}
     <details>
       <summary>Status history ({data.workerHistory.length})</summary>
       <div class="tablewrap">
@@ -325,6 +353,29 @@
   .jobmeta {
     font-size: 0.82rem;
     margin-top: 2px;
+  }
+  .nudge {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 12px 0 4px;
+  }
+  .nudge button {
+    min-height: 48px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .nudge button:disabled {
+    opacity: 0.5;
+  }
+  .ok {
+    color: var(--seen-text);
+    margin: 6px 0;
   }
   .muted {
     color: var(--muted);

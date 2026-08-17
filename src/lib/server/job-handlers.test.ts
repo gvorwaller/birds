@@ -204,9 +204,13 @@ vi.mock("$server/crypto", () => ({
   encryptSecret: (v: string) => `enc-${v}`,
 }));
 
-const { runJob, ensureNeedAlertScan, ENRICH_SCAN_DRAIN_MS, ENRICH_SCAN_IDLE_MS } = await import(
-  "./job-handlers"
-);
+const {
+  runJob,
+  ensureNeedAlertScan,
+  nudgeEnrichmentScan,
+  ENRICH_SCAN_DRAIN_MS,
+  ENRICH_SCAN_IDLE_MS,
+} = await import("./job-handlers");
 const { RATE_LIMIT_RETRY_DELAY_MS, TRANSIENT_RETRY_DELAYS_MS } = await import(
   "./job-policy"
 );
@@ -1815,5 +1819,39 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
     expect((fails[0][2] as { stage: string }).stage).toBe("ai");
     expect(mocks.completeJob).not.toHaveBeenCalled();
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("nudgeEnrichmentScan (admin impatient nudge)", () => {
+  it("pending scan → next_retry_at pulled to NOW ('nudged')", async () => {
+    db.handler = (text) => {
+      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [{ id: 91 }] };
+      return undefined;
+    };
+    expect(await nudgeEnrichmentScan()).toBe("nudged");
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("no pending but running → left alone ('already_running')", async () => {
+    db.handler = (text) => {
+      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [] };
+      if (text.includes("status = 'running'")) return { rows: [{ id: 92 }] };
+      return undefined;
+    };
+    expect(await nudgeEnrichmentScan()).toBe("already_running");
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("lost chain (no pending, no running) → fresh scan enqueued ('created')", async () => {
+    db.handler = (text) => {
+      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [] };
+      if (text.includes("status = 'running'")) return { rows: [] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    mocks.hasActiveJob.mockResolvedValueOnce(false);
+    expect(await nudgeEnrichmentScan()).toBe("created");
+    expect(mocks.enqueueJob).toHaveBeenCalledTimes(1);
+    expect((mocks.enqueueJob.mock.calls[0][0] as { type: string }).type).toBe("scan_enrichment");
   });
 });

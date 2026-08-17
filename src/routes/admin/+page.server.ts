@@ -1,8 +1,9 @@
-import { error } from "@sveltejs/kit";
-import type { PageServerLoad } from "./$types";
+import { error, fail } from "@sveltejs/kit";
+import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { galleryHealth } from "$server/gallery";
 import { listJobs, workerHealth } from "$server/jobs";
+import { nudgeEnrichmentScan } from "$server/job-handlers";
 import {
   displayName,
   durationMs,
@@ -132,4 +133,26 @@ export const load: PageServerLoad = async ({ locals }) => {
     taxonomy: taxonomyRes.rows[0] ?? { n: 0, newest: null },
     gallerySource,
   };
+};
+
+export const actions: Actions = {
+  /**
+   * "Impatient nudge" (Gaylon): run an enrichment scan pass NOW instead of
+   * waiting out the idle 24h cadence — e.g. right after new hotspot loads
+   * put fresh species in scope. Admin-gated in the action itself (the
+   * loader's 404 does not protect POSTs).
+   */
+  nudge_enrichment: async ({ locals }) => {
+    if (locals.user?.role !== "admin") return fail(403, { error: "Admins only." });
+    const outcome = await nudgeEnrichmentScan();
+    return {
+      ok: true as const,
+      message:
+        outcome === "nudged"
+          ? "Enrichment scan pulled forward — it runs within seconds and queues any new species."
+          : outcome === "already_running"
+            ? "An enrichment scan is running right now — its successor chains automatically."
+            : "No pending scan existed — a fresh one was queued.",
+    };
+  },
 };

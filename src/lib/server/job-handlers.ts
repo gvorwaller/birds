@@ -739,6 +739,31 @@ export async function ensureEnrichmentScan(): Promise<void> {
 }
 
 /**
+ * Admin "impatient nudge" (Gaylon 2026-08-17): pull the pending scan's
+ * next_retry_at to NOW so a pass runs immediately — useful right after new
+ * hotspot loads put fresh species in scope, instead of waiting out the
+ * idle 24h cadence (the exact gap the Phase-2 deploy exposed). If no
+ * pending scan exists (lost chain edge), enqueue one. A RUNNING scan is
+ * left alone — its successor will chain normally.
+ */
+export async function nudgeEnrichmentScan(): Promise<'nudged' | 'created' | 'already_running'> {
+	// Unconditional on the timer: a scan already due gets a harmless
+	// overwrite instead of a misleading 'created' fall-through.
+	const r = await query<{ id: number }>(
+		`UPDATE jobs SET next_retry_at = NOW()
+		  WHERE type = 'scan_enrichment' AND status = 'pending'
+		  RETURNING id`
+	);
+	if (r.rows.length > 0) return 'nudged';
+	const running = await query<{ id: number }>(
+		`SELECT id FROM jobs WHERE type = 'scan_enrichment' AND status = 'running' LIMIT 1`
+	);
+	if (running.rows.length > 0) return 'already_running';
+	await ensureEnrichmentScan();
+	return 'created';
+}
+
+/**
  * Recurring singleton: computes what's missing/stale and enqueues BOUNDED
  * enrich_species chunks (CODEX1 #1: heavy work never lives in the recurring
  * job — chunks interleave with user jobs under the single-worker lock).
