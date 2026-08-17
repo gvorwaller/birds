@@ -764,7 +764,10 @@ export interface EnrichmentWorkSummary {
  * with timer writes recreates the deploy gap). Content-hash dedup makes
  * concurrent passes collision-safe: identical chunks dedup, never double.
  */
-async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkSummary> {
+async function enqueueEnrichmentChunks(
+	adminId: number,
+	maxChunks: number
+): Promise<EnrichmentWorkSummary> {
 	// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
 	// the full pipeline; AI-only work (wiki current, AI due) becomes
 	// aiOnly chunks that never touch WDQS/Wikipedia.
@@ -776,7 +779,10 @@ async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkS
 		: [];
 	let enqueued = 0;
 	let deduped = 0;
-	for (let i = 0; i < wikiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+	// Represented CODES, not chunk-count × max-size — partial chunks made
+	// the old arithmetic lie across mixed partitions (CODEX1).
+	let covered = 0;
+	for (let i = 0; i < wikiWork.length && enqueued < maxChunks; i += ENRICH_CHUNK_SIZE) {
 		const codes = wikiWork.slice(i, i + ENRICH_CHUNK_SIZE);
 		const r = await enqueueJob({
 			type: 'enrich_species',
@@ -787,8 +793,9 @@ async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkS
 		});
 		if (r.deduped) deduped++;
 		else enqueued++;
+		covered += codes.length;
 	}
-	for (let i = 0; i < aiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+	for (let i = 0; i < aiWork.length && enqueued < maxChunks; i += ENRICH_CHUNK_SIZE) {
 		const codes = aiWork.slice(i, i + ENRICH_CHUNK_SIZE);
 		const r = await enqueueJob({
 			type: 'enrich_species',
@@ -802,6 +809,7 @@ async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkS
 		});
 		if (r.deduped) deduped++;
 		else enqueued++;
+		covered += codes.length;
 	}
 	const total = wikiWork.length + aiWork.length;
 	return {
@@ -810,7 +818,7 @@ async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkS
 		aiCandidates: aiWork.length,
 		chunksEnqueued: enqueued,
 		deduped,
-		remaining: Math.max(0, total - (enqueued + deduped) * ENRICH_CHUNK_SIZE)
+		remaining: Math.max(0, total - covered)
 	};
 }
 
@@ -823,9 +831,11 @@ async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkS
  */
 export async function nudgeEnrichmentScan(): Promise<EnrichmentWorkSummary> {
 	const adminId = await lowestAdminId();
-	const summary = await enqueueEnrichmentChunks(adminId);
-	// Timer pull is a cadence assist, not the mechanism (idempotent for
-	// due scans; a running scan needs nothing — the work is already queued).
+	// UNCAPPED (CODEX1): an explicit admin nudge enqueues ALL currently-due
+	// work before returning — no remainder to race a stale running scan's
+	// 24h successor. The per-pass cap protects the recurring cadence only.
+	const summary = await enqueueEnrichmentChunks(adminId, Infinity);
+	// Timer pull is purely a cadence assist for the recurring chain.
 	await query(
 		`UPDATE jobs SET next_retry_at = NOW()
 		  WHERE type = 'scan_enrichment' AND status = 'pending'`
@@ -845,7 +855,7 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 	await recordEvent(job.id, 'claimed', { attempt: attempts });
 	try {
 		const adminId = await lowestAdminId();
-		const summary = await enqueueEnrichmentChunks(adminId);
+		const summary = await enqueueEnrichmentChunks(adminId, ENRICH_CHUNKS_PER_SCAN);
 		// Fast cadence while a backlog exists (cold run drains in hours, not
 		// days); daily heartbeat once caught up.
 		const runAfterMs = summary.candidates > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;

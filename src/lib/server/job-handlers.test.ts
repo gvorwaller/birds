@@ -1357,6 +1357,29 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(successor.runAfterMs).toBe(ENRICH_SCAN_DRAIN_MS);
   });
 
+  it("scan cap accounting counts REPRESENTED CODES across mixed partitions, not chunks×30 (CODEX1)", async () => {
+    // 1 wiki-due code + 240 AI-due codes at cap 8: chunks = 1 wiki (1 code)
+    // + 7 AI (210 codes) → covered 211, remaining 30 — the old arithmetic
+    // reported remaining=1.
+    const aiCodes = Array.from({ length: 240 }, (_, i) => `aidue${String(i).padStart(3, "0")}`);
+    db.handler = (text) => {
+      if (text.includes("se.ai_status IS NULL"))
+        return { rows: aiCodes.map((c) => ({ species_code: c })) };
+      if (text.includes("FROM taxonomy_cache tc"))
+        return { rows: [{ species_code: "wikidue1" }] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
+    expect(mocks.enqueueJob).toHaveBeenCalledTimes(8);
+    const result = (mocks.terminalizeAndReschedule.mock.calls[0][2] as {
+      result: { candidates: number; remaining: number; chunksEnqueued: number };
+    }).result;
+    expect(result.candidates).toBe(241);
+    expect(result.chunksEnqueued).toBe(8);
+    expect(result.remaining).toBe(30);
+  });
+
   it("scan with nothing to do → zero chunks, successor at the DAILY cadence", async () => {
     db.handler = (text) => {
       if (text.includes("FROM taxonomy_cache tc")) return { rows: [] };
@@ -1856,6 +1879,16 @@ describe("nudgeEnrichmentScan (admin impatient nudge — direct enqueue)", () =>
     const summary = await nudgeEnrichmentScan();
     expect(summary.chunksEnqueued).toBe(0);
     expect(summary.deduped).toBe(1);
+  });
+
+  it("UNCAPPED: >8-chunks of fresh scope is FULLY enqueued before returning — no remainder to race a stale scan's 24h successor (CODEX1)", async () => {
+    const codes = Array.from({ length: 300 }, (_, i) => `spx${String(i).padStart(3, "0")}`);
+    scopeDb(codes);
+    const summary = await nudgeEnrichmentScan();
+    expect(summary.candidates).toBe(300);
+    expect(summary.chunksEnqueued).toBe(10); // 300/30 — past the scan's cap of 8
+    expect(summary.remaining).toBe(0);
+    expect(mocks.enqueueJob).toHaveBeenCalledTimes(10);
   });
 
   it("nothing due → zero chunks, zero candidates; pending scan timer still pulled (cadence assist)", async () => {
