@@ -420,7 +420,8 @@
           </details>
         {/each}
         <p class="wiki-attrib muted">
-          Wikipedia · CC BY-SA 4.0{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}
+          Wikipedia · CC BY-SA 4.0{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}{#if !hasFieldCraft}
+            · <a href="/species">Browse field guide →</a>{/if}
         </p>
         <details class="wiki-license">
           <summary>Source &amp; license</summary>

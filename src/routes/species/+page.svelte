@@ -30,8 +30,9 @@
     if (data.q) back.set("q", data.q);
     for (const t of data.tags) back.append("tags", t);
     const qs = back.toString();
+    // safeReturnTo labels /species?… itself — no label param needed (GROK).
     const returnTo = encodeURIComponent(`/species${qs ? `?${qs}` : ""}`);
-    return `/species/${code}?returnTo=${returnTo}&returnLabel=${encodeURIComponent("Field guide")}`;
+    return `/species/${code}?returnTo=${returnTo}`;
   }
 
   function tagDimension(tag: string): TagDimension {
@@ -314,6 +315,7 @@
   }
   .name {
     font-weight: 600;
+    overflow-wrap: anywhere; /* long hyphenated names at 320 + zoom (GROK) */
   }
   .sci,
   .craft {
