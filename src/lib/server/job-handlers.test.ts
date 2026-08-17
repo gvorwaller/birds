@@ -1822,36 +1822,57 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
   });
 });
 
-describe("nudgeEnrichmentScan (admin impatient nudge)", () => {
-  it("pending scan → next_retry_at pulled to NOW ('nudged')", async () => {
+describe("nudgeEnrichmentScan (admin impatient nudge — direct enqueue)", () => {
+  const scopeDb = (codes: string[]) => {
     db.handler = (text) => {
-      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [{ id: 91 }] };
-      return undefined;
-    };
-    expect(await nudgeEnrichmentScan()).toBe("nudged");
-    expect(mocks.enqueueJob).not.toHaveBeenCalled();
-  });
-
-  it("no pending but running → left alone ('already_running')", async () => {
-    db.handler = (text) => {
-      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [] };
-      if (text.includes("status = 'running'")) return { rows: [{ id: 92 }] };
-      return undefined;
-    };
-    expect(await nudgeEnrichmentScan()).toBe("already_running");
-    expect(mocks.enqueueJob).not.toHaveBeenCalled();
-  });
-
-  it("lost chain (no pending, no running) → fresh scan enqueued ('created')", async () => {
-    db.handler = (text) => {
-      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) return { rows: [] };
-      if (text.includes("status = 'running'")) return { rows: [] };
+      if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("FROM taxonomy_cache tc"))
+        return { rows: codes.map((c) => ({ species_code: c })) };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
       return undefined;
     };
-    mocks.hasActiveJob.mockResolvedValueOnce(false);
-    expect(await nudgeEnrichmentScan()).toBe("created");
-    expect(mocks.enqueueJob).toHaveBeenCalledTimes(1);
-    expect((mocks.enqueueJob.mock.calls[0][0] as { type: string }).type).toBe("scan_enrichment");
+  };
+
+  it("enqueues due work DIRECTLY — deterministic even while a scan is running with a stale snapshot (CODEX1)", async () => {
+    // No pending scan row to nudge (a scan is 'running' elsewhere) — the
+    // nudge must not depend on it: fresh scope still gets queued NOW.
+    scopeDb(["newsp1", "newsp2"]);
+    const summary = await nudgeEnrichmentScan();
+    expect(summary.candidates).toBe(2);
+    expect(summary.chunksEnqueued).toBe(1);
+    const chunk = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { type: string }).type === "enrich_species",
+    );
+    expect((chunk![0] as { payload: { codes: string[] } }).payload.codes).toEqual([
+      "newsp1",
+      "newsp2",
+    ]);
+    expect((chunk![0] as { dedupKey: string }).dedupKey).toMatch(/^enrich_species:[0-9a-f]{16}$/);
+  });
+
+  it("collision-safe: identical chunk already queued by the scan → deduped, counted honestly", async () => {
+    scopeDb(["newsp1", "newsp2"]);
+    mocks.enqueueJob.mockResolvedValueOnce({ jobId: 7, deduped: true });
+    const summary = await nudgeEnrichmentScan();
+    expect(summary.chunksEnqueued).toBe(0);
+    expect(summary.deduped).toBe(1);
+  });
+
+  it("nothing due → zero chunks, zero candidates; pending scan timer still pulled (cadence assist)", async () => {
+    let timerPulled = false;
+    db.handler = (text) => {
+      if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("FROM taxonomy_cache tc")) return { rows: [] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      if (text.includes("UPDATE jobs SET next_retry_at = NOW()")) {
+        timerPulled = true;
+        return { rows: [] };
+      }
+      return undefined;
+    };
+    const summary = await nudgeEnrichmentScan();
+    expect(summary.candidates).toBe(0);
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+    expect(timerPulled).toBe(true);
   });
 });

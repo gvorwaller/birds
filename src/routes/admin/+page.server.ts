@@ -144,15 +144,19 @@ export const actions: Actions = {
    */
   nudge_enrichment: async ({ locals }) => {
     if (locals.user?.role !== "admin") return fail(403, { error: "Admins only." });
-    const outcome = await nudgeEnrichmentScan();
+    // Runs a scan pass SYNCHRONOUSLY — all currently-due work is queued
+    // when this returns, regardless of what the recurring scan is doing
+    // (CODEX1: timer nudges race a running scan's stale snapshot).
+    const s = await nudgeEnrichmentScan();
     return {
       ok: true as const,
       message:
-        outcome === "nudged"
-          ? "Enrichment scan pulled forward — it runs within seconds and queues any new species."
-          : outcome === "already_running"
-            ? "An enrichment scan is running right now — its successor chains automatically."
-            : "No pending scan existed — a fresh one was queued.",
+        s.candidates === 0
+          ? "Nothing new to enrich — every in-scope species is current."
+          : `Scan pass complete: ${s.chunksEnqueued} chunk${s.chunksEnqueued === 1 ? "" : "s"} queued` +
+            ` for ${s.candidates} species (${s.wikiCandidates} wiki, ${s.aiCandidates} AI` +
+            `${s.deduped > 0 ? `; ${s.deduped} already queued` : ""}` +
+            `${s.remaining > 0 ? `; ${s.remaining} follow on the 15-min cadence` : ""}).`,
     };
   },
 };

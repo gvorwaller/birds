@@ -746,21 +746,91 @@ export async function ensureEnrichmentScan(): Promise<void> {
  * pending scan exists (lost chain edge), enqueue one. A RUNNING scan is
  * left alone — its successor will chain normally.
  */
-export async function nudgeEnrichmentScan(): Promise<'nudged' | 'created' | 'already_running'> {
-	// Unconditional on the timer: a scan already due gets a harmless
-	// overwrite instead of a misleading 'created' fall-through.
-	const r = await query<{ id: number }>(
+export interface EnrichmentWorkSummary {
+	candidates: number;
+	wikiCandidates: number;
+	aiCandidates: number;
+	chunksEnqueued: number;
+	deduped: number;
+	remaining: number;
+}
+
+/**
+ * One scan PASS: compute the due work (partitioned wiki vs AI-only causes)
+ * and enqueue bounded chunks. Shared by the recurring scan AND the admin
+ * nudge — the nudge enqueues work DIRECTLY rather than manipulating scan
+ * timers, so it is deterministic regardless of scan state (CODEX1: a
+ * running scan's successor delay comes from a stale snapshot; racing it
+ * with timer writes recreates the deploy gap). Content-hash dedup makes
+ * concurrent passes collision-safe: identical chunks dedup, never double.
+ */
+async function enqueueEnrichmentChunks(adminId: number): Promise<EnrichmentWorkSummary> {
+	// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
+	// the full pipeline; AI-only work (wiki current, AI due) becomes
+	// aiOnly chunks that never touch WDQS/Wikipedia.
+	const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
+	const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
+	const wikiSet = new Set(wikiWork);
+	const aiWork = AI_STAGE_ENABLED
+		? (await aiDueCodes()).filter((c) => !wikiSet.has(c)).sort()
+		: [];
+	let enqueued = 0;
+	let deduped = 0;
+	for (let i = 0; i < wikiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+		const codes = wikiWork.slice(i, i + ENRICH_CHUNK_SIZE);
+		const r = await enqueueJob({
+			type: 'enrich_species',
+			payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
+			dedupKey: dedupKeys.enrichChunk(codes),
+			requestedBy: adminId,
+			label: `${codes.length} species`
+		});
+		if (r.deduped) deduped++;
+		else enqueued++;
+	}
+	for (let i = 0; i < aiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
+		const codes = aiWork.slice(i, i + ENRICH_CHUNK_SIZE);
+		const r = await enqueueJob({
+			type: 'enrich_species',
+			payload: { codes, aiOnly: true } satisfies EnrichPayload as unknown as Record<
+				string,
+				unknown
+			>,
+			dedupKey: dedupKeys.enrichAiChunk(codes),
+			requestedBy: adminId,
+			label: `${codes.length} species (AI)`
+		});
+		if (r.deduped) deduped++;
+		else enqueued++;
+	}
+	const total = wikiWork.length + aiWork.length;
+	return {
+		candidates: total,
+		wikiCandidates: wikiWork.length,
+		aiCandidates: aiWork.length,
+		chunksEnqueued: enqueued,
+		deduped,
+		remaining: Math.max(0, total - (enqueued + deduped) * ENRICH_CHUNK_SIZE)
+	};
+}
+
+/**
+ * Admin "impatient nudge": run a scan pass NOW, synchronously — all
+ * currently-due work is enqueued when this returns, independent of any
+ * pending/running scan (their enqueues dedup against ours). Also pulls a
+ * pending scan's timer forward so the drain cadence keeps chewing any
+ * remainder past the per-pass chunk cap.
+ */
+export async function nudgeEnrichmentScan(): Promise<EnrichmentWorkSummary> {
+	const adminId = await lowestAdminId();
+	const summary = await enqueueEnrichmentChunks(adminId);
+	// Timer pull is a cadence assist, not the mechanism (idempotent for
+	// due scans; a running scan needs nothing — the work is already queued).
+	await query(
 		`UPDATE jobs SET next_retry_at = NOW()
-		  WHERE type = 'scan_enrichment' AND status = 'pending'
-		  RETURNING id`
-	);
-	if (r.rows.length > 0) return 'nudged';
-	const running = await query<{ id: number }>(
-		`SELECT id FROM jobs WHERE type = 'scan_enrichment' AND status = 'running' LIMIT 1`
-	);
-	if (running.rows.length > 0) return 'already_running';
-	await ensureEnrichmentScan();
-	return 'created';
+		  WHERE type = 'scan_enrichment' AND status = 'pending'`
+	).catch(() => {});
+	return summary;
 }
 
 /**
@@ -774,58 +844,11 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 	const attempts = job.attempts;
 	await recordEvent(job.id, 'claimed', { attempt: attempts });
 	try {
-		// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
-		// the full pipeline; AI-only work (wiki current, AI due) becomes
-		// aiOnly chunks that never touch WDQS/Wikipedia.
-		const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
-		const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
-		const wikiSet = new Set(wikiWork);
-		const aiWork = AI_STAGE_ENABLED
-			? (await aiDueCodes()).filter((c) => !wikiSet.has(c)).sort()
-			: [];
 		const adminId = await lowestAdminId();
-		let enqueued = 0;
-		let deduped = 0;
-		for (let i = 0; i < wikiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
-			const codes = wikiWork.slice(i, i + ENRICH_CHUNK_SIZE);
-			const r = await enqueueJob({
-				type: 'enrich_species',
-				payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
-				dedupKey: dedupKeys.enrichChunk(codes),
-				requestedBy: adminId,
-				label: `${codes.length} species`
-			});
-			if (r.deduped) deduped++;
-			else enqueued++;
-		}
-		for (let i = 0; i < aiWork.length && enqueued < ENRICH_CHUNKS_PER_SCAN; i += ENRICH_CHUNK_SIZE) {
-			const codes = aiWork.slice(i, i + ENRICH_CHUNK_SIZE);
-			const r = await enqueueJob({
-				type: 'enrich_species',
-				payload: { codes, aiOnly: true } satisfies EnrichPayload as unknown as Record<
-					string,
-					unknown
-				>,
-				dedupKey: dedupKeys.enrichAiChunk(codes),
-				requestedBy: adminId,
-				label: `${codes.length} species (AI)`
-			});
-			if (r.deduped) deduped++;
-			else enqueued++;
-		}
-		const total = wikiWork.length + aiWork.length;
-		const remaining = Math.max(0, total - (enqueued + deduped) * ENRICH_CHUNK_SIZE);
-		const summary = {
-			candidates: total,
-			wikiCandidates: wikiWork.length,
-			aiCandidates: aiWork.length,
-			chunksEnqueued: enqueued,
-			deduped,
-			remaining
-		};
+		const summary = await enqueueEnrichmentChunks(adminId);
 		// Fast cadence while a backlog exists (cold run drains in hours, not
 		// days); daily heartbeat once caught up.
-		const runAfterMs = total > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;
+		const runAfterMs = summary.candidates > 0 ? ENRICH_SCAN_DRAIN_MS : ENRICH_SCAN_IDLE_MS;
 		await terminalizeAndReschedule(
 			job.id,
 			attempts,
