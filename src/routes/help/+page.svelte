@@ -522,7 +522,8 @@
 						"(unconfirmed)" in the title means the report hasn't been
 						reviewed yet. Every report alerts with its full location —
 						including personal (non-hotspot) locations — and tapping the
-						notification opens the eBird checklist that triggered it. The
+						notification opens the eBird checklist that triggered it (or the
+						species page when eBird has no checklist link). The
 						<a href="/alerts">Alerts page</a> lists every triggering report,
 						linked whenever eBird provides the checklist.
 					</li>

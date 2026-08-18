@@ -247,7 +247,7 @@
   /* Hover-capable pointers only — iOS tap-hover must not stick (GROK). */
   @media (hover: hover) {
     .row:hover a.title,
-    .report-link:hover {
+    a.report-link:hover {
       text-decoration: underline;
     }
   }
