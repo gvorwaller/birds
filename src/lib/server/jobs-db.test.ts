@@ -47,6 +47,7 @@ const {
   pruneHistory,
   reclaimStartupJobs,
   requeueInterrupted,
+  recordEvent,
   requestCancel,
   scheduleRetry,
   terminalizeAndReschedule,
@@ -111,7 +112,7 @@ describe.runIf(dbUp)("enqueue + dedup", () => {
     expect(a.deduped).toBe(false);
     const b = await enqueueJob(params({ dedupKey: "JOBTEST:dedup1" }));
     expect(b).toEqual({ jobId: a.jobId, deduped: true });
-    const events = await jobEvents(a.jobId);
+    const events = (await jobEvents(a.jobId)).events;
     expect(events.map((e) => e.action)).toEqual(["enqueued", "deduped"]);
   });
 
@@ -202,7 +203,7 @@ describe.runIf(dbUp)("budget yield (CODEX1 P1: queue fairness)", () => {
     expect(next?.id).toBe(b.jobId);
     const after = await claimNextJob();
     expect(after?.id).toBe(a.jobId);
-    expect((await jobEvents(a.jobId)).map((e) => e.action)).toContain("yielded");
+    expect((await jobEvents(a.jobId)).events.map((e) => e.action)).toContain("yielded");
   });
 
   it("null payload keeps the job's payload verbatim (claim-time re-derivers)", async () => {
@@ -229,6 +230,30 @@ describe.runIf(dbUp)("budget yield (CODEX1 P1: queue fairness)", () => {
     const claimed = await claimNextJob();
     expect(await yieldRemainder(a.jobId, claimed!.attempts + 1, null, {})).toBe(false);
     expect((await getJob(a.jobId))?.status).toBe("running");
+  });
+});
+
+describe.runIf(dbUp)("jobEvents — newest window (CODEX1 P1 on e3ac335)", () => {
+  it("a >200-event job returns the NEWEST 200 chronologically, with the true total", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST events-window" }));
+    // 209 unit events on top of the enqueue event = 210 total.
+    for (let i = 1; i <= 209; i++) {
+      await recordEvent(a.jobId, "unit_ok", { code: `L${i}`, name: `Unit ${i}` });
+    }
+    const { events, total } = await jobEvents(a.jobId);
+    expect(total).toBe(210);
+    expect(events).toHaveLength(200);
+    // Chronological within the window…
+    for (let i = 1; i < events.length; i++) {
+      // BIGINT ids arrive as strings from pg.
+      expect(Number(events[i].id)).toBeGreaterThan(Number(events[i - 1].id));
+    }
+    // …and it is the NEWEST window: the very last unit is present and the
+    // oldest events (enqueued + first units) are trimmed. The old
+    // ORDER BY id LIMIT froze the feed on exactly this shape.
+    const last = events[events.length - 1];
+    expect((last.details as { code?: string }).code).toBe("L209");
+    expect(events.some((e) => e.action === "enqueued")).toBe(false);
   });
 });
 
@@ -349,7 +374,7 @@ describe.runIf(dbUp)("cancel at the terminalization boundary (CODEX1 re-re-revie
   async function expectCancelledOnce(jobId: number) {
     const row = await getJob(jobId);
     expect(row?.status).toBe("cancelled");
-    const events = await jobEvents(jobId);
+    const events = (await jobEvents(jobId)).events;
     const terminal = events.filter((e) =>
       ["completed", "failed", "retry_scheduled", "interrupted", "cancelled"].includes(e.action),
     );
@@ -500,7 +525,7 @@ describe.runIf(dbUp)("startup reclaim", () => {
     expect(n).toBe(2);
     expect((await getJob(fresh.jobId))?.status).toBe("pending");
     expect((await getJob(spent.jobId))?.status).toBe("failed");
-    const freshEvents = await jobEvents(fresh.jobId);
+    const freshEvents = (await jobEvents(fresh.jobId)).events;
     expect(freshEvents.some((e) => e.action === "reclaimed")).toBe(true);
   });
 });
@@ -523,7 +548,7 @@ describe.runIf(dbUp)("durable-boundary sanitization (CODEX1 Phase-2 #1)", () => 
       failed: [{ code: "L1", error: HOSTILE }],
     });
     const row = await getJob(a.jobId);
-    const events = await jobEvents(a.jobId);
+    const events = (await jobEvents(a.jobId)).events;
     const everything = JSON.stringify([row?.progress, row?.error, row?.result, events]);
     expect(everything).not.toContain("hunter2");
     expect(everything).not.toContain("abc.def.ghi");
@@ -561,7 +586,7 @@ describe.runIf(dbUp)("recurring primitives (need-alert scheduler)", () => {
       ...recurParams("JOBTEST sched-event"),
       runAfterMs: 30_000,
     });
-    const events = await jobEvents(jobId);
+    const events = (await jobEvents(jobId)).events;
     expect(events[0].action).toBe("enqueued");
     expect((events[0].details as { scheduled?: boolean }).scheduled).toBe(true);
     await query(`UPDATE jobs SET status='cancelled', finished_at=NOW() WHERE id=$1`, [jobId]);
@@ -583,13 +608,13 @@ describe.runIf(dbUp)("recurring primitives (need-alert scheduler)", () => {
     expect(r.successorId).not.toBeNull();
     // Current terminalized with its completed event...
     expect((await getJob(jobId))?.status).toBe("succeeded");
-    const doneEvents = await jobEvents(jobId);
+    const doneEvents = (await jobEvents(jobId)).events;
     expect(doneEvents.some((e) => e.action === "completed")).toBe(true);
     // ...successor pending, gated, with its scheduled enqueued event.
     const succ = await getJob(r.successorId!);
     expect(succ?.status).toBe("pending");
     expect(succ?.next_retry_at).not.toBeNull();
-    const succEvents = await jobEvents(r.successorId!);
+    const succEvents = (await jobEvents(r.successorId!)).events;
     expect(succEvents.map((e) => e.action)).toEqual(["enqueued"]);
     expect((succEvents[0].details as { scheduled?: boolean }).scheduled).toBe(true);
     // Exactly one active holder of the dedup key.

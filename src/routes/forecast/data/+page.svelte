@@ -200,22 +200,34 @@
   // ---- Per-unit activity (Phase 3): the events feed the admin page already
   // uses, surfaced for everyone on this communal hub. Fetch on expand; while
   // a RUNNING job's activity stays open, refresh every 10 s.
-  let openEvents = $state<
-    Record<number, { at: string; action: string; details: unknown }[] | "loading" | "error">
-  >({});
+  interface EventsFeed {
+    events: { at: string; action: string; details: unknown }[];
+    /** ALL events the job has ever written — the fetch is the newest 200,
+     * so total > events.length means older activity was trimmed. */
+    total: number;
+  }
+  let openEvents = $state<Record<number, EventsFeed | "loading" | "error">>({});
   async function loadEvents(jobId: number) {
     openEvents = { ...openEvents, [jobId]: openEvents[jobId] ?? "loading" };
     try {
       const res = await fetch(`/api/jobs/${jobId}/events`);
       if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as {
-        events: { at: string; action: string; details: unknown }[];
-      };
-      openEvents = { ...openEvents, [jobId]: body.events };
+      const body = (await res.json()) as EventsFeed;
+      openEvents = { ...openEvents, [jobId]: body };
     } catch {
       openEvents = { ...openEvents, [jobId]: "error" };
     }
   }
+  // Per-unit activity is only offered for the communal frequency-load
+  // family — other job types' events may reference individual users and
+  // the API 403s them for non-admins (CODEX1 P1 on e3ac335).
+  const ACTIVITY_TYPES = new Set([
+    "load_hotspots",
+    "load_region",
+    "analyze_counties",
+    "refresh_loc",
+    "retry_loc",
+  ]);
   let activityOpen = $state<number[]>([]);
   function toggleActivity(jobId: number, open: boolean) {
     activityOpen = activityOpen.filter((id) => id !== jobId);
@@ -265,7 +277,8 @@
     {:else if openEvents[jobId] === "error"}
       <p class="jobdetail err">Could not load the activity feed.</p>
     {:else}
-      {@const units = unitEvents(openEvents[jobId])}
+      {@const feed = openEvents[jobId]}
+      {@const units = unitEvents(feed.events)}
       {#if units.length === 0}
         <p class="jobdetail">No per-location activity yet.</p>
       {:else}
@@ -287,8 +300,13 @@
             </li>
           {/each}
         </ul>
-        {#if units.length > 40}
-          <p class="jobdetail">Showing the latest 40 of {units.length}.</p>
+        {#if units.length > 40 || feed.total > feed.events.length}
+          <p class="jobdetail">
+            Showing the latest {Math.min(units.length, 40)} location
+            updates{feed.total > feed.events.length
+              ? ` — this load has ${feed.total.toLocaleString()} log entries in all`
+              : ` of ${units.length}`}.
+          </p>
         {/if}
       {/if}
     {/if}
@@ -530,7 +548,7 @@
             {#if j.progress.lastError}
               <p class="jobdetail err">last problem: {j.progress.lastError}</p>
             {/if}
-            {@render activity(j.id)}
+            {#if ACTIVITY_TYPES.has(j.type)}{@render activity(j.id)}{/if}
           </li>
         {/each}
       </ul>
@@ -564,7 +582,7 @@
                     : "s"} failed — see Failed loads below.
                 </p>
               {/if}
-              {@render activity(j.id)}
+              {#if ACTIVITY_TYPES.has(j.type)}{@render activity(j.id)}{/if}
             </li>
           {/each}
         </ul>

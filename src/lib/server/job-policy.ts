@@ -254,6 +254,22 @@ export function jobTarget(type: string, payload: unknown): string | null {
  * buttons for locations already being fetched (CODEX1 re-review #5). Codes
  * only — names/regions stay out of the wire format.
  */
+/** The frequency-load family: communal by design (this page lets any user
+ * see and cancel anyone's load), so their per-unit events are communal too.
+ * Every OTHER job type's events may reference individual users (alert scans,
+ * syncs, enrichment) — admin-only (CODEX1 P1 on e3ac335). */
+export const FREQUENCY_JOB_TYPES: ReadonlySet<string> = new Set([
+	'load_hotspots',
+	'load_region',
+	'analyze_counties',
+	'refresh_loc',
+	'retry_loc'
+]);
+
+export function canViewJobEvents(jobType: string, role: string | undefined): boolean {
+	return role === 'admin' || FREQUENCY_JOB_TYPES.has(jobType);
+}
+
 export function jobLocCodes(payload: unknown): string[] {
 	const p = payload as {
 		locs?: { code?: unknown }[];

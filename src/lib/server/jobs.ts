@@ -652,15 +652,30 @@ export async function listJobs(limit = 15): Promise<JobRow[]> {
 	return r.rows;
 }
 
-export async function jobEvents(jobId: number, limit = 200): Promise<
-	{ id: number; at: Date; action: JobEventAction; details: unknown }[]
-> {
-	const r = await query<{ id: number; at: string; action: JobEventAction; details: unknown }>(
-		`SELECT id, at, action, details FROM job_events
-		  WHERE job_id = $1 ORDER BY id LIMIT $2`,
-		[jobId, limit]
-	);
-	return r.rows.map((row) => ({ ...row, at: new Date(row.at) }));
+/**
+ * The NEWEST `limit` events, in chronological order. Long jobs write far more
+ * than the window — ORDER BY id LIMIT used to return the OLDEST window, which
+ * froze the hub's live activity feed once a load passed 200 events (CODEX1
+ * P1 on e3ac335). `total` lets callers disclose truncation honestly.
+ */
+export async function jobEvents(jobId: number, limit = 200): Promise<{
+	events: { id: number; at: Date; action: JobEventAction; details: unknown }[];
+	total: number;
+}> {
+	const [rows, count] = await Promise.all([
+		query<{ id: number; at: string; action: JobEventAction; details: unknown }>(
+			`SELECT id, at, action, details FROM (
+			   SELECT id, at, action, details FROM job_events
+			    WHERE job_id = $1 ORDER BY id DESC LIMIT $2
+			 ) newest ORDER BY id`,
+			[jobId, limit]
+		),
+		query<{ n: string }>(`SELECT COUNT(*) AS n FROM job_events WHERE job_id = $1`, [jobId])
+	]);
+	return {
+		events: rows.rows.map((row) => ({ ...row, at: new Date(row.at) })),
+		total: Number(count.rows[0]?.n ?? 0)
+	};
 }
 
 export async function getJob(jobId: number): Promise<JobRow | null> {

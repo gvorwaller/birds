@@ -6,6 +6,7 @@ import {
   dedupKeys,
   displayName,
   durationMs,
+  canViewJobEvents,
   jobLocCodes,
   jobOutcome,
   jobTarget,
@@ -296,5 +297,23 @@ describe("jobLocCodes — allCodes union (GROK P1 on afb305d)", () => {
 
   it("counties payloads are unaffected", () => {
     expect(jobLocCodes({ counties: [{ code: "US-FL-057" }] })).toEqual(["US-FL-057"]);
+  });
+});
+
+describe("canViewJobEvents — type/role boundary (CODEX1 P1 on e3ac335)", () => {
+  it("frequency-load family is communal (any role)", () => {
+    for (const t of ["load_hotspots", "load_region", "analyze_counties", "refresh_loc", "retry_loc"]) {
+      expect(canViewJobEvents(t, "user")).toBe(true);
+      expect(canViewJobEvents(t, "viewer")).toBe(true);
+    }
+  });
+
+  it("every other type is admin-only — their events can reference individual users", () => {
+    for (const t of ["sync_lifelist", "sync_taxonomy", "scan_need_alerts", "enrich_species", "scan_enrichment"]) {
+      expect(canViewJobEvents(t, "user")).toBe(false);
+      expect(canViewJobEvents(t, "viewer")).toBe(false);
+      expect(canViewJobEvents(t, undefined)).toBe(false);
+      expect(canViewJobEvents(t, "admin")).toBe(true);
+    }
   });
 });
