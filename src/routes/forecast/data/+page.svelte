@@ -236,13 +236,20 @@
       void loadEvents(jobId);
     }
   }
+  // Depend on activityOpen ONLY: reading jobsPoll here would re-run this
+  // effect on every 2.5s poll write, tearing the interval down before its
+  // 10s ever fired — the live feed silently became one-shot (GROK P2 on
+  // e3ac335). The running check moves INSIDE the callback, where reads
+  // create no reactive dependencies.
   $effect(() => {
-    const runningOpen = activityOpen.filter((id) =>
-      jobsPoll.active.some((j) => j.id === id && j.status === "running"),
-    );
-    if (runningOpen.length === 0) return;
+    if (activityOpen.length === 0) return;
+    const ids = [...activityOpen];
     const t = setInterval(() => {
-      for (const id of runningOpen) void loadEvents(id);
+      for (const id of ids) {
+        if (jobsPoll.active.some((j) => j.id === id && j.status === "running")) {
+          void loadEvents(id);
+        }
+      }
     }, 10_000);
     return () => clearInterval(t);
   });
@@ -1312,6 +1319,11 @@
     display: inline-flex;
     align-items: center;
     min-height: 48px;
+    /* Long hotspot names must wrap inside the flex row, not overflow. */
+    min-width: 0;
+  }
+  .hublink strong {
+    overflow-wrap: anywhere;
   }
   @media (hover: hover) {
     .hublink:hover strong {
@@ -1363,6 +1375,9 @@
   }
   .uname {
     overflow-wrap: anywhere;
+    /* flex min-content trap: without this a long name overflows the row. */
+    min-width: 0;
+    flex: 1;
   }
   .muted2 {
     color: var(--muted);

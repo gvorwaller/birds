@@ -74,7 +74,7 @@ describe("safeReturnTo", () => {
     });
     expect(safeReturnTo("/forecast/data")).toEqual({
       href: "/forecast/data",
-      label: "Forecast data",
+      label: "Hotspots & data",
     });
     expect(safeReturnTo("/trips/4")).toEqual({
       href: "/trips/4",
