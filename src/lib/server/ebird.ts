@@ -225,6 +225,14 @@ export async function hotspotsInRegion(
  * Recent observations at a single location (data/obs/{locId}/recent) — the
  * Hotspot Workspace Phase-1 feed (plan: docs/2026-08-18-hotspot-workspace-
  * plan-CC1.md). back is whitelisted by the caller to 7|14|30 (GROK pin).
+ *
+ * includeProvisional=true (Gaylon, td-e64d93 session 2026-08-18): eBird's
+ * default EXCLUDES not-yet-reviewed records — which is exactly what a
+ * flagged rarity is, so a Roseate Tern that fired a need alert was invisible
+ * on its hotspot's Recent tab. Provisional rows arrive with obsValid=false
+ * and render with the Unconfirmed chip ("ALL reports" ruling; the GROK
+ * Phase-1 review anticipated precisely this pairing). Cache namespace bumped
+ * (hotspotObs2) so stale provisional-free payloads never serve.
  */
 export async function recentHotspotObs(
 	apiKey: string,
@@ -233,9 +241,9 @@ export async function recentHotspotObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const loc = locId.trim();
 	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
-	return cachedFetch(`hotspotObs:${loc}:${b}`, OBS_TTL_MIN, () =>
+	return cachedFetch(`hotspotObs2:${loc}:${b}`, OBS_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
-			`/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple`,
+			`/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple&includeProvisional=true`,
 			apiKey
 		)
 	);

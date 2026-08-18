@@ -5,6 +5,9 @@ import {
   parseSparqlBindings,
   titleFromArticleUrl,
   validSpeciesCode,
+  buildSciNameSparql,
+  fetchWikidataBySciName,
+  validSciName,
 } from "./wikidata";
 import {
   splitSections,
@@ -88,6 +91,67 @@ describe("wikidata pure helpers", () => {
     );
     expect(titleFromArticleUrl(null)).toBeNull();
     expect(titleFromArticleUrl("https://example.com/nope")).toBeNull();
+  });
+});
+
+describe("sci-name fallback (td-e64d93)", () => {
+  it("validSciName accepts binomials, rejects injection shapes", () => {
+    expect(validSciName("Gelochelidon nilotica")).toBe(true);
+    expect(validSciName("Larus smithsonianus")).toBe(true);
+    expect(validSciName("Anas sp.")).toBe(true);
+    expect(validSciName('x" } UNION { ?s ?p ?o')).toBe(false);
+    expect(validSciName("a")).toBe(false);
+    expect(validSciName("has'quote")).toBe(false);
+  });
+
+  it("buildSciNameSparql embeds validated names via P225 and refuses invalid ones", () => {
+    const q = buildSciNameSparql(["Gelochelidon nilotica"]);
+    expect(q).toContain('VALUES ?sci { "Gelochelidon nilotica" }');
+    expect(q).toContain("wdt:P225");
+    expect(() => buildSciNameSparql(['bad"name'])).toThrow(/invalid sci names/);
+  });
+
+  it("fetchWikidataBySciName maps name hits back to the CALLER's eBird codes", async () => {
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          results: {
+            bindings: [
+              {
+                sci: { value: "Gelochelidon nilotica" },
+                item: { value: "http://www.wikidata.org/entity/Q18834" },
+                article: { value: "https://en.wikipedia.org/wiki/Gull-billed_tern" },
+              },
+            ],
+          },
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const out = await fetchWikidataBySciName(
+      [
+        { code: "gubter2", sciName: "Gelochelidon nilotica" },
+        { code: "ghost1", sciName: "Nulla species" },
+        { code: "badone", sciName: 'inj"ect' }, // invalid → never sent
+      ],
+      { fetcher },
+    );
+    expect(out.size).toBe(1);
+    const row = out.get("gubter2");
+    expect(row?.speciesCode).toBe("gubter2"); // caller's code, not the name
+    expect(row?.qid).toBe("Q18834");
+    expect(row?.enwikiTitle).toBe("Gull-billed tern");
+    expect(out.has("ghost1")).toBe(false);
+  });
+
+  it("no valid names → no network call at all", async () => {
+    let called = 0;
+    const fetcher = (async () => {
+      called++;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const out = await fetchWikidataBySciName([{ code: "x1", sciName: 'inj"ect' }], { fetcher });
+    expect(out.size).toBe(0);
+    expect(called).toBe(0);
   });
 });
 

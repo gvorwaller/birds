@@ -192,13 +192,20 @@ vi.mock("$server/push", () => ({
 }));
 const enrichMocks = vi.hoisted(() => ({
   fetchWikidataBatch: vi.fn<(codes: readonly string[]) => Promise<Map<string, unknown>>>(),
+  fetchWikidataBySciName: vi.fn<
+    (pairs: readonly { code: string; sciName: string }[]) => Promise<Map<string, unknown>>
+  >(async () => new Map()),
   fetchArticlePlaintext: vi.fn<(title: string) => Promise<unknown>>(),
   generateSpeciesAnnotation: vi.fn<(input: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock("$server/wikidata", async (importOriginal) => {
   const real = await importOriginal<typeof import("./wikidata")>();
-  return { ...real, fetchWikidataBatch: enrichMocks.fetchWikidataBatch };
+  return {
+    ...real,
+    fetchWikidataBatch: enrichMocks.fetchWikidataBatch,
+    fetchWikidataBySciName: enrichMocks.fetchWikidataBySciName,
+  };
 });
 vi.mock("$server/wikipedia", async (importOriginal) => {
   const real = await importOriginal<typeof import("./wikipedia")>();
@@ -1517,6 +1524,8 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
 
   beforeEach(() => {
     enrichMocks.fetchWikidataBatch.mockReset();
+    enrichMocks.fetchWikidataBySciName.mockReset();
+    enrichMocks.fetchWikidataBySciName.mockResolvedValue(new Map());
     enrichMocks.fetchArticlePlaintext.mockReset();
     // Freshness probe: default NOT fresh (attempt every unit).
     db.handler = (text) => {
@@ -1564,6 +1573,70 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     });
     // Resolution + prose writes reached the DB gateway.
     expect(db.calls.some((c) => c.text.includes("INSERT INTO species_enrichment"))).toBe(true);
+  });
+
+  it("split survivor: no P3444 hit, sci-name fallback resolves it (td-e64d93 — Gull-billed Tern)", async () => {
+    // Primary lookup misses gubter2 entirely (Wikidata still carries the
+    // pre-split code); the binomial resolves it.
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(new Map() as never);
+    enrichMocks.fetchWikidataBySciName.mockResolvedValueOnce(
+      new Map([["gubter2", { ...WD("gubter2", "Gull-billed tern"), qid: "Q18834" }]]) as never,
+    );
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("SELECT species_code, sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "gubter2", sci_name: "Gelochelidon nilotica" }] };
+      return base?.(text, params);
+    };
+    enrichMocks.fetchArticlePlaintext.mockResolvedValueOnce({
+      title: "Gull-billed tern",
+      revId: 9,
+      extract: "prose",
+      sections: [],
+    });
+
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["gubter2"] } }), ctx);
+
+    // The fallback got the CALLER's pairs…
+    expect(enrichMocks.fetchWikidataBySciName).toHaveBeenCalledWith([
+      { code: "gubter2", sciName: "Gelochelidon nilotica" },
+    ]);
+    // …and the unit completed as a full OK, not no_mapping.
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect(oks.some((c) => (c[2] as { kind?: string }).kind === "sci_name_fallback")).toBe(true);
+    expect(oks.some((c) => (c[2] as { outcome?: string }).outcome === "ok")).toBe(true);
+    expect(oks.some((c) => (c[2] as { outcome?: string }).outcome === "no_mapping")).toBe(false);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, noMapping: 0 });
+  });
+
+  it("sci-name fallback failure is SOFT: primary results survive, missing codes stay no_mapping", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["margod", WD("margod", "Marbled godwit")]]) as never,
+    );
+    enrichMocks.fetchWikidataBySciName.mockRejectedValueOnce(
+      new WikidataError("Wikidata query failed (HTTP 503)", 503, false),
+    );
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("SELECT species_code, sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "ghost1", sci_name: "Nulla species" }] };
+      return base?.(text, params);
+    };
+    enrichMocks.fetchArticlePlaintext.mockResolvedValueOnce({
+      title: "Marbled godwit",
+      revId: 7,
+      extract: "prose",
+      sections: [],
+    });
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod", "ghost1"] } }),
+      ctx,
+    );
+    // No whole-job retry — the chunk completed on primary data.
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, noMapping: 1 });
   });
 
   it("SPARQL transient failure → whole-job retry, nothing attempted", async () => {
@@ -1977,6 +2050,10 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
 
   beforeEach(() => {
     enrichMocks.fetchWikidataBatch.mockReset();
+    // Real contract: fetchWikidataBatch always returns a Map — a bare reset
+    // returns undefined, which no caller has to survive.
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(new Map());
+    enrichMocks.fetchWikidataBySciName.mockResolvedValue(new Map());
     enrichMocks.fetchArticlePlaintext.mockReset();
     enrichMocks.generateSpeciesAnnotation.mockReset();
   });

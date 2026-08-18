@@ -57,6 +57,7 @@ import {
 } from '$server/job-policy';
 import {
 	fetchWikidataBatch,
+	fetchWikidataBySciName,
 	validSpeciesCode,
 	WikidataError,
 	type WikidataSpeciesRow
@@ -1002,6 +1003,36 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	if (!aiOnly)
 		try {
 			resolved = await fetchWikidataBatch(codes);
+			// Sci-name fallback (td-e64d93): codes with no P3444 anywhere —
+			// eBird split survivors like gubter2 — get one more chance via the
+			// stable binomial (P225). SOFT failure policy: the primary data is
+			// already in hand, so a fallback error must not fail or retry the
+			// whole chunk; unresolved codes simply stay no_mapping and the
+			// next pass tries again.
+			const missing = codes.filter((c) => !resolved.has(c));
+			if (missing.length > 0) {
+				try {
+					const sci = await query<{ species_code: string; sci_name: string }>(
+						`SELECT species_code, sci_name FROM taxonomy_cache
+						  WHERE species_code = ANY($1)`,
+						[missing]
+					);
+					const fallback = await fetchWikidataBySciName(
+						sci.rows.map((r) => ({ code: r.species_code, sciName: r.sci_name }))
+					);
+					for (const [code, row] of fallback) {
+						resolved.set(code, row);
+						await recordEvent(job.id, 'unit_ok', {
+							code,
+							kind: 'sci_name_fallback',
+							qid: row.qid
+						});
+					}
+				} catch {
+					// Soft: see above. WDQS transient/rate-limit on the fallback
+					// leaves the primary results fully usable.
+				}
+			}
 		} catch (err) {
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
 				0,

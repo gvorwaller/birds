@@ -204,7 +204,9 @@
 						<strong>Load/Refresh historical data</strong> button, a
 						<strong>Recent</strong> tab showing the latest report of each
 						species (one row per species, linking to the eBird checklist it
-						came from, with your Need/Seen badges), and a
+						came from, with your Need/Seen badges — flagged rarities awaiting
+						review are included and marked
+						<strong>Unconfirmed</strong>), and a
 						<strong>Monthly</strong> tab showing what's likely there each
 						month. The <em>eBird ↗</em> badge still opens eBird itself.
 					</li>

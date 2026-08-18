@@ -130,14 +130,10 @@ export interface SparqlBinding {
  * from the result have NO P3444 mapping (the caller records 'no_mapping' —
  * distinct from a transient failure, which throws).
  */
-export async function fetchWikidataBatch(
-	codes: readonly string[],
-	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
-): Promise<Map<string, WikidataSpeciesRow>> {
-	if (codes.length === 0) return new Map();
-	if (codes.length > WIKIDATA_BATCH_SIZE) {
-		throw new Error(`batch too large: ${codes.length} > ${WIKIDATA_BATCH_SIZE}`);
-	}
+async function runSparql(
+	queryText: string,
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch }
+): Promise<SparqlBinding[]> {
 	const doFetch = opts.fetcher ?? fetch;
 	const signal = opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 	let res: Response;
@@ -149,7 +145,7 @@ export async function fetchWikidataBatch(
 				Accept: 'application/sparql-results+json',
 				'User-Agent': userAgent()
 			},
-			body: new URLSearchParams({ query: buildSpeciesSparql(codes) }),
+			body: new URLSearchParams({ query: queryText }),
 			signal
 		});
 	} catch (err) {
@@ -168,7 +164,88 @@ export async function fetchWikidataBatch(
 		);
 	}
 	const body = (await res.json()) as { results?: { bindings?: SparqlBinding[] } };
-	return parseSparqlBindings(body.results?.bindings ?? []);
+	return body.results?.bindings ?? [];
+}
+
+export async function fetchWikidataBatch(
+	codes: readonly string[],
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<Map<string, WikidataSpeciesRow>> {
+	if (codes.length === 0) return new Map();
+	if (codes.length > WIKIDATA_BATCH_SIZE) {
+		throw new Error(`batch too large: ${codes.length} > ${WIKIDATA_BATCH_SIZE}`);
+	}
+	return parseSparqlBindings(await runSparql(buildSpeciesSparql(codes), opts));
+}
+
+/**
+ * Scientific-name fallback (td-e64d93): after an eBird taxonomy split, the
+ * NEW code has no P3444 anywhere on Wikidata yet (Gull-billed Tern: eBird
+ * split gubter → gubter2, Q18834 still carries P3444 = gubter1), so the
+ * primary lookup reports no_mapping forever. The binomial is stable across
+ * such splits — resolve the leftovers by taxon name (P225) instead.
+ * Names never reach the query unvalidated (letters/space/hyphen/period
+ * only) — same string-building discipline as the code path.
+ */
+const SCI_NAME_RE = /^[A-Za-z][A-Za-z .-]{2,60}$/;
+
+export function validSciName(name: string): boolean {
+	return SCI_NAME_RE.test(name);
+}
+
+export function buildSciNameSparql(names: readonly string[]): string {
+	const bad = names.filter((n) => !validSciName(n));
+	if (bad.length > 0) throw new Error(`invalid sci names: ${bad.slice(0, 3).join(', ')}`);
+	const values = names.map((n) => `"${n}"`).join(' ');
+	return `SELECT ?sci ?item
+  (MIN(STR(?articleUrl)) AS ?article)
+  (MIN(?iucnLabel) AS ?iucn)
+  (MIN(?massKg) AS ?massMin) (MAX(?massKg) AS ?massMax)
+  (MIN(?wsM) AS ?wsMin) (MAX(?wsM) AS ?wsMax)
+  (MIN(?inatId) AS ?inat) (MIN(?xcId) AS ?xc)
+WHERE {
+  VALUES ?sci { ${values} }
+  ?item wdt:P225 ?sci .
+  OPTIONAL { ?item wdt:P141 ?iucnItem .
+             ?iucnItem rdfs:label ?iucnLabel . FILTER(LANG(?iucnLabel) = "en") }
+  OPTIONAL { ?item p:P2067 ?massSt . ?massSt a wikibase:BestRank ;
+             psn:P2067/wikibase:quantityAmount ?massKg . }
+  OPTIONAL { ?item p:P2050 ?wsSt . ?wsSt a wikibase:BestRank ;
+             psn:P2050/wikibase:quantityAmount ?wsM . }
+  OPTIONAL { ?item wdt:P3151 ?inatId . }
+  OPTIONAL { ?item wdt:P2426 ?xcId . }
+  OPTIONAL { ?articleUrl schema:about ?item ;
+             schema:isPartOf <https://en.wikipedia.org/> . }
+}
+GROUP BY ?sci ?item`;
+}
+
+/**
+ * Resolve species by scientific name; returns a map keyed by the CALLER'S
+ * eBird code (rows carry that code, not the name). Invalid names are
+ * skipped, never sent. Duplicate-QID resolution matches the primary path
+ * (lowest QID wins, per name).
+ */
+export async function fetchWikidataBySciName(
+	pairs: readonly { code: string; sciName: string }[],
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<Map<string, WikidataSpeciesRow>> {
+	const usable = pairs.filter((p) => validSciName(p.sciName));
+	if (usable.length === 0) return new Map();
+	if (usable.length > WIKIDATA_BATCH_SIZE) {
+		throw new Error(`batch too large: ${usable.length} > ${WIKIDATA_BATCH_SIZE}`);
+	}
+	const bindings = await runSparql(
+		buildSciNameSparql(usable.map((p) => p.sciName)),
+		opts
+	);
+	const byName = parseSparqlBindings(bindings, 'sci');
+	const out = new Map<string, WikidataSpeciesRow>();
+	for (const p of usable) {
+		const row = byName.get(p.sciName);
+		if (row) out.set(p.code, { ...row, speciesCode: p.code });
+	}
+	return out;
 }
 
 /**
@@ -178,12 +255,13 @@ export async function fetchWikidataBatch(
  * (CODEX1 P1 #4: deterministic duplicate resolution, never row-order wins).
  */
 export function parseSparqlBindings(
-	bindings: readonly SparqlBinding[]
+	bindings: readonly SparqlBinding[],
+	keyVar: 'ebird' | 'sci' = 'ebird'
 ): Map<string, WikidataSpeciesRow> {
 	const out = new Map<string, WikidataSpeciesRow>();
 	const qidNum = (qid: string) => Number(qid.replace(/^Q/, '')) || Number.MAX_SAFE_INTEGER;
 	for (const b of bindings) {
-		const code = b.ebird?.value;
+		const code = b[keyVar]?.value;
 		const item = b.item?.value;
 		if (!code || !item) continue;
 		const row: WikidataSpeciesRow = {
