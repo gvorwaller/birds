@@ -1621,7 +1621,7 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     const base = db.handler;
     db.handler = (text, params) => {
       if (text.includes("AS skip"))
-        return { rows: [{ skip: true, resolution: "no_mapping" }] };
+        return { rows: [{ skip: true, resolution: "no_mapping", retry_due: false }] };
       if (text.includes("SELECT species_code, sci_name FROM taxonomy_cache"))
         return { rows: [{ species_code: "gubter2", sci_name: "Gelochelidon nilotica" }] };
       return base?.(text, params);
@@ -1643,6 +1643,38 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, fresh: 0 });
     // Resolution write reached the DB gateway.
     expect(db.calls.some((c) => c.text.includes("INSERT INTO species_enrichment"))).toBe(true);
+  });
+
+  it("weekly-due no_mapping + fallback MISS restamps the clock — never a fresh-skip loop (CODEX1)", async () => {
+    // The loop shape CODEX1 traced: an 8-day-old no_mapping row is due under
+    // the weekly lane; both WDQS lookups miss. If the fresh-skip fires, the
+    // clock is never restamped, wikiStaleCodes keeps returning the row, and
+    // the scan's 15-minute drain cadence re-runs it forever. The terminal
+    // no_mapping path must run instead, restamping via markWikiNoArticle.
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(new Map() as never);
+    enrichMocks.fetchWikidataBySciName.mockResolvedValueOnce(new Map() as never); // MISS
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("AS skip"))
+        return { rows: [{ skip: true, resolution: "no_mapping", retry_due: true }] };
+      if (text.includes("SELECT species_code, sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "gubter2", sci_name: "Gelochelidon nilotica" }] };
+      return base?.(text, params);
+    };
+
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["gubter2"] } }), ctx);
+
+    // Not skipped as fresh — the terminal no_mapping outcome ran…
+    expect(mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped")).toHaveLength(0);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ noMapping: 1, fresh: 0 });
+    // …and the clock restamp reached the DB (markWikiNoArticle's write) so
+    // the weekly lane will not re-select this row for another 7 days.
+    expect(
+      db.calls.some(
+        (c) => c.text.includes("'no_article'") && c.params?.[0] === "gubter2",
+      ),
+    ).toBe(true);
   });
 
   it("sci-name fallback failure is SOFT: primary results survive, missing codes stay no_mapping", async () => {

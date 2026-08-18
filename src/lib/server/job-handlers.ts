@@ -64,6 +64,7 @@ import {
 } from '$server/wikidata';
 import { fetchArticlePlaintext, WikipediaError } from '$server/wikipedia';
 import {
+	ERROR_RETRY_DAYS,
 	aiDueCodes,
 	aiStageInputFor,
 	enrichmentScope,
@@ -1226,22 +1227,37 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			} else {
 			// Skip-if-fresh (idempotent overlap); force skips only rows already
 			// refreshed since THIS job row was enqueued (retry ≠ redo).
-			const fresh = await query<{ skip: boolean; resolution: string | null }>(
+			const fresh = await query<{
+				skip: boolean;
+				resolution: string | null;
+				retry_due: boolean;
+			}>(
 				`SELECT (wiki_status IN ('ok','no_article') AND (
 				          ($2 = false AND wiki_fetched_at > NOW() - INTERVAL '180 days')
 				       OR ($2 = true  AND wiki_fetched_at > $3::timestamptz)
 				        )) AS skip,
-				        resolution
+				        resolution,
+				        (wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+				          AS retry_due
 				   FROM species_enrichment WHERE species_code = $1`,
 				[code, force, job.enqueued_at]
 			);
-			// Fallback rescue (GROK on 4694222): a split survivor sits at
-			// resolution='no_mapping' with a FRESH no_article clock — the very
-			// row the sci-name fallback exists for. When the fallback resolved
-			// it this chunk, the freshness skip must not throw that QID away.
+			// no_mapping rescue (GROK on 4694222 + CODEX1 anti-loop REJECT):
+			// a split survivor sits at resolution='no_mapping' with a "fresh"
+			// no_article clock. Two cases must NOT take the fresh-skip:
+			// - the fallback resolved it THIS chunk (hit) — run resolution +
+			//   wiki on the QID instead of discarding it;
+			// - the row is due under the WEEKLY retry lane (miss included) —
+			//   the terminal no_mapping path must run so markWikiNoArticle
+			//   RESTAMPS the clock. Skipping here left wiki_fetched_at
+			//   untouched, wikiStaleCodes kept returning the row, and the
+			//   scan's 15-minute drain cadence turned "weekly" into a
+			//   quarter-hourly WDQS loop.
+			const row0 = fresh.rows[0];
 			const rescued =
-				fresh.rows[0]?.resolution === 'no_mapping' && resolved.has(code);
-			if (fresh.rows[0]?.skip === true && !rescued) {
+				row0?.resolution === 'no_mapping' &&
+				(resolved.has(code) || row0.retry_due === true);
+			if (row0?.skip === true && !rescued) {
 				// Wiki is fresh — but the AI stage may still be missing, behind
 				// the stored revision, past its error window, or forced. This is
 				// how the whole pre-Phase-2 corpus gets annotated without a
