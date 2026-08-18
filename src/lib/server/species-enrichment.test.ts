@@ -396,6 +396,45 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     }
   });
 
+  it("weekly no_mapping lane: an 8-day-old row IS stale, a restamped one is NOT (GROK P2 pin)", async () => {
+    await wipe();
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Test Bird', 'Testus birdus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET category = 'species'`,
+      [CODE],
+    );
+    const uid = (
+      await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)
+    ).rows[0].id;
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source)
+       VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+      [uid, CODE],
+    );
+    try {
+      await upsertResolution(CODE, null); // resolution='no_mapping'
+      await markWikiNoArticle(CODE);
+      // Age the clock past ERROR_RETRY_DAYS but well inside the 180d window:
+      // the split-survivor lane (not the general refresh) must select it.
+      await query(
+        `UPDATE species_enrichment
+            SET wiki_fetched_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+        [CODE],
+      );
+      expect(await wikiStaleCodes()).toContain(CODE);
+      // A fresh restamp (what BOTH the fallback hit and miss paths do)
+      // removes it — the scan's 15-minute cadence has no candidate.
+      await markWikiNoArticle(CODE);
+      expect(await wikiStaleCodes()).not.toContain(CODE);
+    } finally {
+      await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
+      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+      await wipe();
+    }
+  });
+
   it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", async () => {
     await wipe();
     // Put the synthetic code in scope: taxonomy(species) + a seen row.
