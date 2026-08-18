@@ -152,3 +152,14 @@ grouped by day, one row per species, each row linking to the checklist that
 report came from (Need/Seen badges + Unconfirmed chips unchanged). The
 acceptance item "grouped checklists" is superseded by this row contract.
 A true checklist feed (`/product/lists`) is a separate future td if wanted.
+
+## Owner ruling (2026-08-18, Gaylon): load Activity feeds are COMMUNAL
+
+The Phase-3 draft's "per-unit narration … for THEIR loads" is superseded.
+Gaylon's explicit ruling: any signed-in user (viewer included) may watch any
+frequency-load job's per-location Activity feed — consistent with this hub's
+existing communal semantics (any user already sees and cancels anyone's
+load, and the loaded data pool is shared). Feed contents are hotspot
+names/codes and sanitized error text only. All NON-load job types
+(sync/alerts/enrichment — their events can reference individual users)
+remain admin-only via canViewJobEvents.
