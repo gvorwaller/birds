@@ -502,6 +502,8 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
         locs: [LOCS[1], LOCS[2]],
         force: false,
         base: { total: 3, done: 1 },
+        // First yield pins the ORIGINAL coverage for jobLocCodes (GROK P1).
+        allCodes: ["L1", "L2", "L3"],
       });
       expect(summary).toMatchObject({ remaining: 2, refreshed: 1 });
       expect(mocks.completeJob).not.toHaveBeenCalled();
@@ -657,6 +659,7 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
         locs: [LOCS[1], LOCS[2]],
         force: false,
         base: { total: 3, done: 1 },
+        allCodes: ["L1", "L2", "L3"],
       });
       expect(snapshots[snapshots.length - 1]).toMatchObject({ unitsFailed: 1 });
 
@@ -728,6 +731,42 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
       mocks.updateProgress.mockImplementation(async () => ({
         cancelRequested: false,
       }));
+    }
+  });
+
+  it("a SECOND yield carries the original allCodes forward, not the narrowed set", async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        await opts.shouldStop();
+        return ensureResult({
+          refreshed: [locs[0].code],
+          notAttempted: [locs[1].code],
+        });
+      });
+      await runJob(
+        jobRow({
+          payload: {
+            locs: [LOCS[1], LOCS[2]],
+            force: false,
+            base: { total: 3, done: 1 },
+            allCodes: ["L1", "L2", "L3"],
+          },
+        }),
+        ctx,
+      );
+      const [, , newPayload] = mocks.yieldRemainder.mock.calls[0];
+      expect(newPayload).toEqual({
+        locs: [LOCS[2]],
+        force: false,
+        base: { total: 3, done: 2 },
+        allCodes: ["L1", "L2", "L3"], // original, not [L2, L3]
+      });
+    } finally {
+      vi.useRealTimers();
     }
   });
 

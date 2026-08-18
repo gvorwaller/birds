@@ -954,7 +954,7 @@
             <li>
               <div class="sp">
                 <!-- Name → internal hotspot page (Phase 1); eBird ↗ sibling stays. -->
-                <a class="name" href={`/hotspots/${h.locId}?returnTo=${encodeURIComponent("/forecast")}`}
+                <a class="name" href={`/hotspots/${h.locId}?returnTo=${encodeURIComponent(returnTo)}`}
                   >{h.locName}</a
                 >
                 <span class="meta">

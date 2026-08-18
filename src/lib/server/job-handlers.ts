@@ -100,6 +100,9 @@ interface FrequencyPayload {
 	locs: LocToEnsure[];
 	force?: boolean;
 	base?: FrequencyBase;
+	/** ORIGINAL loc codes, set on the first yield: jobLocCodes unions this so
+	 * covered/queued UI flags keep the whole batch while locs narrows. */
+	allCodes?: string[];
 }
 
 interface AnalyzeCountiesPayload {
@@ -297,12 +300,13 @@ function frequencyLocs(job: JobRow): {
 	locs: LocToEnsure[];
 	force: boolean;
 	base?: FrequencyBase;
+	allCodes?: string[];
 } {
 	const p = job.payload as unknown as FrequencyPayload;
 	if (!Array.isArray(p?.locs) || p.locs.length === 0) {
 		throw new Error('frequency job payload has no locs');
 	}
-	return { locs: p.locs, force: p.force === true, base: p.base };
+	return { locs: p.locs, force: p.force === true, base: p.base, allCodes: p.allCodes };
 }
 
 /**
@@ -1438,15 +1442,19 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			case 'load_region':
 			case 'refresh_loc':
 			case 'retry_loc': {
-				const { locs, force, base } = frequencyLocs(job);
+				const { locs, force, base, allCodes } = frequencyLocs(job);
 				await runFrequencyJob(job, locs, force, ctx, {
 					base,
 					// On a budget yield the payload narrows to the remainder;
-					// base carries the original total + banked completions.
+					// base carries the original total + banked completions, and
+					// allCodes pins the ORIGINAL coverage for the UI's
+					// covered/queued flags (GROK P1 #2 — this claim's locs ARE
+					// the original set on the first yield).
 					remainderPayload: (remaining, newBase) => ({
 						locs: remaining,
 						force,
-						base: newBase
+						base: newBase,
+						allCodes: allCodes ?? locs.map((l) => l.code)
 					})
 				});
 				return;

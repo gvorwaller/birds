@@ -258,9 +258,19 @@ export function jobLocCodes(payload: unknown): string[] {
 	const p = payload as {
 		locs?: { code?: unknown }[];
 		counties?: { code?: unknown }[];
+		allCodes?: unknown[];
 	} | null;
 	const arr = Array.isArray(p?.locs) ? p.locs : Array.isArray(p?.counties) ? p.counties : [];
-	return arr.map((x) => x?.code).filter((c): c is string => typeof c === 'string');
+	const current = arr.map((x) => x?.code).filter((c): c is string => typeof c === 'string');
+	// A budget yield narrows payload.locs to the remaining work set; allCodes
+	// preserves the ORIGINAL coverage so the UI's covered/queued flags don't
+	// flap mid-job — a banked loc flipping back to "unloaded" between yield
+	// and the next data refresh let Load-all re-enqueue it (GROK P1 #2 on
+	// afb305d). Union, never replace: a job without allCodes behaves as before.
+	const all = Array.isArray(p?.allCodes)
+		? p.allCodes.filter((c): c is string => typeof c === 'string')
+		: [];
+	return all.length > 0 ? [...new Set([...all, ...current])] : current;
 }
 
 // ---------------------------------------------------------------------------

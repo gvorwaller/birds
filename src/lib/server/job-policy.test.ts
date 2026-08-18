@@ -280,3 +280,21 @@ describe("decoration", () => {
     expect(statusColor("cancelled")).toBe("muted");
   });
 });
+
+describe("jobLocCodes — allCodes union (GROK P1 on afb305d)", () => {
+  it("without allCodes: current payload.locs codes, as before", () => {
+    expect(jobLocCodes({ locs: [{ code: "L1" }, { code: "L2" }] })).toEqual(["L1", "L2"]);
+  });
+
+  it("after a yield narrows locs, allCodes keeps the ORIGINAL coverage", () => {
+    // covered/queued flags must not flap mid-job: L1 is banked (gone from
+    // locs) but still covered by the running batch.
+    expect(
+      jobLocCodes({ locs: [{ code: "L2" }, { code: "L3" }], allCodes: ["L1", "L2", "L3"] }),
+    ).toEqual(["L1", "L2", "L3"]);
+  });
+
+  it("counties payloads are unaffected", () => {
+    expect(jobLocCodes({ counties: [{ code: "US-FL-057" }] })).toEqual(["US-FL-057"]);
+  });
+});
