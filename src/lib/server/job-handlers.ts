@@ -86,13 +86,14 @@ export interface WorkerContext {
 }
 
 /** Cumulative narration across budget yields: the ORIGINAL batch total and
- * counts banked by earlier chunks, so the progress bar keeps telling the
- * whole-batch story after the payload narrows to the remainder. */
+ * the completions banked by earlier chunks. Deliberately NOT failed/skipped —
+ * failed units stay in the payload and may succeed on a later chunk, so
+ * banking those counts would leave recovered locations falsely failed in the
+ * terminal UI (CODEX1 #2 on afb305d); each chunk reports its own current
+ * failed/skipped truth instead. */
 interface FrequencyBase {
 	total: number;
 	done: number;
-	failed: number;
-	skipped: number;
 }
 
 interface FrequencyPayload {
@@ -158,8 +159,8 @@ async function runFrequencyJob(
 		phase: 'fetching',
 		unitsTotal: opts.base?.total ?? locs.length,
 		unitsDone: opts.base?.done ?? 0,
-		unitsFailed: opts.base?.failed ?? 0,
-		unitsSkipped: opts.base?.skipped ?? 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
 		round: attempts
 	};
 	await recordEvent(job.id, 'claimed', { attempt: attempts, units: locs.length });
@@ -207,6 +208,20 @@ async function runFrequencyJob(
 		onUnit,
 		shouldStop
 	});
+	// Ready locs (made current by jobs that ran ahead of this one — the
+	// fairness interleaving creates exactly this) never pass through onUnit.
+	// Fold them into the cumulative count on EVERY return path, not only the
+	// yield branch, or a resumed chunk that completes normally terminalizes
+	// with a false partial bar (CODEX1 #1 on afb305d).
+	if (ensure.ready.length > 0) {
+		progress.unitsDone = (progress.unitsDone ?? 0) + ensure.ready.length;
+		try {
+			const { cancelRequested } = await updateProgress(job.id, progress);
+			if (cancelRequested) cancelSeen = true;
+		} catch {
+			// Same policy as per-unit writes: never fail the load over telemetry.
+		}
+	}
 	const summary = summarize(ensure);
 
 	// Resolve termination ONCE MORE after ensure returns (CODEX1 re-review #2).
@@ -241,11 +256,8 @@ async function runFrequencyJob(
 		if (remaining.length > 0) {
 			const newBase: FrequencyBase = {
 				total: progress.unitsTotal ?? locs.length,
-				// Ready locs never pass through onUnit — bank them here so the
-				// cumulative count stays honest across chunks.
-				done: (progress.unitsDone ?? 0) + ensure.ready.length,
-				failed: progress.unitsFailed ?? 0,
-				skipped: progress.unitsSkipped ?? 0
+				// Ready was already folded into unitsDone above — no double-add.
+				done: progress.unitsDone ?? 0
 			};
 			await yieldRemainder(
 				job.id,
@@ -1430,7 +1442,7 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				await runFrequencyJob(job, locs, force, ctx, {
 					base,
 					// On a budget yield the payload narrows to the remainder;
-					// base carries the original total + banked counts forward.
+					// base carries the original total + banked completions.
 					remainderPayload: (remaining, newBase) => ({
 						locs: remaining,
 						force,
@@ -1453,9 +1465,16 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 					return;
 				}
 				// No remainderPayload: analyzeCountiesLocs re-derives what is
-				// still uncovered at every claim, so a yielded job resumes
-				// correctly with its payload untouched.
-				await runFrequencyJob(job, locs, false, ctx);
+				// still uncovered at every claim, so a yielded job resumes with
+				// its payload untouched. The base is derived the same way — the
+				// ORIGINAL county snapshot is the total, and whatever the claim
+				// found already covered counts as done, so the bar keeps
+				// narrating N of TOTAL across yields instead of jumping back to
+				// 0 of remaining (CODEX1 #3 on afb305d).
+				const total = (job.payload as unknown as AnalyzeCountiesPayload).counties.length;
+				await runFrequencyJob(job, locs, false, ctx, {
+					base: { total, done: total - locs.length }
+				});
 				return;
 			}
 			case 'sync_lifelist': {

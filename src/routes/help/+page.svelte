@@ -162,8 +162,9 @@
 						The forecast uses <em>every</em> loaded hotspot in range —
 						loading is your choice, and a shared pool: what any user of this
 						app loads, everyone benefits from. A first visit to a new area
-						needs a one-time <strong>Load hotspot data</strong>; after that it's
-						instant and only refreshes about once a year.
+						needs a one-time <strong>Load all remaining</strong> (or a hand-picked
+						load); after that it's instant and only refreshes about once a
+						year.
 					</li>
 					<li>
 						A <strong>coverage pill</strong> under the results header always

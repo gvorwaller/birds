@@ -501,7 +501,7 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
       expect(newPayload).toEqual({
         locs: [LOCS[1], LOCS[2]],
         force: false,
-        base: { total: 3, done: 1, failed: 0, skipped: 0 },
+        base: { total: 3, done: 1 },
       });
       expect(summary).toMatchObject({ remaining: 2, refreshed: 1 });
       expect(mocks.completeJob).not.toHaveBeenCalled();
@@ -531,7 +531,7 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
           payload: {
             locs: [LOCS[2]],
             force: false,
-            base: { total: 3, done: 2, failed: 0, skipped: 0 },
+            base: { total: 3, done: 2 },
           },
         }),
         ctx,
@@ -585,6 +585,149 @@ describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () =>
     } finally {
       vi.useRealTimers();
       mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+    }
+  });
+
+  it("resumed chunk + nonempty ready + NORMAL completion folds ready into the bar (CODEX1 #1)", async () => {
+    // base 1/4 done; interleaved jobs loaded L2 meanwhile (ready, no onUnit);
+    // this chunk refreshes L1+L3 and completes. Bar must end 4 of 4.
+    const snapshots: { unitsTotal?: number; unitsDone?: number }[] = [];
+    mocks.updateProgress.mockImplementation(async (_id, p) => {
+      snapshots.push({ ...p });
+      return { cancelRequested: false };
+    });
+    try {
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        await opts.onUnit(locs[2], { status: "ok" });
+        return ensureResult({
+          ready: [locs[1].code],
+          refreshed: [locs[0].code, locs[2].code],
+        });
+      });
+      await runJob(
+        jobRow({
+          payload: {
+            locs: LOCS,
+            force: false,
+            base: { total: 4, done: 1 },
+          },
+        }),
+        ctx,
+      );
+      expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+      expect(snapshots[snapshots.length - 1]).toMatchObject({
+        unitsTotal: 4,
+        unitsDone: 4, // 1 banked + 2 fetched + 1 ready — no false partial
+      });
+      expect(mocks.yieldRemainder).not.toHaveBeenCalled();
+    } finally {
+      mocks.updateProgress.mockImplementation(async () => ({
+        cancelRequested: false,
+      }));
+    }
+  });
+
+  it("failed/skipped are chunk-local, never banked: a recovered loc does not stay failed (CODEX1 #2)", async () => {
+    vi.useFakeTimers();
+    const snapshots: { unitsDone?: number; unitsFailed?: number }[] = [];
+    mocks.updateProgress.mockImplementation(async (_id, p) => {
+      snapshots.push({ ...p });
+      return { cancelRequested: false };
+    });
+    try {
+      // Chunk 1: L1 ok, L2 FAILS, then budget → yield. The failed unit stays
+      // in the payload; base banks done only.
+      const t0 = Date.now();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        await opts.onUnit(locs[1], { status: "failed", error: "eBird 500" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        await opts.shouldStop();
+        return ensureResult({
+          refreshed: [locs[0].code],
+          failed: [{ code: locs[1].code, error: "eBird 500" }],
+          notAttempted: [locs[2].code],
+        });
+      });
+      await runJob(jobRow(), ctx);
+      const [, , newPayload] = mocks.yieldRemainder.mock.calls[0];
+      // Failed L2 rides the payload; base has NO failed field to go stale.
+      expect(newPayload).toEqual({
+        locs: [LOCS[1], LOCS[2]],
+        force: false,
+        base: { total: 3, done: 1 },
+      });
+      expect(snapshots[snapshots.length - 1]).toMatchObject({ unitsFailed: 1 });
+
+      // Chunk 2 (resumed): L2 now SUCCEEDS. Terminal progress must show it
+      // done and NOT failed — the old banked counter would have said 1 failed.
+      snapshots.length = 0;
+      vi.useRealTimers();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        for (const loc of locs) await opts.onUnit(loc, { status: "ok" });
+        return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+      });
+      await runJob(
+        jobRow({
+          payload: { locs: [LOCS[1], LOCS[2]], force: false, base: { total: 3, done: 1 } },
+        }),
+        ctx,
+      );
+      expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+      expect(snapshots[snapshots.length - 1]).toMatchObject({
+        unitsDone: 3,
+        unitsFailed: 0, // recovered — truthful terminal bar
+      });
+    } finally {
+      vi.useRealTimers();
+      mocks.updateProgress.mockImplementation(async () => ({
+        cancelRequested: false,
+      }));
+    }
+  });
+
+  it("analyze_counties narrates N of ORIGINAL TOTAL across yields — never 0 of remaining (CODEX1 #3)", async () => {
+    // Original snapshot: 3 counties; claim finds 1 already covered → derived
+    // locs are 2, and the bar must open at 1 of 3, not 0 of 2.
+    const snapshots: { unitsTotal?: number; unitsDone?: number }[] = [];
+    mocks.updateProgress.mockImplementation(async (_id, p) => {
+      snapshots.push({ ...p });
+      return { cancelRequested: false };
+    });
+    try {
+      mocks.frequencyMeta.mockResolvedValue(
+        new Map([["US-FL-057", { endYear: 2025 }]]),
+      );
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        for (const loc of locs) await opts.onUnit(loc, { status: "ok" });
+        return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+      });
+      await runJob(
+        jobRow({
+          type: "analyze_counties",
+          payload: {
+            regionCode: "US-FL",
+            regionName: "Florida",
+            counties: [
+              { code: "US-FL-057", name: "Hillsborough" },
+              { code: "US-FL-103", name: "Pinellas" },
+              { code: "US-FL-081", name: "Manatee" },
+            ],
+          },
+        }),
+        ctx,
+      );
+      expect(snapshots[0]).toMatchObject({ unitsTotal: 3, unitsDone: 1 });
+      expect(snapshots[snapshots.length - 1]).toMatchObject({
+        unitsTotal: 3,
+        unitsDone: 3,
+      });
+    } finally {
+      mocks.frequencyMeta.mockResolvedValue(new Map());
+      mocks.updateProgress.mockImplementation(async () => ({
+        cancelRequested: false,
+      }));
     }
   });
 

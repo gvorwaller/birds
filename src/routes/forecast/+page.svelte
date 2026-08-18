@@ -428,29 +428,32 @@
            truncated, max two wrapped lines at 320px; Manage is the ≥48px
            entry to the inline panel below. -->
       <div class="pill">
-        <span class="pillcounts">
-          {v.analyzed.length} of {v.totalNearby} loaded
-          {#if v.outdatedCount > 0}
-            · <span class="stale">{v.outdatedCount} outdated</span>
-          {/if}
-          {#if v.hotspotListStale}
-            · <span class="stale">list from cache</span>
+        <span class="pillrow">
+          <span class="pillcounts">
+            {v.analyzed.length} of {v.totalNearby} loaded
+            {#if v.outdatedCount > 0}
+              · <span class="stale">{v.outdatedCount} outdated</span>
+            {/if}
+            {#if v.hotspotListStale}
+              · <span class="stale">list from cache</span>
+            {/if}
+          </span>
+          {#if loadableCount > 0}
+            <button
+              type="button"
+              class="manage"
+              aria-expanded={manageOpen}
+              aria-controls="managepanel"
+              onclick={() => (manageOpen = !manageOpen)}
+            >
+              {manageOpen ? "Close" : "Manage"}
+            </button>
           {/if}
         </span>
         <span class="pillmeta">
           {#if v.dataYears}{v.dataYears.begin}–{v.dataYears.end} ·
           {/if}<a href="/forecast/data">details</a>
         </span>
-        {#if loadableCount > 0}
-          <button
-            type="button"
-            class="manage"
-            aria-expanded={manageOpen}
-            onclick={() => (manageOpen = !manageOpen)}
-          >
-            {manageOpen ? "Close" : "Manage"}
-          </button>
-        {/if}
       </div>
 
       {#if loadableCount > 0 && !data.isViewer}
@@ -494,6 +497,13 @@
                 <span class="ctasub">{ctaSubText}</span>
               {/if}
             </button>
+            {#if actionableCount > UNLOADED_PREVIEW}
+              <p class="loadnote">
+                Queues all {actionableCount} sites in the background — this can
+                take a while; progress shows below and survives leaving the
+                page.
+              </p>
+            {/if}
           </form>
         {:else if actionableCount === 0}
           <p class="notice ok">
@@ -506,7 +516,7 @@
       {/if}
 
       {#if manageOpen && loadableCount > 0}
-        <div class="managepanel">
+        <div class="managepanel" id="managepanel">
           <input
             class="picksearch"
             type="search"
@@ -1209,9 +1219,8 @@
   }
   .pill {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 10px;
+    flex-direction: column;
+    gap: 2px;
     padding: 8px 12px;
     margin: 6px 0 10px;
     border: 1px solid var(--border);
@@ -1219,8 +1228,22 @@
     background: var(--bg);
     font-size: 0.9rem;
   }
+  /* Counts + Manage share the first (wrapping) row; years/details sit on
+     their own muted line so Manage never sinks below line two at 320px
+     with production-sized counts (GROK Phase-2 SHOULD). */
+  .pillrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+  }
   .pillcounts {
     font-weight: 700;
+  }
+  .loadnote {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin: 6px 0 0;
   }
   .pillmeta {
     color: var(--muted);
@@ -1228,7 +1251,7 @@
   .pillmeta a {
     color: var(--muted);
   }
-  .pill .manage {
+  .pillrow .manage {
     margin-left: auto;
     min-height: 48px;
     padding: 6px 18px;
