@@ -678,9 +678,10 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
           DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()
           RETURNING user_id, species_code
         )
-        INSERT INTO need_alert_log (user_id, species_code, title, body, url)
-        SELECT user_id, species_code, $6, $7, $8 FROM sent`,
-        [userId, species, "L1", "2026-08-16 09:00", "S1", title, "2 mi from home", `https://x.example/s?species=${species}`],
+        INSERT INTO need_alert_log (user_id, species_code, title, body, url, reports)
+        SELECT user_id, species_code, $6, $7, $8, $9 FROM sent`,
+        [userId, species, "L1", "2026-08-16 09:00", "S1", title, "2 mi from home", `https://x.example/s?species=${species}`,
+         JSON.stringify([{ subId: "S1", locName: "Testflat", obsDt: "2026-08-16 09:00", distanceMi: 2 }])],
       );
     await append("snakit", "Lifer nearby: Snail Kite");
     await append("snakit", "Lifer nearby: Snail Kite"); // re-alert: upsert conflict path STILL appends history
@@ -691,12 +692,14 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
       [userId],
     );
     expect(Number(sent.rows[0].n)).toBe(2);
-    const rows = await query<{ species_code: string }>(
-      `SELECT species_code FROM need_alert_log
+    const rows = await query<{ species_code: string; reports: { subId: string }[] }>(
+      `SELECT species_code, reports FROM need_alert_log
         WHERE user_id = $1 ORDER BY sent_at DESC, id DESC`,
       [userId],
     );
     expect(rows.rows.map((r) => r.species_code)).toEqual(["frigul", "snakit", "snakit"]);
+    // Reports round-trip (td-78a7b1) — history rows can link the checklists.
+    expect(rows.rows[0].reports[0]).toMatchObject({ subId: "S1", locName: "Testflat" });
 
     // Rows older than the 180-day retention go; recent ones stay.
     await query(

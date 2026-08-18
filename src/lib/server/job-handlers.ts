@@ -555,9 +555,14 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				checkpoint();
 				let delivered = 0;
 				let lastErr: PushError | null = null;
-				// Absolute URL (CODEX1 Rev-2 addendum #1) — species only,
-				// never coordinates, private or not.
-				const clickUrl = `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`;
+				// Click lands on the TRIGGERING REPORT (td-78a7b1, Gaylon P1):
+				// the closest observation's public eBird checklist. Payload still
+				// carries no raw coordinates; Web Push payloads are E2E-encrypted
+				// (RFC 8291) and a checklist id is eBird's own public handle.
+				// No subId (rare) → the in-app species page as before.
+				const clickUrl = c.obs.subId
+					? `https://ebird.org/checklist/${encodeURIComponent(c.obs.subId)}`
+					: `${origin}/forecast/species?species=${encodeURIComponent(c.speciesCode)}`;
 				for (const sub of subRows.rows) {
 					if (goneEndpoints.has(sub.endpoint)) continue;
 					checkpoint();
@@ -602,8 +607,8 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 						DO UPDATE SET first_loc_id = $3, first_obs_dt = $4, sub_id = $5, sent_at = NOW()
 						RETURNING user_id, species_code
 					)
-					INSERT INTO need_alert_log (user_id, species_code, title, body, url)
-					SELECT user_id, species_code, $6, $7, $8 FROM sent`,
+					INSERT INTO need_alert_log (user_id, species_code, title, body, url, reports)
+					SELECT user_id, species_code, $6, $7, $8, $9 FROM sent`,
 					[
 						u.user_id,
 						c.speciesCode,
@@ -612,7 +617,8 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 						c.obs.subId,
 						c.title,
 						c.body,
-						clickUrl
+						clickUrl,
+						JSON.stringify(c.reports)
 					],
 					graceLeftMs()
 				);

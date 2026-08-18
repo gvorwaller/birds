@@ -90,13 +90,31 @@
       <h2 class="day">{group.day}</h2>
       <section class="card list">
         {#each group.rows as row (row.id)}
-          <a class="row" href={row.url}>
+          <div class="row">
             <span class="row-main">
-              <span class="title">{row.title}</span>
+              <a class="title" href={row.url}>{row.title}</a>
               <span class="body muted">{row.body}</span>
+              {#if row.reports.length > 0}
+                <span class="reports">
+                  {#each row.reports as r, i (i)}
+                    {#if r.subId}
+                      <a
+                        class="report-link"
+                        href={`https://ebird.org/checklist/${encodeURIComponent(r.subId)}`}
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        {r.locName} · {r.distanceMi} mi ↗
+                      </a>
+                    {:else}
+                      <span class="report-link muted">{r.locName} · {r.distanceMi} mi</span>
+                    {/if}
+                  {/each}
+                </span>
+              {/if}
             </span>
             <span class="time muted">{when(row.sent_at)}</span>
-          </a>
+          </div>
         {/each}
       </section>
     {/each}
@@ -175,13 +193,34 @@
     color: inherit;
     text-decoration: none;
   }
+  a.title {
+    color: inherit;
+    text-decoration: none;
+  }
+  .reports {
+    display: flex;
+    gap: 6px 14px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .report-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
   .row + .row {
     border-top: 1px solid var(--border);
   }
   /* Hover-capable pointers only — iOS tap-hover must not stick (GROK). */
   @media (hover: hover) {
-    .row:hover .title {
-      color: var(--accent);
+    .row:hover a.title,
+    .report-link:hover {
+      text-decoration: underline;
     }
   }
   .row-main {

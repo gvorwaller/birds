@@ -28,9 +28,10 @@ export const load: PageServerLoad = async ({ locals }) => {
       title: string;
       body: string;
       url: string;
+      reports: { subId: string | null; locName: string; obsDt: string; distanceMi: number }[];
       sent_at: string;
     }>(
-      `SELECT id::text, species_code, title, body, url, sent_at::text
+      `SELECT id::text, species_code, title, body, url, reports, sent_at::text
          FROM need_alert_log
         WHERE user_id = $1
         ORDER BY sent_at DESC, id DESC

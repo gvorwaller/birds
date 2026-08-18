@@ -87,6 +87,26 @@ describe("alertCandidates", () => {
     expect(c.body).toContain("4 seen");
   });
 
+  it("candidates carry ALL triggering reports closest-first, capped (td-78a7b1)", () => {
+    const many = Array.from({ length: 14 }, (_, i) =>
+      obs({
+        speciesCode: "snakit",
+        subId: `S${i}`,
+        locName: `Loc ${i}`,
+        // spread outward so distance ordering is deterministic and reversed
+        lat: 27.7 + (14 - i) * 0.05,
+      }),
+    );
+    const c = run(many)[0];
+    expect(c.reports).toHaveLength(10); // MAX_ALERT_REPORTS cap
+    // Closest-first: the last-generated obs (smallest offset) leads.
+    expect(c.reports[0].subId).toBe("S13");
+    expect(c.reports[0].distanceMi).toBeLessThanOrEqual(c.reports[9].distanceMi);
+    expect(c.reports[0].locName).toBe("Loc 13");
+    // The audit obs matches the closest report.
+    expect(c.obs.subId).toBe("S13");
+  });
+
   it("per-scan cap bounds a first-enable burst, nearest species first", () => {
     const many = Array.from({ length: 9 }, (_, i) =>
       obs({

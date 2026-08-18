@@ -521,7 +521,10 @@
 						(default 7 days), at most 5 alerts per scan, and
 						"(unconfirmed)" in the title means the report hasn't been
 						reviewed yet. Every report alerts with its full location —
-						including personal (non-hotspot) locations.
+						including personal (non-hotspot) locations — and tapping the
+						notification opens the eBird checklist that triggered it. The
+						<a href="/alerts">Alerts page</a> lists every triggering report
+						with a link.
 					</li>
 					<li>
 						No notification arriving? Check your phone allows notifications

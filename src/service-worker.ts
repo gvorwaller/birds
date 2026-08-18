@@ -55,18 +55,29 @@ sw.addEventListener('notificationclick', (event) => {
 	const url: string = event.notification.data?.url ?? '/';
 	event.waitUntil(
 		(async () => {
-			const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
-			for (const client of all) {
-				// A focus/navigate failure must fall through to openWindow —
-				// not leave the tap doing nothing (GROK).
-				try {
-					if ('focus' in client) {
-						await client.focus();
-						if ('navigate' in client) await client.navigate(url);
-						return;
+			// External URLs (eBird checklists, td-78a7b1): a controlled client
+			// cannot reliably navigate() cross-origin — open directly (a new
+			// tab / Safari from the installed app).
+			let external = false;
+			try {
+				external = new URL(url, sw.location.origin).origin !== sw.location.origin;
+			} catch {
+				external = false;
+			}
+			if (!external) {
+				const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+				for (const client of all) {
+					// A focus/navigate failure must fall through to openWindow —
+					// not leave the tap doing nothing (GROK).
+					try {
+						if ('focus' in client) {
+							await client.focus();
+							if ('navigate' in client) await client.navigate(url);
+							return;
+						}
+					} catch {
+						break;
 					}
-				} catch {
-					break;
 				}
 			}
 			await sw.clients.openWindow(url);

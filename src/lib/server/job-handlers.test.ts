@@ -735,10 +735,11 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     ];
     expect(sub.endpoint).toBe(ENDPOINT);
     expect(msg.title).toBe("Lifer nearby: Snail Kite");
-    expect(msg.url).toMatch(/^https:\/\/.+\/forecast\/species\?species=snakit$/);
+    // td-78a7b1: the click lands on the TRIGGERING report's checklist.
+    expect(msg.url).toBe("https://ebird.org/checklist/S555");
     expect(msg.tag).toBe("need-snakit");
     const upsert = db.calls.find((c) => c.text.includes("INSERT INTO need_alerts_sent"));
-    expect(upsert?.params).toEqual([
+    expect(upsert?.params?.slice(0, 8)).toEqual([
       3,
       "snakit",
       "L9",
@@ -748,6 +749,10 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
       (msg as unknown as { body: string }).body,
       msg.url,
     ]);
+    // 9th param: the triggering reports JSON (td-78a7b1).
+    expect(JSON.parse((upsert?.params?.[8] as string) ?? "[]")[0]).toMatchObject({
+      subId: "S555",
+    });
     expect(mocks.terminalizeAndReschedule).toHaveBeenCalledTimes(1);
     const [, , outcome, successor] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
       number,
@@ -787,8 +792,31 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     expect(
       db.calls.filter((c) => c.text.includes("INSERT INTO need_alert_log")),
     ).toHaveLength(1); // no separate second write
-    // Verbatim: the history line is the pushed content, exactly.
-    expect(combined[0].params.slice(5)).toEqual([msg.title, msg.body, msg.url]);
+    // Verbatim: the history line is the pushed content, exactly — plus the
+    // triggering reports (td-78a7b1) closest-first with full detail.
+    expect(combined[0].params.slice(5, 8)).toEqual([msg.title, msg.body, msg.url]);
+    const reports = JSON.parse(combined[0].params[8] as string) as {
+      subId: string;
+      locName: string;
+      distanceMi: number;
+    }[];
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ subId: "S555", locName: "Sweetwater" });
+  });
+
+  it("no subId on the triggering obs → click falls back to the in-app species page", async () => {
+    scanDb([PREF_ROW]);
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [{ ...NOTABLE, subId: undefined }],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    const [, msg] = syncMocks.sendWebPush.mock.calls[0] as unknown as [
+      unknown,
+      { url: string },
+    ];
+    expect(msg.url).toMatch(/\/forecast\/species\?species=snakit$/);
   });
 
   it("no enrolled devices → unit_skipped('no-devices'), nothing sent", async () => {
