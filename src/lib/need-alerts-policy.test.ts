@@ -87,7 +87,7 @@ describe("alertCandidates", () => {
     expect(c.body).toContain("4 seen");
   });
 
-  it("candidates carry ALL triggering reports closest-first, capped (td-78a7b1)", () => {
+  it("candidates carry ALL triggering reports closest-first, UNCAPPED (td-78a7b1 + CODEX1 no-silent-truncation)", () => {
     const many = Array.from({ length: 14 }, (_, i) =>
       obs({
         speciesCode: "snakit",
@@ -98,10 +98,10 @@ describe("alertCandidates", () => {
       }),
     );
     const c = run(many)[0];
-    expect(c.reports).toHaveLength(10); // MAX_ALERT_REPORTS cap
+    expect(c.reports).toHaveLength(14); // every triggering report, no cap
     // Closest-first: the last-generated obs (smallest offset) leads.
     expect(c.reports[0].subId).toBe("S13");
-    expect(c.reports[0].distanceMi).toBeLessThanOrEqual(c.reports[9].distanceMi);
+    expect(c.reports[0].distanceMi).toBeLessThanOrEqual(c.reports[13].distanceMi);
     expect(c.reports[0].locName).toBe("Loc 13");
     // The audit obs matches the closest report.
     expect(c.obs.subId).toBe("S13");

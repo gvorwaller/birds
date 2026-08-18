@@ -38,9 +38,6 @@ export interface AlertReport {
 	distanceMi: number;
 }
 
-/** Reports listed per alert (closest-first) — bounds the log row size. */
-export const MAX_ALERT_REPORTS = 10;
-
 export interface AlertCandidate {
 	speciesCode: string;
 	comName: string;
@@ -48,9 +45,9 @@ export interface AlertCandidate {
 	body: string;
 	/** Audit of the triggering observation (for need_alerts_sent). */
 	obs: { locId: string; obsDt: string; subId: string | null };
-	/** ALL triggering observations, closest-first, capped — the alert links
-	 * to these (td-78a7b1). Full detail for every report per Gaylon's
-	 * 2026-08-18 ruling. */
+	/** ALL triggering observations, closest-first, UNCAPPED — "and N more
+	 * locations" in the body must equal what history can show (CODEX1:
+	 * no silent truncation; the no-hidden-data-reduction rule). */
 	reports: AlertReport[];
 	distanceMi: number;
 }
@@ -124,7 +121,7 @@ export function alertCandidates(opts: {
 			title,
 			body,
 			obs: { locId: best.locId, obsDt: best.obsDt, subId: best.subId ?? null },
-			reports: ranked.slice(0, MAX_ALERT_REPORTS).map((o) => ({
+			reports: ranked.map((o) => ({
 				subId: o.subId ?? null,
 				locName: o.locName,
 				obsDt: o.obsDt,

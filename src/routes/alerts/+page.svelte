@@ -186,27 +186,33 @@
   .row {
     display: flex;
     gap: 12px;
-    align-items: baseline;
+    align-items: flex-start;
     justify-content: space-between;
-    padding: 10px 16px;
+    padding: 4px 16px;
     min-height: 48px;
     color: inherit;
     text-decoration: none;
   }
+  .time {
+    padding-top: 14px;
+  }
   a.title {
     color: inherit;
     text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px; /* cs.md tap-target floor (CODEX1) */
   }
   .reports {
     display: flex;
-    gap: 6px 14px;
+    gap: 0 18px;
     flex-wrap: wrap;
-    margin-top: 4px;
   }
   .report-link {
     display: inline-flex;
     align-items: center;
-    min-height: 32px;
+    min-height: 48px; /* cs.md tap-target floor (CODEX1); 18px column gap
+                         keeps adjacent targets distinct when wrapped */
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--accent);
