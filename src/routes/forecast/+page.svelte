@@ -62,12 +62,38 @@
   let loadingLoc = $state<string | null>(null);
   let showAllUnloaded = $state(false);
   const UNLOADED_PREVIEW = 30;
+  // Choose-list order: the deterministic suggested mix leads, the rest keep
+  // distance order (GROK Phase-2 pin: order the list with view.suggested or
+  // stop shipping it — it was a dead payload). Rows in the mix get a
+  // "suggested" word-chip, so the ordering is explained, not mysterious.
+  const suggestedSet = $derived(
+    new Set((data.view?.suggested ?? []).map((h) => h.locId)),
+  );
+  const unloadedOrdered = $derived.by(() => {
+    const list = data.view?.unloadedNearby ?? [];
+    const rank = new Map(
+      (data.view?.suggested ?? []).map((h, i) => [h.locId, i]),
+    );
+    return [...list].sort(
+      (a, b) =>
+        (rank.get(a.locId) ?? Infinity) - (rank.get(b.locId) ?? Infinity),
+    );
+  });
+  // Manage-panel name filter. While a search is active the preview cap is
+  // off — hiding matches behind "Show all" would be a hidden reduction.
+  let pickSearch = $state("");
+  const pickQuery = $derived(pickSearch.trim().toLowerCase());
+  const unloadedFiltered = $derived(
+    pickQuery
+      ? unloadedOrdered.filter((h) =>
+          h.locName.toLowerCase().includes(pickQuery),
+        )
+      : unloadedOrdered,
+  );
   const unloadedShown = $derived(
-    data.view
-      ? showAllUnloaded
-        ? data.view.unloadedNearby
-        : data.view.unloadedNearby.slice(0, UNLOADED_PREVIEW)
-      : [],
+    showAllUnloaded || pickQuery
+      ? unloadedFiltered
+      : unloadedFiltered.slice(0, UNLOADED_PREVIEW),
   );
   // Loc codes an ACTIVE job already covers: their rows show "Queued…" instead
   // of a live Load button, so a covered row can't enqueue a second job
@@ -82,6 +108,11 @@
   // ensureFrequencies refreshes non-current rows naturally (td-17d291).
   const outdatedRows = $derived(
     data.view ? data.view.analyzed.filter((h) => !h.current) : [],
+  );
+  const outdatedShown = $derived(
+    pickQuery
+      ? outdatedRows.filter((h) => h.locName.toLowerCase().includes(pickQuery))
+      : outdatedRows,
   );
   // Loadable = everything the panel shows; actionable = what a click could
   // actually queue RIGHT NOW (job-covered rows subtracted — CODEX1 Phase-2
@@ -121,30 +152,16 @@
     return parts.join(" · ");
   });
 
-  // ONE prominent CTA near the results header opens + scrolls to the pick
-  // panel (td-17d291 — the old suggested-mix quick button was redundant with
-  // it and the obscure details link was painful to find).
-  let loadPanelOpen = $state(false);
-  let loadPanelEl = $state<HTMLDetailsElement | undefined>();
-  function openLoadPanel() {
-    loadPanelOpen = true;
-    // Safari lays out the just-opened <details> too late for a single rAF —
-    // the smooth scroll silently no-opped and the CTA "did nothing" (GROK
-    // Phase-2 Safari pass). Double-rAF for the layout, then a hard-jump
-    // fallback if the panel still isn't in view shortly after.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        loadPanelEl?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    });
-    setTimeout(() => {
-      if (!loadPanelEl) return;
-      const top = loadPanelEl.getBoundingClientRect().top;
-      if (top < 0 || top > window.innerHeight * 0.8) {
-        loadPanelEl.scrollIntoView({ block: "start" });
-      }
-    }, 450);
-  }
+  // The manage panel expands INLINE directly below the coverage pill (GROK
+  // Phase-2 pin: no modal, no scroll-to-bottom-details dance — the old
+  // double-rAF Safari scroll hack dies with the bottom panel). Collapses on
+  // second tap and after a successful bulk queue.
+  let manageOpen = $state(false);
+  // Every loc a bulk "Load all remaining" tap can queue right now.
+  const actionableIds = $derived([
+    ...(data.view?.unloadedNearby ?? []).map((h) => h.locId),
+    ...outdatedRows.map((h) => h.locId),
+  ].filter((id) => !coveredLocs.has(id)));
 
   // Multi-select loading (td-8a6f97): checkbox selection is client state;
   // the fetching itself is a background-worker JOB — the action enqueues and
@@ -177,11 +194,12 @@
   });
 
   function selectAllShown() {
+    // "Shown" = what the panel currently displays, filter included.
     selectedLocs = [
       ...new Set([
         ...selectedLocs,
         ...unloadedShown.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
-        ...outdatedRows.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
+        ...outdatedShown.map((h) => h.locId).filter((id) => !coveredLocs.has(id)),
       ]),
     ];
   }
@@ -413,19 +431,34 @@
       <h2>
         {MONTH_NAMES[v.month - 1]} near {data.location.label}
       </h2>
-      <p class="coverage">
-        {#if v.dataYears}{v.dataYears.begin}–{v.dataYears.end} ·
-        {/if}using {v.analyzed.length} loaded hotspot{v.analyzed.length === 1
-          ? ""
-          : "s"} · {v.totalNearby} in range
-        {#if v.outdatedCount > 0}
-          · <span class="stale">{v.outdatedCount} outdated</span>
+      <!-- Coverage pill (GROK Phase-2 pin): counts always visible, never
+           truncated, max two wrapped lines at 320px; Manage is the ≥48px
+           entry to the inline panel below. -->
+      <div class="pill">
+        <span class="pillcounts">
+          {v.analyzed.length} of {v.totalNearby} loaded
+          {#if v.outdatedCount > 0}
+            · <span class="stale">{v.outdatedCount} outdated</span>
+          {/if}
+          {#if v.hotspotListStale}
+            · <span class="stale">list from cache</span>
+          {/if}
+        </span>
+        <span class="pillmeta">
+          {#if v.dataYears}{v.dataYears.begin}–{v.dataYears.end} ·
+          {/if}<a href="/forecast/data">details</a>
+        </span>
+        {#if loadableCount > 0}
+          <button
+            type="button"
+            class="manage"
+            aria-expanded={manageOpen}
+            onclick={() => (manageOpen = !manageOpen)}
+          >
+            {manageOpen ? "Close" : "Manage"}
+          </button>
         {/if}
-        {#if v.hotspotListStale}
-          · <span class="stale">hotspot list from cache</span>
-        {/if}
-        · <a href="/forecast/data">details</a>
-      </p>
+      </div>
 
       {#if loadableCount > 0 && !data.isViewer}
         {#if !data.hasLogin}
@@ -433,17 +466,43 @@
             Loading frequency data uses your eBird sign-in — add it in
             <a href="/settings">Settings</a>.
           </p>
-        {:else if actionableCount > 0}
-          <!-- The ONE load entry point (td-17d291): opens and scrolls to the
-               pick panel below. The old suggested-mix quick button was
-               redundant with it. Counts exclude rows a job already covers. -->
-          <button type="button" class="loadcta" onclick={openLoadPanel}>
-            Load hotspot data ({actionableCount})
-            {#if ctaSubText}
-              <span class="ctasub">{ctaSubText}</span>
-            {/if}
-          </button>
-        {:else}
+        {:else if actionableCount > 0 && data.location}
+          <!-- The one-tap common path (GROK pin): queues EVERY actionable
+               row — no panel needed. Counts exclude job-covered rows. -->
+          <form
+            class="loadall"
+            method="POST"
+            action="?/loadData"
+            use:enhance={() => {
+              loading = true;
+              return async ({ result, update }) => {
+                loading = false;
+                if (result.type === "success") {
+                  manageOpen = false;
+                  pickSearch = "";
+                  selectedLocs = [];
+                }
+                await update();
+              };
+            }}
+          >
+            <input type="hidden" name="lat" value={data.location.lat} />
+            <input type="hidden" name="lng" value={data.location.lng} />
+            <input type="hidden" name="dist" value={data.dist} />
+            <input type="hidden" name="origin" value={data.location.label} />
+            {#each actionableIds as id (id)}
+              <input type="hidden" name="loc" value={id} />
+            {/each}
+            <button type="submit" class="loadcta" disabled={loading}>
+              {loading
+                ? "Queuing…"
+                : `Load all remaining (${actionableCount})`}
+              {#if ctaSubText}
+                <span class="ctasub">{ctaSubText}</span>
+              {/if}
+            </button>
+          </form>
+        {:else if actionableCount === 0}
           <p class="notice ok">
             All {queuedHereCount} remaining hotspot{queuedHereCount === 1
               ? " is"
@@ -451,6 +510,190 @@
             <a href="/forecast/data">Forecast data</a>.
           </p>
         {/if}
+      {/if}
+
+      {#if manageOpen && loadableCount > 0}
+        <div class="managepanel">
+          <input
+            class="picksearch"
+            type="search"
+            placeholder="Filter hotspots by name"
+            aria-label="Filter hotspots by name"
+            bind:value={pickSearch}
+          />
+          {#if !data.isViewer && data.hasLogin && data.location}
+            <div class="bulkbar">
+              <button type="button" class="rowload" onclick={selectAllShown}>
+                Select all shown
+              </button>
+              {#if selectedLocs.length > 0}
+                <button
+                  type="button"
+                  class="rowload"
+                  onclick={() => (selectedLocs = [])}
+                >
+                  Clear ({selectedLocs.length})
+                </button>
+                <!-- One background job for the whole selection; enqueue
+                     returns immediately and the load survives navigation. -->
+                <form
+                  method="POST"
+                  action="?/loadData"
+                  use:enhance={() => {
+                    loading = true;
+                    return async ({ result, update }) => {
+                      loading = false;
+                      if (result.type === "success") {
+                        selectedLocs = [];
+                        manageOpen = false;
+                        pickSearch = "";
+                      }
+                      await update();
+                    };
+                  }}
+                >
+                  <input type="hidden" name="lat" value={data.location.lat} />
+                  <input type="hidden" name="lng" value={data.location.lng} />
+                  <input type="hidden" name="dist" value={data.dist} />
+                  <input type="hidden" name="origin" value={data.location.label} />
+                  {#each selectedLocs as id (id)}
+                    <input type="hidden" name="loc" value={id} />
+                  {/each}
+                  <button type="submit" disabled={loading}>
+                    Load selected ({selectedLocs.length})
+                  </button>
+                </form>
+              {/if}
+            </div>
+          {/if}
+          {#if pickQuery && outdatedShown.length === 0 && unloadedFiltered.length === 0}
+            <p class="muted-inline">No hotspots match “{pickSearch.trim()}”.</p>
+          {/if}
+          {#if outdatedShown.length > 0}
+            <h3 class="pickband">
+              Outdated — refresh ({outdatedShown.length}{pickQuery
+                ? ` of ${outdatedRows.length}`
+                : ""})
+            </h3>
+            <ul class="picklist">
+              {#each outdatedShown as h (h.locId)}
+                <li>
+                  <div class="sp">
+                    {#if !data.isViewer && data.hasLogin}
+                      <label class="pick">
+                        <input
+                          type="checkbox"
+                          bind:group={selectedLocs}
+                          value={h.locId}
+                          disabled={coveredLocs.has(h.locId)}
+                        />
+                        <span class="name">{h.locName}</span>
+                      </label>
+                    {:else}
+                      <span class="name">{h.locName}</span>
+                    {/if}
+                    <span class="meta">
+                      {formatDistance(h.distanceKm, "mi")}
+                      {#if h.fetchedAt}
+                        · data from {fmtDate(h.fetchedAt)}
+                      {/if}
+                      · outdated{#if coveredLocs.has(h.locId)}
+                        · <span class="queuedflag">queued</span>{/if}
+                    </span>
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if unloadedShown.length > 0}
+            {#if outdatedShown.length > 0 || pickQuery}
+              <h3 class="pickband">
+                Not loaded yet ({pickQuery
+                  ? `${unloadedFiltered.length} of ${v.unloadedNearby.length}`
+                  : v.unloadedNearby.length})
+              </h3>
+            {/if}
+            <ul class="picklist">
+              {#each unloadedShown as h (h.locId)}
+                <li>
+                  <div class="sp">
+                    {#if !data.isViewer && data.hasLogin}
+                      <label class="pick">
+                        <input
+                          type="checkbox"
+                          bind:group={selectedLocs}
+                          value={h.locId}
+                          disabled={coveredLocs.has(h.locId)}
+                        />
+                        <span class="name">{h.locName}</span>
+                      </label>
+                    {:else}
+                      <span class="name">{h.locName}</span>
+                    {/if}
+                    <span class="meta">
+                      {#if suggestedSet.has(h.locId)}<span class="sug"
+                          >suggested</span
+                        > · {/if}{formatDistance(h.distanceKm, "mi")}
+                      {#if h.numSpeciesAllTime != null}
+                        · {h.numSpeciesAllTime} species all-time
+                      {/if}
+                      {#if coveredLocs.has(h.locId)}
+                        · <span class="queuedflag">queued</span>{/if}
+                    </span>
+                  </div>
+                  <div class="actions">
+                    {#if !data.isViewer && data.hasLogin && data.location}
+                      <form
+                        method="POST"
+                        action="?/loadData"
+                        use:enhance={() => {
+                          loadingLoc = h.locId;
+                          return async ({ update }) => {
+                            loadingLoc = null;
+                            await update();
+                          };
+                        }}
+                      >
+                        <input type="hidden" name="lat" value={data.location.lat} />
+                        <input type="hidden" name="lng" value={data.location.lng} />
+                        <input type="hidden" name="dist" value={data.dist} />
+                        <input type="hidden" name="origin" value={data.location.label} />
+                        <input type="hidden" name="loc" value={h.locId} />
+                        <button
+                          type="submit"
+                          class="rowload"
+                          disabled={loadingLoc !== null || coveredLocs.has(h.locId)}
+                        >
+                          {coveredLocs.has(h.locId)
+                            ? "Queued…"
+                            : loadingLoc === h.locId
+                              ? "Queueing…"
+                              : "Load"}
+                        </button>
+                      </form>
+                    {/if}
+                    <a
+                      href="https://ebird.org/hotspot/{h.locId}"
+                      target="_blank"
+                      rel="noopener">eBird ↗</a
+                    >
+                  </div>
+                </li>
+              {/each}
+            </ul>
+            {#if !pickQuery && unloadedFiltered.length > UNLOADED_PREVIEW}
+              <button
+                type="button"
+                class="rowload"
+                onclick={() => (showAllUnloaded = !showAllUnloaded)}
+              >
+                {showAllUnloaded
+                  ? "Show fewer"
+                  : `Show all ${unloadedFiltered.length}`}
+              </button>
+            {/if}
+          {/if}
+        </div>
       {/if}
 
       {#if v.analyzed.length > 0 && v.unloadedNearby.length > 0}
@@ -731,188 +974,6 @@
         </ul>
       </details>
 
-      {#if loadableCount > 0}
-        <details
-          class="analyzed"
-          bind:this={loadPanelEl}
-          bind:open={loadPanelOpen}
-        >
-          <summary>
-            {data.isViewer
-              ? `Hotspots without current data (${loadableCount})`
-              : actionableCount > 0
-                ? `Load hotspot data (${actionableCount}) — pick what to load`
-                : `Hotspot loads — all ${queuedHereCount} queued`}
-            {#if panelSubText && !data.isViewer}
-              <span class="muted-inline">({panelSubText})</span>
-            {/if}
-          </summary>
-          {#if !data.isViewer && data.hasLogin && data.location}
-            <div class="bulkbar">
-              <button type="button" class="rowload" onclick={selectAllShown}>
-                Select all shown
-              </button>
-              {#if selectedLocs.length > 0}
-                <button
-                  type="button"
-                  class="rowload"
-                  onclick={() => (selectedLocs = [])}
-                >
-                  Clear ({selectedLocs.length})
-                </button>
-              {/if}
-              {#if selectedLocs.length > 0}
-                <!-- Enqueues ONE background job for the whole selection; the
-                     worker does the fetching, so this returns immediately and
-                     the load survives navigation and reload. -->
-                <form
-                  method="POST"
-                  action="?/loadData"
-                  use:enhance={() => {
-                    loading = true;
-                    return async ({ result, update }) => {
-                      loading = false;
-                      if (result.type === "success") selectedLocs = [];
-                      await update();
-                    };
-                  }}
-                >
-                  <input type="hidden" name="lat" value={data.location.lat} />
-                  <input type="hidden" name="lng" value={data.location.lng} />
-                  <input type="hidden" name="dist" value={data.dist} />
-                  <input type="hidden" name="origin" value={data.location.label} />
-                  {#each selectedLocs as id (id)}
-                    <input type="hidden" name="loc" value={id} />
-                  {/each}
-                  <button type="submit" disabled={loading}>
-                    Load selected ({selectedLocs.length})
-                  </button>
-                </form>
-              {/if}
-            </div>
-          {/if}
-          {#if outdatedRows.length > 0}
-            <h3 class="pickband">
-              Outdated — refresh ({outdatedRows.length})
-            </h3>
-            <ul>
-              {#each outdatedRows as h (h.locId)}
-                <li>
-                  <div class="sp">
-                    {#if !data.isViewer && data.hasLogin}
-                      <label class="pick">
-                        <input
-                          type="checkbox"
-                          bind:group={selectedLocs}
-                          value={h.locId}
-                          disabled={coveredLocs.has(h.locId)}
-                        />
-                        <span class="name">{h.locName}</span>
-                      </label>
-                    {:else}
-                      <span class="name">{h.locName}</span>
-                    {/if}
-                    <span class="meta">
-                      {formatDistance(h.distanceKm, "mi")}
-                      {#if h.fetchedAt}
-                        · data from {fmtDate(h.fetchedAt)}
-                      {/if}
-                      · outdated{#if coveredLocs.has(h.locId)}
-                        · <span class="queuedflag">queued</span>{/if}
-                    </span>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-            {#if v.unloadedNearby.length > 0}
-              <h3 class="pickband">Not loaded yet ({v.unloadedNearby.length})</h3>
-            {/if}
-          {/if}
-          <ul>
-            {#each unloadedShown as h (h.locId)}
-              <li>
-                <div class="sp">
-                  {#if !data.isViewer && data.hasLogin}
-                    <label class="pick">
-                      <input
-                        type="checkbox"
-                        bind:group={selectedLocs}
-                        value={h.locId}
-                        disabled={coveredLocs.has(h.locId)}
-                      />
-                      <span class="name">{h.locName}</span>
-                    </label>
-                  {:else}
-                    <span class="name">{h.locName}</span>
-                  {/if}
-                  <span class="meta">
-                    {formatDistance(h.distanceKm, "mi")}
-                    {#if h.numSpeciesAllTime != null}
-                      · {h.numSpeciesAllTime} species all-time
-                    {/if}
-                  </span>
-                </div>
-                <div class="actions">
-                  {#if !data.isViewer && data.hasLogin && data.location}
-                    <form
-                      method="POST"
-                      action="?/loadData"
-                      use:enhance={() => {
-                        loadingLoc = h.locId;
-                        return async ({ update }) => {
-                          loadingLoc = null;
-                          await update();
-                        };
-                      }}
-                    >
-                      <input
-                        type="hidden"
-                        name="lat"
-                        value={data.location.lat}
-                      />
-                      <input
-                        type="hidden"
-                        name="lng"
-                        value={data.location.lng}
-                      />
-                      <input type="hidden" name="dist" value={data.dist} />
-                      <input type="hidden" name="origin" value={data.location.label} />
-                      <input type="hidden" name="loc" value={h.locId} />
-                      <button
-                        type="submit"
-                        class="rowload"
-                        disabled={loadingLoc !== null || coveredLocs.has(h.locId)}
-                      >
-                        {coveredLocs.has(h.locId)
-                          ? "Queued…"
-                          : loadingLoc === h.locId
-                            ? "Queueing…"
-                            : "Load"}
-                      </button>
-                    </form>
-                  {/if}
-                  <a
-                    href="https://ebird.org/hotspot/{h.locId}"
-                    target="_blank"
-                    rel="noopener">eBird ↗</a
-                  >
-                </div>
-              </li>
-            {/each}
-          </ul>
-          {#if v.unloadedNearby.length > UNLOADED_PREVIEW}
-            <button
-              type="button"
-              class="rowload"
-              onclick={() => (showAllUnloaded = !showAllUnloaded)}
-            >
-              {showAllUnloaded
-                ? "Show fewer"
-                : `Show all ${v.unloadedNearby.length}`}
-            </button>
-          {/if}
-        </details>
-      {/if}
       {#if hotspotPoints.length > 0}
         <div class="map">
           <ObsMap
@@ -1153,10 +1214,104 @@
     flex-wrap: wrap;
     margin-top: 10px;
   }
-  .coverage {
+  .pill {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 8px 12px;
+    margin: 6px 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    font-size: 0.9rem;
+  }
+  .pillcounts {
+    font-weight: 700;
+  }
+  .pillmeta {
     color: var(--muted);
+  }
+  .pillmeta a {
+    color: var(--muted);
+  }
+  .pill .manage {
+    margin-left: auto;
+    min-height: 48px;
+    padding: 6px 18px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    background: var(--card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .managepanel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 0 0 10px;
+  }
+  .picksearch {
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .picklist {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .picklist li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    min-height: 48px;
+    padding: 2px 0;
+  }
+  .picklist li + li {
+    border-top: 1px solid var(--border);
+  }
+  .picklist .sp {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+  .picklist .meta {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .picklist .actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .picklist .actions a {
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
     font-size: 0.85rem;
-    margin: 0 0 12px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .sug {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .loadall {
+    margin: 0 0 10px;
+  }
+  .loadall .loadcta {
+    margin: 0;
   }
   .stale {
     color: var(--need-text);

@@ -166,13 +166,17 @@
 						instant and only refreshes about once a year.
 					</li>
 					<li>
-						One obvious entry point: the big
-						<strong>Load hotspot data (N)</strong> button under the results
-						header opens the pick panel. There, check any set of hotspots (or
-						<strong>Select all shown</strong>) and hit
-						<strong>Load selected (N)</strong>; outdated hotspots appear in
-						their own <strong>refresh</strong> group, and not-yet-loaded rows
-						also keep an individual <strong>Load</strong> button.
+						A <strong>coverage pill</strong> under the results header always
+						shows where you stand — "12 of 18 loaded · 1 outdated". The
+						common path is one tap:
+						<strong>Load all remaining (N)</strong> queues everything at
+						once. To pick instead, tap <strong>Manage</strong>: a panel opens
+						right there with a name filter, checkboxes (or
+						<strong>Select all shown</strong> +
+						<strong>Load selected (N)</strong>), an
+						<strong>outdated — refresh</strong> group, per-row
+						<strong>Load</strong> buttons, and <strong>suggested</strong> tags
+						on the mix of hotspots the app would pick first.
 					</li>
 					<li>
 						Every load runs <strong>in the background on the server</strong> —
