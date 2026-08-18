@@ -190,6 +190,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     home,
     canEdit: locals.user!.role !== "viewer",
     needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
+    needsSpecies: Object.fromEntries(needs.species) as Record<
+      string,
+      { code: string; comName: string }[]
+    >,
     needsStale: needs.stale,
     needsError: needs.error,
     hasApiKey: !!apiKey,

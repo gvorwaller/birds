@@ -13,6 +13,24 @@
 
   const selected = $derived(new Set(data.tags));
 
+  // Tier-1 (td-97b22e): every result row SHIPS its tags + IUCN status —
+  // the user just filtered by tags and the rows didn't show them.
+  const IUCN_LABELS: Record<string, string> = {
+    LC: "Least Concern",
+    NT: "Near Threatened",
+    VU: "Vulnerable",
+    EN: "Endangered",
+    CR: "Critically Endangered",
+    EW: "Extinct in the Wild",
+    EX: "Extinct",
+    DD: "Data Deficient",
+  };
+  function chipText(tag: string): string {
+    const i = tag.indexOf(":");
+    if (i < 1) return tag.replace(/-/g, " ");
+    return tagLabel(tag.slice(0, i) as TagDimension, tag.slice(i + 1));
+  }
+
   /** Toggle URL for a tag chip — GET-driven, restorable, no client state. */
   function toggleHref(tag: string): string {
     const p = new URLSearchParams();
@@ -129,7 +147,21 @@
                   />{/if}
               </span>
               <span class="muted sci"><em>{r.sci_name}</em>{#if r.family}
-                  · {r.family}{/if}</span>
+                  · {r.family}{/if}
+                {#if r.iucn_status}<span
+                    class="iucn s-{r.iucn_status.toLowerCase()}"
+                    title={IUCN_LABELS[r.iucn_status] ?? "IUCN status"}
+                    >{r.iucn_status}</span
+                  >{/if}</span>
+              {#if (r.tags ?? []).length > 0}
+                <span class="rowtags">
+                  {#each r.tags as t (t)}
+                    <span class="rowtag" class:hit={selected.has(t)}
+                      >{chipText(t)}</span
+                    >
+                  {/each}
+                </span>
+              {/if}
               {#if r.field_craft}
                 <span class="muted craft">{r.field_craft.slice(0, 140)}{r
                     .field_craft.length > 140
@@ -347,4 +379,44 @@
   .attribution a {
     color: var(--muted);
   }
+  .rowtags {
+    display: flex;
+    gap: 4px 6px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .rowtag {
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  /* The tags the user filtered by light up on each hit. */
+  .rowtag.hit {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .iucn {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+    margin-left: 6px;
+    background: #e9ecef;
+    color: #343a40;
+  }
+  .iucn.s-lc { background: #d8ecd9; color: #1e4620; }
+  .iucn.s-nt { background: #e8ecc9; color: #4a4d1d; }
+  .iucn.s-vu { background: #fde8c8; color: #724200; }
+  .iucn.s-en { background: #fcd9cc; color: #842607; }
+  .iucn.s-cr { background: #f8d0d4; color: #880e1a; }
+  .iucn.s-ew, .iucn.s-ex { background: #43464a; color: #f4f5f6; }
+  .iucn.s-dd { background: #e9ecef; color: #343a40; }
 </style>

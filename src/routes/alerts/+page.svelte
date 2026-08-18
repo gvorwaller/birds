@@ -33,6 +33,19 @@
     });
   }
 
+  // Tier-1 (td-97b22e): each report's own timestamp shipped unrendered —
+  // "seen 2 hr before the alert" is the difference that matters when you
+  // grab binoculars. eBird obsDt is local naive time ("2026-08-17 14:20").
+  function reportAge(obsDt: string, sentAtIso: string): string {
+    const seen = new Date(obsDt.replace(" ", "T"));
+    if (isNaN(seen.getTime())) return obsDt;
+    const mins = Math.round((new Date(sentAtIso).getTime() - seen.getTime()) / 60_000);
+    if (!Number.isFinite(mins) || mins < 0) return `seen ${obsDt.split(" ")[1] ?? obsDt}`;
+    if (mins < 60) return `seen ${mins} min before alert`;
+    if (mins < 48 * 60) return `seen ${Math.round(mins / 60)} hr before alert`;
+    return `seen ${Math.round(mins / 1440)} days before alert`;
+  }
+
   // Group by calendar day so a busy stretch reads as a timeline.
   const groups = $derived.by(() => {
     const out: { day: string; rows: typeof data.history }[] = [];
@@ -103,12 +116,19 @@
         {#each group.rows as row (row.id)}
           <div class="row">
             <span class="row-main">
-              <a
-                class="title"
-                href={row.url}
-                target={isExternal(row.url) ? "_blank" : undefined}
-                rel={isExternal(row.url) ? "noopener" : undefined}
-              >{row.title}</a>
+              <span class="titlerow">
+                <a
+                  class="title"
+                  href={row.url}
+                  target={isExternal(row.url) ? "_blank" : undefined}
+                  rel={isExternal(row.url) ? "noopener" : undefined}
+                >{row.title}</a>
+                <!-- Tier-1 (td-97b22e): species_code always shipped, never
+                     linked — no path from an alert to our own species page. -->
+                <a class="spx" href={`/species/${row.species_code}?returnTo=${encodeURIComponent("/alerts")}`}
+                  >species page →</a
+                >
+              </span>
               <span class="body muted">{row.body}</span>
               {#if row.reports.length > 0}
                 <span class="reports">
@@ -120,10 +140,14 @@
                         target="_blank"
                         rel="noopener"
                       >
-                        {r.locName} · {r.distanceMi} mi ↗
+                        {r.locName} · {r.distanceMi} mi{#if r.obsDt}
+                          · {reportAge(r.obsDt, row.sent_at)}{/if} ↗
                       </a>
                     {:else}
-                      <span class="report-link muted">{r.locName} · {r.distanceMi} mi</span>
+                      <span class="report-link muted"
+                        >{r.locName} · {r.distanceMi} mi{#if r.obsDt}
+                          · {reportAge(r.obsDt, row.sent_at)}{/if}</span
+                      >
                     {/if}
                   {/each}
                 </span>
@@ -278,5 +302,21 @@
   }
   .attribution a {
     color: var(--muted);
+  }
+  .titlerow {
+    display: flex;
+    gap: 0 14px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  a.spx {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.82rem;
+    text-decoration: none;
+    white-space: nowrap;
   }
 </style>

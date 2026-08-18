@@ -464,9 +464,11 @@
 						findable — and its field craft explains why.
 					</li>
 					<li>
-						Results show your <strong>Seen/Need</strong> badge and tap
-						through to the full species page; the back link returns to your
-						exact search.
+						Results show your <strong>Seen/Need</strong> badge, each
+						species' <strong>tag chips</strong> (the ones you filtered by
+						light up) and <strong>IUCN status</strong>, and tap through to
+						the full species page; the back link returns to your exact
+						search.
 					</li>
 					<li>
 						On any species page, the <strong>About</strong> card holds the
@@ -532,6 +534,12 @@
 						Alerts need your <strong>home location</strong> and
 						<strong>eBird API key</strong> set (distances are measured from
 						home, and the scan runs under your own eBird account).
+					</li>
+					<li>
+						The <a href="/alerts">Alerts</a> page keeps every alert as sent,
+						with a <strong>species page →</strong> link on each row, links to
+						the triggering eBird checklists, and how long before the alert
+						each report was seen.
 					</li>
 					<li>
 						Each account gets its own alerts (matched to that person's life

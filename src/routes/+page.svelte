@@ -50,6 +50,15 @@
     );
   }
 
+  // Tier-1 (td-97b22e): fetchedAt shipped on every view but rendered only
+  // as a binary "cached" badge — the actual freshness time is the useful bit.
+  function asOf(iso: string | Date): string {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
   let notableAll = $derived(data.view?.notable ?? []);
   let needsAll = $derived(data.view?.needs ?? []);
 
@@ -564,6 +573,9 @@
         Notable reports — {windowPhrase(data.back)}
         <Badge kind="notable" label="Notable" />
         {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
+        {#if data.view.fetchedAt}
+          <span class="asof">reports as of {asOf(data.view.fetchedAt)}</span>
+        {/if}
       </h2>
       <p class="muted intro">
         eBird notable reports near {data.location?.label ?? "here"} —
@@ -609,6 +621,9 @@
               <strong
                 >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
               >
+              · {n.nReports} report{n.nReports === 1 ? "" : "s"}
+              {#if n.distanceKm != null}
+                · nearest {formatDistance(n.distanceKm, distanceUnit)}{/if}
               ·
               {n.locations.join(" · ")}
               {#if data.hasGallery && n.photoCount > 0}
@@ -680,6 +695,9 @@
             )}
           {/if}
           {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
+          {#if data.view.fetchedAt}
+            <span class="asof">as of {asOf(data.view.fetchedAt)}</span>
+          {/if}
         </h2>
         {#if needsAll.length > 1}
           <label class="sort-control">
@@ -727,6 +745,9 @@
               <strong
                 >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
               >
+              · {n.nReports} report{n.nReports === 1 ? "" : "s"}
+              {#if n.distanceKm != null}
+                · nearest {formatDistance(n.distanceKm, distanceUnit)}{/if}
               ·
               {n.locations.join(" · ")}
               {#if data.hasGallery && n.photoCount === 0}
@@ -1172,5 +1193,10 @@
     h1 {
       font-size: 1.6rem;
     }
+  }
+  .asof {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 400;
   }
 </style>

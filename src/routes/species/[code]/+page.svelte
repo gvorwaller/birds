@@ -338,6 +338,19 @@
             <div class="meta">
               {o.howMany ?? 1}
               {(o.howMany ?? 1) === 1 ? "bird" : "birds"}
+              {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
+              {#if o.locationPrivate}<span class="privloc"
+                  title="Reported from someone's personal (non-hotspot) location"
+                  >personal location</span
+                >{/if}
+              {#if o.subId}
+                <a
+                  class="cl"
+                  href={`https://ebird.org/checklist/${o.subId}`}
+                  target="_blank"
+                  rel="noopener">checklist ↗</a
+                >
+              {/if}
             </div>
             <MapLink
               lat={o.lat}
@@ -843,5 +856,29 @@
     h1 {
       font-size: 1.6rem;
     }
+  }
+  /* Tier-1 (td-97b22e): fields that always crossed the wire, now shown. */
+  .unconf {
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: #fde8c8;
+    color: #5f3700; /* 8.7:1 AAA (hotspot-page precedent) */
+  }
+  .privloc {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-style: italic;
+  }
+  a.cl {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.82rem;
+    text-decoration: none;
+    white-space: nowrap;
   }
 </style>

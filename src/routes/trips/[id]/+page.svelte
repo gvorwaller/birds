@@ -380,9 +380,29 @@
             {#if !data.hasApiKey}
               <a href="/settings">add eBird key</a> for needs counts
             {:else if data.needsCounts[String(s.id)] !== undefined}
+              {@const stopNeeds = data.needsSpecies[String(s.id)] ?? []}
               {data.needsCounts[String(s.id)]} of your needs reported here · last
               14 days, ≤{formatDistance(16, distanceUnit)}
+              {#if s.target_count_at_save != null && s.target_count_at_save !== data.needsCounts[String(s.id)]}
+                <span class="plandelta"
+                  >(was {s.target_count_at_save} when planned)</span
+                >
+              {/if}
               {#if data.needsStale}<Badge kind="stale" label="cached" />{/if}
+              {#if stopNeeds.length > 0}
+                <!-- Tier-1 (td-97b22e): the need SET was always computed for
+                     this count — the names are the point of the trip. -->
+                <details class="stopneeds">
+                  <summary>Which {stopNeeds.length === 1 ? "one" : "ones"}?</summary>
+                  <span class="needlist">
+                    {#each stopNeeds as sp, i (sp.code)}
+                      <a href={`/species/${sp.code}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
+                        >{sp.comName}</a
+                      >{i < stopNeeds.length - 1 ? " · " : ""}
+                    {/each}
+                  </span>
+                </details>
+              {/if}
             {:else}
               —
             {/if}
@@ -1131,5 +1151,29 @@
       text-align: left;
       width: 100%;
     }
+  }
+  .plandelta {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .stopneeds {
+    display: inline-block;
+  }
+  .stopneeds summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .needlist a {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
   }
 </style>

@@ -28,6 +28,8 @@ export interface TripStop {
   lon: number | null;
   google_place_id: string | null;
   notes: string | null;
+  /** Needs count snapshotted when the stop was saved (planned-vs-now delta). */
+  target_count_at_save: number | null;
   field_tip: string | null;
   field_tip_generated_at: string | null;
 }
@@ -432,9 +434,17 @@ export async function needsCountForStops(
   userId: number,
   apiKey: string | null,
   stops: TripStop[],
-): Promise<{ counts: Map<number, number>; stale: boolean; error: boolean }> {
+): Promise<{
+  counts: Map<number, number>;
+  /** The actual need species per stop, comName-sorted — the set was always
+   * computed here and only .size survived to the page (audit Tier 1). */
+  species: Map<number, { code: string; comName: string }[]>;
+  stale: boolean;
+  error: boolean;
+}> {
   const counts = new Map<number, number>();
-  if (!apiKey) return { counts, stale: false, error: false };
+  const species = new Map<number, { code: string; comName: string }[]>();
+  if (!apiKey) return { counts, species, stale: false, error: false };
 
   const seen = await seenSet(userId);
   let stale = false;
@@ -452,17 +462,23 @@ export async function needsCountForStops(
           STOP_NEEDS_BACK_DAYS,
         );
         if (res.stale) stale = true;
-        const needs = new Set<string>();
+        const needs = new Map<string, string>();
         for (const o of res.data) {
           if (o.speciesCode && !seen.has(o.speciesCode))
-            needs.add(o.speciesCode);
+            needs.set(o.speciesCode, o.comName);
         }
         counts.set(s.id, needs.size);
+        species.set(
+          s.id,
+          [...needs.entries()]
+            .map(([code, comName]) => ({ code, comName }))
+            .sort((a, b) => a.comName.localeCompare(b.comName)),
+        );
       } catch {
         error = true;
       }
     }),
   );
 
-  return { counts, stale, error };
+  return { counts, species, stale, error };
 }
