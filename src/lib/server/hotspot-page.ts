@@ -129,15 +129,17 @@ export async function hotspotPlace(locId: string): Promise<HotspotPlace> {
 	);
 	const row = r.rows[0];
 	if (!row) return { googlePlaceId: null, googlePlaceName: null, venueTypes: [], locName: null };
-	const confident =
-		row.google_place_status === 'matched' &&
-		(row.google_place_confidence ?? 0) >= MIN_VENUE_CONFIDENCE;
+	// Chips need HIGH confidence (junk labels are worse than none); the place
+	// id only needs a match — a 0.55 match is still a better Maps pin than
+	// raw coordinates (GROK).
+	const matched = row.google_place_status === 'matched';
+	const confident = matched && (row.google_place_confidence ?? 0) >= MIN_VENUE_CONFIDENCE;
 	const venueTypes = confident
 		? [...new Set((row.google_place_types ?? []).map((t) => VENUE_ALLOWLIST[t]).filter(Boolean))]
 		: [];
 	return {
-		googlePlaceId: confident ? row.google_place_id : null,
-		googlePlaceName: confident ? row.google_place_name : null,
+		googlePlaceId: matched ? row.google_place_id : null,
+		googlePlaceName: matched ? row.google_place_name : null,
 		venueTypes: venueTypes as string[],
 		locName: row.loc_name
 	};

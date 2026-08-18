@@ -86,15 +86,25 @@ describe.runIf(dbUp)("hotspot-page gateway (test cluster)", () => {
       expect(p.venueTypes).toEqual(["park"]); // generic types dropped
       expect(p.googlePlaceId).toBe("gp1");
 
-      // Low confidence → chips AND place id suppressed, never junk.
+      // Low confidence → chips suppressed (never junk), but the place id
+      // stays: a weak match still beats raw coords as a Maps pin (GROK).
       await query(
         `UPDATE ebird_locations SET google_place_confidence = 0.3 WHERE loc_id = $1`,
         [LOC],
       );
       p = await hotspotPlace(LOC);
       expect(p.venueTypes).toEqual([]);
-      expect(p.googlePlaceId).toBeNull();
+      expect(p.googlePlaceId).toBe("gp1");
       expect(p.locName).toBe("Test Flats Park"); // name still usable
+
+      // Unmatched → nothing, regardless of confidence.
+      await query(
+        `UPDATE ebird_locations SET google_place_status = 'no_match' WHERE loc_id = $1`,
+        [LOC],
+      );
+      p = await hotspotPlace(LOC);
+      expect(p.venueTypes).toEqual([]);
+      expect(p.googlePlaceId).toBeNull();
     } finally {
       await wipe();
     }

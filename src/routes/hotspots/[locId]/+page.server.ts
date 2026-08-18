@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       : new Date().getMonth() + 1;
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
 
-  const [meta, place, freqMap, seen, home] = await Promise.all([
+  const [meta, place, freqMap, seen, home, lastLoad] = await Promise.all([
     hotspotFromCache(locId),
     hotspotPlace(locId),
     frequencyMeta([locId]),
@@ -46,6 +46,18 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     query<{ home_lat: number | null; home_lon: number | null }>(
       "SELECT home_lat, home_lon FROM users WHERE id = $1",
       [scopeId],
+    ),
+    // Terminal jobs drop out of the poll's active set, so a failed load
+    // would silently vanish; surface it durably from the queue (GROK pin:
+    // failed-job empty state, one sentence + the existing retry button).
+    query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM jobs
+        WHERE type = 'load_hotspots'
+          AND status IN ('succeeded', 'failed', 'cancelled')
+          AND payload->'locs' @> jsonb_build_array(jsonb_build_object('code', $1::text))
+        ORDER BY finished_at DESC NULLS LAST
+        LIMIT 1`,
+      [locId],
     ),
   ]);
   const freq = freqMap.get(locId) ?? null;
@@ -112,6 +124,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
           totalChecklists: freq.sampleSizes.reduce((a, b) => a + b, 0),
         }
       : null,
+    lastLoadFailed: lastLoad.rows[0]?.status === "failed",
     tab,
     back,
     month,

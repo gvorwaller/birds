@@ -3,7 +3,12 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
-  import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import {
+    formatDistance,
+    mapsDirectionsUrl,
+    mapsPlaceUrl,
+    type DistanceUnit,
+  } from "$lib/geo";
   import type { ActionData, PageData } from "./$types";
 
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -36,16 +41,21 @@
     return `/hotspots/${data.locId}${s ? `?${s}` : ""}`;
   }
 
+  // Shared helpers prefer the stored google_place_id, then coords (GROK).
+  const mapPlace = $derived({
+    name: data.locName,
+    lat: data.lat,
+    lng: data.lng,
+    google_place_id: data.googlePlaceId,
+  });
   const mapsHref = $derived(
-    data.googlePlaceId
-      ? `https://www.google.com/maps/search/?api=1&query=${data.lat ?? ""},${data.lng ?? ""}&query_place_id=${data.googlePlaceId}`
-      : data.lat != null && data.lng != null
-        ? `https://www.google.com/maps/search/?api=1&query=${data.lat},${data.lng}`
-        : null,
+    data.googlePlaceId || (data.lat != null && data.lng != null)
+      ? mapsPlaceUrl(mapPlace)
+      : null,
   );
   const directionsHref = $derived(
-    data.lat != null && data.lng != null
-      ? `https://www.google.com/maps/dir/?api=1&destination=${data.lat},${data.lng}${data.googlePlaceId ? `&destination_place_id=${data.googlePlaceId}` : ""}`
+    data.googlePlaceId || (data.lat != null && data.lng != null)
+      ? mapsDirectionsUrl(mapPlace)
       : null,
   );
   const forecastHref = $derived(
@@ -154,6 +164,11 @@
           the Monthly view.
         </p>
       {/if}
+      {#if data.lastLoadFailed && !myJob}
+        <p class="err" role="alert">
+          The last load for this hotspot failed — you can retry below.
+        </p>
+      {/if}
       {#if !data.isViewer && !myJob}
         <form
           method="POST"
@@ -170,9 +185,11 @@
           <button type="submit" disabled={loadBusy}>
             {loadBusy
               ? "Queuing…"
-              : data.freq
-                ? "↻ Refresh historical data"
-                : "⬇ Load historical data"}
+              : data.lastLoadFailed
+                ? "↻ Retry load"
+                : data.freq
+                  ? "↻ Refresh historical data"
+                  : "⬇ Load historical data"}
           </button>
           <span class="muted">
             Fetches ~10 years of eBird checklist frequencies in the background.
@@ -213,9 +230,12 @@
         {:else if data.days.length === 0}
           <p class="muted">
             No reports in the last {data.back} days —
-            {#if data.back < 30}<a href={tabHref("recent", { back: "30" })}
+            {#if data.back === 7}<a href={tabHref("recent", { back: "14" })}
+                >widen to 14 days</a
+              >{:else if data.back === 14}<a href={tabHref("recent", { back: "30" })}
                 >widen to 30 days</a
-              >{:else}try the Monthly view for what's typical here{/if}.
+              >{:else}try the <a href={tabHref("monthly")}>Monthly view</a> for
+              what's typical here{/if}.
           </p>
         {:else}
           <p class="muted">
@@ -292,7 +312,10 @@
                     >{sp.comName}</a
                   >
                   <span class="muted">{pct(sp.freq)}{sp.lowSample ? "†" : ""}</span>
-                  {#if sp.need}<Badge kind="need" label="Need" />{/if}
+                  {#if sp.need}<Badge kind="need" label="Need" />{:else}<Badge
+                      kind="seen"
+                      label="Seen"
+                    />{/if}
                 </li>
               {/each}
             </ul>
@@ -523,11 +546,13 @@
     font-size: 0.72rem;
     font-weight: 700;
     background: #fde8c8;
-    color: #724200;
+    color: #5f3700; /* 8.7:1 on #fde8c8 — AAA (GROK: #724200 was 6.9:1) */
   }
+  /* 4-col until 640px: at 320px viewport the inner card is ~256px wide, so
+     6 columns would give ~38px cells — under the 48px floor (GROK). */
   .months {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 6px;
     margin-bottom: 8px;
   }
@@ -570,7 +595,7 @@
     display: flex;
     gap: 10px;
     align-items: center;
-    min-height: 40px;
+    min-height: 48px;
     border-top: 1px solid var(--border);
     flex-wrap: wrap;
   }
@@ -578,6 +603,9 @@
     color: inherit;
     font-weight: 600;
     text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
   }
   @media (hover: hover) {
     .obs a:hover,
