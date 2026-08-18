@@ -272,6 +272,14 @@ export async function wikiStaleCodes(): Promise<string[]> {
 		             AND se.wiki_fetched_at < NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
 		         OR (se.wiki_status = 'error'
 		             AND se.wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		         -- Split survivors: no_mapping now has a real resolution chance
+		         -- (sci-name fallback), so it retries WEEKLY instead of waiting
+		         -- out the 180d clock. Bounded: each attempt re-stamps the
+		         -- clock, so it's at most one fallback query per species per
+		         -- week until Wikidata maps it (GROK on 4694222 — the reported
+		         -- gubter2 row was otherwise frozen for 180 days).
+		         OR (se.resolution = 'no_mapping'
+		             AND se.wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
 		      )
 		 )
 		 ORDER BY 1`

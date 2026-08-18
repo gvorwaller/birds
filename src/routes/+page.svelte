@@ -8,6 +8,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
   import {
     buildPlaceIndex,
     searchPlaces,
@@ -52,11 +53,17 @@
 
   // Tier-1 (td-97b22e): fetchedAt shipped on every view but rendered only
   // as a binary "cached" badge — the actual freshness time is the useful bit.
+  // Explicit app time zone (the forecast-calendar precedent): the droplet
+  // SSRs in UTC, so an undefined locale/zone painted "10:30 PM" for a
+  // 6:30 PM ET fetch until hydration corrected it (GROK P2).
   function asOf(iso: string | Date): string {
-    return new Date(iso).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    return (
+      new Date(iso).toLocaleTimeString("en-US", {
+        timeZone: FORECAST_CALENDAR_TZ,
+        hour: "numeric",
+        minute: "2-digit",
+      }) + " ET"
+    );
   }
 
   let notableAll = $derived(data.view?.notable ?? []);

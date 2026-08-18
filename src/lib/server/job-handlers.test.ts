@@ -1610,6 +1610,41 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, noMapping: 0 });
   });
 
+  it("FROZEN no_mapping row + fallback hit is RESCUED: skip-if-fresh must not discard the QID (GROK)", async () => {
+    // The gubter2 shape: resolution='no_mapping', wiki_status='no_article',
+    // FRESH clock — the fresh probe says skip, but the fallback just found
+    // the mapping. The unit must run resolution + wiki, not record 'fresh'.
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(new Map() as never);
+    enrichMocks.fetchWikidataBySciName.mockResolvedValueOnce(
+      new Map([["gubter2", { ...WD("gubter2", "Gull-billed tern"), qid: "Q18834" }]]) as never,
+    );
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("AS skip"))
+        return { rows: [{ skip: true, resolution: "no_mapping" }] };
+      if (text.includes("SELECT species_code, sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "gubter2", sci_name: "Gelochelidon nilotica" }] };
+      return base?.(text, params);
+    };
+    enrichMocks.fetchArticlePlaintext.mockResolvedValueOnce({
+      title: "Gull-billed tern",
+      revId: 11,
+      extract: "prose",
+      sections: [],
+    });
+
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["gubter2"] } }), ctx);
+
+    // Not skipped as fresh — the wiki stage actually ran on the fallback QID.
+    expect(enrichMocks.fetchArticlePlaintext).toHaveBeenCalledWith("Gull-billed tern");
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect(skips).toHaveLength(0);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, fresh: 0 });
+    // Resolution write reached the DB gateway.
+    expect(db.calls.some((c) => c.text.includes("INSERT INTO species_enrichment"))).toBe(true);
+  });
+
   it("sci-name fallback failure is SOFT: primary results survive, missing codes stay no_mapping", async () => {
     enrichMocks.fetchWikidataBatch.mockResolvedValue(
       new Map([["margod", WD("margod", "Marbled godwit")]]) as never,

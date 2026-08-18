@@ -538,8 +538,8 @@
 					<li>
 						The <a href="/alerts">Alerts</a> page keeps every alert as sent,
 						with a <strong>species page →</strong> link on each row, links to
-						the triggering eBird checklists, and how long before the alert
-						each report was seen.
+						the triggering eBird checklists, and each report's own local
+						observation time.
 					</li>
 					<li>
 						Each account gets its own alerts (matched to that person's life

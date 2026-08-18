@@ -1226,15 +1226,22 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			} else {
 			// Skip-if-fresh (idempotent overlap); force skips only rows already
 			// refreshed since THIS job row was enqueued (retry ≠ redo).
-			const fresh = await query<{ skip: boolean }>(
+			const fresh = await query<{ skip: boolean; resolution: string | null }>(
 				`SELECT (wiki_status IN ('ok','no_article') AND (
 				          ($2 = false AND wiki_fetched_at > NOW() - INTERVAL '180 days')
 				       OR ($2 = true  AND wiki_fetched_at > $3::timestamptz)
-				        )) AS skip
+				        )) AS skip,
+				        resolution
 				   FROM species_enrichment WHERE species_code = $1`,
 				[code, force, job.enqueued_at]
 			);
-			if (fresh.rows[0]?.skip === true) {
+			// Fallback rescue (GROK on 4694222): a split survivor sits at
+			// resolution='no_mapping' with a FRESH no_article clock — the very
+			// row the sci-name fallback exists for. When the fallback resolved
+			// it this chunk, the freshness skip must not throw that QID away.
+			const rescued =
+				fresh.rows[0]?.resolution === 'no_mapping' && resolved.has(code);
+			if (fresh.rows[0]?.skip === true && !rescued) {
 				// Wiki is fresh — but the AI stage may still be missing, behind
 				// the stored revision, past its error window, or forced. This is
 				// how the whole pre-Phase-2 corpus gets annotated without a
