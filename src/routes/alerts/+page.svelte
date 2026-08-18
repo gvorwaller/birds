@@ -33,17 +33,19 @@
     });
   }
 
-  // Tier-1 (td-97b22e): each report's own timestamp shipped unrendered —
-  // "seen 2 hr before the alert" is the difference that matters when you
-  // grab binoculars. eBird obsDt is local naive time ("2026-08-17 14:20").
-  function reportAge(obsDt: string, sentAtIso: string): string {
-    const seen = new Date(obsDt.replace(" ", "T"));
-    if (isNaN(seen.getTime())) return obsDt;
-    const mins = Math.round((new Date(sentAtIso).getTime() - seen.getTime()) / 60_000);
-    if (!Number.isFinite(mins) || mins < 0) return `seen ${obsDt.split(" ")[1] ?? obsDt}`;
-    if (mins < 60) return `seen ${mins} min before alert`;
-    if (mins < 48 * 60) return `seen ${Math.round(mins / 60)} hr before alert`;
-    return `seen ${Math.round(mins / 1440)} days before alert`;
+  // Tier-1 (td-97b22e): each report's own timestamp shipped unrendered.
+  // eBird obsDt is NAIVE local time at the OBSERVATION's location — no zone.
+  // Elapsed-age math against sent_at (an absolute timestamptz) is therefore
+  // untrustworthy across zones/travel (CODEX1 P1), so we render the report's
+  // own local clock verbatim, formatted by pure string work — a Date object
+  // would silently reinterpret it in the viewer's zone.
+  const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function reportSeen(obsDt: string): string {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?$/.exec(obsDt);
+    if (!m) return `seen ${obsDt}`;
+    const mon = MONTHS_SHORT[Number(m[2]) - 1] ?? m[2];
+    const day = Number(m[3]);
+    return m[4] ? `seen ${mon} ${day}, ${m[4]}` : `seen ${mon} ${day}`;
   }
 
   // Group by calendar day so a busy stretch reads as a timeline.
@@ -141,12 +143,12 @@
                         rel="noopener"
                       >
                         {r.locName} · {r.distanceMi} mi{#if r.obsDt}
-                          · {reportAge(r.obsDt, row.sent_at)}{/if} ↗
+                          · {reportSeen(r.obsDt)}{/if} ↗
                       </a>
                     {:else}
                       <span class="report-link muted"
                         >{r.locName} · {r.distanceMi} mi{#if r.obsDt}
-                          · {reportAge(r.obsDt, row.sent_at)}{/if}</span
+                          · {reportSeen(r.obsDt)}{/if}</span
                       >
                     {/if}
                   {/each}

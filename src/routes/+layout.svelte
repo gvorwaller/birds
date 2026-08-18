@@ -28,7 +28,13 @@
 		const extra = jobsPoll.active.length > 1 ? ` (+${jobsPoll.active.length - 1} more)` : '';
 		const p = activeJob.progress;
 		if (activeJob.status === 'running' && (p.unitsTotal ?? 0) > 0) {
-			return `Loading ${p.unitsDone ?? 0} of ${p.unitsTotal} — ${activeJob.displayName}${extra}`;
+			// Tier-1 (td-97b22e): the API always shipped startedAt; "running
+			// 4 min" tells you whether to wait or walk away.
+			const mins = activeJob.startedAt
+				? Math.floor((Date.now() - new Date(activeJob.startedAt).getTime()) / 60_000)
+				: 0;
+			const dur = mins >= 1 ? ` · running ${mins} min` : '';
+			return `Loading ${p.unitsDone ?? 0} of ${p.unitsTotal} — ${activeJob.displayName}${dur}${extra}`;
 		}
 		if (p.phase === 'waiting_retry') return `Load retrying soon — ${activeJob.displayName}${extra}`;
 		return `Load queued — ${activeJob.displayName}${extra}`;

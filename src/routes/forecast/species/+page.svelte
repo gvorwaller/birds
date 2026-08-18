@@ -282,6 +282,14 @@
           stored{#if f.meta.nUnmatched > 0}
             · {f.meta.nUnmatched} names not matched to the taxonomy{/if}
         </p>
+        {#if (f.meta.unmatchedNames?.length ?? 0) > 0}
+          <!-- Tier-1 (td-97b22e): the names always shipped; only the count
+               rendered. Mostly subspecies/hybrid bar-chart rows. -->
+          <details class="unmnames">
+            <summary>Which names?</summary>
+            <p class="meta">{f.meta.unmatchedNames.join(" · ")}</p>
+          </details>
+        {/if}
         {#if !data.isViewer}
           {#if data.hasLogin}
             <form
@@ -1031,5 +1039,14 @@
     .pick .row:first-child {
       flex: 1;
     }
+  }
+  .unmnames summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
   }
 </style>

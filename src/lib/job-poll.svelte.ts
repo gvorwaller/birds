@@ -59,6 +59,8 @@ export interface JobInfo {
 	requestedBy: number;
 	requestedByName: string | null;
 	enqueuedAt: string;
+	/** Set once running; absolute ISO — safe for elapsed math (Tier-1). */
+	startedAt: string | null;
 	finishedAt: string | null;
 	/** Region/loc identity for UI scoping; null for multi-loc loads. */
 	target: string | null;

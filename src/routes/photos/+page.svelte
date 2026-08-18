@@ -5,6 +5,19 @@
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	// taken_on is typed string but node-postgres hands DATE columns to SSR as
+	// Date objects (the client gets the serialized form) — .slice() on a Date
+	// 500s the whole page. Format from LOCAL parts, never toISOString: a DATE
+	// parses as local midnight, and the UTC view of that can be yesterday.
+	function fmtTaken(v: string | Date): string {
+		if (v instanceof Date) {
+			const m = String(v.getMonth() + 1).padStart(2, "0");
+			const d = String(v.getDate()).padStart(2, "0");
+			return `${v.getFullYear()}-${m}-${d}`;
+		}
+		return String(v).slice(0, 10);
+	}
 	let syncing = $state(false);
 
 	const unmatchedCount = $derived(data.unmatched.reduce((n, u) => n + u.photos.length, 0));
@@ -99,9 +112,29 @@
 			</div>
 			<div class="grid">
 				{#each g.photos as p (p.photo_id)}
-					<a href={p.page_url} target="_blank" rel="noopener">
-						<img loading="lazy" src={p.thumbnail} alt={g.comName} />
-					</a>
+					<!-- Tier-1 (td-97b22e): taken_on, match_method, and the stored
+					     full-size url all shipped unrendered. The image now opens
+					     the FULL-SIZE file; the gallery page keeps its own link. -->
+					<figure class="ph">
+						<a href={p.url} target="_blank" rel="noopener" title="Open full size">
+							<img loading="lazy" src={p.thumbnail} alt={g.comName} />
+						</a>
+						<figcaption>
+							{#if p.taken_on}<span class="ptaken">{fmtTaken(p.taken_on)}</span>{/if}
+							{#if p.match_method === 'scientific'}
+								<span
+									class="pmethod"
+									title="The photo's common name didn't match the taxonomy — matched by scientific name instead. If it looks misfiled, use Unmatched-style override on gaylon.photos."
+									>sci-name match</span
+								>
+							{:else if p.match_method === 'override'}
+								<span class="pmethod manual" title="Matched by your manual override"
+									>manual</span
+								>
+							{/if}
+							<a class="ppage" href={p.page_url} target="_blank" rel="noopener">page ↗</a>
+						</figcaption>
+					</figure>
 				{/each}
 			</div>
 		</section>
@@ -122,9 +155,14 @@
 					</div>
 					<div class="grid small">
 						{#each u.photos as p (p.photo_id)}
-							<a href={p.page_url} target="_blank" rel="noopener">
-								<img loading="lazy" src={p.thumbnail} alt={`Unmatched: ${u.name}`} />
-							</a>
+							<figure class="ph">
+								<a href={p.page_url} target="_blank" rel="noopener">
+									<img loading="lazy" src={p.thumbnail} alt={`Unmatched: ${u.name}`} />
+								</a>
+								{#if p.taken_on}
+									<figcaption><span class="ptaken">{fmtTaken(p.taken_on)}</span></figcaption>
+								{/if}
+							</figure>
 						{/each}
 					</div>
 					{#if u.name === '(no species set)'}
@@ -330,5 +368,39 @@
 		.grid {
 			grid-template-columns: repeat(4, 1fr);
 		}
+	}
+	.ph {
+		margin: 0;
+		min-width: 0;
+	}
+	.ph figcaption {
+		display: flex;
+		gap: 4px 8px;
+		align-items: center;
+		flex-wrap: wrap;
+		font-size: 0.72rem;
+		color: var(--muted);
+		padding: 2px 2px 0;
+	}
+	.pmethod {
+		padding: 0 6px;
+		border-radius: 6px;
+		font-weight: 700;
+		background: #fde8c8;
+		color: #5f3700; /* AAA pair (hotspot precedent) */
+	}
+	.pmethod.manual {
+		background: var(--bg);
+		border: 1px solid var(--border);
+		color: var(--muted);
+	}
+	.ppage {
+		margin-left: auto;
+		color: var(--accent);
+		font-weight: 600;
+		text-decoration: none;
+		min-height: 24px;
+		display: inline-flex;
+		align-items: center;
 	}
 </style>
