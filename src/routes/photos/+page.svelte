@@ -399,7 +399,8 @@
 		color: var(--accent);
 		font-weight: 600;
 		text-decoration: none;
-		min-height: 24px;
+		min-height: 48px; /* cs.md tap floor (CODEX1 P2) */
+		padding: 0 4px;
 		display: inline-flex;
 		align-items: center;
 	}
