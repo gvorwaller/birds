@@ -284,7 +284,11 @@ export function groupRecent(obs: readonly EbirdObs[], seen: ReadonlySet<string>)
 			time: time ?? null,
 			subId: o.subId ?? null,
 			need: !seen.has(o.speciesCode),
-			unconfirmed: !o.obsValid || !o.obsReviewed
+			// Unconfirmed = NOT valid, only. Most valid eBird records are never
+			// reviewed (obsReviewed=false is the norm, not a caution), and this
+			// feed already excludes provisionals by default — the alerts-style
+			// `|| !obsReviewed` predicate chipped 74/74 live rows (GROK blocker).
+			unconfirmed: !o.obsValid
 		});
 	}
 	// Newest day first; within a day needs first (stable sort keeps eBird's

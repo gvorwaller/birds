@@ -208,13 +208,15 @@ describe("groupRecent (latest-report-per-species semantics)", () => {
 			obsReviewed: false,
 		},
 		{
+			// The common live case: valid but never reviewed — must NOT chip
+			// as Unconfirmed (obsReviewed=false is the norm on this feed).
 			speciesCode: "norcar",
 			comName: "Northern Cardinal",
 			obsDt: "2026-08-17 06:00",
 			subId: null,
 			howMany: null,
 			obsValid: true,
-			obsReviewed: true,
+			obsReviewed: false,
 		},
 	// The loose fixture shape is intentional (subId/howMany nullable).
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -253,7 +255,12 @@ describe("groupRecent (latest-report-per-species semantics)", () => {
 		});
 		expect(all.find((r) => r.speciesCode === "blujay")).toMatchObject({
 			need: true,
-			unconfirmed: true,
+			unconfirmed: true, // obsValid=false — the only thing that chips
+		});
+		// Valid-but-unreviewed is CONFIRMED for this page (GROK blocker:
+		// obsReviewed=false alone must never render an Unconfirmed chip).
+		expect(all.find((r) => r.speciesCode === "norcar")).toMatchObject({
+			unconfirmed: false,
 		});
 	});
 });
