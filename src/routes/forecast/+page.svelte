@@ -707,7 +707,10 @@
           {#each v.analyzed as h (h.locId)}
             <li>
               <div class="sp">
-                <span class="name">{h.locName}</span>
+                <!-- Name → internal hotspot page (Phase 1); eBird ↗ sibling stays. -->
+                <a class="name" href={`/hotspots/${h.locId}?returnTo=${encodeURIComponent("/forecast")}`}
+                  >{h.locName}</a
+                >
                 <span class="meta">
                   {formatDistance(h.distanceKm, "mi")} ·
                   {h.fetchedAt ? `data from ${fmtDate(h.fetchedAt)}` : ""}

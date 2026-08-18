@@ -675,7 +675,9 @@
                   {@const sel = ch.selected.find((s) => s.locId === h.code)}
                   <li>
                     <div class="sp">
-                      <span class="name">{h.name}</span>
+                      <a class="name" href={`/hotspots/${h.code}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                        >{h.name}</a
+                      >
                       <span class="freq"
                         >{pct(h.freq)} of checklists (n={h.n.toLocaleString()})</span
                       >
@@ -711,7 +713,9 @@
                     {@const sel = ch.selected.find((s) => s.locId === h.code)}
                     <li>
                       <div class="sp">
-                        <span class="name">{h.name}</span>
+                        <a class="name" href={`/hotspots/${h.code}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                        >{h.name}</a
+                      >
                         <span class="freq"
                           >{pct(h.freq)} (n={h.n.toLocaleString()}) †</span
                         >

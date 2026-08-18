@@ -358,11 +358,12 @@
         <div class="grow">
           <div class="name">
             {#if s.hotspot_id}
+              <!-- Name → internal hotspot page (Phase 1, td-32ca9b);
+                   eBird ↗ badge below stays external (GROK pin). -->
               <a
                 class="place-link"
-                href={`https://ebird.org/hotspot/${s.hotspot_id}`}
-                target="_blank"
-                rel="noopener">{s.custom_name ?? "Stop"}</a
+                href={`/hotspots/${s.hotspot_id}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
+                >{s.custom_name ?? "Stop"}</a
               >
               <a
                 class="hotspot-badge"

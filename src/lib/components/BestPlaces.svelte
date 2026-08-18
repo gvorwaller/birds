@@ -60,12 +60,9 @@
         <div class="grow">
           <div class="name">
             {#if p.isHotspot && p.locId}
-              <a
-                class="place-link"
-                href={`https://ebird.org/hotspot/${p.locId}`}
-                target="_blank"
-                rel="noopener">{p.locName}</a
-              >
+              <!-- Name → internal hotspot page (Hotspot Workspace Phase 1);
+                   the eBird ↗ badge stays the external path (GROK pin). -->
+              <a class="place-link" href={`/hotspots/${p.locId}`}>{p.locName}</a>
               <a
                 class="hotspot-badge"
                 href={`https://ebird.org/hotspot/${p.locId}`}

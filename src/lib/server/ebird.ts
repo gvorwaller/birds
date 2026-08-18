@@ -221,6 +221,26 @@ export async function hotspotsInRegion(
 	);
 }
 
+/**
+ * Recent observations at a single location (data/obs/{locId}/recent) — the
+ * Hotspot Workspace Phase-1 feed (plan: docs/2026-08-18-hotspot-workspace-
+ * plan-CC1.md). back is whitelisted by the caller to 7|14|30 (GROK pin).
+ */
+export async function recentHotspotObs(
+	apiKey: string,
+	locId: string,
+	back: number
+): Promise<CachedResult<EbirdObs[]>> {
+	const loc = locId.trim();
+	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
+	return cachedFetch(`hotspotObs:${loc}:${b}`, OBS_TTL_MIN, () =>
+		ebirdFetch<EbirdObs[]>(
+			`/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple`,
+			apiKey
+		)
+	);
+}
+
 /** eBird hotspots within distKm of a point (ref/hotspot/geo). */
 export async function hotspotsNear(
 	apiKey: string,

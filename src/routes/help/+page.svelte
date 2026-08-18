@@ -190,6 +190,19 @@
 						the full picture.
 					</li>
 				</ul>
+				<h3>Hotspot pages</h3>
+				<ul>
+					<li>
+						Tap any <strong>hotspot name</strong> — on Home's best places,
+						the forecast lists, or a saved trip stop — to open its own page:
+						directions and maps, a one-tap
+						<strong>Load/Refresh historical data</strong> button, a
+						<strong>Recent</strong> tab of the latest checklists (with links
+						to each eBird checklist and your Need badges), and a
+						<strong>Monthly</strong> tab showing what's likely there each
+						month. The <em>eBird ↗</em> badge still opens eBird itself.
+					</li>
+				</ul>
 				<h3>Where can I find this bird? (species + state)</h3>
 				<ul>
 					<li>
