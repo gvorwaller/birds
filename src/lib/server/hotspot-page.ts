@@ -7,6 +7,7 @@
  * row when loaded, and the previously-dark ebird_locations Google data.
  */
 import { query } from '$lib/db';
+import type { EbirdObs } from '$server/ebird';
 import {
 	FREQ_LIKELY,
 	FREQ_POSSIBLE,
@@ -35,9 +36,13 @@ export interface HotspotMeta {
 }
 
 /**
- * Resolve one locId from the cached hotspot payloads (first match wins).
- * A jsonb scan over hotspot caches — acceptable for a single page load; the
- * partial index keeps the candidate set small (hotspot namespaces only).
+ * Resolve one locId from the cached hotspot payloads (newest match wins).
+ * Bounded two-step: the `@>` containment prefilter picks candidate rows
+ * WITHOUT expanding their arrays, and only the single newest matching row
+ * is expanded. There is no index on this pattern — measured prod scale
+ * (2026-08-18: 48 hotspot cache rows, ~12k embedded hotspots, 776 kB
+ * total payload) makes the row scan trivial; if the cache ever grows by
+ * orders of magnitude, add a GIN jsonb_path_ops index on payload.
  */
 export async function hotspotFromCache(locId: string): Promise<HotspotMeta | null> {
 	const r = await query<{
@@ -56,10 +61,14 @@ export async function hotspotFromCache(locId: string): Promise<HotspotMeta | nul
 		        h->>'subnational2Code' AS subnational2,
 		        (h->>'numSpeciesAllTime')::int AS num_species,
 		        h->>'latestObsDt' AS latest_obs
-		   FROM ebird_cache c, jsonb_array_elements(c.payload) h
-		  WHERE (c.cache_key LIKE 'hotspotsRegion:%' OR c.cache_key LIKE 'hotspots:%')
-		    AND h->>'locId' = $1
-		  ORDER BY c.fetched_at DESC
+		   FROM (SELECT payload
+		           FROM ebird_cache
+		          WHERE (cache_key LIKE 'hotspotsRegion:%' OR cache_key LIKE 'hotspots:%')
+		            AND payload @> jsonb_build_array(jsonb_build_object('locId', $1::text))
+		          ORDER BY fetched_at DESC
+		          LIMIT 1) c,
+		        jsonb_array_elements(c.payload) h
+		  WHERE h->>'locId' = $1
 		  LIMIT 1`,
 		[locId]
 	);
@@ -232,4 +241,56 @@ export async function regionNames(codes: readonly string[]): Promise<Map<string,
 		[wanted]
 	);
 	return new Map(r.rows.map((x) => [x.code, x.name]));
+}
+
+export interface RecentReport {
+	speciesCode: string;
+	comName: string;
+	howMany: number | null;
+	time: string | null;
+	subId: string | null;
+	need: boolean;
+	unconfirmed: boolean;
+}
+
+export interface RecentDay {
+	date: string;
+	reports: RecentReport[];
+}
+
+/**
+ * Shape /data/obs/{locId}/recent for display. eBird's contract for that
+ * endpoint is the LATEST OBSERVATION PER SPECIES — it is NOT a checklist
+ * feed, and most checklists from the window never appear in it. So each
+ * species is exactly one row, under the day of its most recent report,
+ * linking to the checklist that report came from; rows must never be
+ * presented as checklist contents (CODEX1 blocker on 84a1c4b).
+ */
+export function groupRecent(obs: readonly EbirdObs[], seen: ReadonlySet<string>): RecentDay[] {
+	const days = new Map<string, RecentReport[]>();
+	for (const o of obs) {
+		const [date, time] = (o.obsDt ?? '').split(' ');
+		let list = days.get(date);
+		if (!list) {
+			list = [];
+			days.set(date, list);
+		}
+		list.push({
+			speciesCode: o.speciesCode,
+			comName: o.comName,
+			howMany: o.howMany ?? null,
+			time: time ?? null,
+			subId: o.subId ?? null,
+			need: !seen.has(o.speciesCode),
+			unconfirmed: !o.obsValid || !o.obsReviewed
+		});
+	}
+	// Newest day first; within a day needs first (stable sort keeps eBird's
+	// recency order inside each group).
+	return [...days.entries()]
+		.sort((a, b) => b[0].localeCompare(a[0]))
+		.map(([date, reports]) => ({
+			date,
+			reports: reports.slice().sort((a, b) => Number(b.need) - Number(a.need))
+		}));
 }

@@ -11,6 +11,10 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
   let loadBusy = $state(false);
+  // Monthly list default view is capped for scanability; expansion exposes
+  // EVERY row — never a hidden reduction (cs.md, CODEX1 on 84a1c4b).
+  let showAllMonthly = $state(false);
+  const MONTHLY_PREVIEW = 60;
 
   // In-place progress = the SAME jobsPoll store as the app-wide chip
   // (GROK pin: one progress channel, survives refresh).
@@ -214,37 +218,39 @@
               >{:else}try the Monthly view for what's typical here{/if}.
           </p>
         {:else}
+          <p class="muted">
+            The most recent report of each species — one row per species
+            (eBird's recent feed shows latest sightings, not every
+            checklist). The link opens the checklist it came from.
+          </p>
           {#each data.days as day (day.date)}
             <h3 class="day">{dayLabel(day.date)}</h3>
-            {#each day.checklists as cl, i (cl.subId ?? i)}
-              <div class="checklist">
-                <div class="cl-head">
-                  {#if cl.time}<span class="muted">{cl.time}</span>{/if}
-                  {#if cl.subId}
+            <ul class="obs">
+              {#each day.reports as sp (sp.speciesCode)}
+                <li>
+                  <a href={`/species/${sp.speciesCode}?returnTo=${encodeURIComponent(`/hotspots/${data.locId}`)}`}
+                    >{sp.comName}</a
+                  >
+                  {#if sp.howMany != null && sp.howMany > 1}<span class="muted"
+                      >×{sp.howMany}</span
+                    >{/if}
+                  {#if sp.time}<span class="muted">{sp.time}</span>{/if}
+                  {#if sp.need}<Badge kind="need" label="Need" />{:else}<Badge
+                      kind="seen"
+                      label="Seen"
+                    />{/if}
+                  {#if sp.unconfirmed}<span class="unconf">Unconfirmed</span>{/if}
+                  {#if sp.subId}
                     <a
-                      href={`https://ebird.org/checklist/${cl.subId}`}
+                      class="cl"
+                      href={`https://ebird.org/checklist/${sp.subId}`}
                       target="_blank"
                       rel="noopener">checklist ↗</a
                     >
                   {/if}
-                  <span class="muted">{cl.species.length} species</span>
-                </div>
-                <ul class="obs">
-                  {#each cl.species as sp (sp.speciesCode)}
-                    <li>
-                      <a href={`/species/${sp.speciesCode}?returnTo=${encodeURIComponent(`/hotspots/${data.locId}`)}`}
-                        >{sp.comName}</a
-                      >
-                      {#if sp.howMany != null && sp.howMany > 1}<span class="muted"
-                          >×{sp.howMany}</span
-                        >{/if}
-                      {#if sp.need}<Badge kind="need" label="Need" />{/if}
-                      {#if sp.unconfirmed}<span class="unconf">Unconfirmed</span>{/if}
-                    </li>
-                  {/each}
-                </ul>
-              </div>
-            {/each}
+                </li>
+              {/each}
+            </ul>
           {/each}
         {/if}
       </section>
@@ -280,7 +286,7 @@
             <p class="muted">Nothing recorded here in {MONTHS[data.month - 1]}.</p>
           {:else}
             <ul class="mspecies">
-              {#each data.monthly.species.slice(0, 60) as sp (sp.speciesCode)}
+              {#each showAllMonthly ? data.monthly.species : data.monthly.species.slice(0, MONTHLY_PREVIEW) as sp (sp.speciesCode)}
                 <li>
                   <a href={`/species/${sp.speciesCode}?returnTo=${encodeURIComponent(`/hotspots/${data.locId}?tab=monthly&month=${data.month}`)}`}
                     >{sp.comName}</a
@@ -290,8 +296,16 @@
                 </li>
               {/each}
             </ul>
-            {#if data.monthly.species.length > 60}
-              <p class="muted">Showing the top 60 of {data.monthly.species.length}.</p>
+            {#if data.monthly.species.length > MONTHLY_PREVIEW}
+              <button
+                type="button"
+                class="showall"
+                onclick={() => (showAllMonthly = !showAllMonthly)}
+              >
+                {showAllMonthly
+                  ? `Show the top ${MONTHLY_PREVIEW}`
+                  : `Show all ${data.monthly.species.length} species`}
+              </button>
             {/if}
             <p class="muted">† = few checklists that month — treat as a hint.</p>
           {/if}
@@ -461,17 +475,6 @@
     color: var(--muted);
     margin: 14px 0 6px;
   }
-  .checklist {
-    border-top: 1px solid var(--border);
-    padding: 8px 0;
-  }
-  .cl-head {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    font-size: 0.85rem;
-    margin-bottom: 4px;
-  }
   .obs {
     list-style: none;
     padding: 0;
@@ -481,13 +484,38 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    min-height: 40px;
+    min-height: 48px;
     flex-wrap: wrap;
+    border-top: 1px solid var(--border);
   }
   .obs a {
     color: inherit;
     font-weight: 600;
     text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
+  .obs a.cl {
+    margin-left: auto;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+  .showall {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 8px;
+    padding: 10px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--accent);
+    font-weight: 600;
   }
   .unconf {
     padding: 1px 8px;

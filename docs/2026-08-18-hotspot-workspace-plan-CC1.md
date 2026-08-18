@@ -140,3 +140,15 @@ shipped — no dead payload (GROK).
 Weekly-resolution charts (td-af8393), detail=full observer/media flags
 (td-a893c3), tides (td-6a3d2e), ref/hotspot/info audit (td-39d567 — feeds
 Phase 1 later if the endpoint proves useful).
+
+## Post-review correction (2026-08-18, CODEX1 blocker on 84a1c4b)
+
+eBird's `/data/obs/{locId}/recent` returns only the **latest observation per
+species** — it is not a checklist feed, and most checklists in the window
+never appear in it. The Recent tab therefore must not present subId groups
+as "checklists with N species" (that claim is materially false). Amended
+contract: the Recent tab shows **the most recent report of each species**,
+grouped by day, one row per species, each row linking to the checklist that
+report came from (Need/Seen badges + Unconfirmed chips unchanged). The
+acceptance item "grouped checklists" is superseded by this row contract.
+A true checklist feed (`/product/lists`) is a separate future td if wanted.

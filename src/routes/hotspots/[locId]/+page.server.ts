@@ -1,70 +1,26 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { getEbirdApiKey, recentHotspotObs, EbirdError, type EbirdObs } from "$server/ebird";
+import { getEbirdApiKey, recentHotspotObs, EbirdError } from "$server/ebird";
 import { frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { seenSet } from "$server/needs";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { haversineKm } from "$lib/geo";
 import {
+  groupRecent,
   hotspotFromCache,
   hotspotMonthly,
   hotspotPlace,
   regionNames,
   validLocId,
   type HotspotMonthly,
+  type RecentDay,
 } from "$server/hotspot-page";
 import { safeReturnTo } from "$lib/return-link";
 
 /** GROK pin: the Recent window is whitelisted, never free-form. */
 const BACK_CHOICES = [7, 14, 30] as const;
-
-export interface ChecklistGroup {
-  subId: string | null;
-  time: string | null;
-  species: {
-    speciesCode: string;
-    comName: string;
-    howMany: number | null;
-    need: boolean;
-    unconfirmed: boolean;
-  }[];
-}
-
-export interface DayGroup {
-  date: string;
-  checklists: ChecklistGroup[];
-}
-
-function groupObs(obs: readonly EbirdObs[], seen: ReadonlySet<string>): DayGroup[] {
-  const days = new Map<string, Map<string, ChecklistGroup>>();
-  for (const o of obs) {
-    const [date, time] = (o.obsDt ?? "").split(" ");
-    const subKey = o.subId ?? `${date} ${time ?? ""}`;
-    let day = days.get(date);
-    if (!day) {
-      day = new Map();
-      days.set(date, day);
-    }
-    let cl = day.get(subKey);
-    if (!cl) {
-      cl = { subId: o.subId ?? null, time: time ?? null, species: [] };
-      day.set(subKey, cl);
-    }
-    cl.species.push({
-      speciesCode: o.speciesCode,
-      comName: o.comName,
-      howMany: o.howMany ?? null,
-      need: !seen.has(o.speciesCode),
-      unconfirmed: !o.obsValid || !o.obsReviewed,
-    });
-  }
-  // Newest day first; within a day keep eBird's order (already recency-ish).
-  return [...days.entries()]
-    .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([date, cls]) => ({ date, checklists: [...cls.values()] }));
-}
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
   const locId = params.locId;
@@ -109,7 +65,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       : null;
 
   // Recent tab is the only eBird consumer; Monthly is pure DB (GROK pin).
-  let days: DayGroup[] = [];
+  let days: RecentDay[] = [];
   let recentError: string | null = null;
   let recentStale = false;
   let hasApiKey = false;
@@ -120,7 +76,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       try {
         const res = await recentHotspotObs(apiKey, locId, back);
         recentStale = res.stale;
-        days = groupObs(res.data, seen);
+        days = groupRecent(res.data, seen);
       } catch (err) {
         recentError =
           err instanceof EbirdError ? err.message : "Could not load recent reports.";

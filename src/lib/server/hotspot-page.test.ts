@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import {
+	groupRecent,
   hotspotFromCache,
   hotspotMonthly,
   hotspotPlace,
@@ -168,4 +169,81 @@ describe.runIf(dbUp)("hotspot-page gateway (test cluster)", () => {
       await query(`DELETE FROM ebird_cache WHERE cache_key = $1`, [RKEY]);
     }
   });
+});
+
+describe("groupRecent (latest-report-per-species semantics)", () => {
+	// eBird's /data/obs/{locId}/recent returns ONLY the latest observation of
+	// each species. This fixture mirrors that contract: two checklists (S1,
+	// S2) each really had both species, but the feed carries species A only
+	// from S2 (its latest) and species B only from S1. The display contract
+	// this locks: one row per species linking to its own checklist — rows are
+	// NEVER presented as checklist contents (CODEX1 blocker on 84a1c4b).
+	const obs = [
+		{
+			speciesCode: "amecro",
+			comName: "American Crow",
+			obsDt: "2026-08-18 09:15",
+			subId: "S2",
+			howMany: 3,
+			obsValid: true,
+			obsReviewed: true,
+		},
+		{
+			speciesCode: "blujay",
+			comName: "Blue Jay",
+			obsDt: "2026-08-17 07:30",
+			subId: "S1",
+			howMany: 1,
+			obsValid: false,
+			obsReviewed: false,
+		},
+		{
+			speciesCode: "norcar",
+			comName: "Northern Cardinal",
+			obsDt: "2026-08-17 06:00",
+			subId: null,
+			howMany: null,
+			obsValid: true,
+			obsReviewed: true,
+		},
+	// The loose fixture shape is intentional (subId/howMany nullable).
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	] as any[];
+
+	it("emits exactly one row per species, each tied to its own checklist", () => {
+		const days = groupRecent(obs, new Set(["amecro"]));
+		const all = days.flatMap((d) => d.reports);
+		expect(all).toHaveLength(3);
+		expect(new Set(all.map((r) => r.speciesCode)).size).toBe(3);
+		// No structure groups species under a shared checklist: each row
+		// carries its OWN subId (or null), so nothing can read as "checklist
+		// S2 contained N species".
+		expect(all.find((r) => r.speciesCode === "amecro")?.subId).toBe("S2");
+		expect(all.find((r) => r.speciesCode === "blujay")?.subId).toBe("S1");
+		expect(all.find((r) => r.speciesCode === "norcar")?.subId).toBeNull();
+	});
+
+	it("groups by day, newest first, needs before seen within a day", () => {
+		const days = groupRecent(obs, new Set(["amecro"]));
+		expect(days.map((d) => d.date)).toEqual(["2026-08-18", "2026-08-17"]);
+		// 08-17 holds blujay (need) and norcar (need) — flip norcar to seen:
+		const days2 = groupRecent(obs, new Set(["amecro", "norcar"]));
+		expect(days2[1].reports.map((r) => r.speciesCode)).toEqual(["blujay", "norcar"]);
+		expect(days2[1].reports.map((r) => r.need)).toEqual([true, false]);
+	});
+
+	it("maps seen/need and unconfirmed truthfully", () => {
+		const days = groupRecent(obs, new Set(["amecro"]));
+		const all = days.flatMap((d) => d.reports);
+		expect(all.find((r) => r.speciesCode === "amecro")).toMatchObject({
+			need: false,
+			unconfirmed: false,
+			howMany: 3,
+			time: "09:15",
+		});
+		expect(all.find((r) => r.speciesCode === "blujay")).toMatchObject({
+			need: true,
+			unconfirmed: true,
+		});
+	});
 });
