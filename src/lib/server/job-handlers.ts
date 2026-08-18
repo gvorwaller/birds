@@ -9,6 +9,7 @@
  * Payloads/events/results never contain credentials (cs.md sacred rules).
  */
 import {
+	BATCH_TIME_BUDGET_MS,
 	ensureFrequencies,
 	type EnsureResult,
 	type LocToEnsure,
@@ -42,7 +43,8 @@ import {
 	requeueInterrupted,
 	scheduleRetry,
 	terminalizeAndReschedule,
-	updateProgress
+	updateProgress,
+	yieldRemainder
 } from '$server/jobs';
 import {
 	dedupKeys,
@@ -83,9 +85,20 @@ export interface WorkerContext {
 	isDraining: () => boolean;
 }
 
+/** Cumulative narration across budget yields: the ORIGINAL batch total and
+ * counts banked by earlier chunks, so the progress bar keeps telling the
+ * whole-batch story after the payload narrows to the remainder. */
+interface FrequencyBase {
+	total: number;
+	done: number;
+	failed: number;
+	skipped: number;
+}
+
 interface FrequencyPayload {
 	locs: LocToEnsure[];
 	force?: boolean;
+	base?: FrequencyBase;
 }
 
 interface AnalyzeCountiesPayload {
@@ -116,16 +129,26 @@ function summarize(r: EnsureResult) {
 }
 
 /**
- * Shared frequency-load runner. Drives ensureFrequencies over the WHOLE
- * target set (maxFetches/timeBudget Infinity) with per-unit events, progress
- * heartbeats, cooperative cancel, and drain requeue — one termination path
- * per cause (GROK #6).
+ * Shared frequency-load runner. Drives ensureFrequencies with per-unit
+ * events, progress heartbeats, cooperative cancel, drain requeue, and a
+ * BATCH_TIME_BUDGET_MS chunk boundary — one termination path per cause
+ * (GROK #6). At the boundary the job YIELDS: remaining work goes back to
+ * pending BEHIND anything enqueued meanwhile (CODEX1 P1 on 2171eb7 — a
+ * 1000-loc one-tap load must not monopolize the single-concurrency queue).
+ * opts.remainderPayload builds the narrowed payload for the yield; job
+ * types that re-derive their remainder at claim time (analyze_counties)
+ * omit it and keep their payload verbatim. opts.base seeds cumulative
+ * narration so the bar keeps counting the ORIGINAL batch across chunks.
  */
 async function runFrequencyJob(
 	job: JobRow,
 	locs: LocToEnsure[],
 	force: boolean,
-	ctx: WorkerContext
+	ctx: WorkerContext,
+	opts: {
+		base?: FrequencyBase;
+		remainderPayload?: (remaining: LocToEnsure[], base: FrequencyBase) => unknown;
+	} = {}
 ): Promise<void> {
 	const attempts = job.attempts;
 	let cancelSeen = false;
@@ -133,18 +156,20 @@ async function runFrequencyJob(
 
 	const progress: JobProgress = {
 		phase: 'fetching',
-		unitsTotal: locs.length,
-		unitsDone: 0,
-		unitsFailed: 0,
-		unitsSkipped: 0,
+		unitsTotal: opts.base?.total ?? locs.length,
+		unitsDone: opts.base?.done ?? 0,
+		unitsFailed: opts.base?.failed ?? 0,
+		unitsSkipped: opts.base?.skipped ?? 0,
 		round: attempts
 	};
 	await recordEvent(job.id, 'claimed', { attempt: attempts, units: locs.length });
 	await updateProgress(job.id, progress);
 
+	const chunkStart = Date.now();
 	const shouldStop = async (): Promise<StopSignal> => {
 		if (cancelSeen) return (stopCause = 'cancel');
 		if (ctx.isDraining()) return (stopCause = 'drain');
+		if (Date.now() - chunkStart > BATCH_TIME_BUDGET_MS) return (stopCause = 'budget');
 		return 'no';
 	};
 
@@ -207,6 +232,32 @@ async function runFrequencyJob(
 		await requeueInterrupted(job.id, attempts);
 		return;
 	}
+	if (stopCause === 'budget') {
+		// Everything not banked as loaded stays in the job: notAttempted
+		// resumes next chunk, and failed units keep riding the payload so the
+		// existing cooldown/retry semantics still reach them.
+		const banked = new Set([...ensure.ready, ...ensure.refreshed]);
+		const remaining = locs.filter((l) => !banked.has(l.code));
+		if (remaining.length > 0) {
+			const newBase: FrequencyBase = {
+				total: progress.unitsTotal ?? locs.length,
+				// Ready locs never pass through onUnit — bank them here so the
+				// cumulative count stays honest across chunks.
+				done: (progress.unitsDone ?? 0) + ensure.ready.length,
+				failed: progress.unitsFailed ?? 0,
+				skipped: progress.unitsSkipped ?? 0
+			};
+			await yieldRemainder(
+				job.id,
+				attempts,
+				opts.remainderPayload ? opts.remainderPayload(remaining, newBase) : null,
+				{ ...summary, remaining: remaining.length }
+			);
+			return;
+		}
+		// Budget hit exactly at the last unit — nothing remains; fall through
+		// to the normal outcome resolution below.
+	}
 	const outcome = jobOutcome(
 		{
 			ready: ensure.ready,
@@ -230,12 +281,16 @@ async function runFrequencyJob(
 	}
 }
 
-function frequencyLocs(job: JobRow): { locs: LocToEnsure[]; force: boolean } {
+function frequencyLocs(job: JobRow): {
+	locs: LocToEnsure[];
+	force: boolean;
+	base?: FrequencyBase;
+} {
 	const p = job.payload as unknown as FrequencyPayload;
 	if (!Array.isArray(p?.locs) || p.locs.length === 0) {
 		throw new Error('frequency job payload has no locs');
 	}
-	return { locs: p.locs, force: p.force === true };
+	return { locs: p.locs, force: p.force === true, base: p.base };
 }
 
 /**
@@ -1371,8 +1426,17 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			case 'load_region':
 			case 'refresh_loc':
 			case 'retry_loc': {
-				const { locs, force } = frequencyLocs(job);
-				await runFrequencyJob(job, locs, force, ctx);
+				const { locs, force, base } = frequencyLocs(job);
+				await runFrequencyJob(job, locs, force, ctx, {
+					base,
+					// On a budget yield the payload narrows to the remainder;
+					// base carries the original total + banked counts forward.
+					remainderPayload: (remaining, newBase) => ({
+						locs: remaining,
+						force,
+						base: newBase
+					})
+				});
 				return;
 			}
 			case 'analyze_counties': {
@@ -1388,6 +1452,9 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 					});
 					return;
 				}
+				// No remainderPayload: analyzeCountiesLocs re-derives what is
+				// still uncovered at every claim, so a yielded job resumes
+				// correctly with its payload untouched.
 				await runFrequencyJob(job, locs, false, ctx);
 				return;
 			}

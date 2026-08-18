@@ -39,6 +39,14 @@ const mocks = vi.hoisted(() => {
     requeueInterrupted: vi.fn<(jobId: number, attempts: number) => Promise<boolean>>(
       async () => true,
     ),
+    yieldRemainder: vi.fn<
+      (
+        jobId: number,
+        attempts: number,
+        newPayload: unknown | null,
+        chunkSummary: unknown,
+      ) => Promise<boolean>
+    >(async () => true),
     enqueueJob: vi.fn<(...a: unknown[]) => Promise<{ jobId: number; deduped: boolean }>>(
       async () => ({ jobId: 999, deduped: false }),
     ),
@@ -62,6 +70,7 @@ vi.mock("$server/barchart", () => ({
   attemptMeta: mocks.attemptMeta,
   lastCompleteYear: () => 2025,
   HOTSPOT_FAILURE_COOLDOWN_MS: 15 * 60_000,
+  BATCH_TIME_BUDGET_MS: 240_000,
 }));
 
 vi.mock("$server/jobs", () => ({
@@ -72,6 +81,7 @@ vi.mock("$server/jobs", () => ({
   cancelRunningJob: mocks.cancelRunningJob,
   scheduleRetry: mocks.scheduleRetry,
   requeueInterrupted: mocks.requeueInterrupted,
+  yieldRemainder: mocks.yieldRemainder,
   enqueueJob: mocks.enqueueJob,
   hasActiveJob: mocks.hasActiveJob,
   terminalizeAndReschedule: mocks.terminalizeAndReschedule,
@@ -458,6 +468,159 @@ describe("runJob — frequency jobs", () => {
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.failJob.mock.calls[0][2]).toMatch(/no locs/);
     expect(mocks.ensureFrequencies).not.toHaveBeenCalled();
+  });
+});
+
+describe("runJob — budget yield (CODEX1 P1 on 2171eb7: queue fairness)", () => {
+  // The mocked BATCH_TIME_BUDGET_MS is 240_000; each test drives Date.now
+  // past it mid-ensure with fake timers, exactly how a long chunk trips the
+  // boundary between units in production.
+  it("load_hotspots past budget → yieldRemainder with narrowed payload + cumulative base; no completion/retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        // First unit lands, then the clock passes the chunk boundary.
+        await opts.onUnit(locs[0], { status: "ok" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        expect(await opts.shouldStop()).toBe("budget");
+        return ensureResult({
+          refreshed: ["L1"],
+          notAttempted: ["L2", "L3"],
+        });
+      });
+      await runJob(jobRow(), ctx);
+
+      expect(mocks.yieldRemainder).toHaveBeenCalledTimes(1);
+      const [jobId, attempts, newPayload, summary] =
+        mocks.yieldRemainder.mock.calls[0];
+      expect(jobId).toBe(42);
+      expect(attempts).toBe(1);
+      // Payload narrows to the unfinished locs; base banks the whole-batch
+      // narration (total stays 3, one unit done).
+      expect(newPayload).toEqual({
+        locs: [LOCS[1], LOCS[2]],
+        force: false,
+        base: { total: 3, done: 1, failed: 0, skipped: 0 },
+      });
+      expect(summary).toMatchObject({ remaining: 2, refreshed: 1 });
+      expect(mocks.completeJob).not.toHaveBeenCalled();
+      expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+      expect(mocks.failJob).not.toHaveBeenCalled();
+      expect(mocks.requeueInterrupted).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumed chunk seeds progress from payload.base and keeps counting the ORIGINAL batch", async () => {
+    // The handler mutates ONE progress object — snapshot per call, or the
+    // stored references all show the final state.
+    const snapshots: { unitsTotal?: number; unitsDone?: number }[] = [];
+    mocks.updateProgress.mockImplementation(async (_id, p) => {
+      snapshots.push({ ...p });
+      return { cancelRequested: false };
+    });
+    try {
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+      });
+      await runJob(
+        jobRow({
+          payload: {
+            locs: [LOCS[2]],
+            force: false,
+            base: { total: 3, done: 2, failed: 0, skipped: 0 },
+          },
+        }),
+        ctx,
+      );
+      expect(snapshots[0]).toMatchObject({ unitsTotal: 3, unitsDone: 2 });
+      // After the last unit the bar reads 3 of 3 — the batch, not the chunk.
+      expect(snapshots[snapshots.length - 1]).toMatchObject({
+        unitsTotal: 3,
+        unitsDone: 3,
+      });
+      expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    } finally {
+      mocks.updateProgress.mockImplementation(async () => ({
+        cancelRequested: false,
+      }));
+    }
+  });
+
+  it("budget hit at the LAST unit (nothing remaining) → normal completion, no yield", async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        for (const loc of locs) await opts.onUnit(loc, { status: "ok" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        expect(await opts.shouldStop()).toBe("budget");
+        return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+      });
+      await runJob(jobRow(), ctx);
+      expect(mocks.yieldRemainder).not.toHaveBeenCalled();
+      expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancel outranks budget: both signals present → cancelRunningJob, not yield", async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      mocks.updateProgress.mockResolvedValue({ cancelRequested: true });
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        expect(await opts.shouldStop()).toBe("cancel");
+        return ensureResult({ refreshed: ["L1"], notAttempted: ["L2", "L3"] });
+      });
+      await runJob(jobRow(), ctx);
+      expect(mocks.cancelRunningJob).toHaveBeenCalledTimes(1);
+      expect(mocks.yieldRemainder).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+    }
+  });
+
+  it("analyze_counties yields with payload UNTOUCHED (remainder re-derived at claim time)", async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+        await opts.onUnit(locs[0], { status: "ok" });
+        vi.setSystemTime(t0 + 240_000 + 1_000);
+        await opts.shouldStop();
+        return ensureResult({
+          refreshed: [locs[0].code],
+          notAttempted: locs.slice(1).map((l: Loc) => l.code),
+        });
+      });
+      await runJob(
+        jobRow({
+          type: "analyze_counties",
+          payload: {
+            regionCode: "US-FL",
+            regionName: "Florida",
+            counties: [
+              { code: "US-FL-057", name: "Hillsborough" },
+              { code: "US-FL-103", name: "Pinellas" },
+            ],
+          },
+        }),
+        ctx,
+      );
+      expect(mocks.yieldRemainder).toHaveBeenCalledTimes(1);
+      // null payload = keep verbatim; analyzeCountiesLocs recomputes.
+      expect(mocks.yieldRemainder.mock.calls[0][2]).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -52,6 +52,7 @@ const {
   terminalizeAndReschedule,
   updateProgress,
   workerHealth,
+  yieldRemainder,
 } = await import("./jobs");
 
 let dbUp = false;
@@ -171,6 +172,63 @@ describe.runIf(dbUp)("claim", () => {
     const [x, y] = await Promise.all([claimNextJob(), claimNextJob()]);
     const ids = [x?.id, y?.id].filter((v) => v != null);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe.runIf(dbUp)("budget yield (CODEX1 P1: queue fairness)", () => {
+  it("yield → pending at the BACK of the FIFO: a job enqueued during the chunk claims first", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST yield-a" }));
+    const claimedA = await claimNextJob();
+    expect(claimedA?.id).toBe(a.jobId);
+    // b arrives while a's chunk is running.
+    const b = await enqueueJob(params({ label: "JOBTEST yield-b" }));
+
+    const remainder = {
+      locs: [{ code: "US-YY", kind: "region", name: "Rest", regionCode: "US-YY" }],
+      force: false,
+      base: { total: 2, done: 1, failed: 0, skipped: 0 },
+    };
+    expect(
+      await yieldRemainder(a.jobId, claimedA!.attempts, remainder, { remaining: 1 }),
+    ).toBe(true);
+
+    const rowA = await getJob(a.jobId);
+    expect(rowA?.status).toBe("pending");
+    expect(rowA?.attempts).toBe(0); // refunded — a yield consumes no retry budget
+    expect((rowA?.payload as { base?: { done: number } }).base?.done).toBe(1);
+
+    // Fairness: b (enqueued during the chunk) is claimed BEFORE a's remainder.
+    const next = await claimNextJob();
+    expect(next?.id).toBe(b.jobId);
+    const after = await claimNextJob();
+    expect(after?.id).toBe(a.jobId);
+    expect((await jobEvents(a.jobId)).map((e) => e.action)).toContain("yielded");
+  });
+
+  it("null payload keeps the job's payload verbatim (claim-time re-derivers)", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST yield-keep" }));
+    const claimed = await claimNextJob();
+    expect(await yieldRemainder(a.jobId, claimed!.attempts, null, { remaining: 3 })).toBe(true);
+    const row = await getJob(a.jobId);
+    expect(row?.status).toBe("pending");
+    expect(row?.payload).toEqual(params().payload);
+  });
+
+  it("a raced cancel wins over a yield", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST yield-cancel" }));
+    const claimed = await claimNextJob();
+    await requestCancel(a.jobId, userId);
+    expect(await yieldRemainder(a.jobId, claimed!.attempts, null, {})).toBe(true);
+    const row = await getJob(a.jobId);
+    expect(row?.status).toBe("cancelled");
+    expect(row?.finished_at).not.toBeNull();
+  });
+
+  it("CAS: a stale attempts value does not transition", async () => {
+    const a = await enqueueJob(params({ label: "JOBTEST yield-cas" }));
+    const claimed = await claimNextJob();
+    expect(await yieldRemainder(a.jobId, claimed!.attempts + 1, null, {})).toBe(false);
+    expect((await getJob(a.jobId))?.status).toBe("running");
   });
 });
 

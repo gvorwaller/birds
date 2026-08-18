@@ -470,8 +470,10 @@ export interface LocToEnsure {
 	regionCode?: string | null;
 }
 
-/** How the batch should wind down early, if at all. */
-export type StopSignal = 'no' | 'cancel' | 'drain';
+/** How the batch should wind down early, if at all. 'budget' = the caller's
+ * chunk boundary hit — remaining locs route to notAttempted exactly like
+ * cancel/drain; the CALLER (worker) yields the remainder for queue fairness. */
+export type StopSignal = 'no' | 'cancel' | 'drain' | 'budget';
 
 interface EnsureOptions {
 	/**

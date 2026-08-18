@@ -50,6 +50,7 @@ export type JobEventAction =
 	| 'retry_scheduled'
 	| 'reclaimed'
 	| 'interrupted'
+	| 'yielded'
 	| 'completed'
 	| 'failed'
 	| 'cancelled';
@@ -280,6 +281,38 @@ export async function scheduleRetry(
 			attempt: expectedAttempts
 		});
 	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_retry' });
+	return final != null;
+}
+
+/**
+ * Budget yield (queue fairness — CODEX1 P1 on 2171eb7): a chunk boundary hit
+ * with work remaining. Back to pending with enqueued_at reset to NOW(), so
+ * the FIFO claim order (ORDER BY enqueued_at) serves every job that arrived
+ * during the chunk BEFORE the remainder resumes — one huge load can no
+ * longer monopolize the single-concurrency queue. The attempt is refunded (a
+ * yield is neither failure nor retry), and newPayload — when given — narrows
+ * the job to its remaining work; pass null for job types that re-derive
+ * their remainder at claim time. A raced cancel still wins.
+ */
+export async function yieldRemainder(
+	jobId: number,
+	expectedAttempts: number,
+	newPayload: unknown | null,
+	chunkSummary: unknown
+): Promise<boolean> {
+	const final = await transition(
+		jobId,
+		expectedAttempts,
+		`status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'pending' END,
+		 payload = COALESCE($3::jsonb, payload),
+		 enqueued_at = CASE WHEN cancel_requested THEN enqueued_at ELSE NOW() END,
+		 next_retry_at = NULL,
+		 finished_at = CASE WHEN cancel_requested THEN NOW() ELSE NULL END,
+		 attempts = GREATEST(attempts - 1, 0)`,
+		[newPayload == null ? null : JSON.stringify(scrubStoredValue(newPayload))]
+	);
+	if (final === 'pending') await recordEvent(jobId, 'yielded', { summary: chunkSummary });
+	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_yield' });
 	return final != null;
 }
 

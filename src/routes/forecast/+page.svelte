@@ -144,13 +144,6 @@
     if (queuedHereCount > 0) parts.push(`${queuedHereCount} already queued`);
     return parts.join(" · ");
   });
-  const panelSubText = $derived.by(() => {
-    const parts: string[] = [];
-    if (actionableUnloaded > 0) parts.push(`${actionableUnloaded} unloaded`);
-    if (actionableOutdated > 0) parts.push(`${actionableOutdated} outdated`);
-    if (queuedHereCount > 0) parts.push(`${queuedHereCount} queued`);
-    return parts.join(" · ");
-  });
 
   // The manage panel expands INLINE directly below the coverage pill (GROK
   // Phase-2 pin: no modal, no scroll-to-bottom-details dance — the old
