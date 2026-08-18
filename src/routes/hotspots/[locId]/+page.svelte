@@ -166,7 +166,9 @@
       {/if}
       {#if data.lastLoadFailed && !myJob}
         <p class="err" role="alert">
-          The last load for this hotspot failed — you can retry below.
+          The last load for this hotspot failed{data.isViewer
+            ? "."
+            : " — you can retry below."}
         </p>
       {/if}
       {#if !data.isViewer && !myJob}
