@@ -30,6 +30,9 @@ export interface DataRow {
   beginYear: number;
   endYear: number;
   nSpecies: number;
+  /** Barchart rows that matched no taxon — was SELECTed then dropped in the
+   * row mapping (hidden-data audit Tier 1); now displayed when > 0. */
+  nUnmatched: number;
   fetchedAt: string;
   current: boolean;
 }
@@ -129,6 +132,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       beginYear: Number(r.begin_year),
       endYear: Number(r.end_year),
       nSpecies: Number(r.n_species),
+      nUnmatched: Number(r.n_unmatched),
       fetchedAt: r.fetched_at,
       current: r.current,
     } as DataRow,

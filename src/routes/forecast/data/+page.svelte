@@ -115,7 +115,185 @@
     if (!j.finishedAt) return null;
     return new Date(j.finishedAt).getTime() - new Date(j.enqueuedAt).getTime();
   }
+
+  // ---- Hub search (Phase 3): one box finds any stored state, county,
+  // hotspot, or failed load by name and shows its status — hotspot hits
+  // link straight to their /hotspots/[locId] workspace page.
+  interface HubHit {
+    kind: "state" | "county" | "hotspot" | "failed";
+    code: string;
+    name: string;
+    context: string;
+    row: PageData["stateGroups"][number]["stateHotspots"][number] | null;
+    error?: string | null;
+  }
+  let hubSearch = $state("");
+  const hubQuery = $derived(hubSearch.trim().toLowerCase());
+  const hubIndex = $derived.by((): HubHit[] => {
+    const out: HubHit[] = [];
+    for (const g of data.stateGroups) {
+      if (g.state) {
+        out.push({
+          kind: "state",
+          code: g.stateCode,
+          name: g.stateName,
+          context: "statewide",
+          row: g.state,
+        });
+      }
+      for (const b of g.countyBlocks) {
+        if (b.county) {
+          out.push({
+            kind: "county",
+            code: b.countyCode,
+            name: b.countyName,
+            context: g.stateName,
+            row: b.county,
+          });
+        }
+        for (const h of b.hotspots) {
+          out.push({
+            kind: "hotspot",
+            code: h.locCode,
+            name: h.locName,
+            context: `${b.countyName}, ${g.stateName}`,
+            row: h,
+          });
+        }
+      }
+      for (const h of g.stateHotspots) {
+        out.push({
+          kind: "hotspot",
+          code: h.locCode,
+          name: h.locName,
+          context: g.stateName,
+          row: h,
+        });
+      }
+    }
+    for (const h of data.orphanHotspots) {
+      out.push({ kind: "hotspot", code: h.locCode, name: h.locName, context: "", row: h });
+    }
+    for (const f of data.failed) {
+      out.push({
+        kind: "failed",
+        code: f.locCode,
+        name: f.locName ?? f.locCode,
+        context: f.regionName ?? "",
+        row: null,
+        error: f.error,
+      });
+    }
+    return out;
+  });
+  const hubHits = $derived(
+    hubQuery
+      ? hubIndex.filter(
+          (h) =>
+            h.name.toLowerCase().includes(hubQuery) ||
+            h.context.toLowerCase().includes(hubQuery) ||
+            h.code.toLowerCase() === hubQuery,
+        )
+      : [],
+  );
+
+  // ---- Per-unit activity (Phase 3): the events feed the admin page already
+  // uses, surfaced for everyone on this communal hub. Fetch on expand; while
+  // a RUNNING job's activity stays open, refresh every 10 s.
+  let openEvents = $state<
+    Record<number, { at: string; action: string; details: unknown }[] | "loading" | "error">
+  >({});
+  async function loadEvents(jobId: number) {
+    openEvents = { ...openEvents, [jobId]: openEvents[jobId] ?? "loading" };
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/events`);
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as {
+        events: { at: string; action: string; details: unknown }[];
+      };
+      openEvents = { ...openEvents, [jobId]: body.events };
+    } catch {
+      openEvents = { ...openEvents, [jobId]: "error" };
+    }
+  }
+  let activityOpen = $state<number[]>([]);
+  function toggleActivity(jobId: number, open: boolean) {
+    activityOpen = activityOpen.filter((id) => id !== jobId);
+    if (open) {
+      activityOpen = [...activityOpen, jobId];
+      void loadEvents(jobId);
+    }
+  }
+  $effect(() => {
+    const runningOpen = activityOpen.filter((id) =>
+      jobsPoll.active.some((j) => j.id === id && j.status === "running"),
+    );
+    if (runningOpen.length === 0) return;
+    const t = setInterval(() => {
+      for (const id of runningOpen) void loadEvents(id);
+    }, 10_000);
+    return () => clearInterval(t);
+  });
+  const UNIT_EVENTS = new Set(["unit_ok", "unit_failed", "unit_skipped"]);
+  function unitEvents(ev: { at: string; action: string; details: unknown }[]) {
+    return ev.filter((e) => UNIT_EVENTS.has(e.action));
+  }
+  function unitName(details: unknown): string {
+    const d = details as { name?: unknown; code?: unknown } | null;
+    return typeof d?.name === "string"
+      ? d.name
+      : typeof d?.code === "string"
+        ? d.code
+        : "?";
+  }
+  function unitError(details: unknown): string | null {
+    const d = details as { error?: unknown } | null;
+    return typeof d?.error === "string" ? d.error : null;
+  }
 </script>
+
+{#snippet activity(jobId: number)}
+  <!-- Phase 3: the per-unit narration admins always had, for everyone —
+       which hotspot loaded, which failed and why, as it happens. -->
+  <details
+    class="activity"
+    ontoggle={(e) => toggleActivity(jobId, e.currentTarget.open)}
+  >
+    <summary>Activity</summary>
+    {#if openEvents[jobId] === "loading" || openEvents[jobId] == null}
+      <p class="jobdetail">Loading…</p>
+    {:else if openEvents[jobId] === "error"}
+      <p class="jobdetail err">Could not load the activity feed.</p>
+    {:else}
+      {@const units = unitEvents(openEvents[jobId])}
+      {#if units.length === 0}
+        <p class="jobdetail">No per-location activity yet.</p>
+      {:else}
+        <ul class="unitlog">
+          {#each units.slice(-40) as e, i (i)}
+            <li data-act={e.action}>
+              <span class="uwhen">{fmtTime(e.at)}</span>
+              <span class="umark" aria-hidden="true">
+                {e.action === "unit_ok" ? "✓" : e.action === "unit_failed" ? "✗" : "–"}
+              </span>
+              <span class="uname">
+                {unitName(e.details)}
+                {#if e.action === "unit_failed"}<span class="err">
+                    failed{#if unitError(e.details)} — {unitError(e.details)}{/if}</span
+                  >{:else if e.action === "unit_skipped"}<span class="muted2">
+                    skipped{#if unitError(e.details)} — {unitError(e.details)}{/if}</span
+                  >{/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+        {#if units.length > 40}
+          <p class="jobdetail">Showing the latest 40 of {units.length}.</p>
+        {/if}
+      {/if}
+    {/if}
+  </details>
+{/snippet}
 
 {#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number])}
   <td>
@@ -124,7 +302,12 @@
       <span class="outdated">outdated</span>
     {/if}
   </td>
-  <td>{r.nSpecies.toLocaleString()}</td>
+  <td>
+    {r.nSpecies.toLocaleString()}{#if r.nUnmatched > 0}
+      <span class="unm" title="bar-chart rows matching no current taxon">
+        · {r.nUnmatched} unmatched</span
+      >{/if}
+  </td>
   <td>{fmtDate(r.fetchedAt)}</td>
   {#if !data.isViewer}
     <td>
@@ -159,7 +342,16 @@
   <tr class:indent>
     <td>
       {#if indent}<span class="twig" aria-hidden="true">↳</span>{/if}
-      <strong>{r.locName}</strong>
+      {#if r.locKind === "hotspot"}
+        <!-- Phase 3: stored hotspots open their workspace page. -->
+        <a
+          class="hublink"
+          href={`/hotspots/${r.locCode}?returnTo=${encodeURIComponent("/forecast/data")}`}
+          ><strong>{r.locName}</strong></a
+        >
+      {:else}
+        <strong>{r.locName}</strong>
+      {/if}
       <span class="code">{r.locCode}</span>
     </td>
     {@render metaCells(r)}
@@ -188,17 +380,69 @@
 {/snippet}
 
 <svelte:head>
-  <title>Forecast data · Birds</title>
+  <title>Hotspots &amp; data · Birds</title>
 </svelte:head>
 
 <div class="page">
-  <h1>Forecast data</h1>
+  <h1>Hotspots &amp; data</h1>
   <p class="intro">
-    Frequency data stored from eBird bar-chart exports — what's loaded, how
-    current it is, and when it was fetched. Data refreshes matter only once a
-    year, when a new complete year of checklists becomes available.
+    Every hotspot, county, and state this app has loaded — how current the
+    data is, what's running, and what failed. Data refreshes matter only once
+    a year, when a new complete year of checklists becomes available.
     <a href="/forecast">← Back to Forecast</a>
   </p>
+
+  <section class="card">
+    <h2>Find a hotspot or region</h2>
+    <input
+      class="hubsearch"
+      type="search"
+      placeholder="Type a hotspot, county, or state name"
+      aria-label="Search stored hotspots and regions"
+      bind:value={hubSearch}
+    />
+    {#if hubQuery}
+      {#if hubHits.length === 0}
+        <p class="notice">
+          Nothing stored matches “{hubSearch.trim()}”. To bring a new area in,
+          load hotspots from <a href="/forecast">Forecast</a> or a state below.
+        </p>
+      {:else}
+        <ul class="hits">
+          {#each hubHits as h (h.kind + h.code)}
+            <li>
+              <span class="hitmain">
+                {#if h.kind === "hotspot"}
+                  <a
+                    class="hublink"
+                    href={`/hotspots/${h.code}?returnTo=${encodeURIComponent("/forecast/data")}`}
+                    ><strong>{h.name}</strong></a
+                  >
+                {:else}
+                  <strong>{h.name}</strong>
+                {/if}
+                {#if h.context}<span class="hitctx">· {h.context}</span>{/if}
+                <span class="code">{h.code}</span>
+              </span>
+              <span class="hitmeta">
+                {#if h.kind === "failed"}
+                  <span class="err">failed — {h.error ?? "unknown error"}</span>
+                {:else if h.row}
+                  {h.row.beginYear}–{h.row.endYear} ·
+                  {h.row.nSpecies.toLocaleString()} species
+                  {#if !h.row.current}<span class="outdated">outdated</span>{/if}
+                {/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+        <p class="notice">
+          {hubHits.length} match{hubHits.length === 1 ? "" : "es"} across
+          everything stored. Hotspot names open their page.
+        </p>
+      {/if}
+    {/if}
+  </section>
 
   {#if form && "error" in form && form.error}
     <p class="error">{form.error}</p>
@@ -286,6 +530,7 @@
             {#if j.progress.lastError}
               <p class="jobdetail err">last problem: {j.progress.lastError}</p>
             {/if}
+            {@render activity(j.id)}
           </li>
         {/each}
       </ul>
@@ -319,6 +564,7 @@
                     : "s"} failed — see Failed loads below.
                 </p>
               {/if}
+              {@render activity(j.id)}
             </li>
           {/each}
         </ul>
@@ -1001,5 +1247,106 @@
     h1 {
       font-size: 1.6rem;
     }
+  }
+
+  /* ---- Phase 3: hub search ---- */
+  .hubsearch {
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .hits {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0;
+  }
+  .hits li {
+    display: flex;
+    gap: 8px 12px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    min-height: 48px;
+    padding: 2px 0;
+  }
+  .hits li + li {
+    border-top: 1px solid var(--border);
+  }
+  .hitmain {
+    min-width: 0;
+  }
+  .hitctx {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .hitmeta {
+    color: var(--muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .hublink {
+    color: inherit;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
+  @media (hover: hover) {
+    .hublink:hover strong {
+      color: var(--accent);
+    }
+  }
+  .unm {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  /* ---- Phase 3: per-unit activity ---- */
+  .activity {
+    margin-top: 4px;
+  }
+  .activity summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .unitlog {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 4px;
+    font-size: 0.85rem;
+  }
+  .unitlog li {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 2px 0;
+  }
+  .uwhen {
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .umark {
+    font-weight: 700;
+  }
+  .unitlog li[data-act="unit_ok"] .umark {
+    color: var(--seen-text);
+  }
+  .unitlog li[data-act="unit_failed"] .umark {
+    color: var(--danger);
+  }
+  .uname {
+    overflow-wrap: anywhere;
+  }
+  .muted2 {
+    color: var(--muted);
   }
 </style>

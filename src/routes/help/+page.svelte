@@ -183,7 +183,7 @@
 						Every load runs <strong>in the background on the server</strong> —
 						queue it and walk away. Navigate anywhere, reload, even close the
 						tab: the load keeps going, a slim progress chip follows you around
-						the app, and <strong>Forecast data</strong> shows every queued,
+						the app, and <strong>Hotspots &amp; data</strong> shows every queued,
 						running and finished load (with a Cancel button). Temporary eBird
 						hiccups retry automatically; only real problems (like a wrong
 						eBird password) are surfaced for you to fix.
@@ -249,15 +249,20 @@
 						"best month" or a ranking.
 					</li>
 					<li>
-						<strong>Forecast data</strong> (linked from both tabs) is the
-						inventory <em>and</em> the load hub: background loads show at the
-						top with live progress, Cancel, and recent history; below, states
-						expand to counties, counties expand to their hotspots, each row
-						showing its year span, species count, load date, and a Refresh;
-						failed loads keep a Retry. Load new states and analyze counties
-						from here too. Note: eBird's bar-chart export can't tell
-						provisional or escaped-exotic records apart, so those are included
-						in frequencies.
+						<strong>Hotspots &amp; data</strong> (the page behind the coverage
+						pill's <em>details</em> link) is the inventory <em>and</em> the
+						load hub. A <strong>search box</strong> at the top finds any
+						stored hotspot, county, or state by name and shows its status —
+						hotspot names there (and throughout the tree) open their own
+						page. Background loads show live progress with an
+						<strong>Activity</strong> feed per load (which location just
+						loaded, which failed and why), Cancel, and recent history; below,
+						states expand to counties, counties to their hotspots, each row
+						showing its year span, species count (with any unmatched
+						bar-chart rows), load date, and a Refresh; failed loads keep a
+						Retry. Load new states and analyze counties from here too. Note:
+						eBird's bar-chart export can't tell provisional or escaped-exotic
+						records apart, so those are included in frequencies.
 					</li>
 					<li>
 						Species pages show a <strong>Best time of year</strong> chart with

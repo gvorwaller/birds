@@ -142,7 +142,7 @@
   />
   <p class="intro">
     Best months and places for a species, from prior years' eBird checklist
-    frequencies. <a href="/forecast/data">Forecast data</a> shows what's
+    frequencies. <a href="/forecast/data">Hotspots &amp; data</a> shows what's
     loaded.
   </p>
 
@@ -354,7 +354,7 @@
             ? `Already loading — ${form.queued.label} is in the queue.`
             : `Queued: ${form.queued.label}.`}
           Progress shows here and in
-          <a href="/forecast/data">Forecast data</a>.
+          <a href="/forecast/data">Hotspots &amp; data</a>.
         </p>
       {/if}
     </section>

@@ -323,7 +323,7 @@
   <p class="intro">
     Which species you still need are likely near a place in a given month,
     from prior years' eBird checklist frequencies.
-    <a href="/forecast/data">Forecast data</a> shows what's loaded.
+    <a href="/forecast/data">Hotspots &amp; data</a> shows what's loaded.
   </p>
 
   <section class="card">
@@ -510,13 +510,17 @@
             All {queuedHereCount} remaining hotspot{queuedHereCount === 1
               ? " is"
               : "s are"} already queued — progress shows below and in
-            <a href="/forecast/data">Forecast data</a>.
+            <a href="/forecast/data">Hotspots &amp; data</a>.
           </p>
         {/if}
       {/if}
 
-      {#if manageOpen && loadableCount > 0}
-        <div class="managepanel" id="managepanel">
+      {#if loadableCount > 0}
+        <!-- The div stays in the DOM while closed (hidden) so the Manage
+             button's aria-controls always resolves (GROK); contents only
+             mount when open — no hidden 1000-row render. -->
+        <div class="managepanel" id="managepanel" hidden={!manageOpen}>
+          {#if manageOpen}
           <input
             class="picksearch"
             type="search"
@@ -696,6 +700,16 @@
               </button>
             {/if}
           {/if}
+          <!-- A long list scrolls the pill's Close off-screen — the bottom
+               gets its own ≥48px Close (GROK Phase-3 note). -->
+          <button
+            type="button"
+            class="rowload closebottom"
+            onclick={() => (manageOpen = false)}
+          >
+            Close
+          </button>
+          {/if}
         </div>
       {/if}
 
@@ -723,7 +737,7 @@
             ? `Already loading — ${form.queued.label} is in the queue.`
             : `Queued: ${form.queued.label}.`}
           Progress shows below and in
-          <a href="/forecast/data">Forecast data</a>.
+          <a href="/forecast/data">Hotspots &amp; data</a>.
         </p>
       {/if}
 
@@ -774,7 +788,7 @@
           {recentlyFailedJobs.length} recent load{recentlyFailedJobs.length === 1
             ? ""
             : "s"} failed — details and retry in
-          <a href="/forecast/data">Forecast data</a>.
+          <a href="/forecast/data">Hotspots &amp; data</a>.
         </p>
       {/if}
 
@@ -1175,6 +1189,10 @@
     padding: 10px 12px;
     font-size: 0.88rem;
     margin: 10px 0 0;
+  }
+  .closebottom {
+    width: 100%;
+    margin-top: 8px;
   }
   button.rowload {
     min-height: 48px;
