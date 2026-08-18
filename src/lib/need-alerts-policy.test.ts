@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   alertCandidates,
   PER_SCAN_CAP,
-  PRIVATE_LOCATION_BODY,
   type AlertObs,
 } from "./need-alerts-policy";
 
@@ -79,13 +78,13 @@ describe("alertCandidates", () => {
     expect(c.body).toMatch(/Sweetwater Wetlands · \d+ mi from home · today 14:40 · 3 seen/);
   });
 
-  it("private locations collapse to the fixed phrase — no name/distance/anything (CODEX1 #6)", () => {
+  it("private locations get FULL detail like any other report (Gaylon ruling 2026-08-18 — the old redaction was never his call)", () => {
     const c = run([
       obs({ speciesCode: "snakit", locationPrivate: true, locName: "Secret Roost", howMany: 4 }),
     ])[0];
-    expect(c.body).toBe(PRIVATE_LOCATION_BODY);
-    expect(c.body).not.toContain("Secret Roost");
-    expect(c.body).not.toContain("mi");
+    expect(c.body).toContain("Secret Roost");
+    expect(c.body).toMatch(/\d+ mi from home/);
+    expect(c.body).toContain("4 seen");
   });
 
   it("per-scan cap bounds a first-enable burst, nearest species first", () => {

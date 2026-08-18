@@ -5,15 +5,16 @@
  * their life list) that hasn't been alerted within the rolling re-alert
  * window. One candidate per species per scan (closest observation wins,
  * "and N more" for the rest); per-scan burst cap so a first enable against
- * a rich feed never fires a dozen pushes at once (GROK §2). Private
- * locations (eBird locationPrivate) collapse to a fixed phrase — no name,
- * no distance, no location-bearing anything (CODEX1 #6).
+ * a rich feed never fires a dozen pushes at once (GROK §2). ALL reports get
+ * FULL location detail regardless of eBird's locationPrivate flag — Gaylon
+ * ruling 2026-08-18 ("Of course I want ALL reports… this app of all places
+ * should give me that advantage"); the earlier redaction was never his call.
+ * eBird already shows him these locations; do not reintroduce redaction.
  */
 import { haversineKm } from '$lib/geo';
 
 export const SCAN_INTERVAL_MS = 30 * 60_000; // = OBS_TTL_MIN — faster is waste
 export const PER_SCAN_CAP = 5;
-export const PRIVATE_LOCATION_BODY = 'Private location within your alert radius';
 
 export interface AlertObs {
 	speciesCode: string;
@@ -95,19 +96,14 @@ export function alertCandidates(opts: {
 		const unconfirmed = !best.obsValid || !best.obsReviewed;
 		const title = `Lifer nearby: ${best.comName}${unconfirmed ? ' (unconfirmed)' : ''}`;
 		const distanceMi = Math.round(haversineKm(home.lat, home.lng, best.lat, best.lng) * KM_TO_MI);
-		let body: string;
-		if (best.locationPrivate) {
-			body = PRIVATE_LOCATION_BODY;
-		} else {
-			const parts = [
-				best.locName,
-				`${distanceMi} mi from home`,
-				fmtWhen(best.obsDt, now)
-			];
-			if (best.howMany != null && best.howMany > 1) parts.push(`${best.howMany} seen`);
-			if (others > 0) parts.push(`and ${others} more location${others === 1 ? '' : 's'}`);
-			body = parts.join(' · ');
-		}
+		const parts = [
+			best.locName,
+			`${distanceMi} mi from home`,
+			fmtWhen(best.obsDt, now)
+		];
+		if (best.howMany != null && best.howMany > 1) parts.push(`${best.howMany} seen`);
+		if (others > 0) parts.push(`and ${others} more location${others === 1 ? '' : 's'}`);
+		const body = parts.join(' · ');
 		candidates.push({
 			speciesCode,
 			comName: best.comName,

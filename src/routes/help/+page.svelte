@@ -520,7 +520,8 @@
 						You're alerted about a species at most once per re-alert window
 						(default 7 days), at most 5 alerts per scan, and
 						"(unconfirmed)" in the title means the report hasn't been
-						reviewed yet. Private locations show no place name by design.
+						reviewed yet. Every report alerts with its full location —
+						including personal (non-hotspot) locations.
 					</li>
 					<li>
 						No notification arriving? Check your phone allows notifications
