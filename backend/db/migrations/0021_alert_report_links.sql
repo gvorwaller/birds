@@ -3,7 +3,8 @@
 -- full detail — no public/private split.
 --
 -- reports: the triggering observations for the alert, verbatim at send time:
--- [{sub_id, loc_name, obs_dt, distance_mi}, ...] closest-first, capped.
+-- [{subId, locName, obsDt, distanceMi}, ...] closest-first, UNCAPPED
+-- (CODEX1: no silent truncation — every triggering report persists).
 
 BEGIN;
 

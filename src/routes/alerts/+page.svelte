@@ -1,8 +1,19 @@
 <script lang="ts">
   import Badge from "$lib/components/Badge.svelte";
+  import { page } from "$app/stores";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+
+  /** External click URLs (eBird checklists) open a new tab — a same-tab
+   * title tap must never eject the app (GROK). In-app URLs stay same-tab. */
+  function isExternal(url: string): boolean {
+    try {
+      return new URL(url, $page.url.origin).origin !== $page.url.origin;
+    } catch {
+      return false;
+    }
+  }
 
   // Compact relative time for list rows; absolute date once it's old enough
   // that "days ago" stops being useful.
@@ -92,7 +103,12 @@
         {#each group.rows as row (row.id)}
           <div class="row">
             <span class="row-main">
-              <a class="title" href={row.url}>{row.title}</a>
+              <a
+                class="title"
+                href={row.url}
+                target={isExternal(row.url) ? "_blank" : undefined}
+                rel={isExternal(row.url) ? "noopener" : undefined}
+              >{row.title}</a>
               <span class="body muted">{row.body}</span>
               {#if row.reports.length > 0}
                 <span class="reports">
@@ -218,6 +234,12 @@
     color: var(--accent);
     text-decoration: none;
     overflow-wrap: anywhere;
+  }
+  /* No-subId reports are TEXT, not links — must not look tappable (GROK:
+     the earlier .muted lost the same-specificity battle to the rule above). */
+  span.report-link.muted {
+    color: var(--muted);
+    font-weight: 400;
   }
   .row + .row {
     border-top: 1px solid var(--border);

@@ -523,8 +523,8 @@
 						reviewed yet. Every report alerts with its full location —
 						including personal (non-hotspot) locations — and tapping the
 						notification opens the eBird checklist that triggered it. The
-						<a href="/alerts">Alerts page</a> lists every triggering report
-						with a link.
+						<a href="/alerts">Alerts page</a> lists every triggering report,
+						linked whenever eBird provides the checklist.
 					</li>
 					<li>
 						No notification arriving? Check your phone allows notifications
