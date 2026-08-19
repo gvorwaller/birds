@@ -4,6 +4,100 @@ Gaylon 2026-08-18: "do nearest-lifer and weekly timing" (td-a6c322 +
 td-af8393), with AGY looped into planning for advisory UI/UX feedback
 (suggestions, not mandates), then the normal CODEX1+GROK cycle.
 
+## GROK rulings (binding) — 2026-08-19
+
+Design-only review of this doc at `b4447c3`. AGY is advisory; these pins
+are the binding layer. No code in this turn.
+
+### A — Nearest lifer
+
+1. **Route + nav.** Keep `/nearest`. Drawer-only item **Nearest lifers**
+   (Field guide / Help pattern) — not a 5th primary tab, not
+   `ownerMenuItems` (that list is Settings/Alerts). Viewer sees it:
+   read-only of the scope-owner's needs + saved home + API key, same as
+   Home / species / forecast. No writes exist on this page.
+
+2. **Optional entry points — VETO both.** No Home needs-row `nearest ↗`.
+   Home already answers in-radius nearest; the species name already
+   reaches the on-demand species-page card. No `/forecast/species`
+   chip — that page is historical frequency, not "where is it right
+   now" (category error + re-clutter of a just-decluttered surface).
+   v1 entries are the drawer item + the species-page disclosure only.
+
+3. **Auto-run N = 6 (cap), not 8.** Source: `forecastNeedsNear` at the
+   owner's **saved home** (never Home's searched/focused origin) for
+   the current calendar month; **likely band, needs-first, skip
+   `lowSample`**. Do **not** pad with possible/longshot to hit 6.
+   Disclose the **actual** count: "Checking 4 highest-probability
+   targets for August near home (cached 30 min)" when only 4 likely
+   exist. `/nearest` back is locked to **14** in v1 (no extra selector).
+
+   Empty states (one sentence + the single next action):
+   - No home / no API key — same copy as species nearby (viewer vs owner).
+   - Zero likely-band needs this month — **do not auto-run**. Point at
+     the search box and Forecast (to load data).
+   - Per-species zero reports — keep the name; "No reports in the last
+     14 days".
+   - Partial fetch failure — keep successes; per-species error line;
+     never fail the whole page.
+   - Search of a **seen** species — **no eBird call**; "You already
+     have {name}" + species-page link. Search is needs-only.
+   - Unknown code — 400, no eBird call.
+
+4. **Rows / places.** CONFIRM Phase-1 swap for this new surface:
+   `locId` matching `^L\d+$` → `/hotspots/[locId]`. Do **not** use
+   `verifiedHotspotLocIds(origin, dist)` — nearest is unbounded and a
+   distant L-id will not be in the local set. Non-`L\d+` (personal
+   `P…` etc.): locName as **text** + existing `personal location` chip
+   when `locationPrivate` + `MapLink`. checklist ↗ stays
+   `ebird.org/checklist/{subId}` (new tab). No extra eBird-hotspot ↗
+   badge on these rows. **Out of scope:** do not retarget the existing
+   species-page "Recent reports near X" card in this arc.
+
+5. **Fetch / cache (skip-review pins).**
+   - New `nearestObsOfSpecies` as specified; `includeProvisional=true`;
+     Unconfirmed on `!obsValid` only (species-nearby / hotspot Recent
+     convention — **not** the alerts `!obsValid || !obsReviewed` formula).
+   - Cache key + `OBS_TTL_MIN` as specified. Coords in the key via
+     `toFixed(2)` (match `recentNearbyObs`).
+   - Do **not** pass `dist` (unbounded is the feature). Do **not** pass
+     `hotspot=true` (would hide personal locations; contradicts
+     ALL-reports).
+   - If the API accepts `maxResults`, pass **5**. Render closest **3**
+     on `/nearest`, closest **5** on the species card. Sort by **our**
+     haversine, do not trust API order.
+   - Species-page card: **NEED species only**; `?nearest=1` SSR; default
+     loader never fetches. Inherits the page's `backDays`.
+   - `/nearest` auto-run: `Promise.allSettled`, never a waterfall.
+   - DistanceUnitToggle on both surfaces. No new map on `/nearest`.
+
+### B — Weekly timing
+
+6. **Migration-window annotation — SENTENCE-ONLY.** Veto AGY's
+   span/bracket for v1. 4px bars cannot carry a readable bracket at
+   320px; month mode already has figcaption "Good window"; a weekly
+   bracket can fight the emit-only-when-supported sentence.
+
+7. **Toggle state.** Client-only, Month default. **Not** URL, **not**
+   localStorage, **not** synced between the species teaser and
+   `/forecast/species`. Segments ≥48px.
+
+8. **weekCurve / truthfulness.** 48 `WeekStat` analog of `monthlyStat`.
+   `n === 0` → nodata dot, never a 0% bar. `n < MIN_WEEK_N` (10) →
+   hatch + † **and** excluded from arrival/departure. Inadequate weeks
+   are neither presence nor absence. Sparkline: `/forecast/species`
+   only (~20px, 1:1, labeled "checklists per week", no interaction) —
+   **not** on the species teaser. Teaser loader **does** ship
+   `weekCurve` so the toggle works there. AGY 320px math (48×~4px +
+   2px = 288px, 12 letter ticks, month-group gridlines) adopted.
+
+9. **Help + tests + sequencing.** Help in-commit for both features.
+   Tests: `weekCurve`; arrival/departure emit/suppress matrix
+   (year-round, vagrant, wrap-around winter absence, low-n ignored);
+   nearest whitelist/cache key; `L\d+` link vs personal text; empty
+   states; `N = min(6, likely)`. Two commits (A then B); dual review;
+   no deploy without Gaylon's word.
+
 ## Feature A — Nearest lifer (td-a6c322)
 
 The question: "what's the closest bird I've never seen, right now?"
