@@ -117,6 +117,12 @@
   const syncedOn = $derived(
     data.syncedAt ? new Date(data.syncedAt).toLocaleDateString() : null,
   );
+  // Stale = last synced more than 8 days ago (the sync is meant to recur);
+  // shown to the OWNER with a Settings pointer (GROK pin 5 — stale half).
+  const syncStale = $derived(
+    data.syncedAt != null &&
+      Date.now() - new Date(data.syncedAt).getTime() > 8 * 86_400_000,
+  );
 </script>
 
 <svelte:head>
@@ -131,6 +137,18 @@
       · <a href="https://ebird.org" target="_blank" rel="noopener">Data from eBird.org ↗</a>
     </p>
   </header>
+
+  {#if !data.isViewer && data.syncStatus === "error"}
+    <p class="syncnote">
+      ⚠ The last life-list sync failed{data.syncError ? ` — ${data.syncError}` : ""} ·
+      showing the last synced list. <a href="/settings">Settings</a>
+    </p>
+  {:else if !data.isViewer && syncStale}
+    <p class="syncnote">
+      ⚠ Life list last synced {syncedOn} — re-sync from
+      <a href="/settings">Settings</a> to pick up new lifers.
+    </p>
+  {/if}
 
   {#if total === 0}
     <section class="card">
@@ -287,6 +305,7 @@
     padding: 0.25rem 0.7rem;
     font-size: 0.9rem;
     cursor: pointer;
+    min-height: 48px; /* AAA tap target (nearest precedent) */
   }
   .chip.active {
     background: #0a5c43;
@@ -308,6 +327,7 @@
     padding: 0.4rem 1.1rem;
     font-size: 0.95rem;
     cursor: pointer;
+    min-height: 48px; /* AAA tap target */
   }
   .seg button.active {
     background: #084298;
@@ -348,7 +368,7 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
-    color: var(--muted, #777);
+    color: #555; /* 7.5:1 on white — AAA (GROK P2: #777 fails) */
     font-size: 0.9rem;
   }
   .what a {
@@ -365,6 +385,14 @@
   .disclose {
     margin: 0.5rem 0 0;
     font-size: 0.9rem;
+  }
+  .syncnote {
+    background: #fff3cd;
+    border: 1px solid #ffe69c;
+    border-radius: 8px;
+    padding: 0.5rem 0.7rem;
+    margin: 0 0 0.6rem;
+    color: #664d03;
   }
   .mapcard :global(.map) {
     min-height: 320px;

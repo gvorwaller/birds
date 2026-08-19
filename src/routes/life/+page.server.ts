@@ -44,8 +44,13 @@ export const load: PageServerLoad = async ({ locals }) => {
     [uid],
   );
 
-  const sync = await query<{ life_list_synced_at: string | null; has_creds: boolean }>(
-    `SELECT life_list_synced_at::text,
+  const sync = await query<{
+    life_list_synced_at: string | null;
+    life_list_status: string | null;
+    life_list_error: string | null;
+    has_creds: boolean;
+  }>(
+    `SELECT life_list_synced_at::text, life_list_status, life_list_error,
             (login_username_enc IS NOT NULL AND login_password_enc IS NOT NULL) AS has_creds
        FROM user_ebird WHERE user_id = $1`,
     [uid],
@@ -54,6 +59,8 @@ export const load: PageServerLoad = async ({ locals }) => {
   return {
     lifers: lifers.rows,
     syncedAt: sync.rows[0]?.life_list_synced_at ?? null,
+    syncStatus: sync.rows[0]?.life_list_status ?? null,
+    syncError: sync.rows[0]?.life_list_error ?? null,
     hasCreds: sync.rows[0]?.has_creds ?? false,
     isViewer: locals.user.role === "viewer",
   };

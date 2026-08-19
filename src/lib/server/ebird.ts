@@ -53,17 +53,22 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 }
 
 /**
- * Like ebirdFetch, but 404 AND 403 return null instead of throwing — for
- * endpoints where those are expected data states, not faults: hotspot info
- * 404s for personal L-ids, checklist view 403/404s for unshared checklists
- * (GROK td-b5986c pin 2). 429/5xx still throw (transient, caller stops).
+ * Like ebirdFetch, but the statuses in `nullOn` return null instead of
+ * throwing — for endpoints where they are expected data states, not faults:
+ * hotspot info 404s for personal L-ids; checklist view 403/404s for
+ * unshared checklists (GROK td-b5986c pin 2). Everything else throws —
+ * notably a hotspot-info 403 is an INVALID API KEY on eBird, never a
+ * personal location, and must stop the caller rather than persist a
+ * negative (GROK re-review: a bad key would otherwise poison a capful of
+ * loc_ids per sync).
  */
 export async function ebirdFetchOrNull<T>(
 	path: string,
 	apiKey: string,
-	opts: { fetcher?: typeof fetch } = {}
+	opts: { fetcher?: typeof fetch; nullOn?: readonly number[] } = {}
 ): Promise<T | null> {
 	const doFetch = opts.fetcher ?? fetch;
+	const nullOn = opts.nullOn ?? [404];
 	let res: Response;
 	try {
 		res = await doFetch(`${API}${path}`, {
@@ -72,7 +77,7 @@ export async function ebirdFetchOrNull<T>(
 	} catch (err) {
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
-	if (res.status === 404 || res.status === 403) return null;
+	if (nullOn.includes(res.status)) return null;
 	if (res.status === 429) {
 		throw new EbirdError('eBird API rate limit hit.', 429);
 	}

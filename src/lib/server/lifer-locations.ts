@@ -9,9 +9,11 @@
  * of truth) and never touches Google Places.
  *
  * Fail-soft by contract: runs after a successful import, capped per
- * invocation, tolerates 404/403 as data states, stops (without stamping)
- * on transient API trouble, and persists negatives via loc_checked_at so
- * dead loc_ids are not retried every sync.
+ * invocation, tolerates expected 404/403 as data states, stops (without
+ * recording anything) on transient API trouble, and persists negatives in
+ * lifer_loc_attempts — its own (user_id, loc_id) table, because the import
+ * DELETE+reINSERTs seen_species rows every sync and a stamp there never
+ * survived a re-import (GROK REJECT on 8d1a412).
  */
 import { query } from '$lib/db';
 import { EbirdError, ebirdFetchOrNull, getEbirdApiKey } from '$server/ebird';
@@ -51,19 +53,22 @@ async function lookupOne(
 	apiKey: string,
 	fetcher?: Fetcher
 ): Promise<{ name: string | null; lat: number; lng: number } | null> {
+	// nullOn 404 ONLY: hotspot-info 403 is an invalid API key (eBird), not a
+	// personal location — it throws and stops the pass without persisting.
 	const hs = await ebirdFetchOrNull<HotspotInfo>(
 		`/ref/hotspot/info/${encodeURIComponent(locId)}`,
 		apiKey,
-		{ fetcher }
+		{ fetcher, nullOn: [404] }
 	);
 	if (hs && typeof hs.latitude === 'number' && typeof hs.longitude === 'number') {
 		return { name: hs.name ?? null, lat: hs.latitude, lng: hs.longitude };
 	}
 	if (subId) {
+		// Unshared checklists legitimately 403 — both are data states here.
 		const cl = await ebirdFetchOrNull<ChecklistView>(
 			`/product/checklist/view/${encodeURIComponent(subId)}`,
 			apiKey,
-			{ fetcher }
+			{ fetcher, nullOn: [404, 403] }
 		);
 		const loc = cl?.loc;
 		if (
@@ -93,13 +98,16 @@ export async function resolveLiferLocations(
 	if (!apiKey) return out; // no key → the join-only page still works
 
 	const cap = opts.cap ?? LIFER_LOC_LOOKUP_CAP;
+	// sub_id NULLS LAST: prefer a sibling row that HAS a checklist so a
+	// personal L-id can still resolve through the fallback (GROK P2).
 	const todo = await query<{ loc_id: string; sub_id: string | null }>(
 		`SELECT DISTINCT ON (ss.loc_id) ss.loc_id, ss.sub_id
 		   FROM seen_species ss
 		  WHERE ss.user_id = $1 AND ss.loc_id IS NOT NULL
-		    AND ss.loc_checked_at IS NULL
 		    AND NOT EXISTS (SELECT 1 FROM ebird_locations el WHERE el.loc_id = ss.loc_id)
-		  ORDER BY ss.loc_id`,
+		    AND NOT EXISTS (SELECT 1 FROM lifer_loc_attempts la
+		                     WHERE la.user_id = ss.user_id AND la.loc_id = ss.loc_id)
+		  ORDER BY ss.loc_id, ss.sub_id NULLS LAST`,
 		[userId]
 	);
 	out.candidates = todo.rows.length;
@@ -110,8 +118,8 @@ export async function resolveLiferLocations(
 		try {
 			loc = await lookupOne(row.loc_id, row.sub_id, apiKey, opts.fetcher);
 		} catch (err) {
-			// Transient (429/5xx/network): stop the pass WITHOUT stamping
-			// loc_checked_at — these loc_ids retry on the next sync.
+			// Transient (429/5xx/network) or invalid API key: stop the pass
+			// WITHOUT recording a negative — these loc_ids retry next sync.
 			if (err instanceof EbirdError) {
 				out.stopped = true;
 				break;
@@ -128,15 +136,15 @@ export async function resolveLiferLocations(
 			);
 			out.resolved++;
 		} else {
+			// Persist the negative OUTSIDE seen_species — the next sync's
+			// DELETE+reINSERT must not resurrect it (v1 never retries).
+			await query(
+				`INSERT INTO lifer_loc_attempts (user_id, loc_id) VALUES ($1, $2)
+				 ON CONFLICT (user_id, loc_id) DO NOTHING`,
+				[userId, row.loc_id]
+			);
 			out.negative++;
 		}
-		// Both outcomes are final for this loc_id — stamp every row carrying
-		// it so later syncs skip it (negatives stay negative; hits resolve
-		// through the ebird_locations join anyway).
-		await query(
-			`UPDATE seen_species SET loc_checked_at = NOW() WHERE user_id = $1 AND loc_id = $2`,
-			[userId, row.loc_id]
-		);
 	}
 	return out;
 }
