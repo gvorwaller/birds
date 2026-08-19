@@ -9,6 +9,7 @@
  * Credentials are stored AES-GCM-encrypted (crypto.ts) and never logged.
  */
 import { query, withTransaction } from '$lib/db';
+import { resolveLiferLocations, type LiferLocResolution } from '$server/lifer-locations';
 import { decryptSecret } from '$server/crypto';
 import { buildMatcher } from '$server/species-match';
 
@@ -469,6 +470,8 @@ export interface SyncResult {
 	total: number;
 	matched: number;
 	unmatched: string[];
+	/** Present after a credentialed sync: the loc-resolution pass summary. */
+	locs?: LiferLocResolution;
 }
 
 /**
@@ -604,6 +607,15 @@ export async function syncLifeListFromEbird(userId: number): Promise<SyncResult>
 			 WHERE user_id = $1`,
 			[userId]
 		);
+		// LocID → coordinates for the life-list map (td-b5986c, GROK pin 2):
+		// strictly AFTER the committed import + ok status, and FAIL-SOFT — a
+		// resolution hiccup must never fail the sync or flip the status; the
+		// leftover unresolved count is disclosed on /life instead.
+		try {
+			result.locs = await resolveLiferLocations(userId);
+		} catch {
+			result.locs = undefined;
+		}
 		return result;
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);

@@ -1574,7 +1574,10 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 						total: r.total,
 						matched: r.matched,
 						unmatchedCount: r.unmatched.length,
-						unmatched: r.unmatched.slice(0, 10)
+						unmatched: r.unmatched.slice(0, 10),
+						// Life-list map loc resolution (td-b5986c): full disclosure
+						// of the capped/fail-soft pass in the job record.
+						...(r.locs ? { locs: r.locs } : {})
 					};
 				});
 				return;

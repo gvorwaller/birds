@@ -52,6 +52,36 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 	return enc ? decryptSecret(enc) : null;
 }
 
+/**
+ * Like ebirdFetch, but 404 AND 403 return null instead of throwing — for
+ * endpoints where those are expected data states, not faults: hotspot info
+ * 404s for personal L-ids, checklist view 403/404s for unshared checklists
+ * (GROK td-b5986c pin 2). 429/5xx still throw (transient, caller stops).
+ */
+export async function ebirdFetchOrNull<T>(
+	path: string,
+	apiKey: string,
+	opts: { fetcher?: typeof fetch } = {}
+): Promise<T | null> {
+	const doFetch = opts.fetcher ?? fetch;
+	let res: Response;
+	try {
+		res = await doFetch(`${API}${path}`, {
+			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' }
+		});
+	} catch (err) {
+		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
+	}
+	if (res.status === 404 || res.status === 403) return null;
+	if (res.status === 429) {
+		throw new EbirdError('eBird API rate limit hit.', 429);
+	}
+	if (!res.ok) {
+		throw new EbirdError(`eBird API error ${res.status} for ${path}`, res.status);
+	}
+	return (await res.json()) as T;
+}
+
 async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
 	let res: Response;
 	try {
