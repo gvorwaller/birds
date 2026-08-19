@@ -50,6 +50,9 @@
 		{ href: '/forecast', label: 'Forecast', ico: '📅' },
 		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
+	// Drawer-only (GROK td-a6c322 pin: not a 5th primary tab, visible to
+	// every role — viewers read the scope-owner's needs).
+	const drawerOnlyItems = [{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' }];
 	const ownerMenuItems = [
 		{ href: '/alerts', label: 'Alerts', ico: '🔔' },
 		{ href: '/settings', label: 'Settings', ico: '⚙️' }
@@ -58,10 +61,10 @@
 
 	let drawerItems = $derived(
 		isViewer
-			? primaryItems
+			? [...primaryItems, ...drawerOnlyItems]
 			: data.user?.role === 'admin'
-				? [...primaryItems, ...ownerMenuItems, ...adminMenuItems]
-				: [...primaryItems, ...ownerMenuItems]
+				? [...primaryItems, ...drawerOnlyItems, ...ownerMenuItems, ...adminMenuItems]
+				: [...primaryItems, ...drawerOnlyItems, ...ownerMenuItems]
 	);
 
 	function isActive(href: string, path: string): boolean {

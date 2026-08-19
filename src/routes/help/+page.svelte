@@ -195,6 +195,20 @@
 						the full picture.
 					</li>
 				</ul>
+				<h3>Nearest lifers</h3>
+				<ul>
+					<li>
+						<strong>Nearest lifers</strong> (menu → 🧭 Nearest lifers)
+						answers "what's the closest bird I've never seen, right now?"
+						It automatically checks your top likely targets for the current
+						month near home — any distance, last 14 days — showing the
+						closest reports with distance first, place (hotspots open their
+						page), date, and the eBird checklist. Search any other species
+						you still need; birds you've already seen get a link instead of
+						a lookup. The same check lives on each need species' own page as
+						<strong>Check nearest reports</strong>.
+					</li>
+				</ul>
 				<h3>Hotspot pages</h3>
 				<ul>
 					<li>

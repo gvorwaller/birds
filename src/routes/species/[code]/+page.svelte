@@ -5,6 +5,7 @@
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { isHotspotLocId } from "$lib/loc-id";
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
@@ -369,6 +370,62 @@
       {/each}
     {/if}
   </section>
+
+  {#if !data.seen && data.hasApiKey && data.hasOrigin}
+    <!-- Nearest lifer (td-a6c322): ON-DEMAND — the ?nearest=1 link makes it
+         an SSR fetch the default page load never pays for (GROK pin). Need
+         species only; unbounded distance from the saved home. -->
+    <section class="card">
+      <h2>
+        Nearest reports — any distance
+        {#if data.nearest?.stale}<Badge kind="stale" label="cached" />{/if}
+      </h2>
+      {#if !data.wantNearest}
+        <p class="muted">
+          How far away is the closest current report? One eBird lookup,
+          any distance from home.
+        </p>
+        <a
+          class="nearestcta"
+          href={`?nearest=1${data.backDays !== 7 ? `&back=${data.backDays}` : ""}`}
+          data-sveltekit-noscroll>Check nearest reports</a
+        >
+      {:else if data.nearest?.error}
+        <p class="muted">{data.nearest.error}</p>
+      {:else if (data.nearest?.rows.length ?? 0) === 0}
+        <p class="muted">
+          No reports anywhere in the last {data.backDays} days.
+        </p>
+      {:else if data.nearest}
+        {#each data.nearest.rows as o (o.locId + o.obsDt)}
+          <div class="nrow">
+            <div class="nline1">
+              {#if o.distanceKm != null}
+                <span class="ndist">{formatDistance(o.distanceKm, distanceUnit)}</span>
+              {/if}
+              {#if isHotspotLocId(o.locId)}
+                <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(`/species/${data.taxon.species_code}`)}`}
+                  >{o.locName}</a
+                >
+              {:else}
+                <span class="nplace">{o.locName}</span>
+                {#if o.locationPrivate}<span class="privloc">personal location</span>{/if}
+              {/if}
+            </div>
+            <div class="nline2">
+              <span class="muted">{o.obsDt}</span>
+              {#if o.howMany != null && o.howMany > 1}<span class="muted">×{o.howMany}</span>{/if}
+              {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
+              <MapLink lat={o.lat} lng={o.lng} name={o.locName} googlePlaceId={o.googlePlaceId} />
+              {#if o.subId}
+                <a class="cl" href={`https://ebird.org/checklist/${o.subId}`} target="_blank" rel="noopener">checklist ↗</a>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      {/if}
+    </section>
+  {/if}
 
   {#if en || data.isAdmin}
     <section class="card">
@@ -880,5 +937,58 @@
     font-size: 0.82rem;
     text-decoration: none;
     white-space: nowrap;
+  }
+  /* Nearest lifer rows: distance is the hero (AGY layout, GROK-pinned). */
+  .nearestcta {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 10px 18px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--accent);
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .nrow {
+    padding: 6px 0;
+  }
+  .nrow + .nrow {
+    border-top: 1px solid var(--border);
+  }
+  .nline1 {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .ndist {
+    font-weight: 800;
+    font-size: 1.05rem;
+    white-space: nowrap;
+  }
+  .nplace {
+    font-weight: 600;
+    color: inherit;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  a.nplace {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
+  @media (hover: hover) {
+    a.nplace:hover {
+      color: var(--accent);
+    }
+  }
+  .nline2 {
+    display: flex;
+    gap: 8px 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
   }
 </style>

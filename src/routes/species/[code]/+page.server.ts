@@ -10,6 +10,7 @@ import {
   notableNearbyObs,
   recentNearbySpeciesObs,
   EbirdError,
+  nearestObsOfSpecies,
 } from "$server/ebird";
 import { ownerGalleryUrl } from "$server/access";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
@@ -152,6 +153,46 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     }
   }
 
+  // Nearest reports (td-a6c322, GROK pins): ON-DEMAND only — ?nearest=1 —
+  // NEED species only, unbounded distance from the SAVED HOME, inheriting
+  // the page's back window. The default load never spends this eBird call.
+  const isNeed = seen.rows[0] == null;
+  const wantNearest = url.searchParams.get("nearest") === "1";
+  let nearest: {
+    rows: SpeciesObservationDetail[];
+    stale: boolean;
+    error: string | null;
+  } | null = null;
+  if (wantNearest && isNeed && apiKey && home) {
+    try {
+      const res = await nearestObsOfSpecies(
+        apiKey,
+        code,
+        home.lat,
+        home.lon,
+        backDays,
+      );
+      const placeIds = await hydrateEbirdLocationPlaceIds(res.data);
+      // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
+      // lookup — nearest is unbounded, links derive from the L-id shape.
+      nearest = {
+        rows: speciesObservationDetails(res.data, home, placeIds, new Set())
+          .slice(0, 5),
+        stale: res.stale,
+        error: null,
+      };
+    } catch (err) {
+      nearest = {
+        rows: [],
+        stale: false,
+        error:
+          err instanceof EbirdError
+            ? err.message
+            : "Could not check nearest reports.",
+      };
+    }
+  }
+
   // Forecast teaser: the loaded state where this species is most findable
   // (highest peak month), not the state with the most checklists overall.
   let forecastTeaser: {
@@ -186,6 +227,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     photos: photos.rows,
     hasGallery,
     nearby,
+    nearest,
+    wantNearest,
     nearbyError,
     stale,
     hasApiKey: !!apiKey,

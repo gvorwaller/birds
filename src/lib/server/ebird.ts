@@ -249,6 +249,43 @@ export async function recentHotspotObs(
 	);
 }
 
+/** eBird species-code shape — validated before entering a URL path. */
+const SPECIES_CODE_RE = /^[a-z][a-z0-9-]{1,14}$/;
+
+export function validEbirdSpeciesCode(code: string): boolean {
+	return SPECIES_CODE_RE.test(code);
+}
+
+/**
+ * Nearest recent observations of ONE species (data/nearest/geo/recent) —
+ * the previously unused endpoint behind "what's the closest bird I've never
+ * seen?" (td-a6c322; plan docs/2026-08-19-nearest-lifer-weekly-timing-plan).
+ * GROK pins: NO dist param (unbounded is the feature), NO hotspot=true
+ * (would hide personal locations — ALL-reports ruling),
+ * includeProvisional=true, maxResults=5, coords rounded in the key like
+ * recentNearbyObs. Callers sort by OUR haversine, never API order.
+ */
+export async function nearestObsOfSpecies(
+	apiKey: string,
+	speciesCode: string,
+	lat: number,
+	lng: number,
+	back: number
+): Promise<CachedResult<EbirdObs[]>> {
+	if (!validEbirdSpeciesCode(speciesCode)) {
+		throw new EbirdError('Unrecognized species code.', 400);
+	}
+	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
+	const la = lat.toFixed(2);
+	const ln = lng.toFixed(2);
+	return cachedFetch(`nearestObs:${speciesCode}:${la}:${ln}:${b}`, OBS_TTL_MIN, () =>
+		ebirdFetch<EbirdObs[]>(
+			`/data/nearest/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&back=${b}&includeProvisional=true&maxResults=5`,
+			apiKey
+		)
+	);
+}
+
 /** eBird hotspots within distKm of a point (ref/hotspot/geo). */
 export async function hotspotsNear(
 	apiKey: string,
