@@ -313,8 +313,53 @@ export async function fetchAuthenticatedEbird(userId: number, url: string): Prom
 	return body;
 }
 
+export interface LifeListRow {
+	comName: string;
+	sciName: string | null;
+	firstSeen: string | null;
+	/** 1 = NEWEST lifer (the export is reverse-chronological). */
+	csvRowNum: number | null;
+	taxonOrder: string | null;
+	category: string | null;
+	obsCount: number | null;
+	locationName: string | null;
+	locId: string | null;
+	/** eBird S/P value: "US-FL", "MX-ROO", or a bare country code. */
+	regionCode: string | null;
+	subId: string | null;
+	exotic: string | null;
+	countable: boolean | null;
+}
+
 interface ParsedLifeList {
-	rows: { comName: string; sciName: string | null; firstSeen: string | null }[];
+	rows: LifeListRow[];
+}
+
+const MONTH_NUM: Record<string, number> = {
+	jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+	jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+};
+
+/**
+ * eBird dates are CALENDAR dates ("19 Aug 2026" in the live export; ISO in
+ * older fixtures). Parse without Date#toISOString — the UTC round-trip
+ * shifts a day on negative-offset machines, and these dates now drive a
+ * timeline (GROK pin 3). Unrecognized formats fall back to Date parsing
+ * read back via LOCAL calendar fields.
+ */
+export function parseEbirdDate(raw: string): string | null {
+	const s = raw.trim();
+	if (!s) return null;
+	let m = /^(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})$/.exec(s);
+	if (m) {
+		const mon = MONTH_NUM[m[2].toLowerCase()];
+		if (mon) return `${m[3]}-${String(mon).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+	}
+	m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+	if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+	const d = new Date(s);
+	if (Number.isNaN(d.getTime())) return null;
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** Tolerant CSV line splitter (handles quoted fields with commas). */
@@ -364,6 +409,26 @@ export function parseLifeListCsv(csv: string): ParsedLifeList {
 	if (iSpecies < 0) {
 		throw new Error(`Life-list CSV missing a Species column (saw: ${header.join(', ')})`);
 	}
+	// Detail columns from the live 13-column export (td-b5986c; header
+	// verified 2026-08-19). Every one optional — legacy minimal exports
+	// still parse.
+	const iRowNum = col('row #', 'row');
+	const iTaxonOrder = col('taxon order');
+	const iCategory = col('category');
+	const iCount = col('count');
+	const iLocation = col('location');
+	const iRegion = col('s/p', 'state/province', 'region');
+	const iLocId = col('locid', 'loc id');
+	const iSubId = col('subid', 'sub id');
+	const iExotic = col('exotic');
+	const iCountable = col('countable');
+
+	const cell = (f: string[], i: number) => (i >= 0 ? (f[i] ?? '').trim() || null : null);
+	const intCell = (f: string[], i: number) => {
+		const v = cell(f, i);
+		if (v == null || !/^\d+$/.test(v)) return null; // eBird counts can be "X"
+		return Number(v);
+	};
 
 	const rows: ParsedLifeList['rows'] = [];
 	for (let i = 1; i < lines.length; i++) {
@@ -379,10 +444,23 @@ export function parseLifeListCsv(csv: string): ParsedLifeList {
 			sciName = raw.slice(dash + 3).trim() || null;
 		}
 		const dateRaw = iDate >= 0 ? (f[iDate] ?? '').trim() : '';
-		const parsed = dateRaw ? new Date(dateRaw) : null;
-		const firstSeen =
-			parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
-		rows.push({ comName, sciName, firstSeen });
+		const firstSeen = dateRaw ? parseEbirdDate(dateRaw) : null;
+		const countableRaw = cell(f, iCountable);
+		rows.push({
+			comName,
+			sciName,
+			firstSeen,
+			csvRowNum: intCell(f, iRowNum),
+			taxonOrder: cell(f, iTaxonOrder),
+			category: cell(f, iCategory),
+			obsCount: intCell(f, iCount),
+			locationName: cell(f, iLocation),
+			locId: cell(f, iLocId),
+			regionCode: cell(f, iRegion),
+			subId: cell(f, iSubId),
+			exotic: cell(f, iExotic),
+			countable: countableRaw == null ? null : countableRaw === '1'
+		});
 	}
 	return { rows };
 }
@@ -407,13 +485,14 @@ export async function importLifeList(
 		throw new Error('Taxonomy cache is empty — run the taxonomy sync first (Settings).');
 	}
 
-	const seen = new Map<string, string | null>(); // code → first_seen
+	const seen = new Map<string, LifeListRow>(); // code → CSV row (details ride along)
 	const unmatched: string[] = [];
 	for (const row of parsed.rows) {
 		const m = matcher.match(row.comName, row.sciName);
 		if (m) {
-			if (!seen.has(m.code) || (row.firstSeen && !seen.get(m.code))) {
-				seen.set(m.code, row.firstSeen);
+			const prev = seen.get(m.code);
+			if (!prev || (row.firstSeen && !prev.firstSeen)) {
+				seen.set(m.code, row);
 			}
 		} else {
 			unmatched.push(row.comName);
@@ -426,20 +505,44 @@ export async function importLifeList(
 			[userId]
 		);
 		const entries = [...seen.entries()];
-		const BATCH = 500;
+		const COLS = 14;
+		const BATCH = 400; // 14 params/row; stay well under the 65535 cap
 		for (let i = 0; i < entries.length; i += BATCH) {
 			const slice = entries.slice(i, i + BATCH);
 			const values: string[] = [];
 			const params: unknown[] = [];
-			slice.forEach(([code, firstSeen], j) => {
-				const o = j * 4;
-				values.push(`($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4})`);
-				params.push(userId, code, source, firstSeen);
+			slice.forEach(([code, r], j) => {
+				const o = j * COLS;
+				values.push(`(${Array.from({ length: COLS }, (_, k) => `$${o + k + 1}`).join(', ')})`);
+				params.push(
+					userId, code, source, r.firstSeen,
+					r.csvRowNum, r.taxonOrder, r.category, r.obsCount,
+					r.locationName, r.locId, r.regionCode, r.subId,
+					r.exotic, r.countable
+				);
 			});
+			// A conflict here can only be a MANUAL row (sync/import rows were
+			// just deleted): fill the detail columns so the lifer appears on
+			// the map, but keep source='manual' and its earlier first_seen
+			// (GROK pin 3 — the old UPDATE source clobbered manual).
 			await client.query(
-				`INSERT INTO seen_species (user_id, species_code, source, first_seen)
+				`INSERT INTO seen_species
+				   (user_id, species_code, source, first_seen,
+				    csv_row_num, taxon_order, category, obs_count,
+				    location_name, loc_id, region_code, sub_id, exotic, countable)
 				 VALUES ${values.join(',')}
-				 ON CONFLICT (user_id, species_code) DO UPDATE SET source = EXCLUDED.source`,
+				 ON CONFLICT (user_id, species_code) DO UPDATE SET
+				   first_seen = COALESCE(seen_species.first_seen, EXCLUDED.first_seen),
+				   csv_row_num = EXCLUDED.csv_row_num,
+				   taxon_order = EXCLUDED.taxon_order,
+				   category = EXCLUDED.category,
+				   obs_count = EXCLUDED.obs_count,
+				   location_name = EXCLUDED.location_name,
+				   loc_id = EXCLUDED.loc_id,
+				   region_code = EXCLUDED.region_code,
+				   sub_id = EXCLUDED.sub_id,
+				   exotic = EXCLUDED.exotic,
+				   countable = EXCLUDED.countable`,
 				params
 			);
 		}
