@@ -41,7 +41,13 @@ async function lookupSpecies(
       home.lon,
       NEAREST_BACK_DAYS,
     );
-    const placeIds = await hydrateEbirdLocationPlaceIds(res.data);
+    // DB-only: resolveMissing would fan out live Google Places lookups for
+    // every unknown loc — and nearest is UNBOUNDED, so distant locations are
+    // always unknown (6 targets × 5 rows = up to 30 lookups per view —
+    // CODEX1 P1). Known ids enhance MapLink; unknown fall back to coords.
+    const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
+      resolveMissing: false,
+    });
     // Our haversine order, closest 3 (GROK pin) — never API order.
     const rows = speciesObservationDetails(res.data, home, placeIds, new Set()).slice(0, 3);
     return { speciesCode: code, comName, areaFreq, rows, stale: res.stale, error: null };

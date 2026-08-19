@@ -172,7 +172,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
         home.lon,
         backDays,
       );
-      const placeIds = await hydrateEbirdLocationPlaceIds(res.data);
+      // DB-only (CODEX1 P1): no Google Places fanout for unbounded rows.
+      const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
+        resolveMissing: false,
+      });
       // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
       // lookup — nearest is unbounded, links derive from the L-id shape.
       nearest = {
