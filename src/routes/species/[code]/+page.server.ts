@@ -1,10 +1,9 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { enrichOneNow, getEnrichment } from "$server/species-enrichment";
-import { AI_STAGE_ENABLED } from "$server/job-handlers";
 import { validSpeciesCode } from "$server/wikidata";
 import { enqueueJob } from "$server/jobs";
-import { dedupKeys } from "$server/job-policy";
+import { AI_STAGE_ENABLED, dedupKeys } from "$server/job-policy";
 import { query } from "$lib/db";
 import {
   getEbirdApiKey,
@@ -282,7 +281,7 @@ export const actions: Actions = {
     const now = await enrichOneNow(code);
     if (now.outcome === "ok") {
       if (now.aiDue && AI_STAGE_ENABLED) {
-        await enqueueJob({
+        const ai = await enqueueJob({
           type: "enrich_species",
           payload: { codes: [code], aiOnly: true },
           dedupKey: dedupKeys.enrichAiChunk([code]),
@@ -291,14 +290,16 @@ export const actions: Actions = {
           // the label is the NAME alone; the type prefix supplies the rest).
           label: comName,
         });
+        return {
+          ok: true as const,
+          // queued lights the job chip for the background AI stage — with
+          // the poller now idling when only scheduled rows exist (pin a),
+          // the page's track() is the only thing that wakes it (GROK P2-1).
+          queued: { jobId: ai.jobId, deduped: ai.deduped, label: "Field craft" },
+          message: "Article loaded — field craft is being written.",
+        };
       }
-      return {
-        ok: true as const,
-        message:
-          now.aiDue && AI_STAGE_ENABLED
-            ? "Article loaded — field craft is being written."
-            : "Article loaded.",
-      };
+      return { ok: true as const, message: "Article loaded." };
     }
     if (now.outcome === "no_article" || now.outcome === "no_mapping") {
       return { ok: true as const, message: "No Wikipedia article found." };

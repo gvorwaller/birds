@@ -37,6 +37,11 @@ export type JobOutcome =
  * hotspot failure cooldown, so a retry round never arrives to find all its
  * units still cooling down (property-tested).
  */
+/** Enrichment Phase 2: ON. AI-missing rows with prose count as stale
+ * (CODEX1 #6). Lives here (pure module) so page actions can read it
+ * without importing the worker (GROK td-b7d021 nit). */
+export const AI_STAGE_ENABLED = true;
+
 export const TRANSIENT_RETRY_DELAYS_MS = [16 * 60_000, 45 * 60_000, 120 * 60_000] as const;
 export const RATE_LIMIT_RETRY_DELAY_MS = 30 * 60_000;
 export const DEFAULT_MAX_ATTEMPTS = 4; // initial + 3 retries

@@ -3,7 +3,7 @@
  * line, in the app's calendar zone (td-b7d021 GROK pin a). Extracted from the
  * page for the DST contract below.
  */
-const APP_TZ = "America/New_York";
+import { FORECAST_CALENDAR_TZ as APP_TZ } from "./forecast-calendar";
 
 const dayIn = (x: Date) => x.toLocaleDateString("en-CA", { timeZone: APP_TZ }); // YYYY-MM-DD
 

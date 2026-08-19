@@ -109,6 +109,7 @@ export const load: PageServerLoad = async ({ locals }) => {
        FROM jobs
       WHERE type = 'scan_enrichment' AND status = 'pending'
         AND next_retry_at > NOW()
+        AND (progress ->> 'phase') IS DISTINCT FROM 'waiting_retry'
       ORDER BY next_retry_at LIMIT 1`,
   );
 

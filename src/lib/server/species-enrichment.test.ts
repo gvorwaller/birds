@@ -846,4 +846,33 @@ describe.runIf(dbUp)("enrichOneNow — instant wiki-only refresh (td-b7d021)", (
       await cleanup();
     }
   });
+
+  it("persistence is ATOMIC: a failing wiki write rolls back the resolution write (CODEX1)", async () => {
+    await seed();
+    try {
+      // Pre-existing state the resolution write would CHANGE (no_mapping →
+      // mapped), so a committed first write is detectable.
+      await upsertResolution(CODE, null);
+      await markWikiNoArticle(CODE);
+      const before = await getEnrichment(CODE);
+      expect(before?.resolution).toBe("no_mapping");
+      // Fault injection through real SQL: revid 1e19 overflows BIGINT, so
+      // upsertWikiOk fails AFTER upsertResolution succeeded in-transaction.
+      const net = fakeNet({
+        batchBindings: [
+          {
+            ebird: { value: CODE },
+            item: { value: "http://www.wikidata.org/entity/Q77" },
+            article: { value: "https://en.wikipedia.org/wiki/Instant_bird" },
+          },
+        ],
+        article: { title: "Instant bird", revid: 1e19, extract: "Prose." },
+      });
+      await expect(enrichOneNow(CODE, { fetcher: net.fetcher })).rejects.toThrow();
+      // The whole persistence phase rolled back — resolution untouched.
+      expect(await getEnrichment(CODE)).toEqual(before);
+    } finally {
+      await cleanup();
+    }
+  });
 });

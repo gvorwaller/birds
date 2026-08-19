@@ -1575,6 +1575,84 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     expect(db.calls.some((c) => c.text.includes("INSERT INTO species_enrichment"))).toBe(true);
   });
 
+  it("anti-loop pin: FRESH no_sitelink + WDQS hit never opens Wikipedia (GROK td-b7d021 P2-2)", async () => {
+    // The probe says fresh (clock inside the weekly window) and NOT
+    // retry_due; the batch resolution still has the QID (P3444 succeeded).
+    // A resolved.has()-style rescue copied onto no_sitelink would re-fetch
+    // the binomial article for every split survivor in every 15-min drain —
+    // the fdb3d40 loop, on Wikipedia this time. Pin: skip stays a skip.
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["whimbr3", WD("whimbr3", null)]]) as never,
+    );
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("AS skip"))
+        return {
+          rows: [
+            {
+              skip: true,
+              resolution: "no_sitelink",
+              wiki_status: "no_article",
+              retry_due: false,
+            },
+          ],
+        };
+      return base?.(text, params);
+    };
+
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["whimbr3"] } }), ctx);
+
+    expect(enrichMocks.fetchArticlePlaintext).not.toHaveBeenCalled();
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect(skips.map((c) => (c[2] as { reason: string }).reason)).toEqual(["fresh"]);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("no_sitelink weekly retry_due IS rescued: the binomial fallback runs (GROK pin d)", async () => {
+    enrichMocks.fetchWikidataBatch.mockResolvedValue(
+      new Map([["whimbr3", WD("whimbr3", null)]]) as never,
+    );
+    const base = db.handler;
+    db.handler = (text, params) => {
+      if (text.includes("AS skip"))
+        return {
+          rows: [
+            {
+              skip: true,
+              resolution: "no_sitelink",
+              wiki_status: "no_article",
+              retry_due: true,
+            },
+          ],
+        };
+      if (text.includes("SELECT species_code, com_name, sci_name"))
+        return {
+          rows: [
+            {
+              species_code: "whimbr3",
+              com_name: "Hudsonian Whimbrel",
+              sci_name: "Numenius hudsonicus",
+              family: null,
+            },
+          ],
+        };
+      return base?.(text, params);
+    };
+    enrichMocks.fetchArticlePlaintext.mockResolvedValueOnce({
+      title: "Hudsonian whimbrel",
+      revId: 11,
+      extract: "prose",
+      sections: [],
+    });
+
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["whimbr3"] } }), ctx);
+
+    // Fallback title is the BINOMIAL, and the resolved page landed as ok.
+    expect(enrichMocks.fetchArticlePlaintext).toHaveBeenCalledWith("Numenius hudsonicus");
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect(oks.map((c) => (c[2] as { outcome: string }).outcome)).toEqual(["ok"]);
+  });
+
   it("split survivor: no P3444 hit, sci-name fallback resolves it (td-e64d93 — Gull-billed Tern)", async () => {
     // Primary lookup misses gubter2 entirely (Wikidata still carries the
     // pre-split code); the binomial resolves it.

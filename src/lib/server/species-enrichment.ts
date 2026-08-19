@@ -10,7 +10,20 @@
  * can't leave stale lexemes (CODEX1 #4). Every writer recomputes it via the
  * same upsert→UPDATE CTE so both stages keep it correct atomically.
  */
-import { query } from '$lib/db';
+import { query, withTransaction } from '$lib/db';
+import type pg from 'pg';
+
+/**
+ * Writers accept an injectable executor so enrichOneNow can commit its whole
+ * persistence phase in ONE transaction (CODEX1 td-b7d021 blocker #2); the
+ * default is the autocommit pool query the worker path uses.
+ */
+type Exec = <T extends pg.QueryResultRow = pg.QueryResultRow>(
+	text: string,
+	params?: unknown[]
+) => Promise<{ rows: T[] }>;
+const clientExec = (client: pg.PoolClient): Exec => ((text, params) =>
+	client.query(text, params as never[])) as Exec;
 import { sanitizeErrorText } from '$server/job-policy';
 import type { WikidataSpeciesRow } from '$server/wikidata';
 import { fetchWikidataBatch, fetchWikidataBySciName, validSciName } from '$server/wikidata';
@@ -84,10 +97,11 @@ export function factsFromWikidata(row: WikidataSpeciesRow): EnrichmentFacts {
  */
 export async function upsertResolution(
 	code: string,
-	row: WikidataSpeciesRow | null
+	row: WikidataSpeciesRow | null,
+	exec: Exec = query
 ): Promise<void> {
 	if (row == null) {
-		await query(
+		await exec(
 			`INSERT INTO species_enrichment (species_code, resolution)
 			 VALUES ($1, 'no_mapping')
 			 ON CONFLICT (species_code) DO UPDATE SET resolution = 'no_mapping', updated_at = NOW()`,
@@ -99,7 +113,7 @@ export async function upsertResolution(
 	const crossIds: EnrichmentCrossIds = {};
 	if (row.inatTaxonId) crossIds.inat_taxon_id = row.inatTaxonId;
 	if (row.xenoCantoId) crossIds.xeno_canto_id = row.xenoCantoId;
-	await query(
+	await exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids)
 		 VALUES ($1, $2, $3, $4, $5, $6)
@@ -118,7 +132,11 @@ export async function upsertResolution(
 }
 
 /** Store fetched article prose; stamps the wiki freshness clock. */
-export async function upsertWikiOk(code: string, article: WikiArticle): Promise<void> {
+export async function upsertWikiOk(
+	code: string,
+	article: WikiArticle,
+	exec: Exec = query
+): Promise<void> {
 	// INSERT branch: fresh row has no tags/field_craft yet. UPDATE branch mixes
 	// the new prose ($5/$6) with the EXISTING row's AI-stage text so the vector
 	// always reflects the post-write row.
@@ -132,7 +150,7 @@ export async function upsertWikiOk(code: string, article: WikiArticle): Promise<
 		prose: `coalesce($5, '') || ' ' || coalesce(species_enrichment.field_craft, '')`,
 		sections: `$6::jsonb`
 	});
-	await query(
+	await exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikipedia_title, wikipedia_url, wikipedia_rev_id,
 		    wikipedia_extract, wikipedia_sections, wiki_status, wiki_error,
@@ -162,13 +180,13 @@ export async function upsertWikiOk(code: string, article: WikiArticle): Promise<
  * contradict the persisted terminal state; CODEX1 round 3). AI-owned fields
  * survive; the search vector is recomputed over what remains.
  */
-export async function markWikiNoArticle(code: string): Promise<void> {
+export async function markWikiNoArticle(code: string, exec: Exec = query): Promise<void> {
 	const tsv = tsvExpr({
 		tags: `array_to_string(species_enrichment.tags, ' ')`,
 		prose: `coalesce(species_enrichment.field_craft, '')`,
 		sections: `'[]'::jsonb`
 	});
-	await query(
+	await exec(
 		`INSERT INTO species_enrichment (species_code, wiki_status, wiki_error, wiki_fetched_at)
 		 VALUES ($1, 'no_article', NULL, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
@@ -390,31 +408,36 @@ export async function enrichOneNow(
 		// Timeout, WDQS/Wikipedia error, rate limit — all transient here.
 		return { outcome: 'transient' };
 	}
-	// PERSISTENCE PHASE — network outcome is final; a DB failure from here
-	// THROWS (a real 500, never masked as transient-and-requeue).
-	await upsertResolution(code, row);
-	if (row == null) {
-		await markWikiNoArticle(code);
-		return { outcome: 'no_mapping' };
-	}
-	if (article == null) {
-		await markWikiNoArticle(code);
-		return { outcome: 'no_article' };
-	}
-	await upsertWikiOk(code, article);
-	const ai = await query<{ ai_status: string | null; ai_source_rev_id: string | null }>(
-		`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
-		[code]
-	);
-	const aiDue = !(
-		ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
-	);
-	return {
-		outcome: 'ok',
-		title: article.title,
-		viaFallback: target?.viaFallback === true,
-		aiDue
-	};
+	// PERSISTENCE PHASE — network outcome is final. ONE transaction commits
+	// resolution + wiki outcome together (CODEX1 blocker #2): a failure of
+	// the second write rolls back the first, so the row is never half
+	// refreshed; the error THROWS (a real 500, never masked as transient).
+	return withTransaction(async (client) => {
+		const exec = clientExec(client);
+		await upsertResolution(code, row, exec);
+		if (row == null) {
+			await markWikiNoArticle(code, exec);
+			return { outcome: 'no_mapping' as const };
+		}
+		if (article == null) {
+			await markWikiNoArticle(code, exec);
+			return { outcome: 'no_article' as const };
+		}
+		await upsertWikiOk(code, article, exec);
+		const ai = await exec<{ ai_status: string | null; ai_source_rev_id: string | null }>(
+			`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
+			[code]
+		);
+		const aiDue = !(
+			ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
+		);
+		return {
+			outcome: 'ok' as const,
+			title: article.title,
+			viaFallback: target?.viaFallback === true,
+			aiDue
+		};
+	});
 }
 
 export interface GuideResult {

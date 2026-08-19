@@ -47,6 +47,7 @@ import {
 	yieldRemainder
 } from '$server/jobs';
 import {
+	AI_STAGE_ENABLED,
 	dedupKeys,
 	jobOutcome,
 	RATE_LIMIT_RETRY_DELAY_MS,
@@ -774,8 +775,9 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 // Species enrichment (plan: docs/2026-08-17-species-enrichment-plan.md)
 // ---------------------------------------------------------------------------
 
-/** Phase 2: ON. AI-missing rows with prose now count as stale (CODEX1 #6). */
-export const AI_STAGE_ENABLED = true;
+// AI_STAGE_ENABLED lives in job-policy (pure module) so page actions can
+// read it without importing the worker (GROK td-b7d021 nit).
+export { AI_STAGE_ENABLED };
 
 export const ENRICH_CHUNK_SIZE = 30;
 /** Chunks enqueued per scan pass — bounds hub noise AND queue occupancy. */
