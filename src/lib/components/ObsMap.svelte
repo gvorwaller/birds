@@ -8,6 +8,12 @@
     linkText?: string;
     img?: string;
     kind?: "need" | "notable" | "home" | "photo" | "pending";
+    /** Short text rendered inside the pin (e.g. a lifer count). */
+    glyph?: string;
+    /** Pre-built (already-escaped) info-window body — the multi-item path
+     * (life-list map, GROK td-b5986c pin 5). Replaces title/sub/link
+     * composition; rendered inside a scrollable container. */
+    html?: string;
   }
 </script>
 
@@ -96,7 +102,10 @@
     if (center) bounds.extend(center);
 
     for (const p of pts) {
-      const pin = new markerLib.PinElement(COLORS[p.kind ?? "need"]);
+      const pin = new markerLib.PinElement({
+        ...COLORS[p.kind ?? "need"],
+        ...(p.glyph ? { glyph: p.glyph, scale: 1.15 } : {}),
+      });
       const m = new markerLib.AdvancedMarkerElement({
         map,
         position: { lat: p.lat, lng: p.lng },
@@ -118,9 +127,10 @@
               `<a href="${mapsPlaceUrl({ name: p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
               `<a href="${mapsDirectionsUrl({ name: p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
               `</div>`;
-        info.setContent(
-          `${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ""}${link}${maps}`,
-        );
+        const body = p.html
+          ? `<div style="max-height:240px;overflow:auto">${p.html}</div>`
+          : `${img}<b>${escapeHtml(p.title)}</b>${p.sub ? `<br>${escapeHtml(p.sub)}` : ""}${link}`;
+        info.setContent(`${body}${maps}`);
         info.open({ map, anchor: m });
       });
       markers.push(m);

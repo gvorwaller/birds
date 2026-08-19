@@ -52,7 +52,10 @@
 	];
 	// Drawer-only (GROK td-a6c322 pin: not a 5th primary tab, visible to
 	// every role — viewers read the scope-owner's needs).
-	const drawerOnlyItems = [{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' }];
+	const drawerOnlyItems = [
+		{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' },
+		{ href: '/life', label: 'Life list', ico: '🗺️' }
+	];
 	const ownerMenuItems = [
 		{ href: '/alerts', label: 'Alerts', ico: '🔔' },
 		{ href: '/settings', label: 'Settings', ico: '⚙️' }

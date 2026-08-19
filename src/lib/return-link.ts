@@ -39,6 +39,7 @@ export interface ReturnLink {
  */
 /** Known origin pages get a real name on the back link instead of "Back". */
 const LABELED_PATHS: [path: string, label: string][] = [
+  ["/life", "Life list"],
   ["/forecast/species", "Species forecast"],
   ["/forecast/data", "Hotspots & data"],
   ["/forecast", "Forecast"],

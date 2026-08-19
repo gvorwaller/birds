@@ -209,6 +209,21 @@
 						<strong>Check nearest reports</strong>.
 					</li>
 				</ul>
+				<h3>Life list</h3>
+				<ul>
+					<li>
+						<strong>Life list</strong> (menu → 🗺️ Life list) shows every
+						lifer two ways: a <strong>map</strong> of where you got each one
+						(pin numbers = lifers at that spot; tap a pin for the birds,
+						dates, and their eBird checklists) and a
+						<strong>timeline</strong> by year with your lifer numbers —
+						milestone birds (#100, #200…) are starred. State chips filter
+						both views. Location data comes from your eBird life-list sync
+						(Settings); locations without coordinates yet resolve a batch at
+						a time on each sync, and exotic or not-countable birds are
+						labeled, never hidden.
+					</li>
+				</ul>
 				<h3>Hotspot pages</h3>
 				<ul>
 					<li>
