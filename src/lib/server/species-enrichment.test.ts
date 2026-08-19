@@ -807,9 +807,41 @@ describe.runIf(dbUp)("enrichOneNow — instant wiki-only refresh (td-b7d021)", (
       expect(await enrichOneNow(CODE, { fetcher: net.fetcher })).toEqual({
         outcome: "transient",
       });
-      const row = await getEnrichment(CODE);
-      expect(row?.wiki_status).toBeNull(); // resolution recorded, wiki stage untouched
-      expect(row?.wiki_fetched_at).toBeNull();
+      // ZERO writes: no row exists at all (CODEX1 blocker — network phase
+      // must complete before any persistence begins).
+      expect(await getEnrichment(CODE)).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("transient failure leaves a PRE-EXISTING row byte-identical", async () => {
+    await seed();
+    try {
+      await upsertResolution(CODE, {
+        speciesCode: CODE,
+        qid: "Q77",
+        enwikiTitle: null,
+        iucnStatus: "least concern",
+        massKgMin: null,
+        massKgMax: null,
+        wingspanMMin: null,
+        wingspanMMax: null,
+        inatTaxonId: "42",
+        xenoCantoId: null,
+      });
+      await markWikiNoArticle(CODE);
+      const before = await getEnrichment(CODE);
+      const net = fakeNet({
+        batchBindings: [
+          { ebird: { value: CODE }, item: { value: "http://www.wikidata.org/entity/Q77" } },
+        ],
+        article: "http503",
+      });
+      expect(await enrichOneNow(CODE, { fetcher: net.fetcher })).toEqual({
+        outcome: "transient",
+      });
+      expect(await getEnrichment(CODE)).toEqual(before);
     } finally {
       await cleanup();
     }

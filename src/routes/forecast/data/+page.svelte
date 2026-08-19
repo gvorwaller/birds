@@ -3,6 +3,7 @@
   import { browser } from "$app/environment";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { fmtNextScan } from "$lib/next-scan";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -86,29 +87,6 @@
         // private mode
       }
     }
-  }
-
-  // "today 11:39 PM ET" / "tomorrow …" / "Friday …" in the app's calendar
-  // zone (td-b7d021 GROK pin a — the parked scan must read as scheduled).
-  function fmtNextScan(iso: string): string {
-    const APP_TZ = "America/New_York";
-    const d = new Date(iso);
-    const dayIn = (x: Date) =>
-      x.toLocaleDateString("en-CA", { timeZone: APP_TZ }); // YYYY-MM-DD
-    const now = new Date();
-    const tomorrow = new Date(now.getTime() + 86_400_000);
-    const time = d.toLocaleTimeString("en-US", {
-      timeZone: APP_TZ,
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const day =
-      dayIn(d) === dayIn(now)
-        ? "today"
-        : dayIn(d) === dayIn(tomorrow)
-          ? "tomorrow"
-          : d.toLocaleDateString("en-US", { timeZone: APP_TZ, weekday: "long" });
-    return `${day} ${time} ET`;
   }
 
   function fmtDate(iso: string): string {

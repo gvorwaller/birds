@@ -368,6 +368,12 @@ export async function enrichOneNow(
 		[code]
 	);
 	const sciName = t.rows[0]?.sci_name ?? null;
+	// NETWORK PHASE — no DB writes may happen before this completes (CODEX1
+	// td-b7d021 blocker): a transient failure mid-flight must leave the row
+	// byte-identical, so 'transient' is only ever returned from here.
+	let row: WikidataSpeciesRow | null;
+	let target: { title: string; viaFallback: boolean } | null = null;
+	let article: WikiArticle | null = null;
 	try {
 		const resolved = await fetchWikidataBatch([code], fetchOpts);
 		if (!resolved.has(code) && sciName && validSciName(sciName)) {
@@ -375,36 +381,40 @@ export async function enrichOneNow(
 			const hit = bySci.get(code);
 			if (hit) resolved.set(code, hit);
 		}
-		const row = resolved.get(code) ?? null;
-		await upsertResolution(code, row);
-		if (row == null) {
-			await markWikiNoArticle(code);
-			return { outcome: 'no_mapping' };
+		row = resolved.get(code) ?? null;
+		if (row != null) {
+			target = wikiFetchTitleFor(row, sciName);
+			article = target ? await fetchArticlePlaintext(target.title, fetchOpts) : null;
 		}
-		const target = wikiFetchTitleFor(row, sciName);
-		const article = target ? await fetchArticlePlaintext(target.title, fetchOpts) : null;
-		if (article == null) {
-			await markWikiNoArticle(code);
-			return { outcome: 'no_article' };
-		}
-		await upsertWikiOk(code, article);
-		const ai = await query<{ ai_status: string | null; ai_source_rev_id: string | null }>(
-			`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
-			[code]
-		);
-		const aiDue = !(
-			ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
-		);
-		return {
-			outcome: 'ok',
-			title: article.title,
-			viaFallback: target?.viaFallback === true,
-			aiDue
-		};
 	} catch {
 		// Timeout, WDQS/Wikipedia error, rate limit — all transient here.
 		return { outcome: 'transient' };
 	}
+	// PERSISTENCE PHASE — network outcome is final; a DB failure from here
+	// THROWS (a real 500, never masked as transient-and-requeue).
+	await upsertResolution(code, row);
+	if (row == null) {
+		await markWikiNoArticle(code);
+		return { outcome: 'no_mapping' };
+	}
+	if (article == null) {
+		await markWikiNoArticle(code);
+		return { outcome: 'no_article' };
+	}
+	await upsertWikiOk(code, article);
+	const ai = await query<{ ai_status: string | null; ai_source_rev_id: string | null }>(
+		`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
+		[code]
+	);
+	const aiDue = !(
+		ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
+	);
+	return {
+		outcome: 'ok',
+		title: article.title,
+		viaFallback: target?.viaFallback === true,
+		aiDue
+	};
 }
 
 export interface GuideResult {
