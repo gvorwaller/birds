@@ -1,7 +1,144 @@
 # Life-list map + timeline (td-b5986c) — implementation plan (CC1)
 
 Source: docs/2026-08-18-hidden-data-audit-CC1.md (life-list CSV inventory).
-Status: DRAFT for AGY advisory + GROK plan review (GROK pins are binding).
+Status: GROK pins recorded 2026-08-19 (binding). AGY advisory still welcome, non-blocking.
+
+## GROK rulings (binding) — 2026-08-19
+
+Design-only review of this doc at `80e0d7d`. Independently verified the
+live-CSV claims against `parseLifeListCsv` / `importLifeList`
+(`ebird-account.ts`), `seen_species` (`0001_schema.sql`),
+`ebird_locations` (`0008`), `ebirdFetch` 404/429 behavior, `sync_lifelist`
+as a single-unit background job, drawer-only `/nearest` precedent, and
+cs.md test-isolation / attribution / `resolveMissing:false` rules. AGY is
+advisory and offline; these pins are the binding layer. No code in this
+turn.
+
+Verdict: **APPROVE WITH PINS**. Shape is right (verified header, extend
+`seen_species` nullable 1:1, no join table, taxonomy sort stays in
+td-5bc1d4, county correctly dropped because S/P is `US-FL` not county,
+`resolveMissing:false`, commit split A→B→C, dual review after C, hold
+for Gaylon). Do not start C until A+B honor pins 1–7.
+
+### 1. GET `/life` is join-only. Never live-fetch.
+
+The page loader JOINs `seen_species.loc_id` → `ebird_locations` and
+renders what is already stored. No eBird API, no Google Places, no
+`resolveMissing` default. Same discipline as `/nearest`.
+
+### 2. Location resolution is fail-soft, job-only, capped, and 404-tolerant.
+
+- Call it at the **end of `syncLifeListFromEbird`** (already a background
+  `sync_lifelist` job). **Not** inside `importLifeList`'s transaction, and
+  **not** on the Settings CSV form action (that request will time out).
+- CSV import stores the new columns immediately; pins then come from the
+  `ebird_locations` join (4,798 rows already have coords). Remaining
+  personal/unknown loc_ids wait for a credentialed sync.
+- CSV import success and the `seen_species` replace must **commit even if
+  resolution is incomplete**. A 429/5xx/timeout during resolution must
+  **not** set `life_list_status='error'` or fail the job after a good
+  import. Disclose leftover unresolved on `/life`.
+- `ebirdFetch` today throws on any non-OK, including **404**. Hotspot
+  `/ref/hotspot/info/{locId}` 404 is **expected** for personal L-ids
+  (eBird uses `L\d+` for both hotspots and personal locations —
+  `isHotspotLocId` is the wrong predicate here). Checklist
+  `/product/checklist/view/{subId}` 403/404 for unshared checklists is
+  also expected. Add a 404/403-returns-null helper; never let those
+  bubble as `EbirdError` out of this path.
+- Cap **≤25 live lookups per `sync_lifelist` invocation** (hotspot info
+  + checklist fallback count as the lookups for one loc_id). First-run
+  remainder is picked up on later syncs. Worker budget is 4 min;
+  unbounded 228-serial is how this starves need-alerts/enrichment.
+- Join existing `ebird_locations` first. On a live hit, **INSERT missing
+  loc_ids only** — do not UPDATE lat/lng/name on rows already present
+  (obs feeds stay source of truth).
+- Persist a negative: loc_ids that 404/403 both endpoints must not be
+  retried every sync. Store `checked_at` (on `seen_species` or a tiny
+  per-user loc attempt table). Retry a negative only after a long TTL
+  or never in v1. "Only NEW loc_ids afterward" is a lie unless 404s
+  are remembered.
+
+### 3. Schema / import.
+
+- Migration **0023** is the right next number. All new columns nullable.
+  Index `seen_species (loc_id) WHERE loc_id IS NOT NULL`.
+- Column is **`region_code`**, not `state_code`. S/P is `US-FL` /
+  `MX-ROO` / country-only, not a US-state enum. Chips render the stored
+  code (US-XX may display as XX). No county — it is not in the CSV.
+- Keep writing `first_seen` from the Date column as today. Parse eBird
+  dates as **calendar dates** (`D Mon YYYY` and `YYYY-MM-DD`) without
+  `Date#toISOString` (UTC round-trip). Prod droplet is UTC; do not
+  create a new date-shift footgun now that dates drive a timeline.
+- `NUMERIC taxon_order` returns as a string at the PG boundary —
+  coerce if you ever sort on it; v1 does not.
+- Unmatched names: details stay unstored (no `species_code`). Same
+  unmatched disclosure as today.
+- Manual rows: DELETE+replace of sync/import sources is unchanged, but
+  `ON CONFLICT (user_id, species_code)` against a leftover **manual**
+  row must **write the new detail columns** and must **not** flip
+  `source` to `ebird_sync`/`csv_import`. Today it updates `source`;
+  that would either clobber manual or (if you switch to DO NOTHING)
+  leave those lifers without loc_id/sub_id, so they vanish from the
+  map. Fill NULLs/details, keep `source='manual'`.
+- Pre-migration rows are all-NULL. **No backfill.** Empty state after
+  deploy is "Sync your life list to plot where you got each lifer"
+  (CSV upload also fills columns; live loc resolution still needs the
+  credentialed sync).
+
+### 4. Countable / exotic / lifer numbers.
+
+The verified export's 228 rows **include** not-countable exotic rows.
+v1 map + timeline + chips include every imported row so count parity
+with the CSV is 228. Badge exotic / not-countable; do not drop them.
+Lifer # = `total − csv_row_num + 1` against that full imported set
+(recomputed at render). If a later filter hides not-countable, recompute
+against the visible set — do not store lifer #.
+
+### 5. `/life` UI.
+
+- Drawer-only **Life list**, same slot pattern as Nearest lifers —
+  **not** a 5th primary tab, **not** `ownerMenuItems`. Visible to
+  viewers (owner's data, no redaction).
+- Reuse `loadGoogleMaps` + AdvancedMarker + Map ID. **Do not** force-fit
+  `ObsMap`'s single title/href info window onto a multi-lifer location.
+  New list-of-lifers content path (extend ObsMap **or** a small sibling).
+  Pin glyph = lifer count at that loc. Info window lists name, date,
+  species-page link (`returnTo=/life`), `checklist ↗` to
+  `ebird.org/checklist/{subId}` (new tab). Location name is text unless
+  hotspot/info actually succeeded — then `/hotspots/{locId}` is OK.
+  Personal L-ids must not 404 into a hotspot page.
+- State chips filter both map and timeline. Timeline by year newest
+  first; milestone rows #100, #200, …; per-year count header.
+- Attribution on the page: "Data from eBird.org" with a link (cs.md
+  sacred). Help + menu in-commit.
+- `/life` is **read-only**. No form action that enqueues sync. Owner
+  empty/stale: pointer to Settings. Viewer empty: **no Settings link**
+  (viewers have no Settings) — "This page needs the account owner's
+  life list" (nearest-viewer precedent).
+- Unresolved disclosure exactly as specified ("N locations have no map
+  pin — eBird returned no coordinates"), never silently dropped.
+- Add `/life` to `safeReturnTo` labeled paths ("Life list").
+- Mobile-first; scoped CSS; no toasts; WCAG AAA. Info windows with many
+  lifers at one patch must scroll, not overflow the viewport.
+
+### 6. Tests. No prod credentials in `birds_test`.
+
+cs.md: never seed real eBird credentials into the test DB. The
+authenticated header check is **already done**. Parser + import tests
+use a **committed fixture** with the verified 13-column header (quoted
+Location-with-commas, `19 Aug 2026`, exotic/countable variants) **plus**
+the existing legacy minimal fixture. Loc resolution: mocked 404→checklist
+and both-miss. E2E on the test cluster: `importLifeList` of that fixture
++ seeded `ebird_locations` rows, then `/life` renders pins + timeline +
+count parity. Do **not** CAS-login user 1 against the test cluster.
+
+### 7. Out of scope (veto if they sneak in).
+
+Taxonomic sort / banding codes / family browse (td-5bc1d4). County life
+lists. Google Places. New recurring job type. 5th primary nav tab.
+Sync button on `/life`. Backfill of pre-migration rows. Updating
+existing `ebird_locations` coords from checklist payloads.
+
 
 ## Live CSV header — VERIFIED 2026-08-19 (td mandate)
 
