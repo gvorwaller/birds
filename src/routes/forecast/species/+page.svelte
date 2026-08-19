@@ -271,10 +271,16 @@
           {/if}
           <FrequencyChart
             months={f.curve}
+            weeks={f.weeks}
+            showEffort
             highlightMonth={best?.month ?? null}
             caption="Share of {data.region.name} eBird checklists reporting {data
               .taxon.com_name}, by month, {f.meta.beginYear}–{f.meta.endYear}"
           />
+          {#if f.migration}
+            <!-- td-af8393: emitted only for supported migratory shapes. -->
+            <p class="migration">🛫 {f.migration}</p>
+          {/if}
         {/if}
         <p class="meta">
           Data: {f.meta.beginYear}–{f.meta.endYear}, fetched
@@ -1048,5 +1054,11 @@
     color: var(--accent);
     font-weight: 600;
     font-size: 0.85rem;
+  }
+  .migration {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.92rem;
+    margin: 8px 0 0;
   }
 </style>

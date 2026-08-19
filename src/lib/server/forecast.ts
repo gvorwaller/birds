@@ -188,6 +188,122 @@ export function peakWeekPhrase(
 	return `${slot} ${MONTH_NAMES[month - 1]}`;
 }
 
+// ---------------------------------------------------------------------------
+// Weekly resolution (td-af8393) — GROK-pinned truthfulness: a week with
+// n === 0 is NO DATA (never a 0% bar); n < MIN_WEEK_N is inadequate — hatched
+// in charts and NEITHER presence nor absence for migration inference.
+// ---------------------------------------------------------------------------
+
+export interface WeekStat {
+	week: number; // 1-48
+	freq: number;
+	n: number;
+}
+
+/** All 48 weekly stats — the single-week analog of monthCurve. */
+export function weekCurve(
+	freqByWeek: ReadonlyMap<number, number>,
+	sampleSizes: readonly number[]
+): WeekStat[] {
+	const out: WeekStat[] = [];
+	for (let w = 1; w <= WEEKS; w++) {
+		out.push({ week: w, freq: freqByWeek.get(w) ?? 0, n: sampleSizes[w - 1] ?? 0 });
+	}
+	return out;
+}
+
+/** "early April" from a 1-48 week (the peakWeekPhrase slot vocabulary). */
+export function weekPhrase(week: number): string {
+	const month = Math.ceil(week / 4);
+	return `${WEEK_SLOT[(week - 1) % 4]} ${MONTH_NAMES[month - 1]}`;
+}
+
+/** How many consecutive winter-or-summer absent weeks make a "season". */
+export const MIGRATION_ABSENCE_WEEKS = 8;
+/** Presence needs at least this many consecutive adequate present weeks. */
+export const MIGRATION_PRESENCE_WEEKS = 2;
+
+/**
+ * Arrival/departure for MIGRATORY shapes only (GROK pins): presence =
+ * adequate week (n ≥ MIN_WEEK_N) with freq ≥ FREQ_POSSIBLE; absence =
+ * adequate week below it; inadequate weeks break BOTH runs (unknown is
+ * neither). Requires exactly ONE circular absence run of ≥8 weeks (a
+ * double-gap passage shape can't be told in one sentence → null) and a
+ * ≥2-week presence run on each side of it. Year-round, vagrant, and
+ * unknown-effort shapes all return null — never a fabricated story.
+ */
+export function migrationWindow(
+	curve: readonly WeekStat[]
+): { arriveWeek: number; departWeek: number } | null {
+	const N = curve.length;
+	if (N === 0) return null;
+	type Cls = 'present' | 'absent' | 'unknown';
+	const cls: Cls[] = curve.map((w) =>
+		w.n < MIN_WEEK_N ? 'unknown' : w.freq >= FREQ_POSSIBLE ? 'present' : 'absent'
+	);
+
+	// Circular runs of a class: scan LINEARLY (no modulo in the extension —
+	// wrapping there double-counts the head run), then merge the boundary
+	// pair when the year wraps within one run.
+	const runs = (want: Cls): { start: number; len: number }[] => {
+		const out: { start: number; len: number }[] = [];
+		let i = 0;
+		while (i < N) {
+			if (cls[i] !== want) {
+				i++;
+				continue;
+			}
+			let j = i;
+			while (j < N && cls[j] === want) j++;
+			out.push({ start: i, len: j - i });
+			i = j;
+		}
+		if (out.length >= 2) {
+			const first = out[0];
+			const last = out[out.length - 1];
+			if (first.start === 0 && last.start + last.len === N) {
+				last.len += first.len;
+				out.shift();
+			}
+		}
+		return out;
+	};
+
+	const absences = runs('absent').filter((r) => r.len >= MIGRATION_ABSENCE_WEEKS);
+	if (absences.length !== 1) return null; // year-round, vagrant, or double-gap
+	const gap = absences[0];
+
+	// Arrival: first ≥2-week presence run scanning forward from the gap's end.
+	const after = (gap.start + gap.len) % N;
+	let arrive = -1;
+	for (let step = 0; step < N - gap.len; step++) {
+		const i = (after + step) % N;
+		if (cls[i] === 'present' && cls[(i + 1) % N] === 'present') {
+			arrive = i;
+			break;
+		}
+	}
+	// Departure: last week of a ≥2-week presence run scanning backward from
+	// the gap's start.
+	let depart = -1;
+	for (let step = 1; step <= N - gap.len; step++) {
+		const i = (gap.start - step + N) % N;
+		if (cls[i] === 'present' && cls[(i - 1 + N) % N] === 'present') {
+			depart = i;
+			break;
+		}
+	}
+	if (arrive < 0 || depart < 0) return null;
+	return { arriveWeek: curve[arrive].week, departWeek: curve[depart].week };
+}
+
+/** "arrives ~early April · departs ~late October", or null. */
+export function migrationSentence(curve: readonly WeekStat[]): string | null {
+	const w = migrationWindow(curve);
+	if (!w) return null;
+	return `arrives ~${weekPhrase(w.arriveWeek)} · departs ~${weekPhrase(w.departWeek)}`;
+}
+
 export interface MonthRichness {
 	month: number;
 	likely: number;
@@ -262,6 +378,8 @@ export interface SpeciesLocForecast {
 	good: number[];
 	/** True when the species has a stored fetch but zero reported weeks. */
 	neverReported: boolean;
+	weeks: WeekStat[];
+	migration: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1159,9 @@ export interface SpeciesTeaserPick {
 	locCode: string;
 	locName: string;
 	curve: MonthStat[];
+	/** 48-week resolution for the Month|Week chart toggle (td-af8393). */
+	weeks: WeekStat[];
+	migration: string | null;
 	best: BestMonth | null;
 	peakPhrase: string | null;
 }
@@ -1113,10 +1234,14 @@ export async function pickSpeciesTeaserState(
 	if (!pick) return null;
 	const win = built.find((b) => b.candidate.locCode === pick.locCode);
 	if (!win) return null;
+	const e = byLoc.get(pick.locCode)!;
+	const weeks = weekCurve(e.freqByWeek, e.sampleSizes);
 	return {
 		locCode: pick.locCode,
 		locName: pick.locName,
 		curve: win.curve,
+		weeks,
+		migration: migrationSentence(weeks),
 		best: win.candidate.best,
 		peakPhrase: win.peakPhrase
 	};
@@ -1150,9 +1275,12 @@ export async function speciesLocForecast(
 	// never when a single noisy week in another month would contradict it.
 	const peakPhrase =
 		best && rawPeak && rawPeak.endsWith(MONTH_NAMES[best.month - 1]) ? rawPeak : null;
+	const weeks = weekCurve(freqByWeek, meta.sampleSizes);
 	return {
 		meta,
 		curve,
+		weeks,
+		migration: migrationSentence(weeks),
 		best,
 		peakPhrase,
 		// The window, not just the peak: months within 80% of the best —

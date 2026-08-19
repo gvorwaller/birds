@@ -234,7 +234,13 @@
 					</li>
 					<li>
 						You get a month-by-month chart with the best month called out —
-						plus week-level timing when the data supports it ("peaks late
+						and a <strong>Week</strong> toggle on the chart that shows the
+						full week-by-week resolution (48 bars; hatched † bars mean few
+						checklists that week), with an effort strip underneath showing
+						checklists per week. Migratory species whose data supports it
+						also get an <strong>arrives ~… · departs ~…</strong> line — the
+						same chart toggle and line appear on each species' own page.
+						Plus week-level timing when the data supports it ("peaks late
 						April") and the <strong>good window</strong> ("good Dec–Mar"):
 						every month within 80% of the peak, since trips rarely land on the
 						single best month.

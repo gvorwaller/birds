@@ -270,11 +270,15 @@
         {/if}
       </h2>
       <FrequencyChart
+        weeks={data.forecastTeaser.weeks}
         months={ft.curve}
         highlightMonth={ft.best?.month ?? null}
         caption="Share of {ft.regionName} eBird checklists reporting {data.taxon
           .com_name}, by month"
       />
+      {#if data.forecastTeaser.migration}
+        <p class="migration">🛫 {data.forecastTeaser.migration}</p>
+      {/if}
       <p class="muted">
         <a
           href="/forecast/species?species={data.taxon
@@ -990,5 +994,11 @@
     align-items: center;
     flex-wrap: wrap;
     font-size: 0.85rem;
+  }
+  .migration {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.92rem;
+    margin: 8px 0 0;
   }
 </style>

@@ -199,6 +199,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     regionCode: string;
     regionName: string;
     curve: { month: number; freq: number; n: number }[];
+    /** 48-week resolution for the chart's Week toggle (td-af8393). */
+    weeks: { week: number; freq: number; n: number }[];
+    migration: string | null;
     best: { month: number; freq: number; lowSample: boolean } | null;
     peakPhrase: string | null;
     /** Months within 80% of the peak — the "good window". */
@@ -210,6 +213,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       regionCode: teaserState.locCode,
       regionName: teaserState.locName,
       curve: teaserState.curve,
+      weeks: teaserState.weeks,
+      migration: teaserState.migration,
       best: teaserState.best,
       peakPhrase: teaserState.peakPhrase,
       good: goodMonths(teaserState.curve),
