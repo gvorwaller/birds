@@ -84,3 +84,35 @@ bins — this feature renders the full resolution.
 ## Sequencing
 One branch/range, two commits (A then B), gates + live SSR E2E each,
 CODEX1+GROK dual review of the range, hold for Gaylon's deploy word.
+
+## AGY feedback (2026-08-19, advisory) — integrated
+
+AGY endorsed both CC1 leans and added specifics, adopted as follows:
+
+**A (nearest lifer):**
+- Species-page fetch: ON-DEMAND confirmed (AGY + CC1 agree) — a
+  disclosure/button triggers the fetch; species pages stay snappy.
+- /nearest page: auto-run TOP 6-8 month targets (likely band,
+  needs-first) + a species search box; the bounded check is DISCLOSED
+  in AGY's suggested shape: "Checking N highest-probability targets
+  for {Month} near {home} (cached 30 min)".
+- Row layout (320px): two-line structure — line 1 = distance HERO
+  (bold) + place name (hotspot link); line 2 = date/time · ×count ·
+  Unconfirmed chip · checklist ↗. All targets ≥48px.
+- Entry points, tiered: (adopted) drawer item "Nearest lifers";
+  (optional, GROK to rule) Home needs-row "nearest ↗" inline action
+  and a /forecast/species on-demand chip — both flagged as potential
+  re-clutter of just-decluttered surfaces.
+
+**B (weekly timing):**
+- Toggle: segmented Month|Week control in the chart header, ≥48px per
+  segment, Month default. Adopted.
+- 320px legibility: AGY's math adopted — 48 bars ≈ 4px + 2px gap =
+  288px inside a 320 viewport; 12 single-letter month ticks with
+  month-group gridlines; low-sample bars get hatch/outline + †
+  (never color alone).
+- Arrival/departure: sentence ADOPTED; AGY also suggested a chart
+  window annotation (span/bracket) — marked OPTIONAL, GROK to rule
+  (complexity vs value).
+- Effort sparkline: ~20px strip aligned 1:1 under the 48 columns,
+  labeled "checklists per week". Adopted.
