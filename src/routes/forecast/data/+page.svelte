@@ -88,6 +88,29 @@
     }
   }
 
+  // "today 11:39 PM ET" / "tomorrow …" / "Friday …" in the app's calendar
+  // zone (td-b7d021 GROK pin a — the parked scan must read as scheduled).
+  function fmtNextScan(iso: string): string {
+    const APP_TZ = "America/New_York";
+    const d = new Date(iso);
+    const dayIn = (x: Date) =>
+      x.toLocaleDateString("en-CA", { timeZone: APP_TZ }); // YYYY-MM-DD
+    const now = new Date();
+    const tomorrow = new Date(now.getTime() + 86_400_000);
+    const time = d.toLocaleTimeString("en-US", {
+      timeZone: APP_TZ,
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const day =
+      dayIn(d) === dayIn(now)
+        ? "today"
+        : dayIn(d) === dayIn(tomorrow)
+          ? "tomorrow"
+          : d.toLocaleDateString("en-US", { timeZone: APP_TZ, weekday: "long" });
+    return `${day} ${time} ET`;
+  }
+
   function fmtDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, {
       year: "numeric",
@@ -482,6 +505,11 @@
 
   <section class="card">
     <h2>Background loads</h2>
+    {#if data.nextEnrichmentScanAt}
+      <p class="nextscan">
+        Next enrichment scan — {fmtNextScan(data.nextEnrichmentScanAt)}
+      </p>
+    {/if}
     {#if jobsPoll.worker && !jobsPoll.worker.alive}
       <p class="error">
         The background worker isn't running — queued loads will wait until it
@@ -1381,5 +1409,10 @@
   }
   .muted2 {
     color: var(--muted);
+  }
+  .nextscan {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin: 0 0 8px;
   }
 </style>

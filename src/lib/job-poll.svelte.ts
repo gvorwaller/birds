@@ -45,6 +45,8 @@ export interface JobInfo {
 	attempts: number;
 	maxAttempts: number;
 	nextRetryAt: string | null;
+	/** Parked recurring singleton (next run in the future) — never "queued". */
+	scheduled?: boolean;
 	cancelRequested: boolean;
 	progress: {
 		phase?: string;
@@ -101,7 +103,9 @@ class JobsPoll {
 		return this.jobs.filter((j) => isActive(j));
 	}
 	get recent(): JobInfo[] {
-		return this.jobs.filter((j) => !isActive(j));
+		// Scheduled singletons are neither active nor "recent" — the hub shows
+		// them on their own next-scan line instead.
+		return this.jobs.filter((j) => !isActive(j) && j.scheduled !== true);
 	}
 
 	/** Start (or wake) the poller. Safe to call repeatedly; used by layout mount, enqueue results, and track(). */

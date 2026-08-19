@@ -6,6 +6,8 @@
 export interface PolledJob {
 	id: number;
 	status: string;
+	/** Parked recurring singleton (next run in the future) — never active. */
+	scheduled?: boolean;
 	progress: { phase?: string; unitsDone?: number } | Record<string, never>;
 }
 
@@ -17,8 +19,11 @@ export const POLL_WAITING_MS = 15_000;
 export const STALE_AFTER_MS = 10_000;
 export const INVALIDATE_THROTTLE_MS = 15_000;
 
-export function isActive(job: Pick<PolledJob, 'status'>): boolean {
-	return ACTIVE_STATUSES.has(job.status);
+export function isActive(job: Pick<PolledJob, 'status' | 'scheduled'>): boolean {
+	// A recurring singleton parked until its NEXT run (scheduled) is not
+	// active work: it must not light the chip, hold the 2.5s poll cadence,
+	// or render as "queued" (td-b7d021 GROK pin a).
+	return ACTIVE_STATUSES.has(job.status) && job.scheduled !== true;
 }
 
 /**

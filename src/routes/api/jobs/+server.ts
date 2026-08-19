@@ -4,6 +4,7 @@ import { listJobs, workerHealth } from '$server/jobs';
 import {
 	displayName,
 	durationMs,
+	isScheduledSingleton,
 	jobLocCodes,
 	jobTarget,
 	statusColor,
@@ -20,6 +21,8 @@ export interface DecoratedJob {
 	attempts: number;
 	maxAttempts: number;
 	nextRetryAt: string | null;
+	/** Recurring singleton parked until its next run — not queued work. */
+	scheduled: boolean;
 	cancelRequested: boolean;
 	progress: JobRow['progress'];
 	error: string | null;
@@ -48,6 +51,7 @@ function decorate(job: JobRow, now: Date): DecoratedJob {
 		attempts: job.attempts,
 		maxAttempts: job.max_attempts,
 		nextRetryAt: job.next_retry_at ? new Date(job.next_retry_at).toISOString() : null,
+		scheduled: isScheduledSingleton(job, now),
 		cancelRequested: job.cancel_requested,
 		progress: job.progress,
 		error: job.error,

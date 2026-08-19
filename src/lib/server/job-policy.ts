@@ -336,13 +336,33 @@ const TYPE_NAMES: Record<string, string> = {
 	sync_lifelist: 'Sync life list',
 	sync_taxonomy: 'Sync taxonomy',
 	scan_need_alerts: 'Need-alert scan (system)',
-	enrich_species: 'Enrich species data',
+	enrich_species: 'Species data',
 	scan_enrichment: 'Enrichment scan (system)'
 };
 
 export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {
 	const base = TYPE_NAMES[job.type] ?? job.type;
 	return job.label ? `${base} — ${job.label}` : base;
+}
+
+/** Recurring singleton types that sit 'pending' between runs by design. */
+const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts']);
+
+/**
+ * A recurring singleton parked until its NEXT scheduled run (td-b7d021,
+ * GROK pin a): pending + future next_retry_at + not actually retrying.
+ * These must never read as "queued" work — the chip skips them, the poll
+ * idles, and the hub shows a dedicated "next scan" line instead.
+ */
+export function isScheduledSingleton(
+	job: Pick<JobRow, 'type' | 'status' | 'next_retry_at' | 'progress'>,
+	now: Date = new Date()
+): boolean {
+	if (!RECURRING_SINGLETONS.has(job.type)) return false;
+	if (job.status !== 'pending') return false;
+	if (!job.next_retry_at || new Date(job.next_retry_at).getTime() <= now.getTime()) return false;
+	const phase = (job.progress as { phase?: string } | null)?.phase;
+	return phase !== 'waiting_retry';
 }
 
 export function durationMs(

@@ -7,6 +7,7 @@ import {
   displayName,
   durationMs,
   canViewJobEvents,
+  isScheduledSingleton,
   jobLocCodes,
   jobOutcome,
   jobTarget,
@@ -315,5 +316,32 @@ describe("canViewJobEvents — type/role boundary (CODEX1 P1 on e3ac335)", () =>
       expect(canViewJobEvents(t, undefined)).toBe(false);
       expect(canViewJobEvents(t, "admin")).toBe(true);
     }
+  });
+});
+
+describe("isScheduledSingleton (td-b7d021 pin a: parked scans never read as queued)", () => {
+  const base = {
+    type: "scan_enrichment",
+    status: "pending",
+    next_retry_at: new Date(Date.now() + 3_600_000).toISOString(),
+    progress: {},
+  };
+  it("recurring singleton + pending + future next run + not retrying → scheduled", () => {
+    expect(isScheduledSingleton(base as never)).toBe(true);
+    expect(isScheduledSingleton({ ...base, type: "scan_need_alerts" } as never)).toBe(true);
+  });
+  it("everything else is NOT scheduled", () => {
+    expect(isScheduledSingleton({ ...base, type: "load_hotspots" } as never)).toBe(false);
+    expect(isScheduledSingleton({ ...base, status: "running" } as never)).toBe(false);
+    expect(isScheduledSingleton({ ...base, next_retry_at: null } as never)).toBe(false);
+    expect(
+      isScheduledSingleton({
+        ...base,
+        next_retry_at: new Date(Date.now() - 1000).toISOString(),
+      } as never),
+    ).toBe(false); // due now = real work
+    expect(
+      isScheduledSingleton({ ...base, progress: { phase: "waiting_retry" } } as never),
+    ).toBe(false); // actually retrying keeps the honest retry copy
   });
 });

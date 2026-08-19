@@ -101,6 +101,17 @@ export const load: PageServerLoad = async ({ locals }) => {
     ),
     getEbirdApiKey(userId),
   ]);
+  // Next scheduled enrichment scan (td-b7d021): the parked singleton no
+  // longer renders as "queued" anywhere — this SSR value feeds the hub's
+  // dedicated line instead.
+  const nextScan = await query<{ next_retry_at: string | null }>(
+    `SELECT next_retry_at::text
+       FROM jobs
+      WHERE type = 'scan_enrichment' AND status = 'pending'
+        AND next_retry_at > NOW()
+      ORDER BY next_retry_at LIMIT 1`,
+  );
+
   const credsRow = await query<{ login_set: boolean }>(
     `SELECT (login_username_enc IS NOT NULL AND login_password_enc IS NOT NULL) AS login_set
        FROM user_ebird WHERE user_id = $1`,
@@ -271,6 +282,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     hasApiKey: !!apiKey,
     hasLogin,
     isViewer,
+    nextEnrichmentScanAt: nextScan.rows[0]?.next_retry_at ?? null,
   };
 };
 

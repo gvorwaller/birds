@@ -266,8 +266,8 @@ export const actions: Actions = {
     if (!validSpeciesCode(code)) {
       return fail(400, { error: "Invalid species code." });
     }
-    const taxon = await query<{ category: string }>(
-      "SELECT category FROM taxonomy_cache WHERE species_code = $1",
+    const taxon = await query<{ category: string; com_name: string }>(
+      "SELECT category, com_name FROM taxonomy_cache WHERE species_code = $1",
       [code],
     );
     if (taxon.rows[0]?.category !== "species") {
@@ -278,7 +278,9 @@ export const actions: Actions = {
       payload: { codes: [code], force: true },
       dedupKey: dedupKeys.enrichSpeciesOne(code),
       requestedBy: locals.user!.id,
-      label: "1 species (manual refresh)",
+      // displayName composes "Species data — {comName}" (GROK pin d: the
+      // label is the NAME alone; the type prefix supplies the rest).
+      label: taxon.rows[0].com_name,
     });
     return {
       ok: true as const,

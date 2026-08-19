@@ -179,3 +179,16 @@ describe("shouldInvalidate", () => {
     expect(shouldInvalidate(prev, next, 0, t0)).toBe(false);
   });
 });
+
+describe("scheduled singletons (td-b7d021 pin a)", () => {
+  const scheduled = { id: 1, status: "pending", scheduled: true, progress: {} };
+  const real = { id: 2, status: "running", progress: {} };
+  it("a scheduled job is never active", () => {
+    expect(isActive(scheduled as never)).toBe(false);
+    expect(isActive(real as never)).toBe(true);
+  });
+  it("scheduled-only → nextIntervalMs null (idle poll, chip dark)", () => {
+    expect(nextIntervalMs([scheduled] as never)).toBeNull();
+    expect(nextIntervalMs([scheduled, real] as never)).not.toBeNull();
+  });
+});
