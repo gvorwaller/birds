@@ -4,6 +4,7 @@
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { isHotspotLocId } from "$lib/loc-id";
+  import { page } from "$app/state";
   import type { PageData } from "./$types";
   import type { NearestTarget } from "./+page.server";
 
@@ -40,7 +41,7 @@
               <span class="ndist">{formatDistance(o.distanceKm, distanceUnit)}</span>
             {/if}
             {#if isHotspotLocId(o.locId)}
-              <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent("/nearest")}`}
+              <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
                 >{o.locName}</a
               >
             {:else}

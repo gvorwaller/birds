@@ -420,7 +420,9 @@
                 <span class="ndist">{formatDistance(o.distanceKm, distanceUnit)}</span>
               {/if}
               {#if isHotspotLocId(o.locId)}
-                <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(`/species/${data.taxon.species_code}`)}`}
+                <!-- returnTo carries the full URL so Back reopens the card
+                     with its context intact (GROK P3 on 3b12042). -->
+                <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
                   >{o.locName}</a
                 >
               {:else}
