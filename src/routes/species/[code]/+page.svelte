@@ -6,6 +6,7 @@
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { isHotspotLocId } from "$lib/loc-id";
+  import { page } from "$app/state";
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
@@ -45,6 +46,14 @@
   $effect(() => {
     const q = form && "queued" in form && form.queued ? form.queued : null;
     if (q) jobsPoll.track(q.jobId);
+  });
+
+  // GROK P2-1/P2-2: keep the whole current query (location context, back —
+  // whose default here is 14, not 7 — returnTo) and only add nearest=1.
+  const nearestHref = $derived.by(() => {
+    const p = new URLSearchParams(page.url.searchParams);
+    p.set("nearest", "1");
+    return `?${p.toString()}`;
   });
 
   const IUCN_LABELS: Record<string, string> = {
@@ -375,7 +384,7 @@
     {/if}
   </section>
 
-  {#if !data.seen && data.hasApiKey && data.hasOrigin}
+  {#if !data.seen && data.hasApiKey && data.hasHome}
     <!-- Nearest lifer (td-a6c322): ON-DEMAND — the ?nearest=1 link makes it
          an SSR fetch the default page load never pays for (GROK pin). Need
          species only; unbounded distance from the saved home. -->
@@ -389,9 +398,12 @@
           How far away is the closest current report? One eBird lookup,
           any distance from home.
         </p>
+        <!-- Preserve every existing param (location context, back, returnTo)
+             — a bare ?nearest=1 clobbered the query and silently retargeted
+             the nearby card to home (GROK P2-1/P2-2). -->
         <a
           class="nearestcta"
-          href={`?nearest=1${data.backDays !== 7 ? `&back=${data.backDays}` : ""}`}
+          href={nearestHref}
           data-sveltekit-noscroll>Check nearest reports</a
         >
       {:else if data.nearest?.error}

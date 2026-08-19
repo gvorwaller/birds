@@ -238,6 +238,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     stale,
     hasApiKey: !!apiKey,
     hasOrigin: !!origin,
+    /** Nearest lookups run from the SAVED home only (GROK P2-3) — a searched
+     * origin is not a substitute. */
+    hasHome: !!home,
     originLabel,
     distKm,
     backDays,
