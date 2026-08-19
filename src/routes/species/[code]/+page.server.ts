@@ -1,6 +1,7 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
-import { getEnrichment } from "$server/species-enrichment";
+import { enrichOneNow, getEnrichment } from "$server/species-enrichment";
+import { AI_STAGE_ENABLED } from "$server/job-handlers";
 import { validSpeciesCode } from "$server/wikidata";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
@@ -273,21 +274,48 @@ export const actions: Actions = {
     if (taxon.rows[0]?.category !== "species") {
       return fail(400, { error: "Not an enrichable species." });
     }
+    // Instant path (GROK pin c): wiki stages run INLINE under a 20s budget —
+    // the click Gaylon watched spin for five minutes now returns with the
+    // article. The AI stage is never inline; on wiki-ok with the annotation
+    // due, a narrowed aiOnly chunk is enqueued for the background worker.
+    const comName = taxon.rows[0].com_name;
+    const now = await enrichOneNow(code);
+    if (now.outcome === "ok") {
+      if (now.aiDue && AI_STAGE_ENABLED) {
+        await enqueueJob({
+          type: "enrich_species",
+          payload: { codes: [code], aiOnly: true },
+          dedupKey: dedupKeys.enrichAiChunk([code]),
+          requestedBy: locals.user!.id,
+          // displayName composes "Species data — {comName}" (GROK pin d:
+          // the label is the NAME alone; the type prefix supplies the rest).
+          label: comName,
+        });
+      }
+      return {
+        ok: true as const,
+        message:
+          now.aiDue && AI_STAGE_ENABLED
+            ? "Article loaded — field craft is being written."
+            : "Article loaded.",
+      };
+    }
+    if (now.outcome === "no_article" || now.outcome === "no_mapping") {
+      return { ok: true as const, message: "No Wikipedia article found." };
+    }
+    // Transient (timeout/rate limit): nothing was written — fall back to
+    // the queue so the refresh still happens without the user re-clicking.
     const r = await enqueueJob({
       type: "enrich_species",
       payload: { codes: [code], force: true },
       dedupKey: dedupKeys.enrichSpeciesOne(code),
       requestedBy: locals.user!.id,
-      // displayName composes "Species data — {comName}" (GROK pin d: the
-      // label is the NAME alone; the type prefix supplies the rest).
-      label: taxon.rows[0].com_name,
+      label: comName,
     });
     return {
       ok: true as const,
       queued: { jobId: r.jobId, deduped: r.deduped, label: "Species refresh" },
-      message: r.deduped
-        ? "A refresh for this species is already queued."
-        : "Refresh queued — new data appears when the background job finishes.",
+      message: "Couldn't refresh now — queued to retry.",
     };
   },
 };

@@ -256,7 +256,7 @@
           }}
         >
           <button type="submit" class="secondary" disabled={refreshBusy}>
-            {refreshBusy ? "Queuing…" : "↻ Refresh species data"}
+            {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
           </button>
         </form>
       {/if}
@@ -509,6 +509,13 @@
             </div>
           </details>
         {/each}
+        {#if en?.resolution === "no_sitelink" && en?.wiki_status === "ok"}
+          <!-- Binomial-redirect fallback (GROK pin b): honest label when the
+               article came via the scientific name, not a Wikidata sitelink. -->
+          <p class="muted">
+            Wikipedia has no sitelink for this taxon — showing "{en.wikipedia_title}".
+          </p>
+        {/if}
         <p class="wiki-attrib muted">
           Wikipedia · CC BY-SA 4.0{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}{#if !hasFieldCraft}
             · <a href="/species">Browse field guide →</a>{/if}
@@ -562,7 +569,7 @@
           }}
         >
           <button type="submit" class="secondary" disabled={refreshBusy}>
-            {refreshBusy ? "Queuing…" : "↻ Refresh species data"}
+            {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
           </button>
         </form>
       {/if}

@@ -74,6 +74,7 @@ import {
 	upsertAiData,
 	upsertResolution,
 	upsertWikiOk,
+	wikiFetchTitleFor,
 	wikiStaleCodes
 } from '$server/species-enrichment';
 import {
@@ -1057,9 +1058,10 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			return;
 		}
 
-	// Taxonomy names for the AI prompt — one query for the whole chunk.
+	// Taxonomy names for the AI prompt AND the sci-name sitelink fallback —
+	// one query for the whole chunk, needed regardless of the AI flag.
 	const taxa = new Map<string, { com_name: string; sci_name: string; family: string | null }>();
-	if (AI_STAGE_ENABLED) {
+	{
 		const t = await query<{
 			species_code: string;
 			com_name: string;
@@ -1230,6 +1232,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			const fresh = await query<{
 				skip: boolean;
 				resolution: string | null;
+				wiki_status: string | null;
 				retry_due: boolean;
 			}>(
 				`SELECT (wiki_status IN ('ok','no_article') AND (
@@ -1237,6 +1240,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				       OR ($2 = true  AND wiki_fetched_at > $3::timestamptz)
 				        )) AS skip,
 				        resolution,
+				        wiki_status,
 				        (wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
 				          AS retry_due
 				   FROM species_enrichment WHERE species_code = $1`,
@@ -1254,9 +1258,17 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			//   scan's 15-minute drain cadence turned "weekly" into a
 			//   quarter-hourly WDQS loop.
 			const row0 = fresh.rows[0];
+			// no_sitelink joins the weekly lane on retry_due ONLY (GROK pin d):
+			// its P3444 batch lookup already succeeded, so a resolved.has()
+			// rescue would re-open Wikipedia for every fresh no_sitelink row in
+			// every chunk. The sci-name article attempt runs on force, weekly
+			// retry_due, or a stale clock — never on a fresh skip.
 			const rescued =
-				row0?.resolution === 'no_mapping' &&
-				(resolved.has(code) || row0.retry_due === true);
+				(row0?.resolution === 'no_mapping' &&
+					(resolved.has(code) || row0.retry_due === true)) ||
+				(row0?.resolution === 'no_sitelink' &&
+					row0.wiki_status !== 'ok' &&
+					row0.retry_due === true);
 			if (row0?.skip === true && !rescued) {
 				// Wiki is fresh — but the AI stage may still be missing, behind
 				// the stored revision, past its error window, or forced. This is
@@ -1295,19 +1307,32 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					await markWikiNoArticle(code);
 					counts.noMapping++;
 					await unitOk('no_mapping');
-				} else if (!row.enwikiTitle) {
-					await markWikiNoArticle(code);
-					counts.noSitelink++;
-					await unitOk('no_sitelink');
 				} else {
+					// Sitelink when Wikidata has one, else the binomial redirect
+					// (shared helper — same decision as enrichOneNow, GROK pin d).
+					const target = wikiFetchTitleFor(row, taxa.get(code)?.sci_name ?? null);
+					if (target == null) {
+						// No sitelink and no usable binomial — terminal; restamp
+						// the clock or the weekly lane re-enqueues it forever.
+						await markWikiNoArticle(code);
+						counts.noSitelink++;
+						await unitOk('no_sitelink');
+					} else {
 					// Politeness gap before every Wikipedia hit (serial batch).
 					await new Promise((r) => setTimeout(r, WIKI_POLITENESS_MS));
 					try {
-						const article = await fetchArticlePlaintext(row.enwikiTitle);
+						const article = await fetchArticlePlaintext(target.title);
 						if (article == null) {
 							await markWikiNoArticle(code);
-							counts.noArticle++;
-							await unitOk('no_article');
+							if (target.viaFallback) {
+								// Fallback MISS keeps the no_sitelink resolution and
+								// the weekly retry lane (restamped just above).
+								counts.noSitelink++;
+								await unitOk('no_sitelink');
+							} else {
+								counts.noArticle++;
+								await unitOk('no_article');
+							}
 						} else {
 							await upsertWikiOk(code, article);
 							// Wiki success is the unit's anchor; a failed AI stage is
@@ -1336,6 +1361,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							break;
 						}
 						throw err;
+					}
 					}
 				}
 			}

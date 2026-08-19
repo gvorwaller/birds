@@ -13,8 +13,9 @@
 import { query } from '$lib/db';
 import { sanitizeErrorText } from '$server/job-policy';
 import type { WikidataSpeciesRow } from '$server/wikidata';
+import { fetchWikidataBatch, fetchWikidataBySciName, validSciName } from '$server/wikidata';
 import type { WikiArticle } from '$server/wikipedia';
-import { articleUrl } from '$server/wikipedia';
+import { articleUrl, fetchArticlePlaintext } from '$server/wikipedia';
 
 export const WIKI_REFRESH_DAYS = 180;
 export const ERROR_RETRY_DAYS = 7;
@@ -280,6 +281,13 @@ export async function wikiStaleCodes(): Promise<string[]> {
 		         -- gubter2 row was otherwise frozen for 180 days).
 		         OR (se.resolution = 'no_mapping'
 		             AND se.wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		         -- no_sitelink MISSES only (GROK pin d): a binomial-redirect HIT
+		         -- has wiki_status='ok' and rides the normal 180d refresh; only
+		         -- rows where the fallback also came up empty retry weekly, and
+		         -- each attempt re-stamps the clock (same anti-loop as above).
+		         OR (se.resolution = 'no_sitelink'
+		             AND se.wiki_status IS DISTINCT FROM 'ok'
+		             AND se.wiki_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
 		      )
 		 )
 		 ORDER BY 1`
@@ -310,6 +318,93 @@ export async function aiDueCodes(): Promise<string[]> {
 		 ORDER BY 1`
 	);
 	return r.rows.map((x) => x.species_code);
+}
+
+/**
+ * The ONE place that decides which Wikipedia page to fetch for a resolved
+ * Wikidata row (GROK pin d — action and worker must never diverge): the
+ * enwiki sitelink when Wikidata has one, else the scientific name (enwiki
+ * redirects binomials to the species article; fetchArticlePlaintext sends
+ * redirects=1 and returns the RESOLVED page title, which is what gets
+ * stored — never the eBird common name). Returns null when there is
+ * nothing safe to try.
+ */
+export function wikiFetchTitleFor(
+	row: WikidataSpeciesRow,
+	sciName: string | null
+): { title: string; viaFallback: boolean } | null {
+	if (row.enwikiTitle) return { title: row.enwikiTitle, viaFallback: false };
+	if (sciName && validSciName(sciName)) return { title: sciName, viaFallback: true };
+	return null;
+}
+
+export type EnrichNowResult =
+	| { outcome: 'ok'; title: string; viaFallback: boolean; aiDue: boolean }
+	| { outcome: 'no_article' }
+	| { outcome: 'no_mapping' }
+	| { outcome: 'transient' };
+
+/** Hard wall-clock ceiling for the interactive refresh (GROK pin c). */
+export const ENRICH_NOW_BUDGET_MS = 20_000;
+
+/**
+ * Interactive, wiki-only enrichment of a single species: Wikidata P3444
+ * (sci-name fallback on miss) → Wikipedia plaintext → the same upserts the
+ * worker uses. Runs inline in a form action under a 20s AbortSignal that is
+ * passed INTO every fetch — this can never wedge a request. The AI stage is
+ * NEVER run here (cost + latency); the caller enqueues an aiOnly chunk when
+ * `aiDue`. On any network/timeout failure it writes NOTHING (no error
+ * marks — a user's failed click must not consume the 7-day retry window)
+ * and reports 'transient' so the caller can fall back to the queue.
+ */
+export async function enrichOneNow(
+	code: string,
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<EnrichNowResult> {
+	const signal = opts.signal ?? AbortSignal.timeout(ENRICH_NOW_BUDGET_MS);
+	const fetchOpts = { signal, fetcher: opts.fetcher };
+	const t = await query<{ sci_name: string }>(
+		`SELECT sci_name FROM taxonomy_cache WHERE species_code = $1`,
+		[code]
+	);
+	const sciName = t.rows[0]?.sci_name ?? null;
+	try {
+		const resolved = await fetchWikidataBatch([code], fetchOpts);
+		if (!resolved.has(code) && sciName && validSciName(sciName)) {
+			const bySci = await fetchWikidataBySciName([{ code, sciName }], fetchOpts);
+			const hit = bySci.get(code);
+			if (hit) resolved.set(code, hit);
+		}
+		const row = resolved.get(code) ?? null;
+		await upsertResolution(code, row);
+		if (row == null) {
+			await markWikiNoArticle(code);
+			return { outcome: 'no_mapping' };
+		}
+		const target = wikiFetchTitleFor(row, sciName);
+		const article = target ? await fetchArticlePlaintext(target.title, fetchOpts) : null;
+		if (article == null) {
+			await markWikiNoArticle(code);
+			return { outcome: 'no_article' };
+		}
+		await upsertWikiOk(code, article);
+		const ai = await query<{ ai_status: string | null; ai_source_rev_id: string | null }>(
+			`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
+			[code]
+		);
+		const aiDue = !(
+			ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
+		);
+		return {
+			outcome: 'ok',
+			title: article.title,
+			viaFallback: target?.viaFallback === true,
+			aiDue
+		};
+	} catch {
+		// Timeout, WDQS/Wikipedia error, rate limit — all transient here.
+		return { outcome: 'transient' };
+	}
 }
 
 export interface GuideResult {

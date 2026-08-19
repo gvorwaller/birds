@@ -29,6 +29,8 @@ import {
   upsertAiData,
   upsertResolution,
   upsertWikiOk,
+  wikiFetchTitleFor,
+  enrichOneNow,
 } from "./species-enrichment";
 import type { WikidataSpeciesRow } from "./wikidata";
 
@@ -565,6 +567,251 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       expect(fts.map((r) => r.species_code)).toContain(B);
     } finally {
       await unseed();
+    }
+  });
+});
+
+describe("wikiFetchTitleFor (td-b7d021 — shared action/worker decision)", () => {
+  const base: WikidataSpeciesRow = {
+    speciesCode: "x1",
+    qid: "Q1",
+    enwikiTitle: null,
+    iucnStatus: null,
+    massKgMin: null,
+    massKgMax: null,
+    wingspanMMin: null,
+    wingspanMMax: null,
+    inatTaxonId: null,
+    xenoCantoId: null,
+  };
+  it("sitelink wins; sci name is never consulted", () => {
+    expect(wikiFetchTitleFor({ ...base, enwikiTitle: "Whimbrel" }, "Numenius phaeopus")).toEqual({
+      title: "Whimbrel",
+      viaFallback: false,
+    });
+  });
+  it("no sitelink + valid binomial → fallback title", () => {
+    expect(wikiFetchTitleFor(base, "Numenius hudsonicus")).toEqual({
+      title: "Numenius hudsonicus",
+      viaFallback: true,
+    });
+  });
+  it("no sitelink + missing/invalid sci name → null (terminal)", () => {
+    expect(wikiFetchTitleFor(base, null)).toBeNull();
+    expect(wikiFetchTitleFor(base, 'inj"ect')).toBeNull();
+  });
+});
+
+describe.runIf(dbUp)("no_sitelink weekly lane — MISSES only (td-b7d021)", () => {
+  const CODE = "jobtst3";
+  const NS_ROW: WikidataSpeciesRow = {
+    speciesCode: CODE,
+    qid: "Q27608723",
+    enwikiTitle: null,
+    iucnStatus: null,
+    massKgMin: null,
+    massKgMax: null,
+    wingspanMMin: null,
+    wingspanMMax: null,
+    inatTaxonId: null,
+    xenoCantoId: null,
+  };
+  it("miss retries weekly; a fallback HIT rides the normal 180d clock", async () => {
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Lane Bird', 'Lanus birdus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET category = 'species'`,
+      [CODE],
+    );
+    const uid = (
+      await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)
+    ).rows[0].id;
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source)
+       VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+      [uid, CODE],
+    );
+    try {
+      // Fallback MISS: no_sitelink + no_article clock just stamped → fresh.
+      await upsertResolution(CODE, NS_ROW);
+      await markWikiNoArticle(CODE);
+      expect(await wikiStaleCodes()).not.toContain(CODE);
+      // Past the weekly window → due (this is the new lane).
+      await query(
+        `UPDATE species_enrichment SET wiki_fetched_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+        [CODE],
+      );
+      expect(await wikiStaleCodes()).toContain(CODE);
+      // Fallback HIT (binomial redirect found the article): wiki_status='ok'
+      // excludes the row from the weekly lane even when aged (MISS-only,
+      // GROK pin d) — resolution stays no_sitelink for the UI note.
+      await upsertWikiOk(CODE, { title: "Lanus birdus", revId: 5, extract: "x", sections: [] });
+      await query(
+        `UPDATE species_enrichment SET wiki_fetched_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+        [CODE],
+      );
+      expect((await getEnrichment(CODE))?.resolution).toBe("no_sitelink");
+      expect(await wikiStaleCodes()).not.toContain(CODE);
+      // …but the normal 180d refresh still applies to the hit.
+      await query(
+        `UPDATE species_enrichment SET wiki_fetched_at = NOW() - INTERVAL '181 days'
+          WHERE species_code = $1`,
+        [CODE],
+      );
+      expect(await wikiStaleCodes()).toContain(CODE);
+    } finally {
+      await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
+      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+      await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+    }
+  });
+});
+
+describe.runIf(dbUp)("enrichOneNow — instant wiki-only refresh (td-b7d021)", () => {
+  const CODE = "jobtst4";
+  const SCI = "Instantus birdus";
+
+  /** Fetcher speaking both WDQS and the Wikipedia API from canned bodies. */
+  function fakeNet(opts: {
+    batchBindings?: object[];
+    sciBindings?: object[];
+    article?: { title: string; revid: number; extract: string } | "missing" | "http503";
+  }) {
+    let sparqlCalls = 0;
+    const fetcher = (async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("query.wikidata.org")) {
+        sparqlCalls++;
+        const bindings = sparqlCalls === 1 ? (opts.batchBindings ?? []) : (opts.sciBindings ?? []);
+        return new Response(JSON.stringify({ results: { bindings } }), { status: 200 });
+      }
+      if (url.includes("wikipedia.org")) {
+        if (opts.article === "http503") return new Response("busy", { status: 503 });
+        if (opts.article === "missing" || opts.article == null) {
+          return new Response(
+            JSON.stringify({ query: { pages: [{ title: "x", missing: true }] } }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            query: {
+              pages: [
+                {
+                  title: opts.article.title,
+                  extract: opts.article.extract,
+                  revisions: [{ revid: opts.article.revid }],
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    return { fetcher, sparql: () => sparqlCalls };
+  }
+
+  const seed = async () => {
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Instant Bird', $2, 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET sci_name = $2, category = 'species'`,
+      [CODE, SCI],
+    );
+  };
+  const cleanup = async () => {
+    await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+  };
+
+  it("no sitelink → binomial fallback HIT: stores the RESOLVED title, keeps no_sitelink", async () => {
+    await seed();
+    try {
+      const net = fakeNet({
+        batchBindings: [
+          { ebird: { value: CODE }, item: { value: "http://www.wikidata.org/entity/Q77" } },
+        ],
+        article: { title: "Instant bird article", revid: 9, extract: "Prose." },
+      });
+      const out = await enrichOneNow(CODE, { fetcher: net.fetcher });
+      expect(out).toEqual({
+        outcome: "ok",
+        title: "Instant bird article",
+        viaFallback: true,
+        aiDue: true,
+      });
+      const row = await getEnrichment(CODE);
+      expect(row?.resolution).toBe("no_sitelink"); // WD truth survives the hit
+      expect(row?.wiki_status).toBe("ok");
+      expect(row?.wikipedia_title).toBe("Instant bird article"); // never the com name
+      expect(net.sparql()).toBe(1); // P3444 hit → sci SPARQL not needed
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("fallback MISS → no_article with the clock stamped (weekly lane feed)", async () => {
+    await seed();
+    try {
+      const net = fakeNet({
+        batchBindings: [
+          { ebird: { value: CODE }, item: { value: "http://www.wikidata.org/entity/Q77" } },
+        ],
+        article: "missing",
+      });
+      expect(await enrichOneNow(CODE, { fetcher: net.fetcher })).toEqual({
+        outcome: "no_article",
+      });
+      const row = await getEnrichment(CODE);
+      expect(row?.resolution).toBe("no_sitelink");
+      expect(row?.wiki_status).toBe("no_article");
+      expect(row?.wiki_fetched_at).not.toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("unmapped everywhere → no_mapping (sci SPARQL was tried)", async () => {
+    await seed();
+    try {
+      const net = fakeNet({ batchBindings: [], sciBindings: [] });
+      expect(await enrichOneNow(CODE, { fetcher: net.fetcher })).toEqual({
+        outcome: "no_mapping",
+      });
+      expect(net.sparql()).toBe(2);
+      expect((await getEnrichment(CODE))?.resolution).toBe("no_mapping");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("transient failure → NO error marks written (user's click must not burn the retry window)", async () => {
+    await seed();
+    try {
+      const net = fakeNet({
+        batchBindings: [
+          {
+            ebird: { value: CODE },
+            item: { value: "http://www.wikidata.org/entity/Q77" },
+            article: { value: "https://en.wikipedia.org/wiki/Instant_bird" },
+          },
+        ],
+        article: "http503",
+      });
+      expect(await enrichOneNow(CODE, { fetcher: net.fetcher })).toEqual({
+        outcome: "transient",
+      });
+      const row = await getEnrichment(CODE);
+      expect(row?.wiki_status).toBeNull(); // resolution recorded, wiki stage untouched
+      expect(row?.wiki_fetched_at).toBeNull();
+    } finally {
+      await cleanup();
     }
   });
 });

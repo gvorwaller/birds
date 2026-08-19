@@ -501,8 +501,18 @@
 					<li>
 						Coverage grows by itself: new lifers, newly loaded counties, and
 						new photos are enriched within a day (sooner while a backlog is
-						draining). Species without an English Wikipedia article show
-						facts and links only.
+						draining). Loading a forecast area on
+						<a href="/forecast/data">Hotspots &amp; data</a> is the big lever —
+						a statewide load brings that state's whole avifauna into the
+						guide. Species without an English Wikipedia article show facts
+						and links only; for a few taxa Wikipedia lacks a direct link and
+						the article is found by scientific name instead (the About card
+						says so when that happens).
+					</li>
+					<li>
+						Admins get a <strong>↻ Refresh species data</strong> button on
+						each species page — it fetches the article right then (a few
+						seconds); only the AI field craft finishes in the background.
 					</li>
 				</ul>
 			</div>
