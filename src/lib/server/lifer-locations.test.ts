@@ -43,6 +43,7 @@ function fakeEbird(spec: {
 
 describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
   const LOCS = ["Ltest01", "Ltest02", "Ltest03"];
+  const TEST_TAXA = ["zztsta1", "zztstb1", "zztstc1"];
   let uid: number;
 
   const seed = async (rows: { code: string; locId: string; subId: string | null }[]) => {
@@ -60,6 +61,15 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       [uid, encryptSecret("test-key")],
     );
     await wipe();
+    // Seed taxonomy so importLifeList can match these codes.
+    for (const code of TEST_TAXA) {
+      await query(
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category)
+         VALUES ($1, $1, $1, 'species')
+         ON CONFLICT (species_code) DO NOTHING`,
+        [code],
+      );
+    }
     for (const r of rows) {
       await query(
         `INSERT INTO seen_species (user_id, species_code, source, loc_id, sub_id)
@@ -74,6 +84,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
     await query(`DELETE FROM seen_species WHERE user_id = $1`, [uid]);
     await query(`DELETE FROM ebird_locations WHERE loc_id = ANY($1)`, [LOCS]);
     await query(`DELETE FROM lifer_loc_attempts WHERE user_id = $1`, [uid]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [TEST_TAXA]);
   };
 
   it("hotspot hit + checklist fallback + both-miss negative, all in one pass", async () => {
@@ -122,7 +133,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       expect(res).toMatchObject({ candidates: 1, negative: 1 });
 
       // Re-import the same loc_id (simulates a credentialed sync).
-      await importLifeList(uid, {
+      const imp = await importLifeList(uid, {
         rows: [{
           comName: "zztsta1", sciName: null, firstSeen: "2025-01-01",
           csvRowNum: 1, taxonOrder: null, category: "species",
@@ -130,6 +141,15 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
           regionCode: "US-FL", subId: "Stest01", exotic: null, countable: true,
         }],
       }, "csv_import");
+      expect(imp.matched).toBe(1);
+
+      // Verify the row was actually reinserted with Ltest01.
+      const reinserted = await query(
+        `SELECT loc_id FROM seen_species WHERE user_id = $1 AND species_code = 'zztsta1'`,
+        [uid],
+      );
+      expect(reinserted.rows.length).toBe(1);
+      expect(reinserted.rows[0].loc_id).toBe("Ltest01");
 
       // The negative must survive: candidates === 0 after re-import.
       const again = await resolveLiferLocations(uid, { fetcher: net.fetcher });
