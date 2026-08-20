@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import { encryptSecret } from "$server/crypto";
+import { importLifeList } from "./ebird-account";
 import { resolveLiferLocations } from "./lifer-locations";
 
-// DB-backed (jobs-db pattern) — everything here needs the test cluster.
 const dbUp = await query("SELECT 1")
   .then(() => true)
   .catch(() => false);
 
 /** Fetcher speaking the two eBird endpoints from canned outcomes. */
 function fakeEbird(spec: {
-  hotspot?: Record<string, { name: string; latitude: number; longitude: number } | 404>;
+  hotspot?: Record<string, { name: string; latitude: number; longitude: number } | 404 | 403>;
   checklist?: Record<
     string,
-    { locId: string; name: string; latitude: number; longitude: number } | 404
+    { locId: string; name: string; latitude: number; longitude: number } | 404 | 403
   >;
   rateLimit?: boolean;
 }) {
@@ -25,12 +25,14 @@ function fakeEbird(spec: {
     const hs = /\/ref\/hotspot\/info\/([^/?]+)/.exec(url);
     if (hs) {
       const v = spec.hotspot?.[decodeURIComponent(hs[1])];
+      if (v === 403) return new Response("forbidden", { status: 403 });
       if (v == null || v === 404) return new Response("not found", { status: 404 });
       return new Response(JSON.stringify({ locId: hs[1], ...v }), { status: 200 });
     }
     const cl = /\/product\/checklist\/view\/([^/?]+)/.exec(url);
     if (cl) {
       const v = spec.checklist?.[decodeURIComponent(cl[1])];
+      if (v === 403) return new Response("forbidden", { status: 403 });
       if (v == null || v === 404) return new Response("not found", { status: 404 });
       return new Response(JSON.stringify({ subId: cl[1], loc: v }), { status: 200 });
     }
@@ -43,9 +45,6 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
   const LOCS = ["Ltest01", "Ltest02", "Ltest03"];
   let uid: number;
 
-  // DEDICATED user: other test files seed seen_species rows for the shared
-  // admin user in parallel, and the resolver's candidate query is per-user
-  // over ALL rows — a shared user makes candidate counts racy.
   const seed = async (rows: { code: string; locId: string; subId: string | null }[]) => {
     uid = (
       await query<{ id: number }>(
@@ -66,7 +65,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
         `INSERT INTO seen_species (user_id, species_code, source, loc_id, sub_id)
          VALUES ($1, $2, 'csv_import', $3, $4)
          ON CONFLICT (user_id, species_code) DO UPDATE
-           SET loc_id = EXCLUDED.loc_id, sub_id = EXCLUDED.sub_id, loc_checked_at = NULL`,
+           SET loc_id = EXCLUDED.loc_id, sub_id = EXCLUDED.sub_id`,
         [uid, r.code, r.locId, r.subId],
       );
     }
@@ -74,6 +73,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
   const wipe = async () => {
     await query(`DELETE FROM seen_species WHERE user_id = $1`, [uid]);
     await query(`DELETE FROM ebird_locations WHERE loc_id = ANY($1)`, [LOCS]);
+    await query(`DELETE FROM lifer_loc_attempts WHERE user_id = $1`, [uid]);
   };
 
   it("hotspot hit + checklist fallback + both-miss negative, all in one pass", async () => {
@@ -95,8 +95,15 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       );
       expect(locs.rows.map((r) => r.loc_id)).toEqual(["Ltest01", "Ltest02"]);
       expect(locs.rows[1].loc_name).toBe("My Yard");
-      // Negative persisted: second pass has NO candidates (pin 2 — 404s are
-      // remembered, not retried every sync).
+
+      // Negative persisted in lifer_loc_attempts.
+      const neg = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest03'`,
+        [uid],
+      );
+      expect(neg.rows.length).toBe(1);
+
+      // Second pass has NO candidates (pin 2 — 404s remembered, not retried).
       const again = await resolveLiferLocations(uid, { fetcher: net.fetcher });
       expect(again.candidates).toBe(0);
     } finally {
@@ -104,17 +111,119 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
     }
   });
 
-  it("transient 429 stops the pass WITHOUT stamping (retries next sync)", async () => {
+  it("negative survives importLifeList DELETE+reINSERT (the original blocker)", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+    ]);
+    try {
+      // Resolve: Ltest01 is a both-miss → negative persisted.
+      const net = fakeEbird({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      expect(res).toMatchObject({ candidates: 1, negative: 1 });
+
+      // Re-import the same loc_id (simulates a credentialed sync).
+      await importLifeList(uid, {
+        rows: [{
+          comName: "zztsta1", sciName: null, firstSeen: "2025-01-01",
+          csvRowNum: 1, taxonOrder: null, category: "species",
+          obsCount: 1, locationName: "Somewhere", locId: "Ltest01",
+          regionCode: "US-FL", subId: "Stest01", exotic: null, countable: true,
+        }],
+      }, "csv_import");
+
+      // The negative must survive: candidates === 0 after re-import.
+      const again = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      expect(again.candidates).toBe(0);
+
+      // lifer_loc_attempts row still present.
+      const row = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
+        [uid],
+      );
+      expect(row.rows.length).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("transient 429 stops the pass WITHOUT recording a negative", async () => {
     await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
     try {
       const net = fakeEbird({ rateLimit: true });
       const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
       expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true });
-      const row = await query<{ loc_checked_at: string | null }>(
-        `SELECT loc_checked_at::text FROM seen_species WHERE user_id = $1 AND species_code = 'zztsta1'`,
+      // No lifer_loc_attempts row — retries next sync.
+      const row = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
         [uid],
       );
-      expect(row.rows[0].loc_checked_at).toBeNull();
+      expect(row.rows.length).toBe(0);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("hotspot 403 (invalid API key) stops the pass without persisting a negative", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+      { code: "zztstb1", locId: "Ltest02", subId: "Stest02" },
+    ]);
+    try {
+      const net = fakeEbird({
+        hotspot: { Ltest01: 403 },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      expect(res.stopped).toBe(true);
+      expect(res.negative).toBe(0);
+      // No lifer_loc_attempts row — a bad key must not poison loc_ids.
+      const row = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1`,
+        [uid],
+      );
+      expect(row.rows.length).toBe(0);
+      // Second loc_id was never attempted (pass stopped at first).
+      expect(net.calls.length).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("checklist 403 is a data state (negative), not a stop", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({
+        checklist: { Stest01: 403 },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      expect(res).toMatchObject({ candidates: 1, negative: 1, stopped: false });
+      // Persisted as a negative.
+      const row = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
+        [uid],
+      );
+      expect(row.rows.length).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("NULLS LAST: prefers sibling row with sub_id for checklist fallback", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: null },
+      { code: "zztstb1", locId: "Ltest01", subId: "Stest01" },
+    ]);
+    try {
+      const net = fakeEbird({
+        checklist: { Stest01: { locId: "Ltest01", name: "Personal Spot", latitude: 35.0, longitude: -80.0 } },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 1 });
+      // The checklist fallback was used (hotspot 404 + sub_id from sibling).
+      expect(net.calls.some((c) => c.includes("checklist/view/Stest01"))).toBe(true);
+      const loc = await query<{ loc_name: string }>(
+        `SELECT loc_name FROM ebird_locations WHERE loc_id = 'Ltest01'`,
+      );
+      expect(loc.rows[0].loc_name).toBe("Personal Spot");
     } finally {
       await wipe();
     }
@@ -127,7 +236,6 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       { code: "zztstc1", locId: "Ltest03", subId: null },
     ]);
     try {
-      // Ltest03 already known → join-first excludes it from candidates.
       await query(
         `INSERT INTO ebird_locations (loc_id, loc_name, lat, lng)
          VALUES ('Ltest03', 'Known Spot', 1, 2) ON CONFLICT (loc_id) DO NOTHING`,
@@ -139,10 +247,9 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
         },
       });
       const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, cap: 1 });
-      expect(res.candidates).toBe(2); // Ltest03 never a candidate
+      expect(res.candidates).toBe(2);
       expect(res.capped).toBe(true);
-      expect(res.resolved).toBe(1); // only one live lookup ran
-      // INSERT-only: the pre-existing row keeps its feed-sourced values.
+      expect(res.resolved).toBe(1);
       const known = await query<{ loc_name: string }>(
         `SELECT loc_name FROM ebird_locations WHERE loc_id = 'Ltest03'`,
       );
