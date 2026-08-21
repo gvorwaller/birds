@@ -46,17 +46,28 @@ type OwnerFetcher = (userId: number, url: string, opts?: { timeout?: number }) =
  * Range-check lat ∈ [−90,90], lng ∈ [−180,180]. No general HTML parsing.
  */
 export function extractLatLng(html: string): { lat: number; lng: number } | null {
-	// Adjacent pair match — "lat":N,"lng":N as a single unit (GROK review).
-	// Fallback: "latitude":N,"longitude":N (eBird API format).
+	// Adjacent pair match as a single unit (GROK review). The live checklist JSP
+	// serializes coordinates as strings, while other eBird payloads use numbers.
 	const m =
-		html.match(/"lat"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*(-?\d+(?:\.\d+)?)/) ??
-		html.match(/"latitude"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*(-?\d+(?:\.\d+)?)/);
+		html.match(/"lat"\s*:\s*"?(-?\d+(?:\.\d+)?)"?\s*,\s*"lng"\s*:\s*"?(-?\d+(?:\.\d+)?)"?/) ??
+		html.match(/"latitude"\s*:\s*"?(-?\d+(?:\.\d+)?)"?\s*,\s*"longitude"\s*:\s*"?(-?\d+(?:\.\d+)?)"?/);
 	if (!m) return null;
 	const lat = parseFloat(m[1]);
 	const lng = parseFloat(m[2]);
 	if (isNaN(lat) || isNaN(lng)) return null;
 	if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
 	return { lat, lng };
+}
+
+function regexEscape(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Distinguish a coordinate-less checklist from a login/interstitial page. */
+export function hasChecklistMarker(html: string, subId: string): boolean {
+	if (/"checklistId"\s*:/.test(html)) return true;
+	const id = regexEscape(subId);
+	return new RegExp(`(?:\\bsubId\\b\\s*[:=]|data-sub-?id\\s*=)\\s*["']${id}["']`, 'i').test(html);
 }
 
 function callTimeout(deadlineAt?: number): number | undefined {
@@ -95,7 +106,7 @@ async function lookupOwnerHtml(
 		const html = await ownerFetcher(userId, `https://ebird.org/checklist/${subId}`, t != null ? { timeout: t } : undefined);
 		const coords = extractLatLng(html);
 		if (!coords) {
-			if (!/"(?:checklistId|subId)"\s*:/.test(html)) return { stop: 'auth' };
+			if (!hasChecklistMarker(html, subId)) return { stop: 'auth' };
 			return null;
 		}
 		return { ...coords, locName: null };

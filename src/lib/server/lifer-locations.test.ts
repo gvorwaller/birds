@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import { encryptSecret } from "$server/crypto";
 import { importLifeList } from "./ebird-account";
-import { resolveLiferLocations, extractLatLng } from "./lifer-locations";
+import { resolveLiferLocations, extractLatLng, hasChecklistMarker } from "./lifer-locations";
 
 const dbUp = await query("SELECT 1")
   .then(() => true)
@@ -146,6 +146,31 @@ describe.runIf(dbUp)("resolveLiferLocations (td-2fbfc1 Commit B)", () => {
       expect(llc.rows.length).toBe(1);
       expect(llc.rows[0].source_loc_id).toBe("Ltest01");
       expect(llc.rows[0].provenance).toBe("checklist_owner");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("production-shaped owner HTML with quoted coordinates resolves instead of stopping as auth", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+    ]);
+    try {
+      const net = fakeEbird({ hotspot: { Ltest01: "empty" } });
+      const owner = fakeOwnerFetcher({
+        checklists: {
+          Stest01:
+            `<html><div data-sub-id="Stest01"></div>` +
+            `<script>var subId = "Stest01"; var p = {"lat":"30.263016","lng":"-81.637047"};</script></html>`,
+        },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 1, negative: 0, stopped: false });
+      const row = await query<{ lat: number; lng: number }>(
+        `SELECT lat, lng FROM lifer_loc_coords WHERE user_id = $1 AND source_loc_id = 'Ltest01'`,
+        [uid],
+      );
+      expect(row.rows[0]).toEqual({ lat: 30.263016, lng: -81.637047 });
     } finally {
       await wipe();
     }
@@ -528,6 +553,11 @@ describe("extractLatLng", () => {
     expect(extractLatLng(html)).toEqual({ lat: 30.263016, lng: -81.637047 });
   });
 
+  it("extracts quoted numeric coordinates from the live checklist JSP shape", () => {
+    const html = `"lat":"30.263016","lng":"-81.637047"`;
+    expect(extractLatLng(html)).toEqual({ lat: 30.263016, lng: -81.637047 });
+  });
+
   it("returns null for out-of-range coordinates", () => {
     expect(extractLatLng(`"lat":91,"lng":0`)).toBeNull();
     expect(extractLatLng(`"lat":0,"lng":181`)).toBeNull();
@@ -555,5 +585,17 @@ describe("extractLatLng", () => {
   it("prefers lat/lng over latitude/longitude when both present", () => {
     const html = `"lat":1.0,"lng":2.0 "latitude":3.0,"longitude":4.0`;
     expect(extractLatLng(html)).toEqual({ lat: 1.0, lng: 2.0 });
+  });
+});
+
+describe("hasChecklistMarker", () => {
+  it("accepts live JSP markers for the expected SubID", () => {
+    expect(hasChecklistMarker(`var subId = "S95614428";`, "S95614428")).toBe(true);
+    expect(hasChecklistMarker(`<div data-sub-id="S95614428"></div>`, "S95614428")).toBe(true);
+  });
+
+  it("rejects another SubID and login/interstitial HTML", () => {
+    expect(hasChecklistMarker(`var subId = "S999";`, "S95614428")).toBe(false);
+    expect(hasChecklistMarker(`<html>Please sign in to continue</html>`, "S95614428")).toBe(false);
   });
 });
