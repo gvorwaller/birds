@@ -65,16 +65,20 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 export async function ebirdFetchOrNull<T>(
 	path: string,
 	apiKey: string,
-	opts: { fetcher?: typeof fetch; nullOn?: readonly number[] } = {}
+	opts: { fetcher?: typeof fetch; nullOn?: readonly number[]; signal?: AbortSignal } = {}
 ): Promise<T | null> {
 	const doFetch = opts.fetcher ?? fetch;
 	const nullOn = opts.nullOn ?? [404];
 	let res: Response;
 	try {
 		res = await doFetch(`${API}${path}`, {
-			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' }
+			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
+			signal: opts.signal
 		});
 	} catch (err) {
+		if (opts.signal?.aborted) {
+			throw new EbirdError('eBird API request aborted (deadline).');
+		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
 	if (nullOn.includes(res.status)) return null;
@@ -84,7 +88,17 @@ export async function ebirdFetchOrNull<T>(
 	if (!res.ok) {
 		throw new EbirdError(`eBird API error ${res.status} for ${path}`, res.status);
 	}
-	return (await res.json()) as T;
+	// Personal L-ids return HTTP 200 with an empty body (not 404) from
+	// hotspot/info. Bare res.json() throws SyntaxError — not an EbirdError —
+	// which bypassed the resolver's catch and aborted every prod pass
+	// (td-2fbfc1 root cause). Parse safely: empty or non-JSON 200 → null.
+	const body = await res.text();
+	if (!body.trim()) return null;
+	try {
+		return JSON.parse(body) as T;
+	} catch {
+		return null;
+	}
 }
 
 async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
