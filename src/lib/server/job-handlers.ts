@@ -1569,7 +1569,18 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'sync_lifelist': {
 				await runSyncJob(job, async () => {
-					const r = await syncLifeListFromEbird(job.requested_by);
+					const heartbeat = async () => {
+						const { cancelRequested } = await updateProgress(job.id, {
+							phase: 'fetching',
+							unitsTotal: 1,
+							unitsDone: 0,
+							unitsFailed: 0,
+							unitsSkipped: 0,
+							round: job.attempts
+						});
+						return { cancel: cancelRequested };
+					};
+					const r = await syncLifeListFromEbird(job.requested_by, { heartbeat });
 					return {
 						total: r.total,
 						matched: r.matched,

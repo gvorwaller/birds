@@ -106,13 +106,11 @@
     }));
   });
 
-  // Disclosure (GROK pin 5): locations that joined no coordinates, and rows
-  // with no location data at all (pre-migration / manual) — never silent.
-  const unresolvedLocs = $derived(
-    new Set(filtered.filter((l) => l.loc_id && (l.lat == null || l.lng == null)).map((l) => l.loc_id))
-      .size,
-  );
-  const noLocRows = $derived(filtered.filter((l) => !l.loc_id).length);
+  const pending = $derived(data.pendingUnattempted);
+  const negatives = $derived(data.negatives);
+  const noLocRows = $derived(data.noLoc);
+  const locStatus = $derived(data.locResolutionStatus);
+  const locError = $derived(data.locResolutionError);
 
   const syncedOn = $derived(
     data.syncedAt ? new Date(data.syncedAt).toLocaleDateString() : null,
@@ -214,14 +212,24 @@
         {:else}
           <p class="muted">No mappable locations{regionFilter ? " for this filter" : ""} yet.</p>
         {/if}
-        {#if unresolvedLocs > 0 || noLocRows > 0}
-          <p class="muted disclose">
-            {#if unresolvedLocs > 0}{unresolvedLocs} location{unresolvedLocs === 1 ? " has" : "s have"}
-              no map pin — eBird returned no coordinates (more resolve on each
-              sync).{/if}
-            {#if noLocRows > 0}{noLocRows} lifer{noLocRows === 1 ? "" : "s"} predate location
-              tracking — the next sync fills them in.{/if}
-          </p>
+        {#if pending > 0 || negatives > 0 || noLocRows > 0}
+          <div class="muted disclose">
+            {#if pending > 0 && !data.hasCreds}
+              <p>{pending} location{pending === 1 ? " needs" : "s need"} an eBird sign-in sync to plot.</p>
+            {:else if pending > 0 && (locStatus === 'capped' || locStatus === 'stopped')}
+              <p>{pending} location{pending === 1 ? "" : "s"} still resolving — sync again to plot more pins.</p>
+            {:else if pending > 0 && locStatus === 'error'}
+              <p>{pending} location{pending === 1 ? "" : "s"} could not be resolved{locError ? ` — ${locError}` : ""}. Check <a href="/settings">Settings</a>.</p>
+            {:else if pending > 0}
+              <p>{pending} location{pending === 1 ? "" : "s"} still resolving — sync again to plot more pins.</p>
+            {/if}
+            {#if negatives > 0}
+              <p>{negatives} location{negatives === 1 ? " has" : "s have"} no map pin.</p>
+            {/if}
+            {#if noLocRows > 0}
+              <p>{noLocRows} lifer{noLocRows === 1 ? "" : "s"} predate location tracking — the next sync fills them in.</p>
+            {/if}
+          </div>
         {/if}
       </section>
 

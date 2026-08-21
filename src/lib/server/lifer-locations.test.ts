@@ -2,19 +2,15 @@ import { describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import { encryptSecret } from "$server/crypto";
 import { importLifeList } from "./ebird-account";
-import { resolveLiferLocations } from "./lifer-locations";
+import { resolveLiferLocations, extractLatLng } from "./lifer-locations";
 
 const dbUp = await query("SELECT 1")
   .then(() => true)
   .catch(() => false);
 
-/** Fetcher speaking the two eBird endpoints from canned outcomes. */
+/** Canned hotspot-info fetcher (API key path). */
 function fakeEbird(spec: {
-  hotspot?: Record<string, { name: string; latitude: number; longitude: number } | 404 | 403>;
-  checklist?: Record<
-    string,
-    { locId: string; name: string; latitude: number; longitude: number } | 404 | 403
-  >;
+  hotspot?: Record<string, { name: string; latitude: number; longitude: number } | 404 | 403 | "empty">;
   rateLimit?: boolean;
 }) {
   const calls: string[] = [];
@@ -26,27 +22,50 @@ function fakeEbird(spec: {
     if (hs) {
       const v = spec.hotspot?.[decodeURIComponent(hs[1])];
       if (v === 403) return new Response("forbidden", { status: 403 });
+      if (v === "empty") return new Response("", { status: 200 });
       if (v == null || v === 404) return new Response("not found", { status: 404 });
       return new Response(JSON.stringify({ locId: hs[1], ...v }), { status: 200 });
-    }
-    const cl = /\/product\/checklist\/view\/([^/?]+)/.exec(url);
-    if (cl) {
-      const v = spec.checklist?.[decodeURIComponent(cl[1])];
-      if (v === 403) return new Response("forbidden", { status: 403 });
-      if (v == null || v === 404) return new Response("not found", { status: 404 });
-      return new Response(JSON.stringify({ subId: cl[1], loc: v }), { status: 200 });
     }
     throw new Error(`unexpected fetch: ${url}`);
   }) as typeof fetch;
   return { fetcher, calls };
 }
 
-describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
+function ownerHtml(lat: number, lng: number): string {
+  return `<html>some page content "lat":${lat},"lng":${lng} more content</html>`;
+}
+
+/** Canned owner HTML fetcher (CAS session path). */
+function fakeOwnerFetcher(spec: {
+  checklists?: Record<string, string | 403 | 404 | "login">;
+}) {
+  const calls: string[] = [];
+  const fetcher = async (_userId: number, url: string) => {
+    calls.push(url);
+    const subMatch = /\/checklist\/([^/?]+)/.exec(url);
+    if (!subMatch) throw new Error(`unexpected owner fetch: ${url}`);
+    const subId = subMatch[1];
+    const v = spec.checklists?.[subId];
+    if (v === 403 || v === 404) {
+      const { EbirdUpstreamError } = await import("./ebird-account");
+      throw new EbirdUpstreamError(`HTTP ${v}`, v);
+    }
+    if (v === "login") {
+      const { EbirdLoginError } = await import("./ebird-account");
+      throw new EbirdLoginError("session expired");
+    }
+    if (v == null) return `<html>"checklistId":"CLtest" no coordinates</html>`;
+    return v;
+  };
+  return { fetcher, calls };
+}
+
+describe.runIf(dbUp)("resolveLiferLocations (td-2fbfc1 Commit B)", () => {
   const LOCS = ["Ltest01", "Ltest02", "Ltest03"];
   const TEST_TAXA = ["zztsta1", "zztstb1", "zztstc1"];
   let uid: number;
 
-  const seed = async (rows: { code: string; locId: string; subId: string | null }[]) => {
+  const seed = async (rows: { code: string; locId: string; subId: string | null; firstSeen?: string }[]) => {
     uid = (
       await query<{ id: number }>(
         `INSERT INTO users (username, display_name, password_hash, role)
@@ -61,7 +80,6 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       [uid, encryptSecret("test-key")],
     );
     await wipe();
-    // Seed taxonomy so importLifeList can match these codes.
     for (const code of TEST_TAXA) {
       await query(
         `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category)
@@ -72,11 +90,11 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
     }
     for (const r of rows) {
       await query(
-        `INSERT INTO seen_species (user_id, species_code, source, loc_id, sub_id)
-         VALUES ($1, $2, 'csv_import', $3, $4)
+        `INSERT INTO seen_species (user_id, species_code, source, loc_id, sub_id, first_seen)
+         VALUES ($1, $2, 'csv_import', $3, $4, $5)
          ON CONFLICT (user_id, species_code) DO UPDATE
-           SET loc_id = EXCLUDED.loc_id, sub_id = EXCLUDED.sub_id`,
-        [uid, r.code, r.locId, r.subId],
+           SET loc_id = EXCLUDED.loc_id, sub_id = EXCLUDED.sub_id, first_seen = EXCLUDED.first_seen`,
+        [uid, r.code, r.locId, r.subId, r.firstSeen ?? null],
       );
     }
   };
@@ -84,56 +102,115 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
     await query(`DELETE FROM seen_species WHERE user_id = $1`, [uid]);
     await query(`DELETE FROM ebird_locations WHERE loc_id = ANY($1)`, [LOCS]);
     await query(`DELETE FROM lifer_loc_attempts WHERE user_id = $1`, [uid]);
+    await query(`DELETE FROM lifer_loc_coords WHERE user_id = $1`, [uid]);
     await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [TEST_TAXA]);
   };
 
-  it("hotspot hit + checklist fallback + both-miss negative, all in one pass", async () => {
+  it("hotspot hit writes ebird_locations, not lifer_loc_coords", async () => {
     await seed([
       { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
-      { code: "zztstb1", locId: "Ltest02", subId: "Stest02" },
-      { code: "zztstc1", locId: "Ltest03", subId: "Stest03" },
     ]);
     try {
       const net = fakeEbird({
         hotspot: { Ltest01: { name: "Hotspot One", latitude: 30.1, longitude: -81.4 } },
-        checklist: { Stest02: { locId: "Ltest02", name: "My Yard", latitude: 44.2, longitude: -68.5 } },
       });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
-      expect(res).toMatchObject({ candidates: 3, resolved: 2, negative: 1, stopped: false });
-      const locs = await query<{ loc_id: string; loc_name: string }>(
-        `SELECT loc_id, loc_name FROM ebird_locations WHERE loc_id = ANY($1) ORDER BY loc_id`,
-        [LOCS],
-      );
-      expect(locs.rows.map((r) => r.loc_id)).toEqual(["Ltest01", "Ltest02"]);
-      expect(locs.rows[1].loc_name).toBe("My Yard");
-
-      // Negative persisted in lifer_loc_attempts.
-      const neg = await query(
-        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest03'`,
-        [uid],
-      );
-      expect(neg.rows.length).toBe(1);
-
-      // Second pass has NO candidates (pin 2 — 404s remembered, not retried).
-      const again = await resolveLiferLocations(uid, { fetcher: net.fetcher });
-      expect(again.candidates).toBe(0);
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 1, negative: 0, stopped: false });
+      const locs = await query(`SELECT loc_id FROM ebird_locations WHERE loc_id = 'Ltest01'`);
+      expect(locs.rows.length).toBe(1);
+      const llc = await query(`SELECT 1 FROM lifer_loc_coords WHERE user_id = $1`, [uid]);
+      expect(llc.rows.length).toBe(0);
+      expect(owner.calls.length).toBe(0);
     } finally {
       await wipe();
     }
   });
 
-  it("negative survives importLifeList DELETE+reINSERT (the original blocker)", async () => {
+  it("owner HTML hit writes lifer_loc_coords, not ebird_locations", async () => {
     await seed([
       { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
     ]);
     try {
-      // Resolve: Ltest01 is a both-miss → negative persisted.
-      const net = fakeEbird({});
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
-      expect(res).toMatchObject({ candidates: 1, negative: 1 });
+      const net = fakeEbird({ hotspot: {} });
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: ownerHtml(30.263, -81.637) },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 1, negative: 0, stopped: false });
+      const locs = await query(`SELECT loc_id FROM ebird_locations WHERE loc_id = 'Ltest01'`);
+      expect(locs.rows.length).toBe(0);
+      const llc = await query<{ source_loc_id: string; lat: number; provenance: string }>(
+        `SELECT source_loc_id, lat, provenance FROM lifer_loc_coords WHERE user_id = $1`, [uid],
+      );
+      expect(llc.rows.length).toBe(1);
+      expect(llc.rows[0].source_loc_id).toBe("Ltest01");
+      expect(llc.rows[0].provenance).toBe("checklist_owner");
+    } finally {
+      await wipe();
+    }
+  });
 
-      // Re-import the same loc_id (simulates a credentialed sync).
-      const imp = await importLifeList(uid, {
+  it("owner-JSON hit excluded from next candidate set (CC1 pin A)", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+    ]);
+    try {
+      const net = fakeEbird({ hotspot: {} });
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: ownerHtml(30.0, -81.0) },
+      });
+      await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      const owner2 = fakeOwnerFetcher({ checklists: {} });
+      const again = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner2.fetcher });
+      expect(again.candidates).toBe(0);
+      expect(owner2.calls.length).toBe(0);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("empty-200 hotspot-info → miss, falls through to owner HTML", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+      { code: "zztstb1", locId: "Ltest02", subId: "Stest02" },
+    ]);
+    try {
+      const net = fakeEbird({
+        hotspot: {
+          Ltest01: "empty",
+          Ltest02: { name: "Real Hotspot", latitude: 29.5, longitude: -81.2 },
+        },
+      });
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: ownerHtml(30.263, -81.637) },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 2, resolved: 2, negative: 0, stopped: false });
+      const el = await query(`SELECT loc_id FROM ebird_locations WHERE loc_id = 'Ltest02'`);
+      expect(el.rows.length).toBe(1);
+      const llc = await query(`SELECT source_loc_id FROM lifer_loc_coords WHERE user_id = $1`, [uid]);
+      expect(llc.rows.length).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("negative persists with reason and survives importLifeList reINSERT", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+    ]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, negative: 1 });
+      const attempt = await query<{ reason: string }>(
+        `SELECT reason FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`, [uid],
+      );
+      expect(attempt.rows[0].reason).toBe("no_coords");
+
+      await importLifeList(uid, {
         rows: [{
           comName: "zztsta1", sciName: null, firstSeen: "2025-01-01",
           csvRowNum: 1, taxonOrder: null, category: "species",
@@ -141,26 +218,9 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
           regionCode: "US-FL", subId: "Stest01", exotic: null, countable: true,
         }],
       }, "csv_import");
-      expect(imp.matched).toBe(1);
 
-      // Verify the row was actually reinserted with Ltest01.
-      const reinserted = await query(
-        `SELECT loc_id FROM seen_species WHERE user_id = $1 AND species_code = 'zztsta1'`,
-        [uid],
-      );
-      expect(reinserted.rows.length).toBe(1);
-      expect(reinserted.rows[0].loc_id).toBe("Ltest01");
-
-      // The negative must survive: candidates === 0 after re-import.
-      const again = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      const again = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
       expect(again.candidates).toBe(0);
-
-      // lifer_loc_attempts row still present.
-      const row = await query(
-        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
-        [uid],
-      );
-      expect(row.rows.length).toBe(1);
     } finally {
       await wipe();
     }
@@ -170,12 +230,11 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
     await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
     try {
       const net = fakeEbird({ rateLimit: true });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
       expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true });
-      // No lifer_loc_attempts row — retries next sync.
       const row = await query(
-        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
-        [uid],
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`, [uid],
       );
       expect(row.rows.length).toBe(0);
     } finally {
@@ -189,61 +248,119 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
       { code: "zztstb1", locId: "Ltest02", subId: "Stest02" },
     ]);
     try {
-      const net = fakeEbird({
-        hotspot: { Ltest01: 403 },
-      });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
+      const net = fakeEbird({ hotspot: { Ltest01: 403 } });
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
       expect(res.stopped).toBe(true);
       expect(res.negative).toBe(0);
-      // No lifer_loc_attempts row — a bad key must not poison loc_ids.
-      const row = await query(
-        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1`,
-        [uid],
-      );
+      const row = await query(`SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1`, [uid]);
       expect(row.rows.length).toBe(0);
-      // Second loc_id was never attempted (pass stopped at first).
       expect(net.calls.length).toBe(1);
     } finally {
       await wipe();
     }
   });
 
-  it("checklist 403 is a data state (negative), not a stop", async () => {
+  it("owner HTML login bounce stops the pass, no negative", async () => {
     await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
     try {
-      const net = fakeEbird({
-        checklist: { Stest01: 403 },
-      });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
-      expect(res).toMatchObject({ candidates: 1, negative: 1, stopped: false });
-      // Persisted as a negative.
-      const row = await query(
-        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`,
-        [uid],
-      );
-      expect(row.rows.length).toBe(1);
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({ checklists: { Stest01: "login" } });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true });
     } finally {
       await wipe();
     }
   });
 
-  it("NULLS LAST: prefers sibling row with sub_id for checklist fallback", async () => {
+  it("owner HTML without valid lat/lng but with checklist marker → negative no_coords", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      // Real checklist page with no coords (e.g., old submission)
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: `<html>"checklistId":"CL123" no coordinates here</html>` },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 1 });
+      const attempt = await query<{ reason: string }>(
+        `SELECT reason FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`, [uid],
+      );
+      expect(attempt.rows[0].reason).toBe("no_coords");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("login/interstitial HTML (no checklist marker) → stopped with stopReason:'auth', no negative", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: "<html>Please sign in to continue</html>" },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true, stopReason: 'auth' });
+      const row = await query(
+        `SELECT 1 FROM lifer_loc_attempts WHERE user_id = $1 AND loc_id = 'Ltest01'`, [uid],
+      );
+      expect(row.rows.length).toBe(0);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("multi-SubID: first 404, second hits → resolved, no negative", async () => {
     await seed([
-      { code: "zztsta1", locId: "Ltest01", subId: null },
-      { code: "zztstb1", locId: "Ltest01", subId: "Stest01" },
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01", firstSeen: "2025-01-01" },
+      { code: "zztstb1", locId: "Ltest01", subId: "Stest02", firstSeen: "2025-06-01" },
     ]);
     try {
-      const net = fakeEbird({
-        checklist: { Stest01: { locId: "Ltest01", name: "Personal Spot", latitude: 35.0, longitude: -80.0 } },
+      const net = fakeEbird({});
+      // Newest SubID (Stest02) 404s; older SubID (Stest01) has coords.
+      const owner = fakeOwnerFetcher({
+        checklists: {
+          Stest02: 404,
+          Stest01: ownerHtml(35.0, -80.0),
+        },
       });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher });
-      expect(res).toMatchObject({ candidates: 1, resolved: 1 });
-      // The checklist fallback was used (hotspot 404 + sub_id from sibling).
-      expect(net.calls.some((c) => c.includes("checklist/view/Stest01"))).toBe(true);
-      const loc = await query<{ loc_name: string }>(
-        `SELECT loc_name FROM ebird_locations WHERE loc_id = 'Ltest01'`,
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 1, negative: 0 });
+      const llc = await query<{ source_sub_id: string }>(
+        `SELECT source_sub_id FROM lifer_loc_coords WHERE user_id = $1 AND source_loc_id = 'Ltest01'`, [uid],
       );
-      expect(loc.rows[0].loc_name).toBe("Personal Spot");
+      expect(llc.rows.length).toBe(1);
+      expect(llc.rows[0].source_sub_id).toBe("Stest01");
+      // Both SubIDs were attempted (404 did NOT stop the pass)
+      expect(owner.calls.length).toBe(2);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("cross-user isolation: user B cannot see user A's lifer_loc_coords", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest01: ownerHtml(30.0, -81.0) },
+      });
+      await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+
+      const userB = (
+        await query<{ id: number }>(
+          `INSERT INTO users (username, display_name, password_hash, role)
+           VALUES ('zz_lifer_test_b', 'Lifer B', 'x', 'user')
+           ON CONFLICT (username) DO UPDATE SET role = 'user'
+           RETURNING id`,
+        )
+      ).rows[0].id;
+      const bCoords = await query(
+        `SELECT 1 FROM lifer_loc_coords WHERE user_id = $1 AND source_loc_id = 'Ltest01'`,
+        [userB],
+      );
+      expect(bCoords.rows.length).toBe(0);
+      await query(`DELETE FROM users WHERE id = $1`, [userB]);
     } finally {
       await wipe();
     }
@@ -266,16 +383,167 @@ describe.runIf(dbUp)("resolveLiferLocations (td-b5986c B, GROK pin 2)", () => {
           Ltest02: { name: "B", latitude: 3, longitude: 4 },
         },
       });
-      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, cap: 1 });
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher, cap: 1 });
       expect(res.candidates).toBe(2);
       expect(res.capped).toBe(true);
       expect(res.resolved).toBe(1);
-      const known = await query<{ loc_name: string }>(
-        `SELECT loc_name FROM ebird_locations WHERE loc_id = 'Ltest03'`,
-      );
-      expect(known.rows[0].loc_name).toBe("Known Spot");
     } finally {
       await wipe();
     }
+  });
+
+  it("loc with no sub_id and hotspot miss → negative no_coords", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: null }]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 1 });
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("deadlineAt in the past → stopped immediately, no negatives", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, {
+        fetcher: net.fetcher,
+        ownerFetcher: owner.fetcher,
+        deadlineAt: Date.now() - 1000,
+      });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true });
+      expect(net.calls.length).toBe(0);
+      expect(owner.calls.length).toBe(0);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("heartbeat cancel stops the pass", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, {
+        fetcher: net.fetcher,
+        ownerFetcher: owner.fetcher,
+        heartbeat: async () => ({ cancel: true }),
+      });
+      expect(res).toMatchObject({ candidates: 1, resolved: 0, negative: 0, stopped: true, stopReason: 'cancel' });
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("hotspot success counts HTTP budget but not CAS budget", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
+      { code: "zztstb1", locId: "Ltest02", subId: "Stest02" },
+    ]);
+    try {
+      const net = fakeEbird({
+        hotspot: { Ltest01: { name: "Public", latitude: 1, longitude: 2 } },
+      });
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest02: ownerHtml(30.0, -81.0) },
+      });
+      // cap=3, casCap=1: hotspot hit (1 HTTP) + hotspot miss (1 HTTP) + owner hit (1 HTTP + 1 CAS) = 3 HTTP, 1 CAS
+      const res = await resolveLiferLocations(uid, {
+        fetcher: net.fetcher,
+        ownerFetcher: owner.fetcher,
+        cap: 3,
+        casCap: 1,
+      });
+      expect(res).toMatchObject({ candidates: 2, resolved: 2, negative: 0, capped: false });
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("owner 403 stops but owner 404 tries next SubID", async () => {
+    await seed([
+      { code: "zztsta1", locId: "Ltest01", subId: "Stest01", firstSeen: "2025-01-01" },
+      { code: "zztstb1", locId: "Ltest01", subId: "Stest02", firstSeen: "2025-06-01" },
+    ]);
+    try {
+      const net = fakeEbird({});
+      const owner = fakeOwnerFetcher({
+        checklists: { Stest02: 403 },
+      });
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res).toMatchObject({ stopped: true, negative: 0, stopReason: 'upstream' });
+      // Only tried Stest02 (newest), stopped on 403 — didn't try Stest01
+      expect(owner.calls.length).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("owner timeout (504) maps to stopReason:'timeout', not 'upstream'", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      const net = fakeEbird({});
+      const { EbirdUpstreamError: EUE } = await import("./ebird-account");
+      const owner = {
+        fetcher: async () => { throw new EUE("timed out", 504); },
+        calls: [] as string[],
+      };
+      const res = await resolveLiferLocations(uid, {
+        fetcher: net.fetcher,
+        ownerFetcher: owner.fetcher,
+      });
+      expect(res).toMatchObject({ stopped: true, stopReason: 'timeout', negative: 0 });
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("legacy_untrusted attempts are retried", async () => {
+    await seed([{ code: "zztsta1", locId: "Ltest01", subId: "Stest01" }]);
+    try {
+      await query(
+        `INSERT INTO lifer_loc_attempts (user_id, loc_id, reason) VALUES ($1, 'Ltest01', 'legacy_untrusted')`,
+        [uid],
+      );
+      const net = fakeEbird({
+        hotspot: { Ltest01: { name: "Now Found", latitude: 30.0, longitude: -81.0 } },
+      });
+      const owner = fakeOwnerFetcher({});
+      const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
+      expect(res.candidates).toBe(1);
+      expect(res.resolved).toBe(1);
+    } finally {
+      await wipe();
+    }
+  });
+});
+
+describe("extractLatLng", () => {
+  it("extracts valid lat/lng from HTML", () => {
+    const html = `some content "lat":30.263016,"lng":-81.637047 more content`;
+    expect(extractLatLng(html)).toEqual({ lat: 30.263016, lng: -81.637047 });
+  });
+
+  it("returns null for out-of-range coordinates", () => {
+    expect(extractLatLng(`"lat":91,"lng":0`)).toBeNull();
+    expect(extractLatLng(`"lat":0,"lng":181`)).toBeNull();
+  });
+
+  it("returns null when no lat/lng keys", () => {
+    expect(extractLatLng("<html>nothing here</html>")).toBeNull();
+  });
+
+  it("handles negative coordinates", () => {
+    const r = extractLatLng(`"lat":-33.86,"lng":151.2`);
+    expect(r).toEqual({ lat: -33.86, lng: 151.2 });
+  });
+
+  it("returns null for non-adjacent lat/lng (must be a pair)", () => {
+    expect(extractLatLng(`"lat":30.0 some junk "lng":-81.0`)).toBeNull();
+    expect(extractLatLng(`"lat":30.0,"other":1,"lng":-81.0`)).toBeNull();
   });
 });

@@ -1,38 +1,33 @@
 /**
- * LocID → coordinates for the life-list map (td-b5986c Commit B, GROK pin 2).
+ * LocID → coordinates for the life-list map (td-2fbfc1 Commit B).
  *
  * The life-list CSV has no coordinates. Most lifer loc_ids already exist in
- * ebird_locations (fed by observation feeds); this resolves the remainder via
- * eBird — hotspot info first, then the lifer's own checklist (the CSV gives
- * every row a SubID) for personal locations — and INSERTs the missing rows.
- * It never UPDATEs existing ebird_locations rows (obs feeds stay the source
- * of truth) and never touches Google Places.
+ * ebird_locations (fed by observation feeds); this resolves the remainder:
+ *
+ * 1. Hotspot-info (API key, official) — public hotspots → ebird_locations.
+ * 2. Owner checklist HTML (CAS session, unofficial) — personal L-ids →
+ *    user-scoped lifer_loc_coords (never the communal ebird_locations).
  *
  * Fail-soft by contract: runs after a successful import, capped per
- * invocation, tolerates expected 404/403 as data states, stops (without
- * recording anything) on transient API trouble, and persists negatives in
- * lifer_loc_attempts — its own (user_id, loc_id) table, because the import
- * DELETE+reINSERTs seen_species rows every sync and a stamp there never
- * survived a re-import (GROK REJECT on 8d1a412).
+ * invocation, tolerates expected 404/empty-200 as data states, stops
+ * (without recording anything) on transient API trouble, and persists
+ * negatives in lifer_loc_attempts with a reason column. Multi-SubID
+ * (≤3 per loc) so one deleted/hidden sibling does not poison the loc.
  */
 import { query } from '$lib/db';
 import { EbirdError, ebirdFetchOrNull, getEbirdApiKey } from '$server/ebird';
+import { fetchAuthenticatedEbird, EbirdLoginError, EbirdUpstreamError } from '$server/ebird-account';
 
-/** ≤25 live lookups per sync — the worker budget is 4 minutes and a first
- * run may have a couple hundred unknown loc_ids; the remainder is picked
- * up by later syncs (GROK pin 2). */
-export const LIFER_LOC_LOOKUP_CAP = 25;
+export const LIFER_LOC_TOTAL_CAP = 40;
+export const LIFER_LOC_CAS_CAP = 25;
 
 export interface LiferLocResolution {
-	/** Distinct unresolved loc_ids at start (after the ebird_locations join). */
 	candidates: number;
 	resolved: number;
-	/** Both endpoints said 404/403 — persisted, not retried next sync. */
 	negative: number;
-	/** True when candidates exceeded the per-sync cap. */
 	capped: boolean;
-	/** True when a transient API error stopped the pass early. */
 	stopped: boolean;
+	stopReason?: 'auth' | 'upstream' | 'timeout' | 'cancel';
 }
 
 interface HotspotInfo {
@@ -41,51 +36,88 @@ interface HotspotInfo {
 	latitude?: number;
 	longitude?: number;
 }
-interface ChecklistView {
-	loc?: { locId?: string; name?: string; latitude?: number; longitude?: number };
-}
 
 type Fetcher = typeof fetch;
+type OwnerFetcher = (userId: number, url: string, opts?: { timeout?: number }) => Promise<string>;
 
-async function lookupOne(
+/**
+ * Tight lat/lng extract from owner checklist HTML (td-2fbfc1 §1).
+ * The JSP embeds "lat":N,"lng":N as JSON keys. Take the first valid pair.
+ * Range-check lat ∈ [−90,90], lng ∈ [−180,180]. No general HTML parsing.
+ */
+export function extractLatLng(html: string): { lat: number; lng: number } | null {
+	// Adjacent pair match — "lat":N,"lng":N as a single unit (GROK review).
+	const m = html.match(/"lat"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*(-?\d+(?:\.\d+)?)/);
+	if (!m) return null;
+	const lat = parseFloat(m[1]);
+	const lng = parseFloat(m[2]);
+	if (isNaN(lat) || isNaN(lng)) return null;
+	if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+	return { lat, lng };
+}
+
+function callTimeout(deadlineAt?: number): number | undefined {
+	if (!deadlineAt) return undefined;
+	return Math.max(0, Math.min(30_000, deadlineAt - Date.now()));
+}
+
+async function lookupHotspot(
 	locId: string,
-	subId: string | null,
 	apiKey: string,
-	fetcher?: Fetcher
+	opts?: { fetcher?: Fetcher; deadlineAt?: number }
 ): Promise<{ name: string | null; lat: number; lng: number } | null> {
-	// nullOn 404 ONLY: hotspot-info 403 is an invalid API key (eBird), not a
-	// personal location — it throws and stops the pass without persisting.
+	const t = callTimeout(opts?.deadlineAt);
+	const signal = t != null ? AbortSignal.timeout(t) : undefined;
 	const hs = await ebirdFetchOrNull<HotspotInfo>(
 		`/ref/hotspot/info/${encodeURIComponent(locId)}`,
 		apiKey,
-		{ fetcher, nullOn: [404] }
+		{ fetcher: opts?.fetcher, nullOn: [404], signal }
 	);
 	if (hs && typeof hs.latitude === 'number' && typeof hs.longitude === 'number') {
 		return { name: hs.name ?? null, lat: hs.latitude, lng: hs.longitude };
 	}
-	if (subId) {
-		// Unshared checklists legitimately 403 — both are data states here.
-		const cl = await ebirdFetchOrNull<ChecklistView>(
-			`/product/checklist/view/${encodeURIComponent(subId)}`,
-			apiKey,
-			{ fetcher, nullOn: [404, 403] }
-		);
-		const loc = cl?.loc;
-		if (
-			loc &&
-			loc.locId === locId &&
-			typeof loc.latitude === 'number' &&
-			typeof loc.longitude === 'number'
-		) {
-			return { name: loc.name ?? null, lat: loc.latitude, lng: loc.longitude };
-		}
-	}
 	return null;
+}
+
+type StopSignal = { stop: 'auth' | 'upstream' | 'timeout' };
+
+async function lookupOwnerHtml(
+	userId: number,
+	subId: string,
+	ownerFetcher: OwnerFetcher,
+	deadlineAt?: number
+): Promise<{ lat: number; lng: number; locName: string | null } | StopSignal | null> {
+	const t = callTimeout(deadlineAt);
+	try {
+		const html = await ownerFetcher(userId, `https://ebird.org/checklist/${subId}`, t != null ? { timeout: t } : undefined);
+		const coords = extractLatLng(html);
+		if (!coords) {
+			if (!/"(?:checklistId|subId)"\s*:/.test(html)) return { stop: 'auth' };
+			return null;
+		}
+		return { ...coords, locName: null };
+	} catch (err) {
+		if (err instanceof EbirdLoginError) return { stop: 'auth' };
+		if (err instanceof EbirdUpstreamError) {
+			if (err.status === 404) return null;
+			// 504 = fetchAuthenticatedEbird wraps timeout/abort as EbirdUpstreamError(504)
+			if (err.status === 504) return { stop: 'timeout' };
+			return { stop: 'upstream' };
+		}
+		throw err;
+	}
 }
 
 export async function resolveLiferLocations(
 	userId: number,
-	opts: { fetcher?: Fetcher; cap?: number } = {}
+	opts: {
+		fetcher?: Fetcher;
+		ownerFetcher?: OwnerFetcher;
+		cap?: number;
+		casCap?: number;
+		deadlineAt?: number;
+		heartbeat?: () => Promise<{ cancel: boolean }>;
+	} = {}
 ): Promise<LiferLocResolution> {
 	const out: LiferLocResolution = {
 		candidates: 0,
@@ -95,56 +127,169 @@ export async function resolveLiferLocations(
 		stopped: false
 	};
 	const apiKey = await getEbirdApiKey(userId);
-	if (!apiKey) return out; // no key → the join-only page still works
 
-	const cap = opts.cap ?? LIFER_LOC_LOOKUP_CAP;
-	// sub_id NULLS LAST: prefer a sibling row that HAS a checklist so a
-	// personal L-id can still resolve through the fallback (GROK P2).
-	const todo = await query<{ loc_id: string; sub_id: string | null }>(
-		`SELECT DISTINCT ON (ss.loc_id) ss.loc_id, ss.sub_id
-		   FROM seen_species ss
-		  WHERE ss.user_id = $1 AND ss.loc_id IS NOT NULL
-		    AND NOT EXISTS (SELECT 1 FROM ebird_locations el WHERE el.loc_id = ss.loc_id)
-		    AND NOT EXISTS (SELECT 1 FROM lifer_loc_attempts la
-		                     WHERE la.user_id = ss.user_id AND la.loc_id = ss.loc_id)
-		  ORDER BY ss.loc_id, ss.sub_id NULLS LAST`,
+	const totalCap = opts.cap ?? LIFER_LOC_TOTAL_CAP;
+	let casBudget = opts.casCap ?? LIFER_LOC_CAS_CAP;
+	let httpBudget = totalCap;
+	const oFetcher = opts.ownerFetcher ?? fetchAuthenticatedEbird;
+
+	// Candidate SQL: loc_ids not yet in ebird_locations, not in
+	// lifer_loc_coords (CC1 pin A), and no trusted attempt. NULL and
+	// 'legacy_untrusted' reasons are distrusted (retry them).
+	const rows = await query<{ loc_id: string; sub_id: string | null }>(
+		`SELECT loc_id, sub_id FROM (
+		   SELECT DISTINCT ss.loc_id, ss.sub_id, ss.first_seen
+		     FROM seen_species ss
+		    WHERE ss.user_id = $1
+		      AND ss.loc_id IS NOT NULL
+		      AND NOT EXISTS (SELECT 1 FROM ebird_locations el WHERE el.loc_id = ss.loc_id)
+		      AND NOT EXISTS (SELECT 1 FROM lifer_loc_coords llc
+		                       WHERE llc.user_id = ss.user_id AND llc.source_loc_id = ss.loc_id)
+		      AND NOT EXISTS (SELECT 1 FROM lifer_loc_attempts la
+		                       WHERE la.user_id = ss.user_id AND la.loc_id = ss.loc_id
+		                         AND la.reason IN ('no_coords', 'gone'))
+		 ) sub
+		 ORDER BY loc_id, first_seen DESC NULLS LAST`,
 		[userId]
 	);
-	out.candidates = todo.rows.length;
-	out.capped = todo.rows.length > cap;
 
-	for (const row of todo.rows.slice(0, cap)) {
-		let loc: Awaited<ReturnType<typeof lookupOne>>;
-		try {
-			loc = await lookupOne(row.loc_id, row.sub_id, apiKey, opts.fetcher);
-		} catch (err) {
-			// Transient (429/5xx/network) or invalid API key: stop the pass
-			// WITHOUT recording a negative — these loc_ids retry next sync.
-			if (err instanceof EbirdError) {
-				out.stopped = true;
+	// Group by loc_id, collect up to 3 distinct non-null sub_ids per loc
+	// (newest first_seen first — GROK §4).
+	const candidates = new Map<string, string[]>();
+	for (const r of rows.rows) {
+		if (!candidates.has(r.loc_id)) candidates.set(r.loc_id, []);
+		const subs = candidates.get(r.loc_id)!;
+		if (r.sub_id && !subs.includes(r.sub_id) && subs.length < 3) {
+			subs.push(r.sub_id);
+		}
+	}
+	out.candidates = candidates.size;
+
+	const stop = (reason: LiferLocResolution['stopReason']) => {
+		out.stopped = true;
+		out.stopReason = reason;
+	};
+
+	const locIds = [...candidates.keys()];
+	for (const locId of locIds) {
+		if (opts.heartbeat) {
+			const hb = await opts.heartbeat();
+			if (hb.cancel) {
+				stop('cancel');
 				break;
 			}
-			throw err;
 		}
-		if (loc) {
-			// INSERT missing only — never overwrite feed-sourced coordinates.
+		if (httpBudget <= 0) {
+			out.capped = true;
+			break;
+		}
+		if (opts.deadlineAt && Date.now() >= opts.deadlineAt) {
+			stop('timeout');
+			break;
+		}
+
+		// --- Step 1: Hotspot-info (API key, public hotspots) ---
+		let hotspotHit = false;
+		if (apiKey) {
+			httpBudget--;
+			try {
+				const loc = await lookupHotspot(locId, apiKey, {
+					fetcher: opts.fetcher,
+					deadlineAt: opts.deadlineAt
+				});
+				if (loc) {
+					await query(
+						`INSERT INTO ebird_locations (loc_id, loc_name, lat, lng)
+						 VALUES ($1, $2, $3, $4)
+						 ON CONFLICT (loc_id) DO NOTHING`,
+						[locId, loc.name ?? locId, loc.lat, loc.lng]
+					);
+					out.resolved++;
+					hotspotHit = true;
+				}
+			} catch (err) {
+				if (err instanceof EbirdError) {
+					stop('upstream');
+					break;
+				}
+				throw err;
+			}
+		}
+		if (hotspotHit) continue;
+
+		// --- Step 2: Owner HTML fallback (CAS session, personal L-ids) ---
+		const subIds = candidates.get(locId)!;
+		if (subIds.length === 0) {
 			await query(
-				`INSERT INTO ebird_locations (loc_id, loc_name, lat, lng)
-				 VALUES ($1, $2, $3, $4)
-				 ON CONFLICT (loc_id) DO NOTHING`,
-				[row.loc_id, loc.name ?? row.loc_id, loc.lat, loc.lng]
+				`INSERT INTO lifer_loc_attempts (user_id, loc_id, reason) VALUES ($1, $2, 'no_coords')
+				 ON CONFLICT (user_id, loc_id) DO UPDATE SET reason = 'no_coords'`,
+				[userId, locId]
 			);
-			out.resolved++;
-		} else {
-			// Persist the negative OUTSIDE seen_species — the next sync's
-			// DELETE+reINSERT must not resurrect it (v1 never retries).
+			out.negative++;
+			continue;
+		}
+
+		let ownerHit = false;
+		let ownerStopped = false;
+		for (const subId of subIds) {
+			if (opts.heartbeat) {
+				const hb = await opts.heartbeat();
+				if (hb.cancel) {
+					stop('cancel');
+					ownerStopped = true;
+					break;
+				}
+			}
+			if (httpBudget <= 0 || casBudget <= 0) {
+				out.capped = true;
+				ownerStopped = true;
+				break;
+			}
+			if (opts.deadlineAt && Date.now() >= opts.deadlineAt) {
+				stop('timeout');
+				ownerStopped = true;
+				break;
+			}
+			httpBudget--;
+			casBudget--;
+
+			const result = await lookupOwnerHtml(userId, subId, oFetcher, opts.deadlineAt);
+			if (result && 'stop' in result) {
+				stop(result.stop);
+				ownerStopped = true;
+				break;
+			}
+			if (result && 'lat' in result) {
+				await query(
+					`INSERT INTO lifer_loc_coords
+					   (user_id, source_loc_id, lat, lng, loc_name, source_sub_id, provenance)
+					 VALUES ($1, $2, $3, $4, $5, $6, 'checklist_owner')
+					 ON CONFLICT (user_id, source_loc_id) DO NOTHING`,
+					[userId, locId, result.lat, result.lng, result.locName, subId]
+				);
+				out.resolved++;
+				ownerHit = true;
+				break;
+			}
+		}
+
+		if (ownerStopped) break;
+		if (!ownerHit) {
 			await query(
-				`INSERT INTO lifer_loc_attempts (user_id, loc_id) VALUES ($1, $2)
-				 ON CONFLICT (user_id, loc_id) DO NOTHING`,
-				[userId, row.loc_id]
+				`INSERT INTO lifer_loc_attempts (user_id, loc_id, reason) VALUES ($1, $2, 'no_coords')
+				 ON CONFLICT (user_id, loc_id) DO UPDATE SET reason = 'no_coords'`,
+				[userId, locId]
 			);
 			out.negative++;
 		}
 	}
+
+	if (!out.capped && out.candidates > 0) {
+		const processed = out.resolved + out.negative;
+		if (processed < out.candidates && !out.stopped) {
+			out.capped = true;
+		}
+	}
+
 	return out;
 }

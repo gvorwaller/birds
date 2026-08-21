@@ -937,7 +937,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
       unmatched: Array.from({ length: 12 }, (_, i) => `Mystery bird ${i}`),
     });
     await runJob(jobRow({ type: "sync_lifelist" }), ctx);
-    expect(syncMocks.syncLifeListFromEbird).toHaveBeenCalledWith(7);
+    expect(syncMocks.syncLifeListFromEbird).toHaveBeenCalledWith(7, expect.objectContaining({ heartbeat: expect.any(Function) }));
     expect(mocks.completeJob).toHaveBeenCalledTimes(1);
     const result = mocks.completeJob.mock.calls[0][2] as {
       total: number;

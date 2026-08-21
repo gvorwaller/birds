@@ -31,25 +31,98 @@ export class EbirdLoginError extends Error {
 	}
 }
 
-/** Minimal cookie jar: collects Set-Cookie across redirects, sends name=value pairs. */
-class CookieJar {
-	private cookies = new Map<string, string>();
+interface StoredCookie {
+	name: string;
+	value: string;
+	domain: string;
+	hostOnly: boolean;
+	path: string;
+	secure: boolean;
+}
 
-	absorb(res: Response): void {
+function pathMatches(reqPath: string, cookiePath: string): boolean {
+	if (reqPath === cookiePath) return true;
+	if (reqPath.startsWith(cookiePath)) {
+		return cookiePath.endsWith('/') || reqPath[cookiePath.length] === '/';
+	}
+	return false;
+}
+
+/**
+ * Domain/path/secure-aware cookie jar (td-2fbfc1, CODEX1 #2 + CC1 pin B).
+ * On absorb: validates Domain against the response origin — a foreign
+ * redirect cannot plant cookies for another domain. On send: only cookies
+ * matching the request URL's domain/path/secure are included.
+ */
+export class CookieJar {
+	private cookies: StoredCookie[] = [];
+
+	absorb(res: Response, requestUrl: string): void {
+		const origin = new URL(requestUrl);
+		const originHost = origin.hostname.toLowerCase();
+
 		for (const sc of res.headers.getSetCookie()) {
-			const [pair] = sc.split(';');
-			const eq = pair.indexOf('=');
-			if (eq > 0) {
-				const name = pair.slice(0, eq).trim();
-				const value = pair.slice(eq + 1).trim();
-				if (value === '' || value.toLowerCase() === 'deleted') this.cookies.delete(name);
-				else this.cookies.set(name, value);
+			const parts = sc.split(';').map((p) => p.trim());
+			if (!parts[0]) continue;
+			const eq = parts[0].indexOf('=');
+			if (eq <= 0) continue;
+			const name = parts[0].slice(0, eq).trim();
+			const value = parts[0].slice(eq + 1).trim();
+
+			let domain = originHost;
+			let hostOnly = true;
+			let path = '/';
+			let secure = false;
+
+			for (let i = 1; i < parts.length; i++) {
+				const aeq = parts[i].indexOf('=');
+				const aname = (aeq > 0 ? parts[i].slice(0, aeq) : parts[i]).trim().toLowerCase();
+				const aval = aeq > 0 ? parts[i].slice(aeq + 1).trim() : '';
+				if (aname === 'domain') {
+					const d = aval.replace(/^\./, '').toLowerCase();
+					// Reject public suffixes (bare TLDs like "org", "com") — they
+					// must contain a dot to be a valid domain scope (GROK review).
+					if (d && d.includes('.') && (d === originHost || originHost.endsWith('.' + d))) {
+						domain = d;
+						hostOnly = false;
+					}
+				} else if (aname === 'path') {
+					path = aval || '/';
+				} else if (aname === 'secure') {
+					secure = true;
+				}
 			}
+
+			if (value === '' || value.toLowerCase() === 'deleted') {
+				this.cookies = this.cookies.filter(
+					(c) => !(c.name === name && c.domain === domain)
+				);
+				continue;
+			}
+			this.cookies = this.cookies.filter(
+				(c) => !(c.name === name && c.domain === domain && c.path === path)
+			);
+			this.cookies.push({ name, value, domain, hostOnly, path, secure });
 		}
 	}
 
-	header(): string {
-		return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+	headerFor(requestUrl: string): string {
+		const u = new URL(requestUrl);
+		const host = u.hostname.toLowerCase();
+		const reqPath = u.pathname;
+		const isSecure = u.protocol === 'https:';
+		return this.cookies
+			.filter((c) => {
+				if (c.secure && !isSecure) return false;
+				if (c.hostOnly) {
+					if (c.domain !== host) return false;
+				} else {
+					if (host !== c.domain && !host.endsWith('.' + c.domain)) return false;
+				}
+				return pathMatches(reqPath, c.path);
+			})
+			.map((c) => `${c.name}=${c.value}`)
+			.join('; ');
 	}
 }
 
@@ -61,26 +134,37 @@ class CookieJar {
  */
 const EBIRD_FETCH_TIMEOUT_MS = 30_000;
 
-async function fetchWithJar(url: string, jar: CookieJar, init?: RequestInit): Promise<Response> {
+async function fetchWithJar(
+	url: string,
+	jar: CookieJar,
+	init?: RequestInit,
+	timeout?: number
+): Promise<Response> {
+	const t = timeout ?? EBIRD_FETCH_TIMEOUT_MS;
 	const res = await fetch(url, {
 		...init,
 		redirect: 'manual',
-		signal: AbortSignal.timeout(EBIRD_FETCH_TIMEOUT_MS),
-		headers: { ...(init?.headers ?? {}), Cookie: jar.header(), 'User-Agent': UA }
+		signal: AbortSignal.timeout(t),
+		headers: { ...(init?.headers ?? {}), Cookie: jar.headerFor(url), 'User-Agent': UA }
 	});
-	jar.absorb(res);
+	jar.absorb(res, url);
 	return res;
 }
 
 /** Follow redirects manually (fetch's auto-follow drops Set-Cookie state we need). */
-async function followRedirects(start: Response, jar: CookieJar, maxHops = 8): Promise<Response> {
+async function followRedirects(
+	start: Response,
+	jar: CookieJar,
+	maxHops = 8,
+	timeout?: number
+): Promise<Response> {
 	let res = start;
 	let hops = 0;
 	while (res.status >= 300 && res.status < 400 && hops < maxHops) {
 		const loc = res.headers.get('location');
 		if (!loc) break;
 		const next = new URL(loc, res.url).toString();
-		res = await fetchWithJar(next, jar);
+		res = await fetchWithJar(next, jar, undefined, timeout);
 		hops++;
 	}
 	return res;
@@ -270,28 +354,28 @@ export class EbirdUpstreamError extends Error {
  * the requested host throws EbirdUpstreamError immediately — no re-login, no
  * credential blame.
  */
-export async function fetchAuthenticatedEbird(userId: number, url: string): Promise<string> {
+export async function fetchAuthenticatedEbird(
+	userId: number,
+	url: string,
+	opts?: { timeout?: number }
+): Promise<string> {
 	const target = new URL(url);
 	if (!AUTH_FETCH_ALLOWED_HOSTS.has(target.host)) {
 		throw new Error(`fetchAuthenticatedEbird refuses non-eBird host: ${target.host}`);
 	}
+	const t = opts?.timeout;
 
 	const attempt = async (jar: CookieJar): Promise<string | null> => {
 		let res: Response;
 		try {
-			res = await followRedirects(await fetchWithJar(url, jar), jar);
+			res = await followRedirects(await fetchWithJar(url, jar, undefined, t), jar, 8, t);
 		} catch (err) {
-			// A timed-out request is an upstream problem with retry-once
-			// semantics (like a 5xx), never a credential problem.
 			if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
 				throw new EbirdUpstreamError('eBird did not respond within 30 seconds.', 504);
 			}
 			throw err;
 		}
-		// An expired/invalid session 302s to secure.birds.cornell.edu — a final
-		// landing off the requested host means "not authenticated".
 		if (new URL(res.url).host !== target.host) return null;
-		// Right host, HTTP failure: an upstream problem, not an auth problem.
 		if (!res.ok) {
 			throw new EbirdUpstreamError(
 				`eBird returned HTTP ${res.status} for this request${res.status === 429 ? ' (rate limited) — try again later' : ''}.`,
@@ -554,8 +638,13 @@ export async function importLifeList(
 	return { total: parsed.rows.length, matched: seen.size, unmatched };
 }
 
+const RESOLVE_BUDGET_MS = 4 * 60_000;
+
 /** Full credentialed sync: CAS login → lifelist CSV → import. Records status on user_ebird. */
-export async function syncLifeListFromEbird(userId: number): Promise<SyncResult> {
+export async function syncLifeListFromEbird(
+	userId: number,
+	opts?: { heartbeat?: () => Promise<{ cancel: boolean }> }
+): Promise<SyncResult> {
 	const creds = await query<{ login_username_enc: string | null; login_password_enc: string | null }>(
 		'SELECT login_username_enc, login_password_enc FROM user_ebird WHERE user_id = $1',
 		[userId]
@@ -565,11 +654,13 @@ export async function syncLifeListFromEbird(userId: number): Promise<SyncResult>
 		throw new EbirdLoginError('No eBird account credentials saved — add them in Settings.');
 	}
 
+	const hb = opts?.heartbeat;
 	try {
 		const jar = await casLogin(
 			decryptSecret(row.login_username_enc),
 			decryptSecret(row.login_password_enc)
 		);
+		if (hb) await hb();
 		let csvRes: Response;
 		try {
 			csvRes = await followRedirects(await fetchWithJar(LIFELIST_CSV_URL, jar), jar);
@@ -602,19 +693,40 @@ export async function syncLifeListFromEbird(userId: number): Promise<SyncResult>
 			);
 		}
 		const result = await importLifeList(userId, parseLifeListCsv(text), 'ebird_sync');
+		if (hb) await hb();
 		await query(
 			`UPDATE user_ebird SET life_list_synced_at = NOW(), life_list_status = 'ok', life_list_error = NULL
 			 WHERE user_id = $1`,
 			[userId]
 		);
-		// LocID → coordinates for the life-list map (td-b5986c, GROK pin 2):
+		// Install the post-CSV jar so the resolver's fetchAuthenticatedEbird
+		// calls reuse this session (no second casLogin — GROK §1 pin).
+		sessionMemo.set(userId, { jar, at: Date.now() });
+		// LocID → coordinates for the life-list map (td-2fbfc1):
 		// strictly AFTER the committed import + ok status, and FAIL-SOFT — a
-		// resolution hiccup must never fail the sync or flip the status; the
-		// leftover unresolved count is disclosed on /life instead.
+		// resolution hiccup must never fail the sync or flip life_list_status;
+		// the leftover unresolved count is disclosed on /life instead.
+		// loc_resolution_status is a separate fail-soft channel (CC1 pin D).
 		try {
-			result.locs = await resolveLiferLocations(userId);
-		} catch {
+			result.locs = await resolveLiferLocations(userId, {
+				deadlineAt: Date.now() + RESOLVE_BUDGET_MS,
+				heartbeat: opts?.heartbeat,
+			});
+			let locStatus = 'ok';
+			if (result.locs.capped) locStatus = 'capped';
+			else if (result.locs.stopped && result.locs.stopReason === 'auth') locStatus = 'error';
+			else if (result.locs.stopped) locStatus = 'stopped';
+			const locError = locStatus === 'error' ? 'eBird session could not authenticate — check Settings.' : null;
+			await query(
+				`UPDATE user_ebird SET loc_resolution_status = $2, loc_resolution_error = $3 WHERE user_id = $1`,
+				[userId, locStatus, locError]
+			);
+		} catch (err) {
 			result.locs = undefined;
+			await query(
+				`UPDATE user_ebird SET loc_resolution_status = 'error', loc_resolution_error = $2 WHERE user_id = $1`,
+				[userId, (err instanceof Error ? err.message : String(err)).slice(0, 300)]
+			).catch(() => {});
 		}
 		return result;
 	} catch (err) {

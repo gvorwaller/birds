@@ -18,7 +18,7 @@ vi.mock("$server/crypto", () => ({
   encryptSecret: (v: string) => `enc-${v}`,
 }));
 
-const { testEbirdLogin, syncLifeListFromEbird, EbirdLoginError, EbirdUpstreamError } =
+const { testEbirdLogin, syncLifeListFromEbird, EbirdLoginError, EbirdUpstreamError, CookieJar, fetchAuthenticatedEbird } =
   await import("./ebird-account");
 
 const CAS_FORM_HTML = `<form><input type="hidden" name="execution" value="e1s1" /></form>`;
@@ -108,6 +108,162 @@ describe("casLogin classification (via testEbirdLogin)", () => {
   it("a missing login form on a 200 page stays EbirdLoginError (auth-flow invalidation)", async () => {
     fetchQueue = [html("<h1>totally new page</h1>")];
     await expect(testEbirdLogin(1)).rejects.toBeInstanceOf(EbirdLoginError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CookieJar domain/path/secure-aware tests (CC1 pin B, GROK blocker 4)
+// ---------------------------------------------------------------------------
+
+function cookieRes(url: string, ...setCookies: string[]): Response {
+  const h = new Headers();
+  for (const sc of setCookies) h.append("set-cookie", sc);
+  const r = new Response(null, { status: 200, headers: h });
+  Object.defineProperty(r, "url", { value: url });
+  return r;
+}
+
+describe("CookieJar domain/path/secure awareness (pin B)", () => {
+  it("CAS JSESSIONID not sent to ebird.org", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes(
+        "https://secure.birds.cornell.edu/cassso/login",
+        "JSESSIONID=abc123; Path=/cassso; Secure",
+      ),
+      "https://secure.birds.cornell.edu/cassso/login",
+    );
+    expect(jar.headerFor("https://secure.birds.cornell.edu/cassso/login")).toContain("JSESSIONID=abc123");
+    expect(jar.headerFor("https://ebird.org/lifelist")).toBe("");
+  });
+
+  it("ebird.org session cookie set during redirect survives for subsequent requests", () => {
+    const jar = new CookieJar();
+    // CAS redirect lands on ebird.org with a session cookie
+    jar.absorb(
+      cookieRes(
+        "https://ebird.org/home",
+        "EBIRD_SESSIONID=sess456; Domain=ebird.org; Path=/; Secure",
+      ),
+      "https://ebird.org/home",
+    );
+    expect(jar.headerFor("https://ebird.org/checklist/S12345")).toContain("EBIRD_SESSIONID=sess456");
+    expect(jar.headerFor("https://www.ebird.org/checklist/S12345")).toContain("EBIRD_SESSIONID=sess456");
+  });
+
+  it("foreign origin cannot plant cookies for ebird.org", () => {
+    const jar = new CookieJar();
+    // A redirect through evil.com tries to set Domain=ebird.org
+    jar.absorb(
+      cookieRes(
+        "https://evil.com/redirect",
+        "STOLEN=val; Domain=ebird.org; Path=/",
+      ),
+      "https://evil.com/redirect",
+    );
+    expect(jar.headerFor("https://ebird.org/home")).toBe("");
+  });
+
+  it("rejects public-suffix Domain (Domain=org)", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes(
+        "https://ebird.org/home",
+        "TOO_BROAD=val; Domain=org; Path=/",
+      ),
+      "https://ebird.org/home",
+    );
+    // Should be stored as host-only for ebird.org, not domain-scoped to "org"
+    expect(jar.headerFor("https://ebird.org/home")).toContain("TOO_BROAD=val");
+    expect(jar.headerFor("https://other.org/page")).toBe("");
+  });
+
+  it("Secure cookies not sent over http", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes(
+        "https://ebird.org/home",
+        "SEC=val; Secure; Path=/",
+      ),
+      "https://ebird.org/home",
+    );
+    expect(jar.headerFor("https://ebird.org/page")).toContain("SEC=val");
+    expect(jar.headerFor("http://ebird.org/page")).toBe("");
+  });
+
+  it("path scoping: /cassso cookie not sent to /other", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes(
+        "https://secure.birds.cornell.edu/cassso/login",
+        "CAS_TOK=abc; Path=/cassso",
+      ),
+      "https://secure.birds.cornell.edu/cassso/login",
+    );
+    expect(jar.headerFor("https://secure.birds.cornell.edu/cassso/login")).toContain("CAS_TOK=abc");
+    expect(jar.headerFor("https://secure.birds.cornell.edu/other")).toBe("");
+  });
+
+  it("host-only cookie (no Domain attr) not sent to subdomains", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes("https://ebird.org/home", "HOSTONLY=val; Path=/"),
+      "https://ebird.org/home",
+    );
+    expect(jar.headerFor("https://ebird.org/page")).toContain("HOSTONLY=val");
+    expect(jar.headerFor("https://sub.ebird.org/page")).toBe("");
+  });
+
+  it("full CAS redirect chain: CAS cookies stay on CAS, ebird session on ebird", () => {
+    const jar = new CookieJar();
+    // Step 1: GET CAS login page → CAS sets JSESSIONID
+    jar.absorb(
+      cookieRes(
+        "https://secure.birds.cornell.edu/cassso/login",
+        "JSESSIONID=cas1; Path=/cassso; Secure",
+      ),
+      "https://secure.birds.cornell.edu/cassso/login",
+    );
+    // Step 2: POST CAS login → 302 redirect with ticket to ebird.org
+    // (no new cookies from CAS on the redirect response itself)
+    // Step 3: Follow redirect to ebird.org → ebird sets session
+    jar.absorb(
+      cookieRes(
+        "https://ebird.org/home?ticket=ST-12345",
+        "EBIRD_SESSION=ebsess; Domain=ebird.org; Path=/; Secure",
+      ),
+      "https://ebird.org/home?ticket=ST-12345",
+    );
+
+    // CAS cookie goes to CAS, not to ebird
+    expect(jar.headerFor("https://secure.birds.cornell.edu/cassso/login")).toContain("JSESSIONID=cas1");
+    expect(jar.headerFor("https://ebird.org/checklist/S123")).not.toContain("JSESSIONID");
+
+    // ebird session goes to ebird, not to CAS
+    expect(jar.headerFor("https://ebird.org/checklist/S123")).toContain("EBIRD_SESSION=ebsess");
+    expect(jar.headerFor("https://secure.birds.cornell.edu/cassso/login")).not.toContain("EBIRD_SESSION");
+  });
+
+  it("cookie deletion removes the cookie", () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      cookieRes("https://ebird.org/home", "SID=val; Path=/"),
+      "https://ebird.org/home",
+    );
+    expect(jar.headerFor("https://ebird.org/page")).toContain("SID=val");
+    jar.absorb(
+      cookieRes("https://ebird.org/home", "SID=deleted; Path=/"),
+      "https://ebird.org/home",
+    );
+    expect(jar.headerFor("https://ebird.org/page")).toBe("");
+  });
+});
+
+describe("fetchAuthenticatedEbird host allowlist", () => {
+  it("rejects api.ebird.org (must use API-key path, not CAS session)", async () => {
+    await expect(
+      fetchAuthenticatedEbird(1, "https://api.ebird.org/v2/ref/hotspot/info/L123"),
+    ).rejects.toThrow(/refuses non-eBird host/);
   });
 });
 
