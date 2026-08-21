@@ -365,17 +365,28 @@ export async function fetchAuthenticatedEbird(
 	}
 	const t = opts?.timeout;
 
-	const attempt = async (jar: CookieJar): Promise<string | null> => {
-		let res: Response;
+	const doFetch = async (jar: CookieJar): Promise<Response> => {
 		try {
-			res = await followRedirects(await fetchWithJar(url, jar, undefined, t), jar, 8, t);
+			return await followRedirects(await fetchWithJar(url, jar, undefined, t), jar, 8, t);
 		} catch (err) {
 			if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
 				throw new EbirdUpstreamError('eBird did not respond within 30 seconds.', 504);
 			}
 			throw err;
 		}
+	};
+
+	const attempt = async (jar: CookieJar): Promise<string | null> => {
+		let res = await doFetch(jar);
 		if (new URL(res.url).host !== target.host) return null;
+		// CAS gateway bounce: the redirect chain refreshed the session but
+		// landed on a different page (typically /home). The JAR now holds a
+		// valid EBIRD_SESSIONID — retry the original URL once.
+		if (res.ok && new URL(res.url).pathname !== target.pathname) {
+			res = await doFetch(jar);
+			if (new URL(res.url).host !== target.host) return null;
+			if (new URL(res.url).pathname !== target.pathname) return null;
+		}
 		if (!res.ok) {
 			throw new EbirdUpstreamError(
 				`eBird returned HTTP ${res.status} for this request${res.status === 429 ? ' (rate limited) — try again later' : ''}.`,
@@ -716,7 +727,7 @@ export async function syncLifeListFromEbird(
 			if (result.locs.capped) locStatus = 'capped';
 			else if (result.locs.stopped && result.locs.stopReason === 'auth') locStatus = 'error';
 			else if (result.locs.stopped) locStatus = 'stopped';
-			const locError = locStatus === 'error' ? 'eBird session could not authenticate — check Settings.' : null;
+			const locError = locStatus === 'error' ? 'eBird session could not authenticate' : null;
 			await query(
 				`UPDATE user_ebird SET loc_resolution_status = $2, loc_resolution_error = $3 WHERE user_id = $1`,
 				[userId, locStatus, locError]

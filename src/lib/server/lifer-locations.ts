@@ -47,7 +47,10 @@ type OwnerFetcher = (userId: number, url: string, opts?: { timeout?: number }) =
  */
 export function extractLatLng(html: string): { lat: number; lng: number } | null {
 	// Adjacent pair match — "lat":N,"lng":N as a single unit (GROK review).
-	const m = html.match(/"lat"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*(-?\d+(?:\.\d+)?)/);
+	// Fallback: "latitude":N,"longitude":N (eBird API format).
+	const m =
+		html.match(/"lat"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*(-?\d+(?:\.\d+)?)/) ??
+		html.match(/"latitude"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*(-?\d+(?:\.\d+)?)/);
 	if (!m) return null;
 	const lat = parseFloat(m[1]);
 	const lng = parseFloat(m[2]);

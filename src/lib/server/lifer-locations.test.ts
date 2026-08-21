@@ -546,4 +546,14 @@ describe("extractLatLng", () => {
     expect(extractLatLng(`"lat":30.0 some junk "lng":-81.0`)).toBeNull();
     expect(extractLatLng(`"lat":30.0,"other":1,"lng":-81.0`)).toBeNull();
   });
+
+  it("falls back to latitude/longitude keys (eBird API format)", () => {
+    const html = `"latitude":42.3601,"longitude":-71.0589`;
+    expect(extractLatLng(html)).toEqual({ lat: 42.3601, lng: -71.0589 });
+  });
+
+  it("prefers lat/lng over latitude/longitude when both present", () => {
+    const html = `"lat":1.0,"lng":2.0 "latitude":3.0,"longitude":4.0`;
+    expect(extractLatLng(html)).toEqual({ lat: 1.0, lng: 2.0 });
+  });
 });

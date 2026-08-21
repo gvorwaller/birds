@@ -18,7 +18,7 @@ vi.mock("$server/crypto", () => ({
   encryptSecret: (v: string) => `enc-${v}`,
 }));
 
-const { testEbirdLogin, syncLifeListFromEbird, EbirdLoginError, EbirdUpstreamError, CookieJar, fetchAuthenticatedEbird } =
+const { testEbirdLogin, syncLifeListFromEbird, EbirdLoginError, EbirdUpstreamError, CookieJar, fetchAuthenticatedEbird, invalidateEbirdSession } =
   await import("./ebird-account");
 
 const CAS_FORM_HTML = `<form><input type="hidden" name="execution" value="e1s1" /></form>`;
@@ -264,6 +264,66 @@ describe("fetchAuthenticatedEbird host allowlist", () => {
     await expect(
       fetchAuthenticatedEbird(1, "https://api.ebird.org/v2/ref/hotspot/info/L123"),
     ).rejects.toThrow(/refuses non-eBird host/);
+  });
+});
+
+describe("fetchAuthenticatedEbird CAS gateway bounce", () => {
+  function casLoginQueue(): (Response | Error)[] {
+    return [
+      html(CAS_FORM_HTML),
+      redirect("https://ebird.org/home"),
+      html("<h1>home</h1>"),
+    ];
+  }
+
+  it("retries once when CAS gateway redirects to /home", async () => {
+    invalidateEbirdSession(99);
+    fetchQueue = [
+      ...casLoginQueue(),
+      // First fetch: CAS gateway bounce → landed on /home
+      withUrl(new Response("<html>ebird home</html>", { status: 200 }), "https://ebird.org/home"),
+      // Retry: actual checklist page
+      withUrl(
+        new Response('<html>"checklistId":"CL" "lat":42.3,"lng":-71.1</html>', { status: 200 }),
+        "https://ebird.org/checklist/S123",
+      ),
+    ];
+    const body = await fetchAuthenticatedEbird(99, "https://ebird.org/checklist/S123");
+    expect(body).toContain('"checklistId"');
+  });
+
+  it("returns null (triggers re-login) when retry also lands on /home", async () => {
+    invalidateEbirdSession(98);
+    fetchQueue = [
+      ...casLoginQueue(),
+      // First fetch: bounce to /home
+      withUrl(new Response("<html>home</html>", { status: 200 }), "https://ebird.org/home"),
+      // Retry: still /home
+      withUrl(new Response("<html>home</html>", { status: 200 }), "https://ebird.org/home"),
+      // Fresh login (re-login triggered by null return)
+      ...casLoginQueue(),
+      // Third fetch: bounce to /home again
+      withUrl(new Response("<html>home</html>", { status: 200 }), "https://ebird.org/home"),
+      // Fourth retry: still /home
+      withUrl(new Response("<html>home</html>", { status: 200 }), "https://ebird.org/home"),
+    ];
+    await expect(
+      fetchAuthenticatedEbird(98, "https://ebird.org/checklist/S123"),
+    ).rejects.toThrow(/could not authenticate/);
+  });
+
+  it("does not retry when response is on the same path", async () => {
+    invalidateEbirdSession(97);
+    fetchQueue = [
+      ...casLoginQueue(),
+      withUrl(
+        new Response('<html>"lat":1,"lng":2</html>', { status: 200 }),
+        "https://ebird.org/checklist/S456",
+      ),
+    ];
+    const body = await fetchAuthenticatedEbird(97, "https://ebird.org/checklist/S456");
+    expect(body).toContain('"lat":1');
+    expect(fetchQueue.length).toBe(0);
   });
 });
 
