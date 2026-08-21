@@ -151,7 +151,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-2fbfc1 Commit B)", () => {
     }
   });
 
-  it("production-shaped owner HTML with quoted coordinates resolves instead of stopping as auth", async () => {
+  it("production-shaped owner HTML with assignment coordinates resolves instead of stopping as auth", async () => {
     await seed([
       { code: "zztsta1", locId: "Ltest01", subId: "Stest01" },
     ]);
@@ -161,7 +161,7 @@ describe.runIf(dbUp)("resolveLiferLocations (td-2fbfc1 Commit B)", () => {
         checklists: {
           Stest01:
             `<html><div data-sub-id="Stest01"></div>` +
-            `<script>var subId = "Stest01"; var p = {"lat":"30.263016","lng":"-81.637047"};</script></html>`,
+            `<script>var subId = "Stest01"; setMap(lat=30.263016,lng=-81.637047);</script></html>`,
         },
       });
       const res = await resolveLiferLocations(uid, { fetcher: net.fetcher, ownerFetcher: owner.fetcher });
@@ -556,6 +556,11 @@ describe("extractLatLng", () => {
   it("extracts quoted numeric coordinates from the live checklist JSP shape", () => {
     const html = `"lat":"30.263016","lng":"-81.637047"`;
     expect(extractLatLng(html)).toEqual({ lat: 30.263016, lng: -81.637047 });
+  });
+
+  it("extracts assignment coordinates from the current live checklist JSP", () => {
+    const html = `lat=30.403615,lng=-81.401852`;
+    expect(extractLatLng(html)).toEqual({ lat: 30.403615, lng: -81.401852 });
   });
 
   it("returns null for out-of-range coordinates", () => {

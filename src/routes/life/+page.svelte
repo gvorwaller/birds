@@ -1,6 +1,7 @@
 <script lang="ts">
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import Badge from "$components/Badge.svelte";
+  import { filterLifeList } from "$lib/life-list-filter";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -9,6 +10,10 @@
   // side-by-side on desktop (CSS shows both ≥64rem regardless of the tab).
   let view = $state<"timeline" | "map">("timeline");
   let regionFilter = $state<string | null>(null);
+  let speciesQuery = $state("");
+  let locationQuery = $state("");
+  let dateFrom = $state("");
+  let dateTo = $state("");
 
   const total = $derived(data.lifers.length);
 
@@ -23,18 +28,41 @@
   );
 
   const filtered = $derived(
-    regionFilter == null ? numbered : numbered.filter((l) => l.region_code === regionFilter),
+    filterLifeList(numbered, {
+      species: speciesQuery,
+      location: locationQuery,
+      from: dateFrom,
+      to: dateTo,
+      region: regionFilter,
+    }),
   );
+  const hasFilters = $derived(
+    regionFilter != null ||
+      speciesQuery.trim() !== "" ||
+      locationQuery.trim() !== "" ||
+      dateFrom !== "" ||
+      dateTo !== "",
+  );
+
+  function clearFilters() {
+    speciesQuery = "";
+    locationQuery = "";
+    dateFrom = "";
+    dateTo = "";
+    regionFilter = null;
+  }
 
   // State chips sorted by lifer count desc (AGY advisory).
   const regionChips = $derived.by(() => {
     const counts = new Map<string, number>();
     for (const l of numbered) {
-      if (l.region_code) counts.set(l.region_code, (counts.get(l.region_code) ?? 0) + 1);
+      if (l.region_code)
+        counts.set(l.region_code, (counts.get(l.region_code) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   });
-  const regionLabel = (code: string) => (code.startsWith("US-") ? code.slice(3) : code);
+  const regionLabel = (code: string) =>
+    code.startsWith("US-") ? code.slice(3) : code;
 
   // Timeline grouped by year, newest first; sticky per-year count headers.
   const years = $derived.by(() => {
@@ -45,7 +73,11 @@
       map.get(y)!.push(l);
     }
     return [...map.entries()].sort((a, b) =>
-      a[0] === "Undated" ? 1 : b[0] === "Undated" ? -1 : b[0].localeCompare(a[0]),
+      a[0] === "Undated"
+        ? 1
+        : b[0] === "Undated"
+          ? -1
+          : b[0].localeCompare(a[0]),
     );
   });
 
@@ -53,7 +85,13 @@
     return s.replace(
       /[&<>"']/g,
       (c) =>
-        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c]!,
     );
   }
 
@@ -71,12 +109,20 @@
   // there, info window = scrollable lifer list (GROK pin 5 — the multi-item
   // content path, not ObsMap's single title/href composition).
   const points = $derived.by((): ObsPoint[] => {
-    const byLoc = new Map<string, { name: string; lat: number; lng: number; lifers: typeof filtered }>();
+    const byLoc = new Map<
+      string,
+      { name: string; lat: number; lng: number; lifers: typeof filtered }
+    >();
     for (const l of filtered) {
       if (!l.loc_id || l.lat == null || l.lng == null) continue;
       let g = byLoc.get(l.loc_id);
       if (!g) {
-        g = { name: l.location_name ?? l.loc_id, lat: l.lat, lng: l.lng, lifers: [] };
+        g = {
+          name: l.location_name ?? l.loc_id,
+          lat: l.lat,
+          lng: l.lng,
+          lifers: [],
+        };
         byLoc.set(l.loc_id, g);
       }
       g.lifers.push(l);
@@ -106,6 +152,17 @@
     }));
   });
 
+  const filteredUnmappedLocations = $derived.by(() => {
+    const ids = new Set<string>();
+    for (const l of filtered) {
+      if (l.loc_id && (l.lat == null || l.lng == null)) ids.add(l.loc_id);
+    }
+    return ids.size;
+  });
+  const filteredNoLocRows = $derived(
+    filtered.filter((l) => l.loc_id == null).length,
+  );
+
   const pending = $derived(data.pendingUnattempted);
   const negatives = $derived(data.negatives);
   const noLocRows = $derived(data.noLoc);
@@ -132,14 +189,18 @@
     <h1>Life list</h1>
     <p class="sub">
       {total} lifer{total === 1 ? "" : "s"}{#if syncedOn}&nbsp;· synced {syncedOn}{/if}
-      · <a href="https://ebird.org" target="_blank" rel="noopener">Data from eBird.org ↗</a>
+      ·
+      <a href="https://ebird.org" target="_blank" rel="noopener"
+        >Data from eBird.org ↗</a
+      >
     </p>
   </header>
 
   {#if !data.isViewer && data.syncStatus === "error"}
     <p class="syncnote">
-      ⚠ The last life-list sync failed{data.syncError ? ` — ${data.syncError}` : ""} ·
-      showing the last synced list. <a href="/settings">Settings</a>
+      ⚠ The last life-list sync failed{data.syncError
+        ? ` — ${data.syncError}`
+        : ""} · showing the last synced list. <a href="/settings">Settings</a>
     </p>
   {:else if !data.isViewer && syncStale}
     <p class="syncnote">
@@ -161,6 +222,45 @@
       {/if}
     </section>
   {:else}
+    <section class="card search-card" aria-label="Search life list">
+      <div class="search-fields">
+        <label class="text-field">
+          <span>Species</span>
+          <input
+            type="search"
+            placeholder="e.g. nuthatch"
+            bind:value={speciesQuery}
+            autocomplete="off"
+          />
+        </label>
+        <label class="text-field">
+          <span>Location</span>
+          <input
+            type="search"
+            placeholder="Name, region, or location ID"
+            bind:value={locationQuery}
+            autocomplete="off"
+          />
+        </label>
+        <label>
+          <span>From</span>
+          <input type="date" bind:value={dateFrom} max={dateTo || undefined} />
+        </label>
+        <label>
+          <span>Through</span>
+          <input type="date" bind:value={dateTo} min={dateFrom || undefined} />
+        </label>
+        {#if hasFilters}
+          <button type="button" class="clear-filters" onclick={clearFilters}
+            >Clear</button
+          >
+        {/if}
+      </div>
+      <p class="filter-count" aria-live="polite">
+        Showing {filtered.length} of {total} lifers
+      </p>
+    </section>
+
     {#if regionChips.length > 0}
       <div class="chips" role="group" aria-label="Filter by state or region">
         <button
@@ -210,65 +310,119 @@
         {#if points.length > 0}
           <ObsMap {points} />
         {:else}
-          <p class="muted">No mappable locations{regionFilter ? " for this filter" : ""} yet.</p>
+          <p class="muted">
+            {filtered.length === 0
+              ? "No lifers match these filters."
+              : "No matching lifers have a map pin."}
+          </p>
         {/if}
-        {#if pending > 0 || negatives > 0 || noLocRows > 0}
+        {#if hasFilters && filtered.length > 0 && (filteredUnmappedLocations > 0 || filteredNoLocRows > 0)}
+          <div class="muted disclose">
+            {#if filteredUnmappedLocations > 0}
+              <p>
+                {filteredUnmappedLocations} matching location{filteredUnmappedLocations ===
+                1
+                  ? " has"
+                  : "s have"} no map pin.
+              </p>
+            {/if}
+            {#if filteredNoLocRows > 0}
+              <p>
+                {filteredNoLocRows} matching lifer{filteredNoLocRows === 1
+                  ? " predates"
+                  : "s predate"} location tracking.
+              </p>
+            {/if}
+          </div>
+        {:else if !hasFilters && (pending > 0 || negatives > 0 || noLocRows > 0)}
           <div class="muted disclose">
             {#if pending > 0 && !data.hasCreds}
-              <p>{pending} location{pending === 1 ? " needs" : "s need"} an eBird sign-in sync to plot.</p>
-            {:else if pending > 0 && (locStatus === 'capped' || locStatus === 'stopped')}
-              <p>{pending} location{pending === 1 ? "" : "s"} still resolving — sync again to plot more pins.</p>
-            {:else if pending > 0 && locStatus === 'error'}
-              <p>{pending} location{pending === 1 ? "" : "s"} could not be resolved{locError ? ` — ${locError}` : ""}. Check <a href="/settings">Settings</a>.</p>
+              <p>
+                {pending} location{pending === 1 ? " needs" : "s need"} an eBird sign-in
+                sync to plot.
+              </p>
+            {:else if pending > 0 && (locStatus === "capped" || locStatus === "stopped")}
+              <p>
+                {pending} location{pending === 1 ? "" : "s"} still resolving — sync
+                again to plot more pins.
+              </p>
+            {:else if pending > 0 && locStatus === "error"}
+              <p>
+                {pending} location{pending === 1 ? "" : "s"} could not be resolved{locError
+                  ? ` — ${locError}`
+                  : ""}. Check <a href="/settings">Settings</a>.
+              </p>
             {:else if pending > 0}
-              <p>{pending} location{pending === 1 ? "" : "s"} still resolving — sync again to plot more pins.</p>
+              <p>
+                {pending} location{pending === 1 ? "" : "s"} still resolving — sync
+                again to plot more pins.
+              </p>
             {/if}
             {#if negatives > 0}
-              <p>{negatives} location{negatives === 1 ? " has" : "s have"} no map pin.</p>
+              <p>
+                {negatives} location{negatives === 1 ? " has" : "s have"} no map pin.
+              </p>
             {/if}
             {#if noLocRows > 0}
-              <p>{noLocRows} lifer{noLocRows === 1 ? "" : "s"} predate location tracking — the next sync fills them in.</p>
+              <p>
+                {noLocRows} lifer{noLocRows === 1 ? "" : "s"} predate location tracking
+                — the next sync fills them in.
+              </p>
             {/if}
           </div>
         {/if}
       </section>
 
       <section class="card timeline" class:hidden-mobile={view !== "timeline"}>
-        {#each years as [year, rows] (year)}
-          <div class="yearhead">
-            <span class="year">{year}</span>
-            <span class="muted">{rows.length} lifer{rows.length === 1 ? "" : "s"}</span>
-          </div>
-          <ul class="lifers">
-            {#each rows as l (l.species_code)}
-              <li class:milestone={l.liferNum != null && l.liferNum % 100 === 0}>
-                <span class="num">
-                  {#if l.liferNum != null}#{l.liferNum}{/if}
-                  {#if l.liferNum != null && l.liferNum % 100 === 0}⭐{/if}
-                </span>
-                <span class="what">
-                  <a href={`/species/${l.species_code}?returnTo=${encodeURIComponent("/life")}`}>
-                    {l.com_name}
-                  </a>
-                  {#if l.exotic}<Badge kind="notable" label="Exotic" />{/if}
-                  {#if l.countable === false}<span class="muted small">not countable</span>{/if}
-                  <span class="where muted">
-                    {#if l.location_name}{l.location_name}{/if}
-                    {#if l.region_code}&nbsp;· {regionLabel(l.region_code)}{/if}
-                    {#if l.sub_id}
-                      · <a
-                        href={`https://ebird.org/checklist/${l.sub_id}`}
-                        target="_blank"
-                        rel="noopener">checklist ↗</a
-                      >
-                    {/if}
+        {#if years.length === 0}
+          <p class="muted empty-results">No lifers match these filters.</p>
+        {:else}
+          {#each years as [year, rows] (year)}
+            <div class="yearhead">
+              <span class="year">{year}</span>
+              <span class="muted"
+                >{rows.length} lifer{rows.length === 1 ? "" : "s"}</span
+              >
+            </div>
+            <ul class="lifers">
+              {#each rows as l (l.species_code)}
+                <li
+                  class:milestone={l.liferNum != null && l.liferNum % 100 === 0}
+                >
+                  <span class="num">
+                    {#if l.liferNum != null}#{l.liferNum}{/if}
+                    {#if l.liferNum != null && l.liferNum % 100 === 0}⭐{/if}
                   </span>
-                </span>
-                <span class="date muted">{fmtDate(l.first_seen)}</span>
-              </li>
-            {/each}
-          </ul>
-        {/each}
+                  <span class="what">
+                    <a
+                      href={`/species/${l.species_code}?returnTo=${encodeURIComponent("/life")}`}
+                    >
+                      {l.com_name}
+                    </a>
+                    {#if l.exotic}<Badge kind="notable" label="Exotic" />{/if}
+                    {#if l.countable === false}<span class="muted small"
+                        >not countable</span
+                      >{/if}
+                    <span class="where muted">
+                      {#if l.location_name}{l.location_name}{/if}
+                      {#if l.region_code}&nbsp;· {regionLabel(
+                          l.region_code,
+                        )}{/if}
+                      {#if l.sub_id}
+                        · <a
+                          href={`https://ebird.org/checklist/${l.sub_id}`}
+                          target="_blank"
+                          rel="noopener">checklist ↗</a
+                        >
+                      {/if}
+                    </span>
+                  </span>
+                  <span class="date muted">{fmtDate(l.first_seen)}</span>
+                </li>
+              {/each}
+            </ul>
+          {/each}
+        {/if}
       </section>
     </div>
   {/if}
@@ -299,6 +453,57 @@
     border-radius: 10px;
     padding: 0.75rem;
     margin-bottom: 0.75rem;
+  }
+  .search-card {
+    padding-bottom: 0.55rem;
+  }
+  .search-fields {
+    display: grid;
+    grid-template-columns:
+      minmax(10rem, 1fr) minmax(14rem, 1.5fr)
+      auto auto auto;
+    gap: 0.55rem;
+    align-items: end;
+  }
+  .search-fields label {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 0.25rem;
+    color: var(--muted, #555);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .search-fields input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 8px;
+    background: var(--card-bg, #fff);
+    color: inherit;
+    font: inherit;
+    font-size: 1rem;
+  }
+  .clear-filters {
+    min-height: 48px;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 8px;
+    background: var(--card-bg, #fff);
+    color: #084298;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .filter-count {
+    margin: 0.45rem 0 0;
+    color: var(--muted, #555);
+    font-size: 0.85rem;
+  }
+  .empty-results {
+    margin: 0.5rem 0;
   }
   .chips {
     display: flex;
@@ -407,6 +612,15 @@
   }
   /* Mobile: segmented control switches panels. Desktop: both visible. */
   @media (max-width: 63.99rem) {
+    .search-fields {
+      grid-template-columns: 1fr 1fr;
+    }
+    .search-fields .text-field {
+      grid-column: 1 / -1;
+    }
+    .clear-filters {
+      grid-column: 1 / -1;
+    }
     .hidden-mobile {
       display: none;
     }
