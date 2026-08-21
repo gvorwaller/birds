@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { filterLifeList, type LifeListFilterRow } from "./life-list-filter";
+import {
+  filterLifeList,
+  parseLifeListDateInput,
+  type LifeListFilterRow,
+} from "./life-list-filter";
 
 const rows: LifeListFilterRow[] = [
   {
@@ -89,5 +93,23 @@ describe("filterLifeList", () => {
         region: "US-ME",
       }),
     ).toEqual([rows[1]]);
+  });
+});
+
+describe("parseLifeListDateInput", () => {
+  it("expands a typed year to the requested range boundary", () => {
+    expect(parseLifeListDateInput("2026", "start")).toBe("2026-01-01");
+    expect(parseLifeListDateInput("2026", "end")).toBe("2026-12-31");
+  });
+
+  it("accepts ISO and US full dates", () => {
+    expect(parseLifeListDateInput("2026-8-2", "start")).toBe("2026-08-02");
+    expect(parseLifeListDateInput("8/2/2026", "end")).toBe("2026-08-02");
+  });
+
+  it("does not apply partial, impossible, or implausibly ancient input", () => {
+    expect(parseLifeListDateInput("202", "start")).toBeNull();
+    expect(parseLifeListDateInput("02/30/2026", "start")).toBeNull();
+    expect(parseLifeListDateInput("0006", "start")).toBeNull();
   });
 });

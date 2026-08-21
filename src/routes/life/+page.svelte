@@ -1,7 +1,10 @@
 <script lang="ts">
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import Badge from "$components/Badge.svelte";
-  import { filterLifeList } from "$lib/life-list-filter";
+  import {
+    filterLifeList,
+    parseLifeListDateInput,
+  } from "$lib/life-list-filter";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -12,8 +15,21 @@
   let regionFilter = $state<string | null>(null);
   let speciesQuery = $state("");
   let locationQuery = $state("");
-  let dateFrom = $state("");
-  let dateTo = $state("");
+  let dateFromInput = $state("");
+  let dateToInput = $state("");
+
+  const parsedDateFrom = $derived(
+    parseLifeListDateInput(dateFromInput, "start"),
+  );
+  const parsedDateTo = $derived(parseLifeListDateInput(dateToInput, "end"));
+  const dateFrom = $derived(parsedDateFrom ?? "");
+  const dateTo = $derived(parsedDateTo ?? "");
+  const dateFromInvalid = $derived(
+    dateFromInput.trim() !== "" && parsedDateFrom == null,
+  );
+  const dateToInvalid = $derived(
+    dateToInput.trim() !== "" && parsedDateTo == null,
+  );
 
   const total = $derived(data.lifers.length);
 
@@ -40,15 +56,15 @@
     regionFilter != null ||
       speciesQuery.trim() !== "" ||
       locationQuery.trim() !== "" ||
-      dateFrom !== "" ||
-      dateTo !== "",
+      dateFromInput.trim() !== "" ||
+      dateToInput.trim() !== "",
   );
 
   function clearFilters() {
     speciesQuery = "";
     locationQuery = "";
-    dateFrom = "";
-    dateTo = "";
+    dateFromInput = "";
+    dateToInput = "";
     regionFilter = null;
   }
 
@@ -242,27 +258,56 @@
             autocomplete="off"
           />
         </label>
-        <label>
-          <span>From</span>
-          <!-- Native date controls emit partial input events while a segmented
-               date is being typed. Committing only on change lets the browser
-               finish editing the year before Svelte writes the value back. -->
-          <input
-            type="date"
-            value={dateFrom}
-            max={dateTo || undefined}
-            onchange={(event) => (dateFrom = event.currentTarget.value)}
-          />
-        </label>
-        <label>
-          <span>Through</span>
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onchange={(event) => (dateTo = event.currentTarget.value)}
-          />
-        </label>
+        <div class="date-field">
+          <label for="life-date-from">From</label>
+          <div class="date-entry">
+            <input
+              id="life-date-from"
+              type="text"
+              placeholder="YYYY or MM/DD/YYYY"
+              autocomplete="off"
+              aria-invalid={dateFromInvalid}
+              bind:value={dateFromInput}
+            />
+            <label class="calendar-button" title="Choose From date from calendar">
+              <span aria-hidden="true">📅</span>
+              <input
+                class="calendar-native"
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                tabindex="-1"
+                aria-label="Choose From date from calendar"
+                onchange={(event) => (dateFromInput = event.currentTarget.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <div class="date-field">
+          <label for="life-date-to">Through</label>
+          <div class="date-entry">
+            <input
+              id="life-date-to"
+              type="text"
+              placeholder="YYYY or MM/DD/YYYY"
+              autocomplete="off"
+              aria-invalid={dateToInvalid}
+              bind:value={dateToInput}
+            />
+            <label class="calendar-button" title="Choose Through date from calendar">
+              <span aria-hidden="true">📅</span>
+              <input
+                class="calendar-native"
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                tabindex="-1"
+                aria-label="Choose Through date from calendar"
+                onchange={(event) => (dateToInput = event.currentTarget.value)}
+              />
+            </label>
+          </div>
+        </div>
         {#if hasFilters}
           <button type="button" class="clear-filters" onclick={clearFilters}
             >Clear</button
@@ -478,7 +523,8 @@
     gap: 0.55rem;
     align-items: end;
   }
-  .search-fields label {
+  .search-fields > label,
+  .date-field > label {
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -499,6 +545,41 @@
     color: inherit;
     font: inherit;
     font-size: 1rem;
+  }
+  .date-field {
+    min-width: 11rem;
+  }
+  .date-entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 48px;
+  }
+  .date-entry > input {
+    border-radius: 8px 0 0 8px;
+  }
+  .date-entry > input[aria-invalid="true"] {
+    border-color: #b42318;
+    box-shadow: inset 0 0 0 1px #b42318;
+  }
+  .calendar-button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 48px;
+    overflow: hidden;
+    border: 1px solid var(--border, #ccc);
+    border-left: 0;
+    border-radius: 0 8px 8px 0;
+    background: var(--card-bg, #fff);
+    cursor: pointer;
+  }
+  .search-fields .calendar-native {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-height: 100%;
+    padding: 0;
+    opacity: 0;
+    cursor: pointer;
   }
   .clear-filters {
     min-height: 48px;
