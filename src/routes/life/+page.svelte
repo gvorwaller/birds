@@ -244,11 +244,24 @@
         </label>
         <label>
           <span>From</span>
-          <input type="date" bind:value={dateFrom} max={dateTo || undefined} />
+          <!-- Native date controls emit partial input events while a segmented
+               date is being typed. Committing only on change lets the browser
+               finish editing the year before Svelte writes the value back. -->
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onchange={(event) => (dateFrom = event.currentTarget.value)}
+          />
         </label>
         <label>
           <span>Through</span>
-          <input type="date" bind:value={dateTo} min={dateFrom || undefined} />
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onchange={(event) => (dateTo = event.currentTarget.value)}
+          />
         </label>
         {#if hasFilters}
           <button type="button" class="clear-filters" onclick={clearFilters}
