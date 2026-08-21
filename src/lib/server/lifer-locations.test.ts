@@ -559,7 +559,7 @@ describe("extractLatLng", () => {
   });
 
   it("extracts assignment coordinates from the current live checklist JSP", () => {
-    const html = `lat=30.403615,lng=-81.401852`;
+    const html = `lat=30.403615&lng=-81.401852`;
     expect(extractLatLng(html)).toEqual({ lat: 30.403615, lng: -81.401852 });
   });
 
