@@ -472,12 +472,13 @@
 		{#if open === 'guide'}
 			<div class="body">
 				<p>
-					The <a href="/species">Field guide</a> (menu → 📖 Field guide) is a
-					searchable knowledge base of every species in your world — your life
-					list, loaded forecast areas, and photos. Each species carries real
-					article text from Wikipedia, quick facts (conservation status, size),
-					and AI-written field craft: when, where, and how to actually find the
-					bird.
+					The <a href="/species">Field guide</a> (menu → 📖 Field guide) searches
+					the complete current eBird species taxonomy by name or code.
+					Wikipedia notes and field craft fill from loaded regions, life lists,
+					photos, or an explicit first-time Load on the species page. Each
+					enriched species may include article text from Wikipedia, quick facts
+					(conservation status, size), and AI-written field craft: when, where,
+					and how to actually find the bird.
 				</p>
 				<ul>
 					<li>
@@ -494,16 +495,16 @@
 						chip (or its ✕ in the Active filters row) to remove it.
 					</li>
 					<li>
-						<strong>Tide tags</strong> are the shorebird special: every
-						coastal species gets exactly one — the stage when it's most
-						findable — and its field craft explains why.
+						<strong>Tide tags</strong> are the shorebird special:
+						AI-annotated tidal species can receive one — the stage when
+						it's most findable — and its field craft explains why.
 					</li>
 					<li>
-						Results show your <strong>Seen/Need</strong> badge, each
-						species' <strong>tag chips</strong> (the ones you filtered by
-						light up) and <strong>IUCN status</strong>, and tap through to
-						the full species page; the back link returns to your exact
-						search.
+						Results always show your <strong>Seen/Need</strong> badge;
+						enriched results may also show <strong>tag chips</strong>
+						(the ones you filtered by light up), <strong>field craft</strong>,
+						and <strong>IUCN status</strong>. Tap through to the full
+						species page; the back link returns to your exact search.
 					</li>
 					<li>
 						On any species page, the <strong>About</strong> card holds the
@@ -514,20 +515,19 @@
 						treat it as a knowledgeable friend's hunch, not gospel.
 					</li>
 					<li>
-						Coverage grows by itself: new lifers, newly loaded counties, and
-						new photos are enriched within a day (sooner while a backlog is
-						draining). Loading a forecast area on
+						<strong>Name/code search</strong> covers the complete current eBird
+						species taxonomy. Wikipedia notes fill when you load a species
+						(or when that bird is already in a loaded region, life list, or
+						photos). Loading a forecast area on
 						<a href="/forecast/data">Hotspots &amp; data</a> is the big lever —
 						a statewide load brings that state's whole avifauna into the
-						guide. Species without an English Wikipedia article show facts
-						and links only; for a few taxa Wikipedia lacks a direct link and
-						the article is found by scientific name instead (the About card
-						says so when that happens).
+						guide.
 					</li>
 					<li>
-						Admins get a <strong>↻ Refresh species data</strong> button on
-						each species page — it fetches the article right then (a few
-						seconds); only the AI field craft finishes in the background.
+						Any account may perform the <strong>first load</strong> of a
+						species' Wikipedia notes; only admins may
+						<strong>refresh</strong> existing data. Some species legitimately
+						have taxonomy and links but no English Wikipedia article.
 					</li>
 				</ul>
 			</div>

@@ -66,9 +66,9 @@
   <header class="page-head">
     <h1>📖 Field guide</h1>
     <p class="sub">
-      Search {data.counts.enriched} enriched species by name, description, or
-      field-craft tags{data.counts.annotated > 0
-        ? ` (${data.counts.annotated} with AI field craft)`
+      Search {data.counts.taxonomy} species by name or code;
+      {data.counts.withWikipedia} have Wikipedia notes{data.counts.annotated > 0
+        ? ` and ${data.counts.annotated} have AI field craft`
         : ""}.
     </p>
   </header>
@@ -82,7 +82,7 @@
         type="search"
         name="q"
         value={data.q}
-        placeholder="mudflats, probing, granary trees…"
+        placeholder="Shoebill, mudflats, granary trees…"
         aria-label="Search species"
       />
       <button type="submit">Search</button>
@@ -127,12 +127,22 @@
   {#if data.active}
     {#if data.results.length === 0}
       <section class="card">
-        <p class="muted">
-          No species match{data.q ? ` “${data.q}”` : ""}{data.tags.length > 0
-            ? " with every selected tag"
-            : ""}. Try fewer tags or a broader search — tags come from AI
-          annotation, which is still filling in.
-        </p>
+        {#if data.counts.taxonomy === 0}
+          <p class="muted">
+            No species taxonomy loaded yet. Sync eBird taxonomy from
+            <a href="/settings">Settings</a> or load a forecast area on
+            <a href="/forecast/data">Hotspots &amp; data</a>.
+          </p>
+        {:else}
+          <p class="muted">
+            No species match{data.q ? ` "${data.q}"` : ""}{data.tags.length > 0
+              ? " with every selected tag"
+              : ""}.
+            {data.tags.length > 0
+              ? "Try fewer tags or a broader search — tags come from AI annotation, which is still filling in."
+              : "Try a different name, species code, or description."}
+          </p>
+        {/if}
       </section>
     {:else}
       <section class="card results">
@@ -167,6 +177,10 @@
                     .field_craft.length > 140
                     ? "…"
                     : ""}</span>
+              {:else if !r.wiki_fetched_at}
+                <span class="muted craft">Wikipedia notes not loaded yet.</span>
+              {:else if !r.has_prose}
+                <span class="muted craft">No Wikipedia article.</span>
               {/if}
             </span>
             <span class="go" aria-hidden="true">›</span>
@@ -195,7 +209,7 @@
   <p class="attribution">
     Species text from
     <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a>
-    (CC BY-SA 4.0) · data from
+    where available (CC BY-SA 4.0) · data from
     <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a>
   </p>
 </div>

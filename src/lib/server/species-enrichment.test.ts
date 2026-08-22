@@ -26,11 +26,13 @@ import {
   wikiStaleCodes,
   aiDueCodes,
   searchEnrichment,
+  guideCounts,
   upsertAiData,
   upsertResolution,
   upsertWikiOk,
   wikiFetchTitleFor,
   enrichOneNow,
+  enrichOneNowCoalesced,
 } from "./species-enrichment";
 import type { WikidataSpeciesRow } from "./wikidata";
 
@@ -567,6 +569,209 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       expect(fts.map((r) => r.species_code)).toContain(B);
     } finally {
       await unseed();
+    }
+  });
+});
+
+describe.runIf(dbUp)("td-0753d0: taxonomy-first search, unenriched rows, tier ordering, guideCounts", () => {
+  const E = "enrtst01"; // enriched species
+  const U = "unrtst01"; // unenriched species (taxonomy only)
+  const S = "sphtst01"; // spuh (non-species category)
+  let uid = 0;
+
+  async function seed() {
+    uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Enriched Sparrowtest', 'Testus enrichus', 'species', 'Testidae'),
+              ($2, 'Unenriched Sparrowtest', 'Testus unenrichus', 'species', 'Testidae'),
+              ($3, 'Sparrowtest sp.', 'Testus sp.', 'spuh', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE
+         SET com_name = EXCLUDED.com_name, sci_name = EXCLUDED.sci_name,
+             category = EXCLUDED.category`,
+      [E, U, S],
+    );
+    await upsertWikiOk(E, {
+      title: "Enriched Sparrowtest",
+      revId: 1,
+      extract: "A sparrowtest that haunts alpine meadows.",
+      sections: [],
+    });
+    await upsertAiData(E, {
+      fieldCraft: "Check high meadows.",
+      tags: ["habitat:alpine-meadow"],
+      model: "m",
+      sourceRevId: 1,
+    });
+  }
+  async function unseed() {
+    await query(`DELETE FROM seen_species WHERE species_code IN ($1, $2, $3)`, [E, U, S]);
+    await query(`DELETE FROM species_enrichment WHERE species_code IN ($1, $2, $3)`, [E, U, S]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code IN ($1, $2, $3)`, [E, U, S]);
+  }
+
+  it("unenriched species appear in name search results", async () => {
+    await seed();
+    try {
+      const results = await searchEnrichment("Unenriched Sparrowtest", [], uid);
+      const codes = results.map((r) => r.species_code);
+      expect(codes).toContain(U);
+      const row = results.find((r) => r.species_code === U)!;
+      expect(row.has_prose).toBe(false);
+      expect(row.wiki_fetched_at).toBeNull();
+      expect(row.tags).toEqual([]);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("5-tier ordering: exact code > exact name > prefix > substring, all in one result set", async () => {
+    // Seed 4 species that all match query "sparxtest" at different tiers.
+    const T0 = "sparxtest"; // code IS the query → tier 0
+    const T1 = "tiertst01"; // com_name exactly equals query → tier 1
+    const T2 = "tiertst02"; // com_name starts with query → tier 2
+    const T3 = "tiertst03"; // com_name contains query mid-word → tier 3
+    const tierCodes = [T0, T1, T2, T3];
+    await seed();
+    for (const [code, com] of [
+      [T0, "Sparxtest Ignored Name"],
+      [T1, "Sparxtest"],
+      [T2, "Sparxtest Warbler"],
+      [T3, "Great Sparxtest"],
+    ] as const) {
+      await query(
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+         VALUES ($1, $2, 'Testus tierus', 'species', 'Testidae')
+         ON CONFLICT (species_code) DO UPDATE SET com_name = $2, category = 'species'`,
+        [code, com],
+      );
+    }
+    try {
+      const results = await searchEnrichment("sparxtest", [], uid);
+      const codes = results.map((r) => r.species_code);
+      for (const c of tierCodes) expect(codes).toContain(c);
+      // Strict ordering: tier 0 before tier 1 before tier 2 before tier 3.
+      expect(codes.indexOf(T0)).toBeLessThan(codes.indexOf(T1));
+      expect(codes.indexOf(T1)).toBeLessThan(codes.indexOf(T2));
+      expect(codes.indexOf(T2)).toBeLessThan(codes.indexOf(T3));
+    } finally {
+      for (const c of tierCodes)
+        await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [c]);
+      await unseed();
+    }
+  });
+
+  it("dedup: both legs match the same species — only one row returned", async () => {
+    await seed();
+    try {
+      const results = await searchEnrichment("sparrowtest", [], uid);
+      const eCodes = results.filter((r) => r.species_code === E);
+      expect(eCodes).toHaveLength(1);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("tags exclude unenriched rows", async () => {
+    await seed();
+    try {
+      const tagged = await searchEnrichment("Sparrowtest", ["habitat:alpine-meadow"], uid);
+      const codes = tagged.map((r) => r.species_code);
+      expect(codes).toContain(E);
+      expect(codes).not.toContain(U);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("non-species categories are excluded from search", async () => {
+    await seed();
+    try {
+      const results = await searchEnrichment("Sparrowtest sp.", [], uid);
+      const codes = results.map((r) => r.species_code);
+      expect(codes).not.toContain(S);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("guideCounts includes taxonomy total and excludes retired enrichment", async () => {
+    await seed();
+    try {
+      const before = await guideCounts();
+      expect(before.taxonomy).toBeGreaterThan(0);
+      expect(before.withWikipedia).toBeGreaterThan(0);
+      expect(before.taxonomy).toBeGreaterThanOrEqual(before.withWikipedia);
+
+      await query(
+        `INSERT INTO species_enrichment (species_code, wikipedia_extract, wiki_status, wiki_fetched_at)
+         VALUES ('retired9', 'ghost', 'ok', NOW())
+         ON CONFLICT (species_code) DO NOTHING`,
+      );
+      try {
+        const after = await guideCounts();
+        expect(after.withWikipedia).toBe(before.withWikipedia);
+        expect(after.taxonomy).toBe(before.taxonomy);
+      } finally {
+        await query(`DELETE FROM species_enrichment WHERE species_code = 'retired9'`);
+      }
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("resolution-only partial row (wiki_fetched_at NULL) appears loadable in search", async () => {
+    await seed();
+    const P = "parttst01";
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Partial Loadbird', 'Testus partialus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET com_name = 'Partial Loadbird', category = 'species'`,
+      [P],
+    );
+    // Simulate worker crash: resolution committed, wiki never fetched.
+    await query(
+      `INSERT INTO species_enrichment (species_code, resolution, wiki_status)
+       VALUES ($1, 'mapped', NULL)
+       ON CONFLICT (species_code) DO UPDATE SET wiki_status = NULL, wiki_fetched_at = NULL, wikipedia_extract = NULL`,
+      [P],
+    );
+    try {
+      const results = await searchEnrichment("Partial Loadbird", [], uid);
+      const row = results.find((r) => r.species_code === P);
+      expect(row).toBeDefined();
+      expect(row!.has_prose).toBe(false);
+      expect(row!.wiki_fetched_at).toBeNull();
+    } finally {
+      await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [P]);
+      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [P]);
+      await unseed();
+    }
+  });
+
+  it("enrichOneNowCoalesced shares promises and cleans up after settlement", { timeout: 25_000 }, async () => {
+    const fakeCode = "zzztst99";
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Coalesce Test', 'Testus coalescus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET category = 'species'`,
+      [fakeCode],
+    );
+    try {
+      // Concurrent calls share one promise.
+      const p1 = enrichOneNowCoalesced(fakeCode);
+      const p2 = enrichOneNowCoalesced(fakeCode);
+      expect(p1).toBe(p2);
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.outcome).toBe(r2.outcome);
+
+      // After settlement, .finally() cleans the Map — next call creates fresh.
+      const p3 = enrichOneNowCoalesced(fakeCode);
+      expect(p3).not.toBe(p1);
+      await p3;
+    } finally {
+      await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [fakeCode]);
+      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [fakeCode]);
     }
   });
 });

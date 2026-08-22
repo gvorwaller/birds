@@ -216,7 +216,7 @@
     <section class="card">
       <h2>Finding this bird</h2>
       {#if form && "message" in form && form.message}
-        <p class="ok">{form.message}</p>
+        <p class="ok" role="status">{form.message}</p>
       {/if}
       {#if form && "error" in form && form.error}
         <p class="err" role="alert">{form.error}</p>
@@ -250,10 +250,10 @@
           use:enhance={() => {
             refreshBusy = true;
             return async ({ update }) => {
-              await update();
-              refreshBusy = false;
+              try { await update(); } finally { refreshBusy = false; }
             };
           }}
+          aria-busy={refreshBusy}
         >
           <button type="submit" class="secondary" disabled={refreshBusy}>
             {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
@@ -445,7 +445,7 @@
     </section>
   {/if}
 
-  {#if en || data.isAdmin}
+  {#if data.taxon.category === 'species'}
     <section class="card">
       <h2>
         About {data.taxon.com_name}
@@ -462,7 +462,7 @@
            Finding card (which owns the button then) doesn't exist (GROK). -->
       {#if !hasFieldCraft}
         {#if form && "message" in form && form.message}
-          <p class="ok">{form.message}</p>
+          <p class="ok" role="status">{form.message}</p>
         {/if}
         {#if form && "error" in form && form.error}
           <p class="err" role="alert">{form.error}</p>
@@ -544,7 +544,7 @@
             credited via the revision history linked above.
           </p>
         </details>
-      {:else if en}
+      {:else if en?.wiki_fetched_at}
         <p class="muted">
           No Wikipedia article for this species{en.resolution === "no_mapping"
             ? " (no Wikidata mapping)"
@@ -552,21 +552,37 @@
           <a href="/species">Browse field guide →</a>
         </p>
       {:else}
-        <p class="muted">No enrichment data fetched yet for this species.</p>
+        <p class="muted">Wikipedia notes haven't been loaded yet.</p>
+        <form
+          method="POST"
+          action="?/load_enrichment"
+          use:enhance={() => {
+            refreshBusy = true;
+            return async ({ update }) => {
+              try { await update(); } finally { refreshBusy = false; }
+            };
+          }}
+          aria-busy={refreshBusy}
+        >
+          <button type="submit" class="secondary" disabled={refreshBusy}>
+            {refreshBusy ? "Loading… this can take up to 20 seconds" : "Load Wikipedia notes"}
+          </button>
+        </form>
+        <p class="muted" style="margin-top:6px;font-size:0.78rem">
+          Adds Wikipedia notes to the shared field guide. Your sightings won't change.
+        </p>
       {/if}
-      {#if data.isAdmin && !hasFieldCraft}
-        <!-- Single refresh control: lives on Finding this bird when that
-             card exists, here otherwise. -->
+      {#if data.isAdmin && en?.wiki_fetched_at && !hasFieldCraft}
         <form
           method="POST"
           action="?/refresh_enrichment"
           use:enhance={() => {
             refreshBusy = true;
             return async ({ update }) => {
-              await update();
-              refreshBusy = false;
+              try { await update(); } finally { refreshBusy = false; }
             };
           }}
+          aria-busy={refreshBusy}
         >
           <button type="submit" class="secondary" disabled={refreshBusy}>
             {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
@@ -823,7 +839,9 @@
     margin-top: 10px;
   }
   button.secondary:disabled {
-    opacity: 0.5;
+    color: var(--muted);
+    border-color: var(--muted);
+    cursor: not-allowed;
   }
   .card-head {
     display: flex;

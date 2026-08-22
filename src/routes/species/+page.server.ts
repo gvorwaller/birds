@@ -18,15 +18,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const tags = url.searchParams.getAll("tags").filter((t) => ALL_TAGS.has(t));
   const active = q.length > 0 || tags.length > 0;
 
+  const countsP = guideCounts();
   let results: GuideResult[] = [];
   if (active) {
-    results = await searchEnrichment(q, tags, locals.scopeId!);
+    [results] = await Promise.all([
+      searchEnrichment(q, tags, locals.scopeId!),
+      countsP,
+    ]);
   }
   return {
     q,
     tags,
     active,
     results,
-    counts: await guideCounts(),
+    counts: await countsP,
   };
 };

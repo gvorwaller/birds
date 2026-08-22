@@ -23,7 +23,7 @@ interface GuideLoad {
   tags: string[];
   active: boolean;
   results: { species_code: string; seen: boolean }[];
-  counts: { enriched: number; annotated: number };
+  counts: { taxonomy: number; withWikipedia: number; annotated: number };
 }
 
 async function run(scopeId: number, path: string): Promise<GuideLoad> {
@@ -103,7 +103,8 @@ describe.runIf(dbUp)("Field guide loader (route contract, test cluster)", () => 
       const intro = await run(uid, "/species");
       expect(intro.active).toBe(false);
       expect(intro.results).toEqual([]);
-      expect(intro.counts.enriched).toBeGreaterThan(0);
+      expect(intro.counts.withWikipedia).toBeGreaterThan(0);
+      expect(intro.counts.taxonomy).toBeGreaterThan(0);
 
       // A retired code (enrichment row without current taxonomy) must not
       // inflate the advertised counts (CODEX1 Phase-3 #2).
@@ -114,7 +115,7 @@ describe.runIf(dbUp)("Field guide loader (route contract, test cluster)", () => 
       );
       try {
         const after = await run(uid, "/species");
-        expect(after.counts.enriched).toBe(intro.counts.enriched);
+        expect(after.counts.withWikipedia).toBe(intro.counts.withWikipedia);
       } finally {
         await query(`DELETE FROM species_enrichment WHERE species_code = 'retired0'`);
       }

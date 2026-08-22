@@ -365,6 +365,24 @@ export type EnrichNowResult =
 /** Hard wall-clock ceiling for the interactive refresh (GROK pin c). */
 export const ENRICH_NOW_BUDGET_MS = 20_000;
 
+const inFlight = new Map<string, Promise<EnrichNowResult>>();
+
+/**
+ * Per-process promise coalescing (td-0753d0): concurrent first-load clicks
+ * for the same species share one Wikimedia operation. The DB's transactional
+ * upserts remain the cross-process safety net.
+ */
+export function enrichOneNowCoalesced(
+	code: string,
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<EnrichNowResult> {
+	const existing = inFlight.get(code);
+	if (existing) return existing;
+	const p = enrichOneNow(code, opts).finally(() => inFlight.delete(code));
+	inFlight.set(code, p);
+	return p;
+}
+
 /**
  * Interactive, wiki-only enrichment of a single species: Wikidata P3444
  * (sci-name fallback on miss) → Wikipedia plaintext → the same upserts the
@@ -449,14 +467,23 @@ export interface GuideResult {
 	iucn_status: string | null;
 	field_craft: string | null;
 	seen: boolean;
+	wiki_status: string | null;
+	wiki_fetched_at: string | null;
+	has_prose: boolean;
 }
 
 /**
- * Field-guide search (plan Phase 3). Name matches UNION with FTS — never a
- * fallback, so a valid substring name hit can't be hidden by unrelated prose
- * hits (CODEX1 plan note). Deterministic rank: name-tier first, then
- * ts_rank_cd, then com_name. Tags are AND semantics (tags @> $tags).
- * seenUserId is the SCOPE user (viewers read their owner's badges).
+ * Field-guide search (td-0753d0 taxonomy-first rewrite). Two legs UNIONed:
+ *
+ * 1. Taxonomy name/code leg — searches ALL ~11k species in taxonomy_cache
+ *    by exact code, exact name, prefix, then substring. LEFT JOINs
+ *    species_enrichment (so unenriched rows appear). Unenriched rows are
+ *    included only when no tags are selected (tags require enrichment).
+ * 2. Enrichment prose/tag leg — unchanged FTS + tags @> AND semantics,
+ *    INNER JOIN to taxonomy (requires enrichment row).
+ *
+ * Combined with DISTINCT ON to keep each species' best-ranked candidate,
+ * then a final deterministic ORDER + LIMIT 50.
  */
 export async function searchEnrichment(
 	q: string,
@@ -465,47 +492,95 @@ export async function searchEnrichment(
 ): Promise<GuideResult[]> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
-	const like = `%${query_.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
-	const r = await query<GuideResult & { name_tier: number; rank: number }>(
-		`SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
-		        se.tags, se.iucn_status, se.field_craft,
-		        (ss.species_code IS NOT NULL) AS seen,
-		        CASE WHEN $1 AND (tc.com_name ILIKE $2 OR tc.sci_name ILIKE $2)
-		             THEN 0 ELSE 1 END AS name_tier,
-		        CASE WHEN $1 THEN ts_rank_cd(se.search_tsv, websearch_to_tsquery('english', $3))
-		             ELSE 0 END AS rank
-		   FROM species_enrichment se
-		   JOIN taxonomy_cache tc USING (species_code)
-		   LEFT JOIN seen_species ss
-		     ON ss.user_id = $4 AND ss.species_code = se.species_code
-		  WHERE tc.category = 'species'
-		    AND ($5::text[] = '{}' OR se.tags @> $5::text[])
-		    AND (NOT $1
-		         OR tc.com_name ILIKE $2 OR tc.sci_name ILIKE $2
-		         OR se.search_tsv @@ websearch_to_tsquery('english', $3))
-		  ORDER BY name_tier, rank DESC NULLS LAST, tc.com_name, tc.species_code
-		  LIMIT 50`,
-		[hasQ, like, query_, seenUserId, [...tags]]
+	const escaped = query_.replace(/[%_\\]/g, (m) => `\\${m}`);
+	const prefix = `${escaped}%`;
+	const substr = `%${escaped}%`;
+	const lowerQ = query_.toLowerCase();
+
+	// $1=hasQ  $2=query_  $3=seenUserId  $4=tags  $5=lowerQ  $6=prefix  $7=substr
+	type Row = GuideResult & { name_tier: number; rank: number };
+	const r = await query<Row>(
+		`SELECT * FROM (
+		   SELECT DISTINCT ON (species_code) *
+		   FROM (
+		     /* Leg 1: taxonomy name/code — the "never empty" leg */
+		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+		            COALESCE(se.tags, '{}') AS tags,
+		            se.iucn_status, se.field_craft,
+		            (ss.species_code IS NOT NULL) AS seen,
+		            se.wiki_status,
+		            se.wiki_fetched_at::text AS wiki_fetched_at,
+		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
+		            CASE
+		              WHEN tc.species_code = $5         THEN 0
+		              WHEN lower(tc.com_name) = $5
+		                OR lower(tc.sci_name) = $5      THEN 1
+		              WHEN tc.com_name ILIKE $6
+		                OR tc.sci_name ILIKE $6         THEN 2
+		              ELSE                                   3
+		            END AS name_tier,
+		            0::float4 AS rank
+		       FROM taxonomy_cache tc
+		       LEFT JOIN species_enrichment se USING (species_code)
+		       LEFT JOIN seen_species ss
+		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
+		      WHERE tc.category = 'species'
+		        AND $1::bool
+		        AND (tc.species_code = $5
+		             OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
+		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
+
+		     UNION ALL
+
+		     /* Leg 2: enrichment prose/tag — FTS + tag AND semantics */
+		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+		            se.tags, se.iucn_status, se.field_craft,
+		            (ss.species_code IS NOT NULL) AS seen,
+		            se.wiki_status,
+		            se.wiki_fetched_at::text AS wiki_fetched_at,
+		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
+		            4 AS name_tier,
+		            ts_rank_cd(se.search_tsv, websearch_to_tsquery('english', $2)) AS rank
+		       FROM species_enrichment se
+		       JOIN taxonomy_cache tc USING (species_code)
+		       LEFT JOIN seen_species ss
+		         ON ss.user_id = $3 AND ss.species_code = se.species_code
+		      WHERE tc.category = 'species'
+		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
+		        AND (NOT $1::bool
+		             OR se.search_tsv @@ websearch_to_tsquery('english', $2))
+		   ) combined
+		   ORDER BY species_code, name_tier, rank DESC
+		 ) deduped
+		 ORDER BY name_tier, rank DESC NULLS LAST, com_name, species_code
+		 LIMIT 50`,
+		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr]
 	);
 	return r.rows.map(({ name_tier: _t, rank: _r, ...row }) => row);
 }
 
 /**
- * Counts for the Field guide intro — the SEARCHABLE corpus, not raw
- * enrichment rows: species_enrichment retains retired codes (no taxonomy
- * FK by design), so the count applies the same taxonomy join + category
- * filter as searchEnrichment (CODEX1 Phase-3 #2).
+ * Counts for the Field guide intro (td-0753d0): taxonomy total + enrichment
+ * counts. species_enrichment retains retired codes (no taxonomy FK by design),
+ * so the enrichment counts apply the same taxonomy join + category filter as
+ * searchEnrichment.
  */
-export async function guideCounts(): Promise<{ enriched: number; annotated: number }> {
-	const r = await query<{ enriched: string; annotated: string }>(
-		`SELECT COUNT(*) FILTER (WHERE se.wikipedia_extract IS NOT NULL) AS enriched,
+export async function guideCounts(): Promise<{
+	taxonomy: number;
+	withWikipedia: number;
+	annotated: number;
+}> {
+	const r = await query<{ taxonomy: string; with_wikipedia: string; annotated: string }>(
+		`SELECT (SELECT COUNT(*) FROM taxonomy_cache WHERE category = 'species') AS taxonomy,
+		        COUNT(*) FILTER (WHERE se.wikipedia_extract IS NOT NULL) AS with_wikipedia,
 		        COUNT(*) FILTER (WHERE se.ai_status = 'ok') AS annotated
 		   FROM species_enrichment se
 		   JOIN taxonomy_cache tc USING (species_code)
 		  WHERE tc.category = 'species'`
 	);
 	return {
-		enriched: Number(r.rows[0]?.enriched ?? 0),
+		taxonomy: Number(r.rows[0]?.taxonomy ?? 0),
+		withWikipedia: Number(r.rows[0]?.with_wikipedia ?? 0),
 		annotated: Number(r.rows[0]?.annotated ?? 0)
 	};
 }

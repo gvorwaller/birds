@@ -1,6 +1,10 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
-import { enrichOneNow, getEnrichment } from "$server/species-enrichment";
+import {
+  enrichOneNow,
+  enrichOneNowCoalesced,
+  getEnrichment,
+} from "$server/species-enrichment";
 import { validSpeciesCode } from "$server/wikidata";
 import { enqueueJob } from "$server/jobs";
 import { AI_STAGE_ENABLED, dedupKeys } from "$server/job-policy";
@@ -46,8 +50,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     com_name: string;
     sci_name: string;
     family: string | null;
+    category: string;
   }>(
-    "SELECT species_code, com_name, sci_name, family FROM taxonomy_cache WHERE species_code = $1",
+    "SELECT species_code, com_name, sci_name, family, category FROM taxonomy_cache WHERE species_code = $1",
     [code],
   );
   if (!taxon.rows[0]) {
@@ -252,6 +257,94 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 };
 
 export const actions: Actions = {
+  /**
+   * First-time enrichment: any authenticated role (td-0753d0). Uses promise
+   * coalescing so concurrent clicks share one Wikimedia operation. Gate:
+   * wiki_fetched_at IS NULL (server-side, not just button-hide).
+   */
+  load_enrichment: async ({ locals, params }) => {
+    const code = params.code;
+    if (!validSpeciesCode(code)) {
+      return fail(400, { error: "Invalid species code." });
+    }
+    const taxon = await query<{ category: string; com_name: string; wiki_fetched_at: string | null }>(
+      `SELECT tc.category, tc.com_name, se.wiki_fetched_at::text
+         FROM taxonomy_cache tc
+         LEFT JOIN species_enrichment se USING (species_code)
+        WHERE tc.species_code = $1`,
+      [code],
+    );
+    if (taxon.rows[0]?.category !== "species") {
+      return fail(400, { error: "Not an enrichable species." });
+    }
+    if (taxon.rows[0].wiki_fetched_at != null) {
+      return { ok: true as const, message: "This species already has Wikipedia data." };
+    }
+    const comName = taxon.rows[0].com_name;
+    let now;
+    try {
+      now = await enrichOneNowCoalesced(code);
+    } catch {
+      try {
+        const r = await enqueueJob({
+          type: "enrich_species",
+          payload: { codes: [code] },
+          dedupKey: dedupKeys.enrichSpeciesOne(code),
+          requestedBy: locals.user!.id,
+          label: comName,
+        });
+        return {
+          ok: true as const,
+          queued: { jobId: r.jobId, deduped: r.deduped, label: "Species data" },
+          message: "Queued — refresh the page shortly.",
+        };
+      } catch {
+        return fail(500, { error: "Could not load species data. Try again later." });
+      }
+    }
+    if (now.outcome === "ok") {
+      if (now.aiDue && AI_STAGE_ENABLED) {
+        try {
+          const ai = await enqueueJob({
+            type: "enrich_species",
+            payload: { codes: [code], aiOnly: true },
+            dedupKey: dedupKeys.enrichAiChunk([code]),
+            requestedBy: locals.user!.id,
+            label: comName,
+          });
+          return {
+            ok: true as const,
+            queued: { jobId: ai.jobId, deduped: ai.deduped, label: "Field craft" },
+            message: "Article loaded — field craft is being written.",
+          };
+        } catch {
+          return { ok: true as const, message: "Article loaded." };
+        }
+      }
+      return { ok: true as const, message: "Article loaded." };
+    }
+    if (now.outcome === "no_article" || now.outcome === "no_mapping") {
+      return { ok: true as const, message: "No Wikipedia article found." };
+    }
+    // Transient: queue for background retry.
+    try {
+      const r = await enqueueJob({
+        type: "enrich_species",
+        payload: { codes: [code] },
+        dedupKey: dedupKeys.enrichSpeciesOne(code),
+        requestedBy: locals.user!.id,
+        label: comName,
+      });
+      return {
+        ok: true as const,
+        queued: { jobId: r.jobId, deduped: r.deduped, label: "Species data" },
+        message: "Queued — refresh the page shortly.",
+      };
+    } catch {
+      return fail(500, { error: "Could not load species data. Try again later." });
+    }
+  },
+
   /**
    * Force-refresh this species' enrichment via the queue. ADMIN-gated
    * server-side (CODEX1 plan #5): it spends communal Wikimedia/Anthropic

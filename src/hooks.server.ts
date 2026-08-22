@@ -60,8 +60,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Read-only viewers: no writes, no settings (holds eBird credentials).
 	if (event.locals.user?.role === 'viewer') {
 		const method = event.request.method;
-		// Block every mutation except logout (posts to /login?/logout).
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login') {
+		// td-0753d0: viewers may POST load_enrichment (first-time species data,
+		// communal reference data — does not touch the owner's sightings).
+		// Check the FIRST action param only — ?/refresh_enrichment&/load_enrichment
+		// must NOT pass (SvelteKit dispatches the first slash-prefixed key).
+		const firstAction = event.url.searchParams.keys().next().value;
+		const isLoadEnrichment =
+			method === 'POST' &&
+			path.startsWith('/species/') &&
+			firstAction === '/load_enrichment';
+		// Block every mutation except logout and first-time species load.
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// Hide Settings entirely (it holds eBird credentials).
