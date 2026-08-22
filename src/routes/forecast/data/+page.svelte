@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
+  import { invalidateAll } from "$app/navigation";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { fmtNextScan } from "$lib/next-scan";
@@ -9,6 +10,15 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let refreshing = $state<string | null>(null);
+  let reloading = $state(false);
+  async function reloadData() {
+    reloading = true;
+    try {
+      await invalidateAll();
+    } finally {
+      reloading = false;
+    }
+  }
 
   // This page is the load/progress hub — force a fresh poll on arrival so
   // the jobs list is current even if the poller had gone idle.
@@ -647,12 +657,22 @@
   {/if}
 
   <section class="card">
-    <h2>
-      Loaded data ({data.stateGroups.length} state{data.stateGroups.length ===
-      1
-        ? ""
-        : "s"})
-    </h2>
+    <div class="section-head">
+      <h2>
+        Loaded data ({data.stateGroups.length} state{data.stateGroups.length ===
+        1
+          ? ""
+          : "s"})
+      </h2>
+      <button
+        type="button"
+        class="secondary reload"
+        disabled={reloading}
+        onclick={reloadData}
+      >
+        {reloading ? "Reloading…" : "Reload"}
+      </button>
+    </div>
     {#if data.stateGroups.length === 0}
       <p class="notice">Nothing loaded yet — load a state above.</p>
     {:else}
@@ -917,6 +937,21 @@
   h2 {
     font-size: 1.05rem;
     margin: 0 0 10px;
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .section-head h2 {
+    margin: 0;
+  }
+  .reload {
+    font-size: 0.82rem;
+    min-height: 36px;
+    padding: 4px 12px;
   }
   .stategroup {
     border-top: 1px solid var(--border);
