@@ -75,13 +75,15 @@ describe.runIf(dbUp)("Field guide loader (route contract, test cluster)", () => 
   it("GET ?tags= AND-filters; unknown tags degrade to dropped, not errors", async () => {
     const uid = await seed();
     try {
-      const good = await run(uid, "/species?tags=habitat%3Afreshwater-marsh");
+      // Include the seeded code so this route contract is independent of the
+      // production-sized corpus and the search endpoint's intentional LIMIT 50.
+      const good = await run(uid, `/species?q=${CODE}&tags=habitat%3Afreshwater-marsh`);
       expect(good.active).toBe(true);
       expect(good.tags).toEqual(["habitat:freshwater-marsh"]);
       expect(good.results.map((r) => r.species_code)).toContain(CODE);
 
       // Unknown tag alongside a real one: dropped, filter still applies.
-      const mixed = await run(uid, "/species?tags=habitat%3Afreshwater-marsh&tags=bogus%3Atag");
+      const mixed = await run(uid, `/species?q=${CODE}&tags=habitat%3Afreshwater-marsh&tags=bogus%3Atag`);
       expect(mixed.tags).toEqual(["habitat:freshwater-marsh"]);
       expect(mixed.results.map((r) => r.species_code)).toContain(CODE);
 
@@ -132,12 +134,12 @@ describe.runIf(dbUp)("Field guide loader (route contract, test cluster)", () => 
          ON CONFLICT DO NOTHING`,
         [uid, CODE],
       );
-      const asOwnerScope = await run(uid, "/species?tags=habitat%3Afreshwater-marsh");
+      const asOwnerScope = await run(uid, `/species?q=${CODE}&tags=habitat%3Afreshwater-marsh`);
       expect(
         asOwnerScope.results.find((r) => r.species_code === CODE)?.seen,
       ).toBe(true);
       // A different scope id (no seen rows) → Need.
-      const other = await run(uid + 999_999, "/species?tags=habitat%3Afreshwater-marsh");
+      const other = await run(uid + 999_999, `/species?q=${CODE}&tags=habitat%3Afreshwater-marsh`);
       expect(other.results.find((r) => r.species_code === CODE)?.seen).toBe(false);
     } finally {
       await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);

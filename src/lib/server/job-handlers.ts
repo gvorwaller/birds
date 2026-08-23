@@ -1002,10 +1002,177 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 	}
 }
 
-class EnrichRateLimited extends Error {
-	constructor(public retryAfterMs: number) {
-		super('upstream rate limit');
+/**
+ * Shared chunk-lifecycle harness (td-eae0fc): runEnrichSpecies and
+ * runEnrichSpeciesMedia hand-copied this ~200-line skeleton — claim event,
+ * progress init, per-unit loop (drain/cancel/budget/rate-limit stops), and
+ * the terminal ladder (cancel/rate-limit/spillover/failed-retry/complete).
+ * Extracted to ONE implementation; each wrapper supplies only the pieces
+ * that genuinely differ, as closures over its own local counters: the
+ * per-unit work (with its own accounting), the chunk summary, the spillover
+ * payload/dedup/label, and the final terminal transition (`finalize` — home
+ * for wiki's aiOnly aggregate branch and AI-remediation enqueue, neither of
+ * which applies to media or to a wiki row's non-aiOnly path).
+ */
+
+/** attempts < max ⇒ scheduleRetry, else failJob — ALWAYS carrying the chunk
+ * summary as the `result` column so a terminal row (retry OR fail) still
+ * shows what the chunk actually did. (td-eae0fc drift fix: runEnrichSpecies's
+ * wiki-rate-limit-exhausted failJob call used to drop `summary` while every
+ * other failJob call in both handlers passed it — an oversight, not an
+ * intentional distinction; unified here on always passing it.) */
+async function retryOrFail(
+	job: JobRow,
+	attempts: number,
+	delayMs: number,
+	retryReason: string,
+	failReason: string,
+	summary?: unknown
+): Promise<void> {
+	if (attempts < job.max_attempts) {
+		await scheduleRetry(job.id, attempts, delayMs, retryReason, summary);
+	} else {
+		await failJob(job.id, attempts, failReason, summary);
 	}
+}
+
+/**
+ * Generic "any attempted unit failed ⇒ retry the whole row" aggregate used
+ * by media and by a wiki row's non-aiOnly path (CODEX1 P1 #2): failures are
+ * naturally narrowed on the next attempt because successes freshness-skip.
+ * Exhaustion fails honestly with whatever was persisted. Zero failures runs
+ * `onSuccess` (wiki's AI-remediation enqueue) before completing.
+ */
+async function completeChunk(
+	job: JobRow,
+	attempts: number,
+	failedCount: number,
+	unitLabel: string,
+	summary: unknown,
+	onSuccess?: () => Promise<void>
+): Promise<void> {
+	if (failedCount > 0) {
+		await retryOrFail(
+			job,
+			attempts,
+			retryDelayMs(attempts, 'transient'),
+			`${failedCount} ${unitLabel} failed transiently`,
+			`${failedCount} ${unitLabel} failed after ${attempts} attempts`,
+			summary
+		);
+		return;
+	}
+	if (onSuccess) await onSuccess();
+	await completeJob(job.id, attempts, summary);
+}
+
+/** Claim event + initial JobProgress + heartbeat write — identical across
+ * every chunk-based enrichment worker. */
+async function claimChunk(
+	job: JobRow,
+	attempts: number,
+	unitsTotal: number
+): Promise<JobProgress> {
+	await recordEvent(job.id, 'claimed', { attempt: attempts, codes: unitsTotal });
+	const progress: JobProgress = {
+		phase: 'fetching',
+		unitsTotal,
+		unitsDone: 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	};
+	await updateProgress(job.id, progress);
+	return progress;
+}
+
+interface ChunkLifecycleOpts<S> {
+	job: JobRow;
+	ctx: WorkerContext;
+	attempts: number;
+	codes: string[];
+	wallBudgetMs: number;
+	progress: JobProgress;
+	/**
+	 * Run one unit; the callback owns ALL of its own progress/event
+	 * accounting (unit_ok/unit_failed/unit_skipped) exactly as before — the
+	 * harness never inspects it. Returning `{ retryAfterMs }` stops the batch
+	 * the same way the historic in-loop `break` did: the harness marks
+	 * `codes[i..]` as the remainder WITHOUT the trailing updateProgress call
+	 * for this unit (that unit never finished, so no extra heartbeat is
+	 * owed for it).
+	 */
+	runUnit: (code: string) => Promise<{ retryAfterMs: number } | void>;
+	/** Built once, after the loop settles, with the FINAL remainder. */
+	buildSummary: (budgetRemainder: string[]) => S;
+	rateLimitReason: string;
+	rateLimitExhaustedReason: string;
+	/** Called only when the loop stopped with unstarted work remaining. */
+	spillover: (remainder: string[]) => Promise<void>;
+	/** Owns the final terminal transition on the non-cancel, non-rate-limit
+	 * path — typically a `completeChunk` call, or (wiki aiOnly) a wholly
+	 * different aggregate ladder. */
+	finalize: (summary: S) => Promise<void>;
+}
+
+/**
+ * The ~200-line skeleton itself: per-unit loop (drain → requeue and return;
+ * cancel → break; wall budget → capture remainder and break; per-unit work;
+ * rate-limit → capture remainder and break WITHOUT a progress write) then
+ * the terminal ladder (cancel → cancelRunningJob; rate-limit → retryOrFail;
+ * budget remainder → spillover; else → wrapper-supplied `finalize`).
+ */
+async function runChunkLifecycle<S>(opts: ChunkLifecycleOpts<S>): Promise<void> {
+	const { job, ctx, attempts, codes, wallBudgetMs, progress } = opts;
+	const startedAt = Date.now();
+	let cancelSeen = false;
+	let rateLimit: { retryAfterMs: number } | null = null;
+	let budgetRemainder: string[] = [];
+
+	for (let i = 0; i < codes.length; i++) {
+		if (ctx.isDraining()) {
+			await requeueInterrupted(job.id, attempts);
+			return;
+		}
+		if (cancelSeen) break;
+		// Wall budget (CODEX1 #1): never START a new unit past the budget —
+		// the remainder becomes a fresh content-hashed chunk so this job ends
+		// promptly and user jobs interleave.
+		if (Date.now() - startedAt > wallBudgetMs) {
+			budgetRemainder = codes.slice(i);
+			break;
+		}
+		const outcome = await opts.runUnit(codes[i]);
+		if (outcome?.retryAfterMs != null) {
+			rateLimit = { retryAfterMs: outcome.retryAfterMs };
+			budgetRemainder = codes.slice(i);
+			break;
+		}
+		const { cancelRequested } = await updateProgress(job.id, progress);
+		if (cancelRequested) cancelSeen = true;
+	}
+
+	const summary = opts.buildSummary(budgetRemainder);
+
+	if (cancelSeen) {
+		await cancelRunningJob(job.id, attempts, summary);
+		return;
+	}
+	if (rateLimit) {
+		await retryOrFail(
+			job,
+			attempts,
+			rateLimit.retryAfterMs,
+			opts.rateLimitReason,
+			opts.rateLimitExhaustedReason,
+			summary
+		);
+		return;
+	}
+	if (budgetRemainder.length > 0) {
+		await opts.spillover(budgetRemainder);
+	}
+	await opts.finalize(summary);
 }
 
 /**
@@ -1027,17 +1194,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		await failJob(job.id, attempts, 'invalid enrich_species payload');
 		return;
 	}
-	await recordEvent(job.id, 'claimed', { attempt: attempts, codes: codes.length });
-
-	const progress: JobProgress = {
-		phase: 'fetching',
-		unitsTotal: codes.length,
-		unitsDone: 0,
-		unitsFailed: 0,
-		unitsSkipped: 0,
-		round: attempts
-	};
-	await updateProgress(job.id, progress);
+	const progress = await claimChunk(job, attempts, codes.length);
 
 	// Resolution stage: ONE batched SPARQL request refreshes facts for the
 	// whole chunk. Nothing has been attempted per-unit yet, so a transient
@@ -1082,21 +1239,11 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				0,
 				300
 			);
-			const rateLimited = err instanceof WikidataError && err.rateLimited;
-			const retryAfter =
-				err instanceof WikidataError && err.retryAfterMs != null ? err.retryAfterMs : null;
-			if (attempts < job.max_attempts) {
-				await scheduleRetry(
-					job.id,
-					attempts,
-					rateLimited
-						? (retryAfter ?? RATE_LIMIT_RETRY_DELAY_MS)
-						: retryDelayMs(attempts, 'transient'),
-					message
-				);
-			} else {
-				await failJob(job.id, attempts, message);
-			}
+			const delayMs =
+				err instanceof WikidataError && err.rateLimited
+					? (err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS)
+					: retryDelayMs(attempts, 'transient');
+			await retryOrFail(job, attempts, delayMs, message, message, undefined);
 			return;
 		}
 
@@ -1117,18 +1264,14 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		for (const r of t.rows) taxa.set(r.species_code, r);
 	}
 
-	const startedAt = Date.now();
 	const counts = { ok: 0, noArticle: 0, noMapping: 0, noSitelink: 0, fresh: 0, aiOk: 0 };
 	const failed: string[] = [];
 	const aiFailed: string[] = [];
 	/** AI-due codes never attempted (rate-limit stop / skipped-under-flag) —
 	 * remediated by a narrowed aiOnly chunk, never silently left to cadence. */
 	const aiPending: string[] = [];
-	let cancelSeen = false;
-	let rateLimit: EnrichRateLimited | null = null;
 	let aiRateLimited = false;
 	let aiRetryAfterMs: number | null = null;
-	let budgetRemainder: string[] = [];
 
 	type AiOutcome = 'ok' | 'error' | 'rate_limited' | 'no_taxonomy' | 'disabled';
 
@@ -1187,41 +1330,29 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		}
 	};
 
-	for (let i = 0; i < codes.length; i++) {
-		const code = codes[i];
-		if (ctx.isDraining()) {
-			await requeueInterrupted(job.id, attempts);
-			return;
+	/** Truthful accounting for an attempted AI stage (CODEX1 Phase-2 P1 #1):
+	 * only 'ok' becomes a done unit; errors are failed units; a rate-limit
+	 * stop parks the code for the narrowed remediation chunk. */
+	const accountAiAttempt = async (aiCode: string, outcome: AiOutcome): Promise<void> => {
+		if (outcome === 'ok') {
+			progress.unitsDone++;
+			await recordEvent(job.id, 'unit_ok', { code: aiCode, outcome: 'ai_only' });
+		} else if (outcome === 'error') {
+			progress.unitsFailed++; // unit_failed already recorded by runAiStage
+		} else if (outcome === 'rate_limited') {
+			aiPending.push(aiCode);
+			progress.unitsSkipped++;
+			await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: 'ai_rate_limited' });
+		} else {
+			progress.unitsSkipped++;
+			await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: outcome });
 		}
-		if (cancelSeen) break;
-		// Wall budget (CODEX1 #1): never START a new unit past the budget —
-		// the remainder becomes a fresh content-hashed chunk so this job ends
-		// promptly and user jobs interleave.
-		if (Date.now() - startedAt > ENRICH_WALL_BUDGET_MS) {
-			budgetRemainder = codes.slice(i);
-			break;
-		}
+	};
+
+	const runUnit = async (code: string): Promise<{ retryAfterMs: number } | void> => {
 		const unitOk = async (outcome: string) => {
 			progress.unitsDone++;
 			await recordEvent(job.id, 'unit_ok', { code, outcome });
-		};
-		/** Truthful accounting for an attempted AI stage (CODEX1 Phase-2 P1 #1):
-		 * only 'ok' becomes a done unit; errors are failed units; a rate-limit
-		 * stop parks the code for the narrowed remediation chunk. */
-		const accountAiAttempt = async (aiCode: string, outcome: AiOutcome): Promise<void> => {
-			if (outcome === 'ok') {
-				progress.unitsDone++;
-				await recordEvent(job.id, 'unit_ok', { code: aiCode, outcome: 'ai_only' });
-			} else if (outcome === 'error') {
-				progress.unitsFailed++; // unit_failed already recorded by runAiStage
-			} else if (outcome === 'rate_limited') {
-				aiPending.push(aiCode);
-				progress.unitsSkipped++;
-				await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: 'ai_rate_limited' });
-			} else {
-				progress.unitsSkipped++;
-				await recordEvent(job.id, 'unit_skipped', { code: aiCode, reason: outcome });
-			}
 		};
 
 		try {
@@ -1398,9 +1529,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							// Stop the batch — remaining units keep their state and
 							// the whole row retries after the server's Retry-After
 							// when it sent one (CODEX1 P2 #6).
-							rateLimit = new EnrichRateLimited(err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS);
-							budgetRemainder = codes.slice(i);
-							break;
+							return { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
 						}
 						throw err;
 					}
@@ -1419,153 +1548,121 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			progress.lastError = message;
 			await recordEvent(job.id, 'unit_failed', { code, error: message });
 		}
-		const { cancelRequested } = await updateProgress(job.id, progress);
-		if (cancelRequested) cancelSeen = true;
-	}
-
-	const summary = {
-		...counts,
-		failed,
-		aiFailed,
-		aiPending,
-		aiRateLimited,
-		remainder: budgetRemainder.length
 	};
 
-	if (cancelSeen) {
-		await cancelRunningJob(job.id, attempts, summary);
-		return;
-	}
-	if (rateLimit) {
-		if (attempts < job.max_attempts) {
-			await scheduleRetry(job.id, attempts, rateLimit.retryAfterMs, 'wikipedia rate limit', summary);
-		} else {
-			await failJob(job.id, attempts, 'wikipedia rate limit — retries exhausted');
-		}
-		return;
-	}
-	if (budgetRemainder.length > 0) {
-		// Spill the un-started remainder into its own chunk; this job then
-		// completes honestly with what it actually did. The spill PRESERVES
-		// the route (CODEX1 round 2 P1 #1): an aiOnly remainder stays aiOnly
-		// in its own dedup namespace — never demoted to a wiki chunk.
-		await enqueueJob({
-			type: 'enrich_species',
-			payload: {
-				codes: budgetRemainder,
-				...(force ? { force } : {}),
-				...(aiOnly ? { aiOnly } : {})
-			},
-			dedupKey: aiOnly
-				? dedupKeys.enrichAiChunk(budgetRemainder)
-				: dedupKeys.enrichChunk(budgetRemainder),
-			requestedBy: job.requested_by,
-			label: `${budgetRemainder.length} species (spillover${aiOnly ? ', AI' : ''})`
-		});
-		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length, aiOnly });
-	}
-	// aiOnly aggregate (CODEX1 Phase-2 P1 #1): AI work IS this job's work —
-	// failures retry the row (errors are always due on the next attempt) and
-	// exhaustion fails honestly; a 429 stop retries after the server's
-	// Retry-After. Never a green complete over an unannotated chunk.
-	if (aiOnly) {
-		if (aiRateLimited) {
-			if (attempts < job.max_attempts) {
-				await scheduleRetry(
-					job.id,
-					attempts,
-					aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS,
-					'AI rate limit',
-					summary
-				);
-			} else {
-				await failJob(job.id, attempts, 'AI rate limit — retries exhausted', summary);
+	await runChunkLifecycle({
+		job,
+		ctx,
+		attempts,
+		codes,
+		wallBudgetMs: ENRICH_WALL_BUDGET_MS,
+		progress,
+		runUnit,
+		buildSummary: (budgetRemainder) => ({
+			...counts,
+			failed,
+			aiFailed,
+			aiPending,
+			aiRateLimited,
+			remainder: budgetRemainder.length
+		}),
+		rateLimitReason: 'wikipedia rate limit',
+		rateLimitExhaustedReason: 'wikipedia rate limit — retries exhausted',
+		spillover: async (remainder) => {
+			// Spill the un-started remainder into its own chunk; this job then
+			// completes honestly with what it actually did. The spill PRESERVES
+			// the route (CODEX1 round 2 P1 #1): an aiOnly remainder stays aiOnly
+			// in its own dedup namespace — never demoted to a wiki chunk.
+			await enqueueJob({
+				type: 'enrich_species',
+				payload: {
+					codes: remainder,
+					...(force ? { force } : {}),
+					...(aiOnly ? { aiOnly } : {})
+				},
+				dedupKey: aiOnly ? dedupKeys.enrichAiChunk(remainder) : dedupKeys.enrichChunk(remainder),
+				requestedBy: job.requested_by,
+				label: `${remainder.length} species (spillover${aiOnly ? ', AI' : ''})`
+			});
+			await recordEvent(job.id, 'progress', { spillover: remainder.length, aiOnly });
+		},
+		finalize: async (summary) => {
+			// aiOnly aggregate (CODEX1 Phase-2 P1 #1): AI work IS this job's
+			// work — failures retry the row (errors are always due on the next
+			// attempt) and exhaustion fails honestly; a 429 stop retries after
+			// the server's Retry-After. Never a green complete over an
+			// unannotated chunk. This branch — and the AI-remediation enqueue
+			// below it — are genuinely wiki-only, so they live in this
+			// wrapper's `finalize` rather than the shared harness (td-eae0fc).
+			if (aiOnly) {
+				if (aiRateLimited) {
+					await retryOrFail(
+						job,
+						attempts,
+						aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS,
+						'AI rate limit',
+						'AI rate limit — retries exhausted',
+						summary
+					);
+					return;
+				}
+				// aiFailed is the expected bucket; `failed` is belt-and-braces
+				// (the stage-aware catch should make it unreachable in aiOnly)
+				// — either way, failures never complete green (CODEX1 round 2
+				// P1 #2).
+				const aiOnlyFailures = aiFailed.length + failed.length;
+				if (aiOnlyFailures > 0) {
+					await retryOrFail(
+						job,
+						attempts,
+						retryDelayMs(attempts, 'transient'),
+						`${aiOnlyFailures} AI annotations failed`,
+						`${aiOnlyFailures} AI annotations failed after ${attempts} attempts`,
+						summary
+					);
+					return;
+				}
+				await completeJob(job.id, attempts, summary);
+				return;
 			}
-			return;
-		}
-		// aiFailed is the expected bucket; `failed` is belt-and-braces (the
-		// stage-aware catch should make it unreachable in aiOnly) — either
-		// way, failures never complete green (CODEX1 round 2 P1 #2).
-		const aiOnlyFailures = aiFailed.length + failed.length;
-		if (aiOnlyFailures > 0) {
-			if (attempts < job.max_attempts) {
-				await scheduleRetry(
-					job.id,
-					attempts,
-					retryDelayMs(attempts, 'transient'),
-					`${aiOnlyFailures} AI annotations failed`,
-					summary
-				);
-			} else {
-				await failJob(
-					job.id,
-					attempts,
-					`${aiOnlyFailures} AI annotations failed after ${attempts} attempts`,
-					summary
-				);
-			}
-			return;
-		}
-		await completeJob(job.id, attempts, summary);
-		return;
-	}
 
-	// Aggregate rule (CODEX1 P1 #2): ANY transient unit failure retries the
-	// row — the retry is NATURALLY narrowed to the failed codes because
-	// successes are freshness-skipped on the next attempt (error rows are
-	// not "fresh", so only they re-run; force successes are covered by the
-	// refreshed-since-enqueue check). Exhaustion fails honestly — persisted
-	// per-species data stays, but the job never reads green with holes.
-	if (failed.length > 0) {
-		if (attempts < job.max_attempts) {
-			await scheduleRetry(
-				job.id,
-				attempts,
-				retryDelayMs(attempts, 'transient'),
-				`${failed.length} species failed transiently`,
-				summary
-			);
-		} else {
-			await failJob(
-				job.id,
-				attempts,
-				`${failed.length} species failed after ${attempts} attempts`,
-				summary
-			);
+			// Aggregate rule (CODEX1 P1 #2): ANY transient unit failure retries
+			// the row — the retry is NATURALLY narrowed to the failed codes
+			// because successes are freshness-skipped on the next attempt
+			// (error rows are not "fresh", so only they re-run; force
+			// successes are covered by the refreshed-since-enqueue check).
+			// Exhaustion fails honestly — persisted per-species data stays,
+			// but the job never reads green with holes. Wiki work succeeded →
+			// AI holes get a DURABLE narrowed remediation chunk (CODEX1
+			// Phase-2 P1 #1/#2/P2 #3) before the job completes honestly.
+			await completeChunk(job, attempts, failed.length, 'species', summary, async () => {
+				const remediation = [...new Set([...aiFailed, ...aiPending])].sort();
+				if (remediation.length > 0) {
+					await enqueueJob({
+						type: 'enrich_species',
+						payload: {
+							codes: remediation,
+							aiOnly: true
+						} satisfies EnrichPayload as unknown as Record<string, unknown>,
+						dedupKey: dedupKeys.enrichAiChunk(remediation),
+						requestedBy: job.requested_by,
+						label: `${remediation.length} species (AI remediation)`,
+						runAfterMs: aiRateLimited ? (aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS) : 0
+					});
+					await recordEvent(job.id, 'progress', { aiRemediation: remediation.length });
+				}
+			});
 		}
-		return;
-	}
-	// Wiki work succeeded; AI holes get a DURABLE narrowed remediation chunk
-	// (CODEX1 Phase-2 P1 #1/#2/P2 #3) — completion is honest because the
-	// remaining work is enqueued, not left to scanner cadence.
-	const remediation = [...new Set([...aiFailed, ...aiPending])].sort();
-	if (remediation.length > 0) {
-		await enqueueJob({
-			type: 'enrich_species',
-			payload: { codes: remediation, aiOnly: true } satisfies EnrichPayload as unknown as Record<
-				string,
-				unknown
-			>,
-			dedupKey: dedupKeys.enrichAiChunk(remediation),
-			requestedBy: job.requested_by,
-			label: `${remediation.length} species (AI remediation)`,
-			runAfterMs: aiRateLimited ? (aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS) : 0
-		});
-		await recordEvent(job.id, 'progress', { aiRemediation: remediation.length });
-	}
-	await completeJob(job.id, attempts, summary);
+	});
 }
 
 // ---------------------------------------------------------------------------
 // Field-guide sample media (plan: docs/2026-08-23-field-guide-sample-media-
-// CLAUDE.md §7). Modeled closely on runEnrichSpecies above: claim event,
-// progress, drain requeue, wall-budget spillover, freshness skip, rate-limit
-// stop with Retry-After, cancel handling, honest terminal transitions. Two
-// external APIs per species (Commons + xeno-canto), so the chunk is smaller
-// and the politeness gap wider than wiki enrichment.
+// CLAUDE.md §7). Uses the shared chunk-lifecycle harness above; its wrapper
+// retains media-specific freshness, provider calls, spillover, and summary
+// accounting. Two external APIs per species (Commons + xeno-canto), so the
+// chunk is smaller and the politeness gap wider than wiki enrichment.
 // ---------------------------------------------------------------------------
-
-
 /**
  * One bounded chunk (≤20 species): resolves each code's stored QID + sci
  * name, then serially runs enrichSpeciesMedia with a politeness gap. Per-
@@ -1583,17 +1680,7 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 		await failJob(job.id, attempts, 'invalid enrich_species_media payload');
 		return;
 	}
-	await recordEvent(job.id, 'claimed', { attempt: attempts, codes: codes.length });
-
-	const progress: JobProgress = {
-		phase: 'fetching',
-		unitsTotal: codes.length,
-		unitsDone: 0,
-		unitsFailed: 0,
-		unitsSkipped: 0,
-		round: attempts
-	};
-	await updateProgress(job.id, progress);
+	const progress = await claimChunk(job, attempts, codes.length);
 
 	// Pre-load QIDs + sci names for the whole chunk (two batch SELECTs) —
 	// media needs both and neither changes mid-chunk.
@@ -1614,31 +1701,16 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 		for (const row of r.rows) sciNames.set(row.species_code, row.sci_name);
 	}
 
-	const startedAt = Date.now();
 	const counts = { ok: 0, partial: 0, noMedia: 0, fresh: 0 };
 	const failed: string[] = [];
-	let cancelSeen = false;
-	let rateLimit: { retryAfterMs: number } | null = null;
-	let budgetRemainder: string[] = [];
 	let attemptedAny = false;
 
 	const skipUnit = async (code: string, reason: string) => {
 		progress.unitsSkipped++;
 		await recordEvent(job.id, 'unit_skipped', { code, reason });
 	};
-	for (let i = 0; i < codes.length; i++) {
-		const code = codes[i];
-		if (ctx.isDraining()) {
-			await requeueInterrupted(job.id, attempts);
-			return;
-		}
-		if (cancelSeen) break;
-		// Wall budget: never START a new unit past the budget — the
-		// remainder becomes a fresh content-hashed chunk (CODEX1 pattern).
-		if (Date.now() - startedAt > MEDIA_WALL_BUDGET_MS) {
-			budgetRemainder = codes.slice(i);
-			break;
-		}
+
+	const runUnit = async (code: string): Promise<{ retryAfterMs: number } | void> => {
 		const qid = qids.get(code);
 		const sciName = sciNames.get(code);
 		try {
@@ -1662,11 +1734,9 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 		} catch (err) {
 			// Structural check — covers CommonsError, WikidataError, and
 			// XenoCantoError today, plus any future provider error carrying the
-			// shared {rateLimited, retryAfterMs} shape.
+			// shared {rateLimited, retryAfterMs} provider-error shape.
 			if (isRateLimitedError(err)) {
-				rateLimit = { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
-				budgetRemainder = codes.slice(i);
-				break;
+				return { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
 			}
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
 				0,
@@ -1678,65 +1748,37 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 			progress.lastError = message;
 			await recordEvent(job.id, 'unit_failed', { code, error: message });
 		}
-		const { cancelRequested } = await updateProgress(job.id, progress);
-		if (cancelRequested) cancelSeen = true;
-	}
+	};
 
-	const summary = { ...counts, failed, remainder: budgetRemainder.length };
-
-	if (cancelSeen) {
-		await cancelRunningJob(job.id, attempts, summary);
-		return;
-	}
-	if (rateLimit) {
-		if (attempts < job.max_attempts) {
-			await scheduleRetry(
-				job.id,
-				attempts,
-				rateLimit.retryAfterMs,
-				'media provider rate limit',
-				summary
-			);
-		} else {
-			await failJob(job.id, attempts, 'media provider rate limit — retries exhausted', summary);
-		}
-		return;
-	}
-	if (budgetRemainder.length > 0) {
-		await enqueueJob({
-			type: 'enrich_species_media',
-			payload: {
-				codes: budgetRemainder,
-				...(force ? { force } : {})
-			} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
-			dedupKey: dedupKeys.enrichMediaChunk(budgetRemainder),
-			requestedBy: job.requested_by,
-			label: `${budgetRemainder.length} species media (spillover)`
-		});
-		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
-	}
-	// ANY transient unit failure retries the row — naturally narrowed to the
-	// failed codes next attempt (error rows are not "fresh", successes are).
-	if (failed.length > 0) {
-		if (attempts < job.max_attempts) {
-			await scheduleRetry(
-				job.id,
-				attempts,
-				retryDelayMs(attempts, 'transient'),
-				`${failed.length} species media failed transiently`,
-				summary
-			);
-		} else {
-			await failJob(
-				job.id,
-				attempts,
-				`${failed.length} species media failed after ${attempts} attempts`,
-				summary
-			);
-		}
-		return;
-	}
-	await completeJob(job.id, attempts, summary);
+	await runChunkLifecycle({
+		job,
+		ctx,
+		attempts,
+		codes,
+		wallBudgetMs: MEDIA_WALL_BUDGET_MS,
+		progress,
+		runUnit,
+		buildSummary: (budgetRemainder) => ({ ...counts, failed, remainder: budgetRemainder.length }),
+		rateLimitReason: 'media provider rate limit',
+		rateLimitExhaustedReason: 'media provider rate limit — retries exhausted',
+		spillover: async (remainder) => {
+			await enqueueJob({
+				type: 'enrich_species_media',
+				payload: {
+					codes: remainder,
+					...(force ? { force } : {})
+				} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
+				dedupKey: dedupKeys.enrichMediaChunk(remainder),
+				requestedBy: job.requested_by,
+				label: `${remainder.length} species media (spillover)`
+			});
+			await recordEvent(job.id, 'progress', { spillover: remainder.length });
+		},
+		// ANY transient unit failure retries the row — naturally narrowed to
+		// the failed codes next attempt (error rows are not "fresh",
+		// successes are).
+		finalize: (summary) => completeChunk(job, attempts, failed.length, 'species media', summary)
+	});
 }
 
 /** Dispatch a claimed job. Never throws — failures become failJob. */
