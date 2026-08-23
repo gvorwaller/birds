@@ -1011,6 +1011,11 @@ export async function enrichSpeciesMedia(
 	} catch (err) {
 		if (err instanceof XenoCantoError && err.rateLimited) throw err;
 		xcOk = false;
+		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+			0,
+			200
+		);
+		console.warn(`[species-media] ${code} xeno-canto partial: ${message}`);
 	}
 	if (xcOk) {
 		if (commonsAudioOk) {

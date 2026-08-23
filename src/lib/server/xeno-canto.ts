@@ -17,12 +17,13 @@
  *   - Auth: the key is a QUERY PARAMETER named `key` (e.g. `&key=...`), NOT
  *     a request header — this contradicts the spec's draft X-API-Key header
  *     guess, so this implementation uses the query param.
- *   - Recording field names: id, file, type, q (quality), len (duration),
+ *   - Recording field names: id, file, type, q (quality), length (duration),
  *     rec (recordist), lic (license), loc (location), cnt (country).
  *   - Response envelope: { numRecordings, numSpecies, page, numPages,
  *     recordings: [...] }.
- * UNVERIFIED: the exact `len` duration format (mm:ss vs. plain seconds).
- * parseDuration() below defensively accepts both formats.
+ * LIVE-VERIFIED (2026-08-23): v3 returns duration in `length`, formatted
+ * as mm:ss (for example "0:10"). parseDuration() also accepts h:mm:ss and
+ * bare seconds defensively.
  * Query shape: this code uses the documented v3 species tag
  * `sp:"Genus species"` (the only form any reachable example shows). Quality
  * is NOT filtered server-side: xeno-canto tags combine with AND semantics,
@@ -88,8 +89,7 @@ export function categorizeType(type: string): 'song' | 'call' {
 
 /**
  * "mm:ss" (or "h:mm:ss") → seconds. Defensively also accepts a bare integer
- * string (unverified whether v3's `len` field kept v2's mm:ss format — see
- * module doc comment). Unparsable input returns 0, which fails the
+ * string. Unparsable input returns 0, which fails the
  * 3–60s acceptance window rather than throwing.
  */
 export function parseDuration(dur: string): number {
@@ -127,7 +127,7 @@ interface XcApiRecording {
 	file: string;
 	type: string;
 	q: string;
-	len: string;
+	length: string;
 	rec: string;
 	lic: string;
 	loc?: string;
@@ -142,13 +142,20 @@ interface XcApiResponse {
 }
 
 function toRecording(r: XcApiRecording): XenoCantoRecording {
+	if (typeof r.length !== 'string') {
+		throw new XenoCantoError(
+			'xeno-canto query failed: malformed recording (missing length)',
+			0,
+			false
+		);
+	}
 	return {
 		xcId: r.id.startsWith('XC') ? r.id : `XC${r.id}`,
 		mediaUrl: r.file,
 		sourceUrl: `https://xeno-canto.org/${r.id.replace(/^XC/, '')}`,
 		type: r.type,
 		quality: r.q,
-		duration: parseDuration(r.len),
+		duration: parseDuration(r.length),
 		recordist: r.rec,
 		license: normalizeLicense(r.lic),
 		licenseUrl: licenseUrl(r.lic),

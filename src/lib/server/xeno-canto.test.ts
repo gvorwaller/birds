@@ -154,11 +154,11 @@ describe("fetchXenoCantoRecordings", () => {
       new Response(
         JSON.stringify({
           recordings: [
-            { id: "1", file: "u1", type: "song", q: "C", len: "0:10", rec: "R1", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // quality C — rejected
-            { id: "2", file: "u2", type: "song", q: "B", len: "0:02", rec: "R2", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // too short (<3s) — rejected
-            { id: "3", file: "u3", type: "song", q: "B", len: "0:20", rec: "R3", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" },
-            { id: "4", file: "u4", type: "song", q: "A", len: "0:15", rec: "R4", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // best song: A beats B
-            { id: "5", file: "u5", type: "alarm call", q: "A", len: "0:08", rec: "R5", lic: "//creativecommons.org/licenses/by/4.0/", loc: "Some Marsh" },
+            { id: "1", file: "u1", type: "song", q: "C", length: "0:10", rec: "R1", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // quality C — rejected
+            { id: "2", file: "u2", type: "song", q: "B", length: "0:02", rec: "R2", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // too short (<3s) — rejected
+            { id: "3", file: "u3", type: "song", q: "B", length: "0:20", rec: "R3", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" },
+            { id: "4", file: "u4", type: "song", q: "A", length: "0:15", rec: "R4", lic: "//creativecommons.org/licenses/by-nc-sa/4.0/" }, // best song: A beats B
+            { id: "5", file: "u5", type: "alarm call", q: "A", length: "0:08", rec: "R5", lic: "//creativecommons.org/licenses/by/4.0/", loc: "Some Marsh" },
           ],
         }),
         { status: 200 },
@@ -170,6 +170,29 @@ describe("fetchXenoCantoRecordings", () => {
     expect(call?.location).toBe("Some Marsh");
     expect(call?.license).toBe("CC BY 4.0");
     expect(call?.sourceUrl).toBe("https://xeno-canto.org/5");
+  });
+
+  it("rejects a malformed v3 recording without a length field", async () => {
+    setKey("test-key");
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          recordings: [
+            {
+              id: "1",
+              file: "u1",
+              type: "song",
+              q: "A",
+              rec: "R1",
+              lic: "https://creativecommons.org/licenses/by/4.0/",
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    await expect(fetchXenoCantoRecordings("Limosa fedoa", { fetcher })).rejects.toThrow(
+      /malformed recording \(missing length\)/,
+    );
   });
 
   it("HTTP 429 → XenoCantoError with rateLimited true", async () => {
