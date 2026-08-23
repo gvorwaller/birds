@@ -143,6 +143,14 @@
 				>
 					<span class="ico">❓</span>Help
 				</a>
+				<!-- Reference-only About link — drawer only (all roles), below Help -->
+				<a
+					href="/about"
+					class:active={isActive('/about', $page.url.pathname)}
+					onclick={() => (menuOpen = false)}
+				>
+					<span class="ico">ℹ️</span>About
+				</a>
 			</nav>
 			<div class="drawer-foot">
 				<div class="who">Signed in as {data.user.display_name}{isViewer ? ' · read-only' : ''}</div>
