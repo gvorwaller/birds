@@ -22,13 +22,27 @@ type Exec = <T extends pg.QueryResultRow = pg.QueryResultRow>(
 	text: string,
 	params?: unknown[]
 ) => Promise<{ rows: T[] }>;
-const clientExec = (client: pg.PoolClient): Exec => ((text, params) =>
-	client.query(text, params as never[])) as Exec;
+const clientExec = (client: pg.PoolClient): Exec =>
+	((text, params) => client.query(text, params as never[])) as Exec;
 import { sanitizeErrorText } from '$server/job-policy';
 import type { WikidataSpeciesRow } from '$server/wikidata';
-import { fetchWikidataBatch, fetchWikidataBySciName, validSciName } from '$server/wikidata';
+import {
+	fetchWikidataBatch,
+	fetchWikidataBySciName,
+	fetchWikidataMedia,
+	validSciName
+} from '$server/wikidata';
 import type { WikiArticle } from '$server/wikipedia';
 import { articleUrl, fetchArticlePlaintext } from '$server/wikipedia';
+import type { CommonsFileInfo } from '$server/wikimedia-commons';
+import {
+	commonsSourceUrl,
+	fetchCommonsFileInfo,
+	isDisplayableImage,
+	isPlayableAudio
+} from '$server/wikimedia-commons';
+import type { XenoCantoRecording } from '$server/xeno-canto';
+import { fetchXenoCantoRecordings, XenoCantoError } from '$server/xeno-canto';
 
 export const WIKI_REFRESH_DAYS = 180;
 export const ERROR_RETRY_DAYS = 7;
@@ -216,7 +230,12 @@ export async function markWikiError(code: string, message: string): Promise<void
 /** Phase 2 writer — present now so the schema/tsv contract is complete. */
 export async function upsertAiData(
 	code: string,
-	data: { fieldCraft: string; tags: string[]; model: string; sourceRevId: number }
+	data: {
+		fieldCraft: string;
+		tags: string[];
+		model: string;
+		sourceRevId: number;
+	}
 ): Promise<void> {
 	// SET expressions read the OLD row for untouched columns, so mixing the
 	// new tags/field_craft params with the stored extract/sections is correct.
@@ -442,10 +461,12 @@ export async function enrichOneNow(
 			return { outcome: 'no_article' as const };
 		}
 		await upsertWikiOk(code, article, exec);
-		const ai = await exec<{ ai_status: string | null; ai_source_rev_id: string | null }>(
-			`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`,
-			[code]
-		);
+		const ai = await exec<{
+			ai_status: string | null;
+			ai_source_rev_id: string | null;
+		}>(`SELECT ai_status, ai_source_rev_id::text FROM species_enrichment WHERE species_code = $1`, [
+			code
+		]);
 		const aiDue = !(
 			ai.rows[0]?.ai_status === 'ok' && ai.rows[0]?.ai_source_rev_id === String(article.revId)
 		);
@@ -570,7 +591,11 @@ export async function guideCounts(): Promise<{
 	withWikipedia: number;
 	annotated: number;
 }> {
-	const r = await query<{ taxonomy: string; with_wikipedia: string; annotated: string }>(
+	const r = await query<{
+		taxonomy: string;
+		with_wikipedia: string;
+		annotated: string;
+	}>(
 		`SELECT (SELECT COUNT(*) FROM taxonomy_cache WHERE category = 'species') AS taxonomy,
 		        COUNT(*) FILTER (WHERE se.wikipedia_extract IS NOT NULL) AS with_wikipedia,
 		        COUNT(*) FILTER (WHERE se.ai_status = 'ok') AS annotated
@@ -603,6 +628,10 @@ export interface EnrichmentRow {
 	field_craft: string | null;
 	tags: string[];
 	ai_generated_at: string | null;
+	media_status: string | null;
+	media_fetched_at: string | null;
+	media_ok_at: string | null;
+	media_error: string | null;
 }
 
 export async function getEnrichment(code: string): Promise<EnrichmentRow | null> {
@@ -610,7 +639,8 @@ export async function getEnrichment(code: string): Promise<EnrichmentRow | null>
 		`SELECT species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids,
 		        wikipedia_title, wikipedia_url, wikipedia_rev_id::text, wikipedia_extract,
 		        wikipedia_sections, wiki_status, wiki_fetched_at::text, wiki_ok_at::text,
-		        field_craft, tags, ai_generated_at::text
+		        field_craft, tags, ai_generated_at::text,
+		        media_status, media_fetched_at::text, media_ok_at::text, media_error
 		   FROM species_enrichment WHERE species_code = $1`,
 		[code]
 	);
@@ -666,4 +696,368 @@ export async function wikiFresh(code: string): Promise<boolean> {
 		[code]
 	);
 	return r.rows[0]?.fresh === true;
+}
+
+// ---------------------------------------------------------------------------
+// Field-guide sample media (plan: docs/2026-08-23-field-guide-sample-media-
+// CLAUDE.md). Metadata-only: binaries live on Wikimedia Commons / xeno-canto,
+// remote URLs are the source of truth. A separate table + stage columns,
+// parallel to the wiki/AI stages above — a media failure never touches wiki
+// or AI data, and vice versa.
+// ---------------------------------------------------------------------------
+
+export interface MediaRow {
+	media_id: number;
+	species_code: string;
+	kind: 'photo' | 'sound';
+	vocalization_type: string | null;
+	rank: number;
+	provider: 'wikimedia_commons' | 'xeno_canto';
+	provider_id: string;
+	media_url: string;
+	thumbnail_url: string | null;
+	source_url: string;
+	title: string | null;
+	creator: string | null;
+	license_code: string;
+	license_url: string | null;
+	location: string | null;
+	duration_seconds: number | null;
+	width: number | null;
+	height: number | null;
+}
+
+export interface SampleMedia {
+	photo: MediaRow | null;
+	sounds: MediaRow[];
+	status: string | null;
+	mediaError: string | null;
+}
+
+/** A row shape not yet persisted — media_id/species_code are assigned by the write. */
+export type MediaCandidate = Omit<MediaRow, 'media_id' | 'species_code'>;
+
+/**
+ * Transactional replace: DELETE existing species_media rows for this code,
+ * INSERT the new candidates, and stamp species_enrichment's media stage —
+ * all in one statement sequence so a partial write is never visible
+ * (CODEX1 pattern, matching upsertResolution/upsertWikiOk). When no executor
+ * is supplied, this function owns the transaction; callers already inside a
+ * transaction can pass their client executor.
+ */
+export async function upsertMediaOk(
+	code: string,
+	rows: readonly MediaCandidate[],
+	status: 'ok' | 'partial' | 'no_media',
+	exec?: Exec
+): Promise<void> {
+	const replace = async (run: Exec): Promise<void> => {
+		await run(`DELETE FROM species_media WHERE species_code = $1`, [code]);
+		for (const r of rows) {
+			await run(
+				`INSERT INTO species_media
+			   (species_code, kind, vocalization_type, rank, provider, provider_id,
+			    media_url, thumbnail_url, source_url, title, creator, license_code,
+			    license_url, location, duration_seconds, width, height)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+				[
+					code,
+					r.kind,
+					r.vocalization_type,
+					r.rank,
+					r.provider,
+					r.provider_id,
+					r.media_url,
+					r.thumbnail_url,
+					r.source_url,
+					r.title,
+					r.creator,
+					r.license_code,
+					r.license_url,
+					r.location,
+					r.duration_seconds,
+					r.width,
+					r.height
+				]
+			);
+		}
+		await run(
+			`INSERT INTO species_enrichment (species_code, media_status, media_fetched_at, media_ok_at)
+		 VALUES ($1, $2, NOW(), NOW())
+		 ON CONFLICT (species_code) DO UPDATE SET
+		   media_status = $2, media_fetched_at = NOW(), media_ok_at = NOW(),
+		   media_error = NULL, updated_at = NOW()`,
+			[code, status]
+		);
+	};
+	if (exec) {
+		await replace(exec);
+		return;
+	}
+	await withTransaction(async (client) => replace(clientExec(client)));
+}
+
+/**
+ * Media-stage failure: stamps status/error/clock ONLY. Existing species_media
+ * rows are PRESERVED (last-good) — a transient Commons/xeno-canto outage must
+ * not blank out a photo that was already showing on the species page.
+ * INSERT ON CONFLICT so it works even when the enrichment row doesn't exist
+ * yet (belt-and-braces, matching markWikiError).
+ */
+export async function markMediaError(code: string, message: string): Promise<void> {
+	await query(
+		`INSERT INTO species_enrichment (species_code, media_status, media_error, media_fetched_at)
+		 VALUES ($1, 'error', $2, NOW())
+		 ON CONFLICT (species_code) DO UPDATE SET
+		   media_status = 'error', media_error = $2, media_fetched_at = NOW(),
+		   updated_at = NOW()`,
+		[code, sanitizeErrorText(message).slice(0, 500)]
+	);
+}
+
+/**
+ * DB-only read for the species page loader (key invariant: never calls
+ * Commons/xeno-canto on GET). Two parallel queries: the media rows and the
+ * enrichment row's media-stage status/error.
+ */
+export async function getSpeciesMedia(code: string): Promise<SampleMedia> {
+	const [mediaRes, statusRes] = await Promise.all([
+		query<MediaRow>(
+			`SELECT media_id, species_code, kind, vocalization_type, rank, provider, provider_id,
+			        media_url, thumbnail_url, source_url, title, creator, license_code, license_url,
+			        location, duration_seconds, width, height
+			   FROM species_media WHERE species_code = $1 ORDER BY kind, rank`,
+			[code]
+		),
+		query<{ media_status: string | null; media_error: string | null }>(
+			`SELECT media_status, media_error FROM species_enrichment WHERE species_code = $1`,
+			[code]
+		)
+	]);
+	return {
+		photo: mediaRes.rows.find((r) => r.kind === 'photo') ?? null,
+		sounds: mediaRes.rows.filter((r) => r.kind === 'sound'),
+		status: statusRes.rows[0]?.media_status ?? null,
+		mediaError: statusRes.rows[0]?.media_error ?? null
+	};
+}
+
+/**
+ * In-scope codes whose media is due: never attempted, past the refresh
+ * window, or past the error retry window. Requires a resolved QID — media
+ * needs it for the P18/P51 SPARQL lookup, so an unresolved species (still
+ * no_mapping) is never a media candidate.
+ */
+export async function mediaDueCodes(): Promise<string[]> {
+	const r = await query<{ species_code: string }>(
+		`${SCOPE_SQL}
+		 AND EXISTS (
+		   SELECT 1 FROM species_enrichment se
+		    WHERE se.species_code = tc.species_code
+		      AND se.wikidata_qid IS NOT NULL
+		      AND (
+		            se.media_status IS NULL
+		         OR (se.media_status IN ('ok','no_media')
+		             AND se.media_fetched_at < NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
+		         OR (se.media_status IN ('partial','error')
+		             AND se.media_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		      )
+		 )
+		 ORDER BY 1`
+	);
+	return r.rows.map((x) => x.species_code);
+}
+
+/**
+ * Per-species freshness check used by the media chunk handler (idempotent
+ * overlap). MUST stay the exact negation of mediaDueCodes' predicate above
+ * (minus the never-fresh 'error' state). 'partial' is transient by
+ * definition — a xeno-canto outage or an unconfigured XENO_CANTO_API_KEY —
+ * so it retries on the short ERROR window, never the 180-day one: species
+ * enriched before the key exists get their sounds within days of it being
+ * configured, not months.
+ */
+export async function mediaFresh(code: string): Promise<boolean> {
+	const r = await query<{ fresh: boolean }>(
+		`SELECT ((media_status IN ('ok','no_media')
+		          AND media_fetched_at > NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
+		      OR (media_status = 'partial'
+		          AND media_fetched_at > NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')) AS fresh
+		   FROM species_enrichment WHERE species_code = $1`,
+		[code]
+	);
+	return r.rows[0]?.fresh === true;
+}
+
+function commonsPhotoCandidate(filename: string, info: CommonsFileInfo): MediaCandidate | null {
+	if (!isDisplayableImage(info.mimeType) || !info.licenseCode) return null;
+	return {
+		kind: 'photo',
+		vocalization_type: null,
+		rank: 1,
+		provider: 'wikimedia_commons',
+		provider_id: filename,
+		media_url: info.url,
+		thumbnail_url: info.thumbUrl,
+		source_url: commonsSourceUrl(filename),
+		title: null,
+		creator: info.artist,
+		license_code: info.licenseCode,
+		license_url: info.licenseUrl,
+		location: null,
+		duration_seconds: null,
+		width: info.width,
+		height: info.height
+	};
+}
+
+/** vocalization_type = null (§4/GROK gap #4 — P51 audio has no type from Commons). */
+function commonsAudioCandidate(filename: string, info: CommonsFileInfo): MediaCandidate | null {
+	if (!isPlayableAudio(info.mimeType) || !info.licenseCode) return null;
+	return {
+		kind: 'sound',
+		vocalization_type: null,
+		rank: 1,
+		provider: 'wikimedia_commons',
+		provider_id: filename,
+		media_url: info.url,
+		thumbnail_url: null,
+		source_url: commonsSourceUrl(filename),
+		title: null,
+		creator: info.artist,
+		license_code: info.licenseCode,
+		license_url: info.licenseUrl,
+		location: null,
+		duration_seconds: info.duration,
+		width: null,
+		height: null
+	};
+}
+
+function xenoCantoSoundCandidate(
+	rec: XenoCantoRecording,
+	vocalizationType: 'song' | 'call',
+	rank: number
+): MediaCandidate {
+	return {
+		kind: 'sound',
+		vocalization_type: vocalizationType,
+		rank,
+		provider: 'xeno_canto',
+		provider_id: rec.xcId,
+		media_url: rec.mediaUrl,
+		thumbnail_url: null,
+		source_url: rec.sourceUrl,
+		title: null,
+		creator: rec.recordist,
+		license_code: rec.license,
+		license_url: rec.licenseUrl,
+		location: rec.location,
+		duration_seconds: rec.duration,
+		width: null,
+		height: null
+	};
+}
+
+/**
+ * One representative photo + up to two sounds (prefer song + call) for one
+ * species. Fatal-vs-soft split (§6d): a Wikidata/Commons failure THROWS —
+ * both are structural to finding ANY media, so the caller (runEnrichSpecies-
+ * Media) catches and calls markMediaError, preserving last-good rows. A
+ * xeno-canto failure (including a missing API key) is caught HERE and never
+ * fails the whole operation — the Commons photo, if any, still gets written,
+ * previously-stored xeno-canto sounds are preserved (last-good), and the
+ * status downgrades to 'partial' (retried on the short ERROR window).
+ */
+export async function enrichSpeciesMedia(
+	code: string,
+	qid: string,
+	sciName: string,
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<'ok' | 'partial' | 'no_media'> {
+	const wdMedia = await fetchWikidataMedia([qid], opts);
+	const wd = wdMedia.get(qid) ?? null;
+	const filenames = [
+		...new Set([wd?.imageFilename, wd?.audioFilename].filter((f): f is string => f != null))
+	];
+	const commonsInfo = await fetchCommonsFileInfo(filenames, opts);
+
+	const candidates: MediaCandidate[] = [];
+	if (wd?.imageFilename) {
+		const info = commonsInfo.get(wd.imageFilename);
+		const photo = info ? commonsPhotoCandidate(wd.imageFilename, info) : null;
+		if (photo) candidates.push(photo);
+	}
+	let commonsAudioOk = false;
+	if (wd?.audioFilename) {
+		const info = commonsInfo.get(wd.audioFilename);
+		const audio = info ? commonsAudioCandidate(wd.audioFilename, info) : null;
+		if (audio) {
+			candidates.push(audio);
+			commonsAudioOk = true;
+		}
+	}
+
+	// SOFT zone: ordinary xeno-canto failures (including a missing key) yield
+	// a partial Commons result. A provider rate limit must retain ownership in
+	// the worker so Retry-After is honored and last-good rows are preserved.
+	let xcOk = true;
+	let xc: { song: XenoCantoRecording | null; call: XenoCantoRecording | null } = {
+		song: null,
+		call: null
+	};
+	try {
+		xc = await fetchXenoCantoRecordings(sciName, opts);
+	} catch (err) {
+		if (err instanceof XenoCantoError && err.rateLimited) throw err;
+		xcOk = false;
+	}
+	if (xcOk) {
+		if (commonsAudioOk) {
+			// Commons audio already occupies rank=1 — only the call fills rank=2.
+			if (xc.call) candidates.push(xenoCantoSoundCandidate(xc.call, 'call', 2));
+		} else {
+			if (xc.song) candidates.push(xenoCantoSoundCandidate(xc.song, 'song', 1));
+			if (xc.call) candidates.push(xenoCantoSoundCandidate(xc.call, 'call', 2));
+		}
+	} else {
+		// Last-good preservation for the SOFT path (same invariant markMediaError
+		// enforces for thrown errors): a transient xeno-canto failure must not
+		// blank sounds that were already showing — upsertMediaOk is a full
+		// replace, so carry surviving prior xeno-canto rows forward into slots
+		// the new candidates don't occupy.
+		const prior = await query<MediaRow>(
+			`SELECT media_id, species_code, kind, vocalization_type, rank, provider, provider_id,
+			        media_url, thumbnail_url, source_url, title, creator, license_code, license_url,
+			        location, duration_seconds, width, height
+			   FROM species_media
+			  WHERE species_code = $1 AND kind = 'sound' AND provider = 'xeno_canto'
+			  ORDER BY rank`,
+			[code]
+		);
+		const takenRanks = new Set(
+			candidates.filter((c) => c.kind === 'sound').map((c) => c.rank)
+		);
+		for (const row of prior.rows) {
+			if (takenRanks.has(row.rank)) continue;
+			const { media_id: _id, species_code: _code, ...candidate } = row;
+			candidates.push(candidate);
+			takenRanks.add(row.rank);
+		}
+	}
+
+	// Belt-and-braces (§6d step 7) — the Commons builders enforce this by
+	// construction; xeno-canto's license passes through unchecked, so an
+	// empty-string license is still caught here.
+	const accepted = candidates.filter((c) => c.source_url && c.license_code);
+
+	const status: 'ok' | 'partial' | 'no_media' = !xcOk
+		? 'partial'
+		: accepted.length > 0
+			? 'ok'
+			: 'no_media';
+
+	// upsertMediaOk owns its own transaction when called without an executor.
+	await upsertMediaOk(code, accepted, status);
+	return status;
 }

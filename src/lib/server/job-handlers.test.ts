@@ -197,6 +197,11 @@ const enrichMocks = vi.hoisted(() => ({
   >(async () => new Map()),
   fetchArticlePlaintext: vi.fn<(title: string) => Promise<unknown>>(),
   generateSpeciesAnnotation: vi.fn<(input: unknown) => Promise<unknown>>(),
+  fetchWikidataMedia: vi.fn<(qids: readonly string[]) => Promise<Map<string, unknown>>>(),
+  fetchCommonsFileInfo: vi.fn<(filenames: readonly string[]) => Promise<Map<string, unknown>>>(),
+  fetchXenoCantoRecordings: vi.fn<
+    (sciName: string) => Promise<{ song: unknown; call: unknown }>
+  >(),
 }));
 
 vi.mock("$server/wikidata", async (importOriginal) => {
@@ -205,6 +210,7 @@ vi.mock("$server/wikidata", async (importOriginal) => {
     ...real,
     fetchWikidataBatch: enrichMocks.fetchWikidataBatch,
     fetchWikidataBySciName: enrichMocks.fetchWikidataBySciName,
+    fetchWikidataMedia: enrichMocks.fetchWikidataMedia,
   };
 });
 vi.mock("$server/wikipedia", async (importOriginal) => {
@@ -214,6 +220,14 @@ vi.mock("$server/wikipedia", async (importOriginal) => {
 vi.mock("$server/ai-enrichment", async (importOriginal) => {
   const real = await importOriginal<typeof import("./ai-enrichment")>();
   return { ...real, generateSpeciesAnnotation: enrichMocks.generateSpeciesAnnotation };
+});
+vi.mock("$server/wikimedia-commons", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./wikimedia-commons")>();
+  return { ...real, fetchCommonsFileInfo: enrichMocks.fetchCommonsFileInfo };
+});
+vi.mock("$server/xeno-canto", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./xeno-canto")>();
+  return { ...real, fetchXenoCantoRecordings: enrichMocks.fetchXenoCantoRecordings };
 });
 
 vi.mock("$server/crypto", () => ({
@@ -1506,6 +1520,8 @@ describe("runJob — dispatch", () => {
 
 const { WikidataError } = await import("./wikidata");
 const { WikipediaError } = await import("./wikipedia");
+const { CommonsError } = await import("./wikimedia-commons");
+const { XenoCantoError } = await import("./xeno-canto");
 
 describe("runJob — species enrichment (plan Phase 1)", () => {
 
@@ -2437,6 +2453,305 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
     expect((fails[0][2] as { stage: string }).stage).toBe("ai");
     expect(mocks.completeJob).not.toHaveBeenCalled();
     expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runJob — species media enrichment (td-86a2b6)", () => {
+  const QID = "Q123";
+  const SCI = "Testus birdus";
+
+  const PHOTO_INFO = {
+    filename: "Test.jpg",
+    url: "https://commons/x.jpg",
+    thumbUrl: null,
+    width: 100,
+    height: 80,
+    mimeType: "image/jpeg",
+    artist: "A",
+    licenseCode: "CC BY-SA 4.0",
+    licenseUrl: "https://x",
+    duration: null,
+  };
+  const SONG_REC = {
+    xcId: "XC1",
+    mediaUrl: "u",
+    sourceUrl: "s",
+    type: "song",
+    quality: "A",
+    duration: 10,
+    recordist: "R",
+    license: "CC BY-NC-SA 4.0",
+    licenseUrl: "https://l",
+    location: null,
+  };
+  const CALL_REC = { ...SONG_REC, xcId: "XC2", type: "call" };
+
+  const mediaDb = (codes: string[]) => {
+    db.handler = (text) => {
+      if (text.includes("wikidata_qid FROM species_enrichment"))
+        return {
+          rows: codes.map((c) => ({ species_code: c, wikidata_qid: QID })),
+        };
+      if (text.includes("sci_name FROM taxonomy_cache"))
+        return { rows: codes.map((c) => ({ species_code: c, sci_name: SCI })) };
+      return undefined;
+    };
+  };
+
+  beforeEach(() => {
+    enrichMocks.fetchWikidataMedia.mockReset();
+    enrichMocks.fetchCommonsFileInfo.mockReset();
+    enrichMocks.fetchXenoCantoRecordings.mockReset();
+  });
+
+  it("invalid payload (empty / oversized) → fail, never calls any gateway", async () => {
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: [] } }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchWikidataMedia).not.toHaveBeenCalled();
+
+    mocks.failJob.mockClear();
+    const tooMany = Array.from({ length: 21 }, (_, i) => `sp${String(i).padStart(2, "0")}`);
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: tooMany } }), ctx);
+    expect(mocks.failJob).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.fetchWikidataMedia).not.toHaveBeenCalled();
+  });
+
+  it("happy path: Commons photo + xeno-canto song/call → complete as ok", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(
+      new Map([[QID, { qid: QID, imageFilename: "Test.jpg", audioFilename: null }]]),
+    );
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map([["Test.jpg", PHOTO_INFO]]));
+    enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
+      song: SONG_REC,
+      call: CALL_REC,
+    });
+
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      ok: 1,
+      partial: 0,
+      noMedia: 0,
+      failed: [],
+    });
+    const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
+    expect(oks[0][2]).toMatchObject({ code: "margod", outcome: "ok" });
+  });
+
+  it("missing xeno-canto key → partial, not error; Commons photo still counted", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(
+      new Map([[QID, { qid: QID, imageFilename: "Test.jpg", audioFilename: null }]]),
+    );
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map([["Test.jpg", PHOTO_INFO]]));
+    enrichMocks.fetchXenoCantoRecordings.mockRejectedValue(
+      new XenoCantoError("xeno-canto API key not configured", 0, false),
+    );
+
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      ok: 0,
+      partial: 1,
+      noMedia: 0,
+      failed: [],
+    });
+    expect(mocks.recordEvent.mock.calls.some((c) => c[1] === "unit_failed")).toBe(false);
+  });
+
+  it("both sources answer empty → no_media, job still completes (not failed)", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(new Map());
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map());
+    enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
+      song: null,
+      call: null,
+    });
+
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({
+      ok: 0,
+      partial: 0,
+      noMedia: 1,
+    });
+  });
+
+  it("no QID on a code → unit_skipped 'no-qid', never calls a media gateway for it", async () => {
+    db.handler = (text) => {
+      if (text.includes("wikidata_qid FROM species_enrichment")) return { rows: [] };
+      if (text.includes("sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "margod", sci_name: SCI }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.fetchWikidataMedia).not.toHaveBeenCalled();
+    const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
+    expect(skips[0][2]).toMatchObject({ code: "margod", reason: "no-qid" });
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("freshness skip on non-force; force bypasses it", async () => {
+    db.handler = (text) => {
+      if (text.includes("wikidata_qid FROM species_enrichment"))
+        return { rows: [{ species_code: "margod", wikidata_qid: QID }] };
+      if (text.includes("sci_name FROM taxonomy_cache"))
+        return { rows: [{ species_code: "margod", sci_name: SCI }] };
+      if (text.includes("media_status IN")) return { rows: [{ fresh: true }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.fetchWikidataMedia).not.toHaveBeenCalled();
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ fresh: 1 });
+
+    mocks.completeJob.mockClear();
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(new Map());
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map());
+    enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
+      song: null,
+      call: null,
+    });
+    await runJob(
+      jobRow({
+        type: "enrich_species_media",
+        payload: { codes: ["margod"], force: true },
+      }),
+      ctx,
+    );
+    expect(enrichMocks.fetchWikidataMedia).toHaveBeenCalled();
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ noMedia: 1 });
+  });
+
+  it("rate limit on any provider → scheduleRetry with its Retry-After, no spillover enqueue", async () => {
+    mediaDb(["margod", "grycat"]);
+    enrichMocks.fetchWikidataMedia.mockRejectedValueOnce(
+      new WikidataError("Wikidata query failed (HTTP 429)", 429, true, 12_345),
+    );
+    await runJob(
+      jobRow({
+        type: "enrich_species_media",
+        payload: { codes: ["margod", "grycat"] },
+      }),
+      ctx,
+    );
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(12_345);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(
+      mocks.enqueueJob.mock.calls.some(
+        (c) => (c[0] as { type: string }).type === "enrich_species_media",
+      ),
+    ).toBe(false);
+  });
+
+  it("Commons rate limit is ALSO classified as a rate-limit stop (any provider, not just Wikidata)", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(
+      new Map([[QID, { qid: QID, imageFilename: "Test.jpg", audioFilename: null }]]),
+    );
+    enrichMocks.fetchCommonsFileInfo.mockRejectedValue(
+      new CommonsError("Commons imageinfo query failed (HTTP 429)", 429, true, 60_000),
+    );
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(60_000);
+  });
+
+  it("xeno-canto rate limit is not downgraded to partial and honors Retry-After", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(new Map());
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map());
+    enrichMocks.fetchXenoCantoRecordings.mockRejectedValue(
+      new XenoCantoError("xeno-canto query failed (HTTP 429)", 429, true, 45_000),
+    );
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleRetry.mock.calls[0][2]).toBe(45_000);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("wall budget → spillover chunk preserves the un-started remainder", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      mediaDb(["margod", "grycat"]);
+      enrichMocks.fetchWikidataMedia.mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + 9 * 60_000); // past MEDIA_WALL_BUDGET_MS (8 min)
+        return new Map();
+      });
+      enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map());
+      enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
+        song: null,
+        call: null,
+      });
+      await runJob(
+        jobRow({
+          type: "enrich_species_media",
+          payload: { codes: ["margod", "grycat"] },
+        }),
+        ctx,
+      );
+      const spill = mocks.enqueueJob.mock.calls.find(
+        (c) => (c[0] as { type: string }).type === "enrich_species_media",
+      );
+      expect(spill).toBeDefined();
+      const arg = spill![0] as {
+        payload: { codes: string[] };
+        dedupKey: string;
+      };
+      expect(arg.payload.codes).toEqual(["grycat"]);
+      expect(arg.dedupKey).toMatch(/^enrich_media:[0-9a-f]{16}$/);
+      expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+      expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ noMedia: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drain mid-chunk → requeueInterrupted, never completes", async () => {
+    mediaDb(["margod"]);
+    const drainCtx = { isDraining: () => true };
+    await runJob(
+      jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }),
+      drainCtx,
+    );
+    expect(mocks.requeueInterrupted).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("cancel observed mid-chunk → cancelRunningJob only, remaining code untouched", async () => {
+    mediaDb(["margod", "grycat"]);
+    enrichMocks.fetchWikidataMedia.mockResolvedValue(new Map());
+    enrichMocks.fetchCommonsFileInfo.mockResolvedValue(new Map());
+    enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
+      song: null,
+      call: null,
+    });
+    mocks.updateProgress.mockResolvedValue({ cancelRequested: true });
+    await runJob(
+      jobRow({
+        type: "enrich_species_media",
+        payload: { codes: ["margod", "grycat"] },
+      }),
+      ctx,
+    );
+    expect(mocks.cancelRunningJob).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(enrichMocks.fetchWikidataMedia).toHaveBeenCalledTimes(1); // only margod attempted
+  });
+
+  it("non-rate-limit error → markMediaError write with sanitized text, unit failed, row retries", async () => {
+    mediaDb(["margod"]);
+    enrichMocks.fetchWikidataMedia.mockRejectedValue(new Error("boom api_key=SECRET123"));
+    await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
+    expect(JSON.stringify(mocks.recordEvent.mock.calls)).not.toContain("SECRET123");
+    expect(JSON.stringify(db.calls)).not.toContain("SECRET123");
+    expect(db.calls.some((c) => c.text.includes("media_status = 'error'"))).toBe(true);
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
   });
 });
 

@@ -13,6 +13,7 @@
   import { sectionBlocks } from "$lib/wiki-render";
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
   import { allAboutBirdsUrl } from "$lib/species-links";
+  import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
   import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
@@ -98,6 +99,10 @@
   // never an empty shell (GROK contract). The single refresh button lives
   // here when the card exists, on About otherwise.
   const hasFieldCraft = $derived(!!en?.field_craft);
+  // Field-guide sample media (td-86a2b6 §11b).
+  const hasMedia = $derived(
+    data.sampleMedia.photo != null || data.sampleMedia.sounds.length > 0,
+  );
   const tagGroups = $derived(groupTags(en?.tags ?? []));
   const aiGeneratedOn = $derived(
     en?.ai_generated_at ? new Date(en.ai_generated_at).toLocaleDateString() : null,
@@ -210,6 +215,14 @@
         </div>
       {/if}
     </section>
+  {/if}
+
+  {#if hasMedia || (data.isAdmin && data.sampleMedia.status != null)}
+    <SpeciesMediaCard
+      media={data.sampleMedia}
+      comName={data.taxon.com_name}
+      isAdmin={data.isAdmin}
+    />
   {/if}
 
   {#if hasFieldCraft}
@@ -617,7 +630,15 @@
       · species text from
       <a href="https://en.wikipedia.org" target="_blank" rel="noopener"
         >Wikipedia</a
-      > (CC BY-SA 4.0){/if}
+      > (CC BY-SA 4.0){/if}{#if hasMedia}
+      · sample media from
+      <a href="https://commons.wikimedia.org" target="_blank" rel="noopener"
+        >Wikimedia Commons</a
+      >
+      and
+      <a href="https://xeno-canto.org" target="_blank" rel="noopener"
+        >xeno-canto</a
+      >{/if}
   </p>
 </div>
 

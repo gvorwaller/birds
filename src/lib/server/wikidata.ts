@@ -98,9 +98,30 @@ WHERE {
 GROUP BY ?ebird ?item`;
 }
 
-function userAgent(): string {
+/**
+ * Shared User-Agent for ALL enrichment provider gateways (Wikidata,
+ * Wikipedia, Commons, xeno-canto) — one place to change the contact/policy.
+ */
+export function enrichmentUserAgent(): string {
 	const contact = env.ENRICHMENT_CONTACT ?? 'gaylon@vorwaller.net';
 	return `birds.gaylon.photos species enrichment (${contact})`;
+}
+
+/**
+ * Structural rate-limit check across the provider error classes
+ * (WikidataError, WikipediaError, CommonsError, XenoCantoError all carry
+ * `rateLimited`/`retryAfterMs`) — a new provider's error joins automatically
+ * instead of growing an instanceof union at every consumer.
+ */
+export function isRateLimitedError(
+	err: unknown
+): err is Error & { rateLimited: true; retryAfterMs: number | null } {
+	return (
+		err instanceof Error &&
+		'rateLimited' in err &&
+		(err as { rateLimited?: unknown }).rateLimited === true &&
+		'retryAfterMs' in err
+	);
 }
 
 function numOrNull(v: string | undefined): number | null {
@@ -143,7 +164,7 @@ async function runSparql(
 			headers: {
 				'Content-Type': 'application/x-www-form-urlencoded',
 				Accept: 'application/sparql-results+json',
-				'User-Agent': userAgent()
+				'User-Agent': enrichmentUserAgent()
 			},
 			body: new URLSearchParams({ query: queryText }),
 			signal
@@ -244,6 +265,84 @@ export async function fetchWikidataBySciName(
 	for (const p of usable) {
 		const row = byName.get(p.sciName);
 		if (row) out.set(p.code, { ...row, speciesCode: p.code });
+	}
+	return out;
+}
+
+// ---------------------------------------------------------------------------
+// Media (P18/P51) — field-guide sample photos and sounds (td-86a2b6)
+// ---------------------------------------------------------------------------
+
+/**
+ * SPARQL for image (P18) and audio (P51) filenames by QID.
+ * Returns Commons filenames, NOT URLs — caller uses Commons imageinfo
+ * API to get actual media URLs, dimensions, license, artist.
+ * Multi-valued claims are collapsed via MIN for determinism.
+ */
+export function buildMediaSparql(qids: readonly string[]): string {
+	const bad = qids.filter((q) => !/^Q\d+$/.test(q));
+	if (bad.length > 0) throw new Error(`invalid QIDs: ${bad.slice(0, 3).join(', ')}`);
+	const values = qids.map((q) => `wd:${q}`).join(' ');
+	return `SELECT ?item
+  (MIN(?imgFile) AS ?image)
+  (MIN(?audioFile) AS ?audio)
+WHERE {
+  VALUES ?item { ${values} }
+  OPTIONAL { ?item wdt:P18 ?imgFile . }
+  OPTIONAL { ?item wdt:P51 ?audioFile . }
+}
+GROUP BY ?item`;
+}
+
+export interface WikidataMediaRow {
+	qid: string;
+	/** Commons filename from P18 (e.g. "Marbled Godwit RWD.jpg"), not a URL. */
+	imageFilename: string | null;
+	/** Commons filename from P51, not a URL. */
+	audioFilename: string | null;
+}
+
+/**
+ * P18/P51 values arrive from WDQS as Special:FilePath URIs (e.g.
+ * "http://commons.wikimedia.org/wiki/Special:FilePath/Marbled%20Godwit%20RWD.jpg")
+ * — the filename segment is percent-encoded with literal spaces, NOT
+ * underscored like enwiki article URLs, so no underscore substitution here.
+ */
+function filenameFromCommonsUri(uri: string | undefined): string | null {
+	if (!uri) return null;
+	const m = /\/([^/]+)$/.exec(uri);
+	if (!m) return null;
+	try {
+		return decodeURIComponent(m[1]);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolve one batch (≤50 QIDs) of P18/P51 Commons filenames. A QID absent
+ * from the result had neither claim — the caller treats that as "no media
+ * from Wikidata", distinct from a transient failure (which throws).
+ */
+export async function fetchWikidataMedia(
+	qids: readonly string[],
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<Map<string, WikidataMediaRow>> {
+	if (qids.length === 0) return new Map();
+	if (qids.length > WIKIDATA_BATCH_SIZE) {
+		throw new Error(`batch too large: ${qids.length} > ${WIKIDATA_BATCH_SIZE}`);
+	}
+	const bindings = await runSparql(buildMediaSparql(qids), opts);
+	const out = new Map<string, WikidataMediaRow>();
+	for (const b of bindings) {
+		const item = b.item?.value;
+		if (!item) continue;
+		const qid = item.replace(/^.*\/(Q\d+)$/, '$1');
+		out.set(qid, {
+			qid,
+			imageFilename: filenameFromCommonsUri(b.image?.value),
+			audioFilename: filenameFromCommonsUri(b.audio?.value)
+		});
 	}
 	return out;
 }

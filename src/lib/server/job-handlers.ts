@@ -59,6 +59,7 @@ import {
 import {
 	fetchWikidataBatch,
 	fetchWikidataBySciName,
+	isRateLimitedError,
 	validSpeciesCode,
 	WikidataError,
 	type WikidataSpeciesRow
@@ -69,9 +70,13 @@ import {
 	aiDueCodes,
 	aiStageInputFor,
 	enrichmentScope,
+	enrichSpeciesMedia,
 	markAiError,
+	markMediaError,
 	markWikiError,
 	markWikiNoArticle,
+	mediaDueCodes,
+	mediaFresh,
 	upsertAiData,
 	upsertResolution,
 	upsertWikiOk,
@@ -790,6 +795,16 @@ const WIKI_POLITENESS_MS = 400;
 export const ENRICH_SCAN_DRAIN_MS = 15 * 60_000;
 export const ENRICH_SCAN_IDLE_MS = 24 * 60 * 60_000;
 
+/**
+ * Field-guide sample media (td-86a2b6). Smaller chunk than wiki enrichment
+ * (30) because each species hits TWO external APIs (Commons + xeno-canto).
+ */
+export const MEDIA_CHUNK_SIZE = 20;
+/** Wall budget per media chunk job: past this, no NEW network side effect starts. */
+export const MEDIA_WALL_BUDGET_MS = 8 * 60_000;
+/** Politeness between species (serial; two external APIs per unit). */
+const MEDIA_POLITENESS_MS = 500;
+
 interface EnrichPayload {
 	codes: string[];
 	force?: boolean;
@@ -800,6 +815,11 @@ interface EnrichPayload {
 	 * failed); bounded by the row's own max_attempts.
 	 */
 	aiOnly?: boolean;
+}
+
+interface MediaEnrichPayload {
+	codes: string[];
+	force?: boolean;
 }
 
 function enrichScanParams(adminId: number, runAfterMs: number) {
@@ -832,6 +852,7 @@ export interface EnrichmentWorkSummary {
 	candidates: number;
 	wikiCandidates: number;
 	aiCandidates: number;
+	mediaCandidates: number;
 	chunksEnqueued: number;
 	deduped: number;
 	remaining: number;
@@ -893,11 +914,30 @@ async function enqueueEnrichmentChunks(
 		else enqueued++;
 		covered += codes.length;
 	}
-	const total = wikiWork.length + aiWork.length;
+	// Media partition (td-86a2b6): separate from wiki/AI — a media failure
+	// never blocks or is blocked by prose/annotation work. Codes about to get
+	// a full wiki refresh are skipped here; enrichSpeciesMedia only needs the
+	// STORED QID, so it runs independently of whether wiki data is fresh.
+	const mediaWork = (await mediaDueCodes()).filter((c) => !wikiSet.has(c)).sort();
+	for (let i = 0; i < mediaWork.length && enqueued < maxChunks; i += MEDIA_CHUNK_SIZE) {
+		const codes = mediaWork.slice(i, i + MEDIA_CHUNK_SIZE);
+		const r = await enqueueJob({
+			type: 'enrich_species_media',
+			payload: { codes } satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
+			dedupKey: dedupKeys.enrichMediaChunk(codes),
+			requestedBy: adminId,
+			label: `${codes.length} species media`
+		});
+		if (r.deduped) deduped++;
+		else enqueued++;
+		covered += codes.length;
+	}
+	const total = wikiWork.length + aiWork.length + mediaWork.length;
 	return {
 		candidates: total,
 		wikiCandidates: wikiWork.length,
 		aiCandidates: aiWork.length,
+		mediaCandidates: mediaWork.length,
 		chunksEnqueued: enqueued,
 		deduped,
 		remaining: Math.max(0, total - covered)
@@ -1516,6 +1556,189 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	await completeJob(job.id, attempts, summary);
 }
 
+// ---------------------------------------------------------------------------
+// Field-guide sample media (plan: docs/2026-08-23-field-guide-sample-media-
+// CLAUDE.md §7). Modeled closely on runEnrichSpecies above: claim event,
+// progress, drain requeue, wall-budget spillover, freshness skip, rate-limit
+// stop with Retry-After, cancel handling, honest terminal transitions. Two
+// external APIs per species (Commons + xeno-canto), so the chunk is smaller
+// and the politeness gap wider than wiki enrichment.
+// ---------------------------------------------------------------------------
+
+
+/**
+ * One bounded chunk (≤20 species): resolves each code's stored QID + sci
+ * name, then serially runs enrichSpeciesMedia with a politeness gap. Per-
+ * species freshness makes overlapping chunks idempotent; `force` bypasses it
+ * (the species-page refresh action always forces a single-code job).
+ */
+async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<void> {
+	const attempts = job.attempts;
+	const payload = job.payload as unknown as MediaEnrichPayload;
+	const codes = [...new Set(payload.codes ?? [])];
+	const force = payload.force === true;
+	// Hard ≤ chunk-size cap (mirrors runEnrichSpecies's ENRICH_CHUNK_SIZE
+	// guard) — terminal, not retryable.
+	if (codes.length === 0 || codes.length > MEDIA_CHUNK_SIZE || !codes.every(validSpeciesCode)) {
+		await failJob(job.id, attempts, 'invalid enrich_species_media payload');
+		return;
+	}
+	await recordEvent(job.id, 'claimed', { attempt: attempts, codes: codes.length });
+
+	const progress: JobProgress = {
+		phase: 'fetching',
+		unitsTotal: codes.length,
+		unitsDone: 0,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	};
+	await updateProgress(job.id, progress);
+
+	// Pre-load QIDs + sci names for the whole chunk (two batch SELECTs) —
+	// media needs both and neither changes mid-chunk.
+	const qids = new Map<string, string>();
+	{
+		const r = await query<{ species_code: string; wikidata_qid: string | null }>(
+			`SELECT species_code, wikidata_qid FROM species_enrichment WHERE species_code = ANY($1)`,
+			[codes]
+		);
+		for (const row of r.rows) if (row.wikidata_qid) qids.set(row.species_code, row.wikidata_qid);
+	}
+	const sciNames = new Map<string, string>();
+	{
+		const r = await query<{ species_code: string; sci_name: string }>(
+			`SELECT species_code, sci_name FROM taxonomy_cache WHERE species_code = ANY($1)`,
+			[codes]
+		);
+		for (const row of r.rows) sciNames.set(row.species_code, row.sci_name);
+	}
+
+	const startedAt = Date.now();
+	const counts = { ok: 0, partial: 0, noMedia: 0, fresh: 0 };
+	const failed: string[] = [];
+	let cancelSeen = false;
+	let rateLimit: { retryAfterMs: number } | null = null;
+	let budgetRemainder: string[] = [];
+	let attemptedAny = false;
+
+	const skipUnit = async (code: string, reason: string) => {
+		progress.unitsSkipped++;
+		await recordEvent(job.id, 'unit_skipped', { code, reason });
+	};
+	for (let i = 0; i < codes.length; i++) {
+		const code = codes[i];
+		if (ctx.isDraining()) {
+			await requeueInterrupted(job.id, attempts);
+			return;
+		}
+		if (cancelSeen) break;
+		// Wall budget: never START a new unit past the budget — the
+		// remainder becomes a fresh content-hashed chunk (CODEX1 pattern).
+		if (Date.now() - startedAt > MEDIA_WALL_BUDGET_MS) {
+			budgetRemainder = codes.slice(i);
+			break;
+		}
+		const qid = qids.get(code);
+		const sciName = sciNames.get(code);
+		try {
+			if (!qid) {
+				await skipUnit(code, 'no-qid');
+			} else if (!sciName) {
+				await skipUnit(code, 'no-sci-name');
+			} else if (!force && (await mediaFresh(code))) {
+				counts.fresh++;
+				await skipUnit(code, 'fresh');
+			} else {
+				if (attemptedAny) await new Promise((r) => setTimeout(r, MEDIA_POLITENESS_MS));
+				attemptedAny = true;
+				const outcome = await enrichSpeciesMedia(code, qid, sciName);
+				if (outcome === 'ok') counts.ok++;
+				else if (outcome === 'partial') counts.partial++;
+				else counts.noMedia++;
+				progress.unitsDone++;
+				await recordEvent(job.id, 'unit_ok', { code, outcome });
+			}
+		} catch (err) {
+			// Structural check — covers CommonsError, WikidataError, and
+			// XenoCantoError today, plus any future provider error carrying the
+			// shared {rateLimited, retryAfterMs} shape.
+			if (isRateLimitedError(err)) {
+				rateLimit = { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
+				budgetRemainder = codes.slice(i);
+				break;
+			}
+			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+				0,
+				200
+			);
+			await markMediaError(code, message).catch(() => {});
+			failed.push(code);
+			progress.unitsFailed++;
+			progress.lastError = message;
+			await recordEvent(job.id, 'unit_failed', { code, error: message });
+		}
+		const { cancelRequested } = await updateProgress(job.id, progress);
+		if (cancelRequested) cancelSeen = true;
+	}
+
+	const summary = { ...counts, failed, remainder: budgetRemainder.length };
+
+	if (cancelSeen) {
+		await cancelRunningJob(job.id, attempts, summary);
+		return;
+	}
+	if (rateLimit) {
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(
+				job.id,
+				attempts,
+				rateLimit.retryAfterMs,
+				'media provider rate limit',
+				summary
+			);
+		} else {
+			await failJob(job.id, attempts, 'media provider rate limit — retries exhausted', summary);
+		}
+		return;
+	}
+	if (budgetRemainder.length > 0) {
+		await enqueueJob({
+			type: 'enrich_species_media',
+			payload: {
+				codes: budgetRemainder,
+				...(force ? { force } : {})
+			} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
+			dedupKey: dedupKeys.enrichMediaChunk(budgetRemainder),
+			requestedBy: job.requested_by,
+			label: `${budgetRemainder.length} species media (spillover)`
+		});
+		await recordEvent(job.id, 'progress', { spillover: budgetRemainder.length });
+	}
+	// ANY transient unit failure retries the row — naturally narrowed to the
+	// failed codes next attempt (error rows are not "fresh", successes are).
+	if (failed.length > 0) {
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(
+				job.id,
+				attempts,
+				retryDelayMs(attempts, 'transient'),
+				`${failed.length} species media failed transiently`,
+				summary
+			);
+		} else {
+			await failJob(
+				job.id,
+				attempts,
+				`${failed.length} species media failed after ${attempts} attempts`,
+				summary
+			);
+		}
+		return;
+	}
+	await completeJob(job.id, attempts, summary);
+}
+
 /** Dispatch a claimed job. Never throws — failures become failJob. */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
@@ -1603,6 +1826,10 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'enrich_species': {
 				await runEnrichSpecies(job, ctx);
+				return;
+			}
+			case 'enrich_species_media': {
+				await runEnrichSpeciesMedia(job, ctx);
 				return;
 			}
 			case 'sync_taxonomy': {

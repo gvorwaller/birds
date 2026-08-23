@@ -4,6 +4,7 @@ import {
   enrichOneNow,
   enrichOneNowCoalesced,
   getEnrichment,
+  getSpeciesMedia,
 } from "$server/species-enrichment";
 import { validSpeciesCode } from "$server/wikidata";
 import { enqueueJob } from "$server/jobs";
@@ -184,8 +185,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
       // lookup — nearest is unbounded, links derive from the L-id shape.
       nearest = {
-        rows: speciesObservationDetails(res.data, home, placeIds, new Set())
-          .slice(0, 5),
+        rows: speciesObservationDetails(
+          res.data,
+          home,
+          placeIds,
+          new Set(),
+        ).slice(0, 5),
         stale: res.stale,
         error: null,
       };
@@ -229,11 +234,17 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     };
   }
 
-  const enrichment = await getEnrichment(code);
+  // DB-only (spec invariant #1): never calls Commons/xeno-canto on GET.
+  // Independent reads — run in parallel.
+  const [enrichment, sampleMedia] = await Promise.all([
+    getEnrichment(code),
+    getSpeciesMedia(code),
+  ]);
 
   return {
     taxon: t,
     enrichment,
+    sampleMedia,
     isAdmin: locals.user!.role === "admin",
     seen: seen.rows[0] ?? null,
     forecastTeaser,
@@ -267,7 +278,11 @@ export const actions: Actions = {
     if (!validSpeciesCode(code)) {
       return fail(400, { error: "Invalid species code." });
     }
-    const taxon = await query<{ category: string; com_name: string; wiki_fetched_at: string | null }>(
+    const taxon = await query<{
+      category: string;
+      com_name: string;
+      wiki_fetched_at: string | null;
+    }>(
       `SELECT tc.category, tc.com_name, se.wiki_fetched_at::text
          FROM taxonomy_cache tc
          LEFT JOIN species_enrichment se USING (species_code)
@@ -278,7 +293,10 @@ export const actions: Actions = {
       return fail(400, { error: "Not an enrichable species." });
     }
     if (taxon.rows[0].wiki_fetched_at != null) {
-      return { ok: true as const, message: "This species already has Wikipedia data." };
+      return {
+        ok: true as const,
+        message: "This species already has Wikipedia data.",
+      };
     }
     const comName = taxon.rows[0].com_name;
     let now;
@@ -299,7 +317,9 @@ export const actions: Actions = {
           message: "Queued — refresh the page shortly.",
         };
       } catch {
-        return fail(500, { error: "Could not load species data. Try again later." });
+        return fail(500, {
+          error: "Could not load species data. Try again later.",
+        });
       }
     }
     if (now.outcome === "ok") {
@@ -314,7 +334,11 @@ export const actions: Actions = {
           });
           return {
             ok: true as const,
-            queued: { jobId: ai.jobId, deduped: ai.deduped, label: "Field craft" },
+            queued: {
+              jobId: ai.jobId,
+              deduped: ai.deduped,
+              label: "Field craft",
+            },
             message: "Article loaded — field craft is being written.",
           };
         } catch {
@@ -341,7 +365,9 @@ export const actions: Actions = {
         message: "Queued — refresh the page shortly.",
       };
     } catch {
-      return fail(500, { error: "Could not load species data. Try again later." });
+      return fail(500, {
+        error: "Could not load species data. Try again later.",
+      });
     }
   },
 
@@ -366,12 +392,45 @@ export const actions: Actions = {
     if (taxon.rows[0]?.category !== "species") {
       return fail(400, { error: "Not an enrichable species." });
     }
+    const comName = taxon.rows[0].com_name;
+
     // Instant path (GROK pin c): wiki stages run INLINE under a 20s budget —
     // the click Gaylon watched spin for five minutes now returns with the
     // article. The AI stage is never inline; on wiki-ok with the annotation
     // due, a narrowed aiOnly chunk is enqueued for the background worker.
-    const comName = taxon.rows[0].com_name;
     const now = await enrichOneNow(code);
+
+    // Media refresh is always background and never gates the wiki/AI result.
+    // Enqueue only AFTER enrichOneNow finishes: on a species' first refresh,
+    // that inline transaction may be what creates the QID the media worker
+    // requires. Enqueuing first lets a fast worker claim and skip `no-qid`.
+    // Capture the job id so the layout chip can track it when it's the only
+    // background work (jobsPoll grace-stops when idle — GROK P2-1).
+    let mediaQueued: { jobId: number; deduped: boolean } | null = null;
+    try {
+      mediaQueued = await enqueueJob({
+        type: "enrich_species_media",
+        payload: { codes: [code], force: true },
+        dedupKey: dedupKeys.enrichMediaOne(code),
+        requestedBy: locals.user!.id,
+        label: comName,
+      });
+    } catch {
+      // Enqueue failure is non-fatal: media is a bonus, not gating.
+    }
+
+    // One shared chip payload — the return shape carries a single queued
+    // job, and messages only claim "sample media is updating" when the
+    // media job was actually enqueued (the enqueue above is allowed to
+    // fail silently).
+    const mediaChip = mediaQueued
+      ? {
+          jobId: mediaQueued.jobId,
+          deduped: mediaQueued.deduped,
+          label: "Sample media",
+        }
+      : null;
+
     if (now.outcome === "ok") {
       if (now.aiDue && AI_STAGE_ENABLED) {
         const ai = await enqueueJob({
@@ -388,13 +447,39 @@ export const actions: Actions = {
           // queued lights the job chip for the background AI stage — with
           // the poller now idling when only scheduled rows exist (pin a),
           // the page's track() is the only thing that wakes it (GROK P2-1).
-          queued: { jobId: ai.jobId, deduped: ai.deduped, label: "Field craft" },
-          message: "Article loaded — field craft is being written.",
+          queued: {
+            jobId: ai.jobId,
+            deduped: ai.deduped,
+            label: "Field craft",
+          },
+          message: mediaQueued
+            ? "Article loaded — field craft and sample media are updating."
+            : "Article loaded — field craft is being written.",
+        };
+      }
+      if (mediaChip) {
+        return {
+          ok: true as const,
+          queued: mediaChip,
+          message: "Article loaded — sample media is updating.",
         };
       }
       return { ok: true as const, message: "Article loaded." };
     }
-    if (now.outcome === "no_article" || now.outcome === "no_mapping") {
+    if (now.outcome === "no_article") {
+      // A QID exists (mapping resolved, article missing) — media can run.
+      if (mediaChip) {
+        return {
+          ok: true as const,
+          queued: mediaChip,
+          message: "No Wikipedia article found. Sample media is updating.",
+        };
+      }
+      return { ok: true as const, message: "No Wikipedia article found." };
+    }
+    if (now.outcome === "no_mapping") {
+      // No QID was written — the media worker will no-qid-skip, so don't
+      // claim media is updating (that would be a lie the user waits on).
       return { ok: true as const, message: "No Wikipedia article found." };
     }
     // Transient (timeout/rate limit): nothing was written — fall back to

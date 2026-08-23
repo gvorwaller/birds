@@ -515,6 +515,16 @@
 						treat it as a knowledgeable friend's hunch, not gospel.
 					</li>
 					<li>
+						The <strong>Identification</strong> card (after Your photos) is a
+						representative photo and up to two sounds — song and call when we
+						have them. Files stay on
+						<a href="https://commons.wikimedia.org" target="_blank" rel="noopener">Wikimedia Commons</a>
+						and
+						<a href="https://xeno-canto.org" target="_blank" rel="noopener">xeno-canto</a>;
+						this app stores only the links, so playback needs a network
+						connection.
+					</li>
+					<li>
 						<strong>Name/code search</strong> covers the complete current eBird
 						species taxonomy. Wikipedia notes fill when you load a species
 						(or when that bird is already in a loaded region, life list, or

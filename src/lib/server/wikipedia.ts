@@ -8,8 +8,7 @@
  * UI can render the required attribution (revision permalink carries
  * contributor credit via history).
  */
-import { env } from '$env/dynamic/private';
-import { parseRetryAfterMs } from '$server/wikidata';
+import { enrichmentUserAgent, parseRetryAfterMs } from '$server/wikidata';
 
 const API_URL = 'https://en.wikipedia.org/w/api.php';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -102,11 +101,6 @@ export function splitSections(plaintext: string): { extract: string; sections: W
 	return { extract: lead.join('\n').trim().slice(0, MAX_EXTRACT_CHARS), sections };
 }
 
-function userAgent(): string {
-	const contact = env.ENRICHMENT_CONTACT ?? 'gaylon@vorwaller.net';
-	return `birds.gaylon.photos species enrichment (${contact})`;
-}
-
 export function articleUrl(title: string): string {
 	return `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
 }
@@ -142,7 +136,7 @@ export async function fetchArticlePlaintext(
 	let res: Response;
 	try {
 		res = await doFetch(`${API_URL}?${params}`, {
-			headers: { 'User-Agent': userAgent() },
+			headers: { 'User-Agent': enrichmentUserAgent() },
 			signal
 		});
 	} catch (err) {

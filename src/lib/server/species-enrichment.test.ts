@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { env } from "$env/dynamic/private";
+
+function setXcKey(value: string | undefined) {
+  if (value === undefined) delete (env as Record<string, string | undefined>).XENO_CANTO_API_KEY;
+  else env.XENO_CANTO_API_KEY = value;
+}
 import {
   buildSpeciesSparql,
   parseRetryAfterMs,
@@ -8,7 +14,11 @@ import {
   buildSciNameSparql,
   fetchWikidataBySciName,
   validSciName,
+  buildMediaSparql,
 } from "./wikidata";
+import * as wikidataMod from "./wikidata";
+import * as commonsMod from "./wikimedia-commons";
+import * as xenoCantoMod from "./xeno-canto";
 import {
   splitSections,
   articleUrl,
@@ -33,8 +43,15 @@ import {
   wikiFetchTitleFor,
   enrichOneNow,
   enrichOneNowCoalesced,
+  enrichSpeciesMedia,
+  getSpeciesMedia,
+  markMediaError,
+  mediaDueCodes,
+  mediaFresh,
+  upsertMediaOk,
 } from "./species-enrichment";
 import type { WikidataSpeciesRow } from "./wikidata";
+import type { MediaCandidate } from "./species-enrichment";
 
 // DB-backed cases run only when the test cluster is up (jobs-db pattern).
 const dbUp = await query("SELECT 1")
@@ -60,6 +77,15 @@ describe("wikidata pure helpers", () => {
   it("buildSpeciesSparql filters quantities to BestRank statements (CODEX1 P1 #4)", () => {
     const q = buildSpeciesSparql(["grycat"]);
     expect(q).toContain("wikibase:BestRank");
+  });
+
+  it("buildMediaSparql embeds validated QIDs via P18/P51 and refuses invalid ones", () => {
+    const q = buildMediaSparql(["Q123", "Q456"]);
+    expect(q).toContain("VALUES ?item { wd:Q123 wd:Q456 }");
+    expect(q).toContain("wdt:P18");
+    expect(q).toContain("wdt:P51");
+    expect(() => buildMediaSparql(['Q1"} UNION { ?x ?y ?z'])).toThrow(/invalid QIDs/);
+    expect(() => buildMediaSparql(["not-a-qid"])).toThrow(/invalid QIDs/);
   });
 
   it("parseSparqlBindings resolves duplicate QIDs deterministically — lowest QID wins in ANY row order", () => {
@@ -95,6 +121,64 @@ describe("wikidata pure helpers", () => {
     );
     expect(titleFromArticleUrl(null)).toBeNull();
     expect(titleFromArticleUrl("https://example.com/nope")).toBeNull();
+  });
+});
+
+describe("fetchWikidataMedia (P18/P51 filename resolution, td-86a2b6)", () => {
+  it("decodes Special:FilePath URIs to bare filenames (spaces, not underscores)", async () => {
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          results: {
+            bindings: [
+              {
+                item: { value: "http://www.wikidata.org/entity/Q844540" },
+                image: {
+                  value:
+                    "http://commons.wikimedia.org/wiki/Special:FilePath/Marbled%20Godwit%20RWD.jpg",
+                },
+                audio: {
+                  value:
+                    "http://commons.wikimedia.org/wiki/Special:FilePath/Marbled%20godwit%20call.ogg",
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const out = await wikidataMod.fetchWikidataMedia(["Q844540"], { fetcher });
+    const row = out.get("Q844540");
+    expect(row?.imageFilename).toBe("Marbled Godwit RWD.jpg");
+    expect(row?.audioFilename).toBe("Marbled godwit call.ogg");
+  });
+
+  it("a QID with neither claim is returned with null filenames", async () => {
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          results: {
+            bindings: [{ item: { value: "http://www.wikidata.org/entity/Q1" } }],
+          },
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const out = await wikidataMod.fetchWikidataMedia(["Q1"], { fetcher });
+    expect(out.get("Q1")).toEqual({
+      qid: "Q1",
+      imageFilename: null,
+      audioFilename: null,
+    });
+  });
+
+  it("empty QID list never calls fetch", async () => {
+    let called = 0;
+    const fetcher = (async () => {
+      called++;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    expect((await wikidataMod.fetchWikidataMedia([], { fetcher })).size).toBe(0);
+    expect(called).toBe(0);
   });
 });
 
@@ -1078,6 +1162,669 @@ describe.runIf(dbUp)("enrichOneNow — instant wiki-only refresh (td-b7d021)", (
       expect(await getEnrichment(CODE)).toEqual(before);
     } finally {
       await cleanup();
+    }
+  });
+  it("enrichOneNow NEVER touches a media gateway (unchanged 20s wiki-only budget, td-86a2b6)", async () => {
+    await seed();
+    const spyMedia = vi.spyOn(wikidataMod, "fetchWikidataMedia");
+    const spyCommons = vi.spyOn(commonsMod, "fetchCommonsFileInfo");
+    const spyXc = vi.spyOn(xenoCantoMod, "fetchXenoCantoRecordings");
+    try {
+      const net = fakeNet({
+        batchBindings: [
+          {
+            ebird: { value: CODE },
+            item: { value: "http://www.wikidata.org/entity/Q77" },
+          },
+        ],
+        article: {
+          title: "Instant bird article",
+          revid: 9,
+          extract: "Prose.",
+        },
+      });
+      await enrichOneNow(CODE, { fetcher: net.fetcher });
+      expect(spyMedia).not.toHaveBeenCalled();
+      expect(spyCommons).not.toHaveBeenCalled();
+      expect(spyXc).not.toHaveBeenCalled();
+    } finally {
+      spyMedia.mockRestore();
+      spyCommons.mockRestore();
+      spyXc.mockRestore();
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Field-guide sample media (td-86a2b6)
+// ---------------------------------------------------------------------------
+
+describe.runIf(dbUp)("species_media DB contract (test cluster)", () => {
+  const CODE = "medtst01";
+  const wipe = async () => {
+    await query(`DELETE FROM species_media WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+  };
+
+  const PHOTO: MediaCandidate = {
+    kind: "photo",
+    vocalization_type: null,
+    rank: 1,
+    provider: "wikimedia_commons",
+    provider_id: "Test bird.jpg",
+    media_url: "https://upload.wikimedia.org/test.jpg",
+    thumbnail_url: "https://upload.wikimedia.org/640px-test.jpg",
+    source_url: "https://commons.wikimedia.org/wiki/File:Test_bird.jpg",
+    title: null,
+    creator: "Photographer",
+    license_code: "CC BY-SA 4.0",
+    license_url: "https://creativecommons.org/licenses/by-sa/4.0",
+    location: null,
+    duration_seconds: null,
+    width: 800,
+    height: 600,
+  };
+  const SONG: MediaCandidate = {
+    kind: "sound",
+    vocalization_type: "song",
+    rank: 1,
+    provider: "xeno_canto",
+    provider_id: "XC1",
+    media_url: "https://xeno-canto.org/1/download",
+    thumbnail_url: null,
+    source_url: "https://xeno-canto.org/1",
+    title: null,
+    creator: "Recordist",
+    license_code: "CC BY-NC-SA 4.0",
+    license_url: "https://creativecommons.org/licenses/by-nc-sa/4.0",
+    location: "Some Marsh",
+    duration_seconds: 12,
+    width: null,
+    height: null,
+  };
+
+  it("transactional replace: DELETE + INSERT swap rows atomically, status/clocks stamped", async () => {
+    await wipe();
+    try {
+      await upsertMediaOk(CODE, [PHOTO, SONG], "ok");
+      let media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider_id).toBe("Test bird.jpg");
+      expect(media.sounds).toHaveLength(1);
+      expect(media.sounds[0].vocalization_type).toBe("song");
+      expect(media.status).toBe("ok");
+      expect(media.mediaError).toBeNull();
+
+      const enr = await getEnrichment(CODE);
+      expect(enr?.media_status).toBe("ok");
+      expect(enr?.media_fetched_at).not.toBeNull();
+      expect(enr?.media_ok_at).not.toBeNull();
+
+      // A second write REPLACES — the old song row is gone, only the new
+      // candidate set survives (no leftover rank/kind rows).
+      await upsertMediaOk(CODE, [PHOTO], "ok");
+      media = await getSpeciesMedia(CODE);
+      expect(media.sounds).toHaveLength(0);
+      expect(media.photo).not.toBeNull();
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("transactional replace rolls back the delete when a replacement row is invalid", async () => {
+    await wipe();
+    try {
+      await upsertMediaOk(CODE, [PHOTO], "ok");
+      const invalid = {
+        ...PHOTO,
+        provider: "not_a_provider" as MediaCandidate["provider"],
+      };
+      await expect(upsertMediaOk(CODE, [invalid], "ok")).rejects.toThrow();
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider_id).toBe("Test bird.jpg");
+      expect(media.status).toBe("ok");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("kind+rank uniqueness: two sounds at different ranks coexist; same rank cannot duplicate", async () => {
+    await wipe();
+    try {
+      const call: MediaCandidate = {
+        ...SONG,
+        vocalization_type: "call",
+        rank: 2,
+        provider_id: "XC2",
+      };
+      await upsertMediaOk(CODE, [SONG, call], "ok");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.sounds.map((s) => s.rank).sort()).toEqual([1, 2]);
+
+      // Constraint enforcement: inserting a duplicate (code, kind, rank) fails.
+      await expect(
+        query(
+          `INSERT INTO species_media
+             (species_code, kind, rank, provider, provider_id, media_url, source_url, license_code)
+           VALUES ($1, 'sound', 1, 'xeno_canto', 'XC99', 'u', 's', 'CC0 1.0')`,
+          [CODE],
+        ),
+      ).rejects.toThrow(/species_media_uq/);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("no_media: empty candidate array writes zero rows, status recorded", async () => {
+    await wipe();
+    try {
+      await upsertMediaOk(CODE, [], "no_media");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo).toBeNull();
+      expect(media.sounds).toEqual([]);
+      expect(media.status).toBe("no_media");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("markMediaError preserves existing species_media rows (last-good) and never advances media_ok_at", async () => {
+    await wipe();
+    try {
+      await upsertMediaOk(CODE, [PHOTO], "ok");
+      const okAt = (await getEnrichment(CODE))?.media_ok_at;
+      expect(okAt).not.toBeNull();
+
+      await markMediaError(CODE, "Commons unreachable: fetch failed");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider_id).toBe("Test bird.jpg"); // last-good preserved
+      expect(media.status).toBe("error");
+      expect(media.mediaError).toContain("Commons unreachable");
+
+      const enr = await getEnrichment(CODE);
+      expect(enr?.media_ok_at).toBe(okAt); // error never re-dates the ok clock
+      expect(enr?.media_status).toBe("error");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("markMediaError works even when no enrichment row exists yet (belt-and-braces upsert)", async () => {
+    await wipe();
+    try {
+      await markMediaError(CODE, "boom");
+      const enr = await getEnrichment(CODE);
+      expect(enr?.media_status).toBe("error");
+      expect(enr?.media_error).toBe("boom");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("markMediaError redacts credential-shaped text before storage", async () => {
+    await wipe();
+    try {
+      await markMediaError(CODE, "upstream said api_key=SECRET123 while fetching");
+      const enr = await getEnrichment(CODE);
+      expect(enr?.media_error).not.toContain("SECRET123");
+      expect(enr?.media_error).toContain("[redacted]");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it(
+    "mediaDueCodes / mediaFresh: unresolved (no QID) never due; resolved+never-attempted is due; freshly ok is not",
+    // mediaDueCodes() scans the full taxonomy/enrichment universe on the
+    // shared test cluster; this test calls it 6x sequentially, each ~1s
+    // against real data volume where nearly everything is media-due (a
+    // brand-new stage) — well past vitest's default 5s (CODEX1 evidence:
+    // EXPLAIN timing on this cluster showed ~1.1s/call vs. wikiStaleCodes'
+    // ~3ms because almost every row is a TRUE match here, not a FALSE
+    // short-circuit).
+    { timeout: 30_000 },
+    async () => {
+      await wipe();
+      await query(
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Media Test Bird', 'Testus mediaus', 'species', 'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET category = 'species'`,
+        [CODE],
+      );
+      const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0]
+        .id;
+      await query(
+        `INSERT INTO seen_species (user_id, species_code, source)
+       VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+        [uid, CODE],
+      );
+      try {
+        // No wikidata_qid at all → never a media candidate.
+        expect(await mediaDueCodes()).not.toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(false);
+
+        // Resolved (has a QID), media never attempted → due.
+        await upsertResolution(CODE, {
+          speciesCode: CODE,
+          qid: "Q999999",
+          enwikiTitle: "Media Test Bird",
+          iucnStatus: null,
+          massKgMin: null,
+          massKgMax: null,
+          wingspanMMin: null,
+          wingspanMMax: null,
+          inatTaxonId: null,
+          xenoCantoId: null,
+        });
+        expect(await mediaDueCodes()).toContain(CODE);
+
+        // Freshly ok → not due, and mediaFresh reports true.
+        await upsertMediaOk(CODE, [PHOTO], "ok");
+        expect(await mediaDueCodes()).not.toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(true);
+
+        // Aged past the refresh window → due again.
+        await query(
+          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '181 days'
+          WHERE species_code = $1`,
+          [CODE],
+        );
+        expect(await mediaDueCodes()).toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(false);
+
+        // Error retries after ERROR_RETRY_DAYS, not immediately.
+        await markMediaError(CODE, "boom");
+        expect(await mediaDueCodes()).not.toContain(CODE);
+        await query(
+          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+          [CODE],
+        );
+        expect(await mediaDueCodes()).toContain(CODE);
+
+        // 'partial' is transient (xc outage / missing key) — it retries on
+        // the short ERROR window, NOT the 180-day ok window, so configuring
+        // XENO_CANTO_API_KEY late backfills sounds within days, not months.
+        await upsertMediaOk(CODE, [PHOTO], "partial");
+        expect(await mediaDueCodes()).not.toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(true);
+        await query(
+          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+          [CODE],
+        );
+        expect(await mediaDueCodes()).toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(false);
+      } finally {
+        await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
+        await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+        await wipe();
+      }
+    },
+  );
+});
+
+describe.runIf(dbUp)("enrichSpeciesMedia orchestrator (injected fetchers, td-86a2b6)", () => {
+  const CODE = "medtst02";
+  const QID = "Q555555";
+  const SCI = "Testus orchestrus";
+  const LAST_GOOD: MediaCandidate = {
+    kind: "photo",
+    vocalization_type: null,
+    rank: 1,
+    provider: "wikimedia_commons",
+    provider_id: "Last good.jpg",
+    media_url: "https://upload.wikimedia.org/last-good.jpg",
+    thumbnail_url: "https://upload.wikimedia.org/640px-last-good.jpg",
+    source_url: "https://commons.wikimedia.org/wiki/File:Last_good.jpg",
+    title: null,
+    creator: "Photographer",
+    license_code: "CC BY-SA 4.0",
+    license_url: "https://creativecommons.org/licenses/by-sa/4.0",
+    location: null,
+    duration_seconds: null,
+    width: 800,
+    height: 600,
+  };
+
+  const wipe = async () => {
+    await query(`DELETE FROM species_media WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+  };
+
+  const origKey = env.XENO_CANTO_API_KEY;
+  afterEach(() => {
+    setXcKey(origKey);
+  });
+
+  /** Fetcher speaking WDQS, Commons, and xeno-canto from canned bodies. */
+  function fakeMediaNet(opts: {
+    imageFilename?: string | null;
+    audioFilename?: string | null;
+    commonsPages?: object[];
+    xc?: "ok" | "empty" | "error" | "rate_limited";
+  }) {
+    const fetcher = (async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("query.wikidata.org")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              bindings: [
+                {
+                  item: { value: `http://www.wikidata.org/entity/${QID}` },
+                  ...(opts.imageFilename
+                    ? {
+                        image: {
+                          value: `http://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(opts.imageFilename)}`,
+                        },
+                      }
+                    : {}),
+                  ...(opts.audioFilename
+                    ? {
+                        audio: {
+                          value: `http://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(opts.audioFilename)}`,
+                        },
+                      }
+                    : {}),
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("commons.wikimedia.org")) {
+        return new Response(JSON.stringify({ query: { pages: opts.commonsPages ?? [] } }), {
+          status: 200,
+        });
+      }
+      if (url.includes("xeno-canto.org")) {
+        if (opts.xc === "error") return new Response("busy", { status: 503 });
+        if (opts.xc === "rate_limited") return new Response("slow down", { status: 429 });
+        if (opts.xc === "empty" || opts.xc == null)
+          return new Response(JSON.stringify({ recordings: [] }), {
+            status: 200,
+          });
+        return new Response(
+          JSON.stringify({
+            recordings: [
+              {
+                id: "10",
+                file: "u10",
+                type: "song",
+                q: "A",
+                len: "0:12",
+                rec: "R",
+                lic: "//creativecommons.org/licenses/by-nc-sa/4.0/",
+              },
+              {
+                id: "11",
+                file: "u11",
+                type: "call",
+                q: "A",
+                len: "0:08",
+                rec: "R",
+                lic: "//creativecommons.org/licenses/by-nc-sa/4.0/",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    return fetcher;
+  }
+
+  const commonsPhotoPage = (filename: string) => ({
+    title: `File:${filename}`,
+    imageinfo: [
+      {
+        url: `https://upload.wikimedia.org/${encodeURIComponent(filename)}`,
+        thumburl: `https://upload.wikimedia.org/640px-${encodeURIComponent(filename)}`,
+        width: 800,
+        height: 600,
+        mime: "image/jpeg",
+        extmetadata: {
+          Artist: { value: "A Photographer" },
+          LicenseShortName: { value: "CC BY-SA 4.0" },
+          LicenseUrl: {
+            value: "https://creativecommons.org/licenses/by-sa/4.0",
+          },
+        },
+      },
+    ],
+  });
+
+  const commonsAudioPage = (filename: string) => ({
+    title: `File:${filename}`,
+    imageinfo: [
+      {
+        url: `https://upload.wikimedia.org/${encodeURIComponent(filename)}`,
+        mime: "audio/ogg",
+        duration: 6.5,
+        extmetadata: {
+          Artist: { value: "A Recordist" },
+          LicenseShortName: { value: "CC BY-SA 4.0" },
+          LicenseUrl: {
+            value: "https://creativecommons.org/licenses/by-sa/4.0",
+          },
+        },
+      },
+    ],
+  });
+
+  it("Commons photo ok + xeno-canto ok → status ok, photo + song(rank1) + call(rank2) persisted", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      const fetcher = fakeMediaNet({
+        imageFilename: "Test bird.jpg",
+        commonsPages: [commonsPhotoPage("Test bird.jpg")],
+        xc: "ok",
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("ok");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider).toBe("wikimedia_commons");
+      expect(media.sounds.map((s) => [s.rank, s.vocalization_type, s.provider])).toEqual([
+        [1, "song", "xeno_canto"],
+        [2, "call", "xeno_canto"],
+      ]);
+      expect(media.status).toBe("ok");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("Commons audio present: it takes sound rank=1, xeno-canto SONG is skipped, only the call fills rank=2", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      const fetcher = fakeMediaNet({
+        audioFilename: "Test call.ogg",
+        commonsPages: [commonsAudioPage("Test call.ogg")],
+        xc: "ok",
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("ok");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo).toBeNull();
+      expect(media.sounds.map((s) => [s.rank, s.vocalization_type, s.provider])).toEqual([
+        [1, null, "wikimedia_commons"],
+        [2, "call", "xeno_canto"],
+      ]);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("missing xeno-canto key → partial; Commons photo still written", async () => {
+    await wipe();
+    setXcKey(undefined);
+    try {
+      const fetcher = fakeMediaNet({
+        imageFilename: "Test bird.jpg",
+        commonsPages: [commonsPhotoPage("Test bird.jpg")],
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("partial");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo).not.toBeNull();
+      expect(media.sounds).toEqual([]);
+      expect(media.status).toBe("partial");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("xeno-canto transient error (not missing key) is ALSO soft → partial, never fatal", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      const fetcher = fakeMediaNet({
+        imageFilename: "Test bird.jpg",
+        commonsPages: [commonsPhotoPage("Test bird.jpg")],
+        xc: "error",
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("partial");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("soft xeno-canto failure PRESERVES last-good xeno-canto sounds (the replace must not blank them)", async () => {
+    await wipe();
+    setXcKey("test-key");
+    const PRIOR_SONG: MediaCandidate = {
+      kind: "sound",
+      vocalization_type: "song",
+      rank: 1,
+      provider: "xeno_canto",
+      provider_id: "XC100",
+      media_url: "https://xeno-canto.org/100/file",
+      thumbnail_url: null,
+      source_url: "https://xeno-canto.org/100",
+      title: null,
+      creator: "R",
+      license_code: "CC BY-NC-SA 4.0",
+      license_url: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      location: null,
+      duration_seconds: 12,
+      width: null,
+      height: null,
+    };
+    const PRIOR_CALL: MediaCandidate = {
+      ...PRIOR_SONG,
+      vocalization_type: "call",
+      rank: 2,
+      provider_id: "XC101",
+      source_url: "https://xeno-canto.org/101",
+    };
+    try {
+      await upsertMediaOk(CODE, [LAST_GOOD, PRIOR_SONG, PRIOR_CALL], "ok");
+      const fetcher = fakeMediaNet({
+        imageFilename: "Replacement.jpg",
+        commonsPages: [commonsPhotoPage("Replacement.jpg")],
+        xc: "error",
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("partial");
+      const media = await getSpeciesMedia(CODE);
+      // The Commons photo still refreshes…
+      expect(media.photo?.provider_id).toBe("Replacement.jpg");
+      // …but the last-good xeno-canto sounds survive the transient outage.
+      expect(media.sounds.map((s) => [s.rank, s.provider_id])).toEqual([
+        [1, "XC100"],
+        [2, "XC101"],
+      ]);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("xeno-canto rate limit is retryable and preserves last-good media", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      await upsertMediaOk(CODE, [LAST_GOOD], "ok");
+      const fetcher = fakeMediaNet({
+        imageFilename: "Replacement.jpg",
+        commonsPages: [commonsPhotoPage("Replacement.jpg")],
+        xc: "rate_limited",
+      });
+      await expect(enrichSpeciesMedia(CODE, QID, SCI, { fetcher })).rejects.toMatchObject({
+        name: "XenoCantoError",
+        rateLimited: true,
+      });
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider_id).toBe("Last good.jpg");
+      expect(media.status).toBe("ok");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("both sources answer empty → no_media", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      const fetcher = fakeMediaNet({ xc: "empty" });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("no_media");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo).toBeNull();
+      expect(media.sounds).toEqual([]);
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("Wikidata/WDQS failure is FATAL — throws, does not write anything", async () => {
+    await wipe();
+    const fetcher = (async (input: URL | RequestInfo) => {
+      if (String(input).includes("query.wikidata.org"))
+        return new Response("busy", { status: 503 });
+      throw new Error("unexpected fetch");
+    }) as typeof fetch;
+    try {
+      await expect(enrichSpeciesMedia(CODE, QID, SCI, { fetcher })).rejects.toThrow();
+      expect((await getSpeciesMedia(CODE)).status).toBeNull();
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("Commons imageinfo failure is FATAL — throws even when Wikidata succeeded", async () => {
+    await wipe();
+    const fetcher = (async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("query.wikidata.org")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              bindings: [
+                {
+                  item: { value: `http://www.wikidata.org/entity/${QID}` },
+                  image: {
+                    value: "http://commons.wikimedia.org/wiki/Special:FilePath/Test%20bird.jpg",
+                  },
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("commons.wikimedia.org")) return new Response("busy", { status: 503 });
+      throw new Error("unexpected fetch");
+    }) as typeof fetch;
+    try {
+      await expect(enrichSpeciesMedia(CODE, QID, SCI, { fetcher })).rejects.toThrow();
+    } finally {
+      await wipe();
     }
   });
 });

@@ -171,7 +171,9 @@ export const dedupKeys = {
 	enrichChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species', codes),
 	enrichAiChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species_ai', codes),
 	enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
-	scanEnrichment: () => 'scan_enrichment:global'
+	scanEnrichment: () => 'scan_enrichment:global',
+	enrichMediaChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media', codes),
+	enrichMediaOne: (code: string) => `enrich_media:one:${code}`
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -342,7 +344,8 @@ const TYPE_NAMES: Record<string, string> = {
 	sync_taxonomy: 'Sync taxonomy',
 	scan_need_alerts: 'Need-alert scan (system)',
 	enrich_species: 'Species data',
-	scan_enrichment: 'Enrichment scan (system)'
+	scan_enrichment: 'Enrichment scan (system)',
+	enrich_species_media: 'Species media'
 };
 
 export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {

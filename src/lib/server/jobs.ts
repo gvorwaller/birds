@@ -26,7 +26,8 @@ export type JobType =
 	| 'sync_taxonomy'
 	| 'scan_need_alerts'
 	| 'enrich_species'
-	| 'scan_enrichment';
+	| 'scan_enrichment'
+	| 'enrich_species_media';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
