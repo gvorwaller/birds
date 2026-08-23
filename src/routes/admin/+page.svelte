@@ -1,10 +1,97 @@
 <script lang="ts">
   import { invalidateAll } from "$app/navigation";
   import { enhance } from "$app/forms";
+  import { onMount, untrack } from "svelte";
+  import { nextIntervalMs } from "$lib/job-poll-core";
+  import type { AdminLiveStatus } from "$server/admin-status";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let nudgeBusy = $state(false);
+  let refreshBusy = $state(false);
+  let manualRefreshError = $state<string | null>(null);
+  let liveRefreshError = $state<string | null>(null);
+  let liveStatus = $state<AdminLiveStatus | null>(null);
+  let liveWorker = $derived(liveStatus?.worker ?? data.worker);
+  let liveJobs = $derived(liveStatus?.jobs ?? data.jobs);
+  let lastRefreshedAt = $derived(liveStatus?.now ?? data.now);
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
+  let liveAbort: AbortController | null = null;
+  let mounted = false;
+
+  function stopLiveRefresh() {
+    if (liveTimer) clearTimeout(liveTimer);
+    liveTimer = null;
+    liveAbort?.abort();
+    liveAbort = null;
+  }
+
+  function scheduleLiveRefresh() {
+    if (!mounted) return;
+    if (liveTimer) clearTimeout(liveTimer);
+    const delay = nextIntervalMs(liveJobs);
+    liveTimer = delay == null ? null : setTimeout(refreshLiveStatus, delay);
+  }
+
+  async function refreshLiveStatus() {
+    liveTimer = null;
+    const controller = new AbortController();
+    liveAbort = controller;
+    try {
+      const res = await fetch("/api/admin/status", {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const current = (await res.json()) as AdminLiveStatus;
+      if (controller.signal.aborted) return;
+      liveStatus = current;
+      liveRefreshError = null;
+    } catch {
+      if (!controller.signal.aborted) {
+        liveRefreshError =
+          "Live status could not refresh; showing the last successful update.";
+      }
+    } finally {
+      if (liveAbort === controller) liveAbort = null;
+      if (!controller.signal.aborted) scheduleLiveRefresh();
+    }
+  }
+
+  async function refreshAll() {
+    refreshBusy = true;
+    manualRefreshError = null;
+    stopLiveRefresh();
+    try {
+      await invalidateAll();
+      // Event rows are fetched separately from page data. Discard them so a
+      // later expansion cannot display pre-refresh history.
+      openEvents = {};
+    } catch {
+      manualRefreshError =
+        "Refresh failed. The previous Admin snapshot is still shown.";
+    } finally {
+      refreshBusy = false;
+      scheduleLiveRefresh();
+    }
+  }
+
+  // Form actions and a successful full invalidate replace PageData. Keep the
+  // lightweight live view aligned with that authoritative snapshot.
+  $effect(() => {
+    data.now;
+    liveStatus = null;
+    if (mounted) untrack(scheduleLiveRefresh);
+  });
+
+  onMount(() => {
+    mounted = true;
+    scheduleLiveRefresh();
+    return () => {
+      mounted = false;
+      stopLiveRefresh();
+    };
+  });
 
   // Per-job event log, fetched on expand via the existing API.
   let openEvents = $state<Record<number, { at: string; action: string; details: unknown }[] | "loading" | "error">>({});
@@ -66,10 +153,25 @@
 <div class="page">
   <div class="head">
     <h1>Admin</h1>
-    <button type="button" class="secondary" onclick={() => invalidateAll()}>
-      Refresh
-    </button>
+    <div class="refresh-controls">
+      <span class="muted" aria-live="polite">Updated {fmt(lastRefreshedAt)}</span>
+      <button
+        type="button"
+        class="secondary"
+        disabled={refreshBusy}
+        aria-busy={refreshBusy}
+        onclick={refreshAll}
+      >
+        {refreshBusy ? "Refreshing…" : "Refresh"}
+      </button>
+    </div>
   </div>
+  {#if manualRefreshError}
+    <p class="error" role="alert">{manualRefreshError}</p>
+  {/if}
+  {#if liveRefreshError}
+    <p class="error" role="alert">{liveRefreshError}</p>
+  {/if}
 
   <section class="card">
     <h2>Worker</h2>
@@ -79,10 +181,10 @@
         crash loop. Check <code>pm2 logs birds-worker</code>.
       </p>
     {/if}
-    {#if !data.worker.alive}
+    {#if !liveWorker.alive}
       <p class="error">
-        Worker is {data.worker.heartbeatAt ? "stale" : "not started"} — last
-        heartbeat {ago(data.worker.heartbeatAt)}. Queued loads wait until it
+        Worker is {liveWorker.heartbeatAt ? "stale" : "not started"} — last
+        heartbeat {ago(liveWorker.heartbeatAt)}. Queued loads wait until it
         returns.
       </p>
     {/if}
@@ -90,14 +192,14 @@
       <table>
         <tbody>
           <tr><th>State</th><td>
-            <span class="badge" data-color={data.worker.alive ? "ok" : "error"}>
-              {data.worker.alive ? (data.worker.state ?? "unknown") : "down"}
+            <span class="badge" data-color={liveWorker.alive ? "ok" : "error"}>
+              {liveWorker.alive ? (liveWorker.state ?? "unknown") : "down"}
             </span>
           </td></tr>
-          <tr><th>Heartbeat</th><td>{ago(data.worker.heartbeatAt)}</td></tr>
-          <tr><th>Started</th><td>{fmt(data.worker.startedAt)} ({ago(data.worker.startedAt)})</td></tr>
-          <tr><th>PID / version</th><td>{data.worker.pid ?? "—"} · {data.worker.version ?? "—"}</td></tr>
-          <tr><th>Current job</th><td>{data.worker.currentJobId ?? "idle"}</td></tr>
+          <tr><th>Heartbeat</th><td>{ago(liveWorker.heartbeatAt)}</td></tr>
+          <tr><th>Started</th><td>{fmt(liveWorker.startedAt)} ({ago(liveWorker.startedAt)})</td></tr>
+          <tr><th>PID / version</th><td>{liveWorker.pid ?? "—"} · {liveWorker.version ?? "—"}</td></tr>
+          <tr><th>Current job</th><td>{liveWorker.currentJobId ?? "idle"}</td></tr>
         </tbody>
       </table>
     </div>
@@ -149,9 +251,9 @@
   </section>
 
   <section class="card">
-    <h2>Jobs ({data.jobs.length})</h2>
+    <h2>Jobs ({liveJobs.length})</h2>
     <ul class="jobs">
-      {#each data.jobs as j (j.id)}
+      {#each liveJobs as j (j.id)}
         {@const ev = openEvents[j.id]}
         <li>
           <div class="jobhead">
@@ -271,6 +373,13 @@
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 8px;
+  }
+  .refresh-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
   }
   h1 {
     font-size: 1.35rem;
@@ -425,6 +534,10 @@
     color: var(--accent);
     border: 1px solid var(--accent);
     cursor: pointer;
+  }
+  button.secondary:disabled {
+    cursor: wait;
+    opacity: 0.65;
   }
   details summary {
     cursor: pointer;
