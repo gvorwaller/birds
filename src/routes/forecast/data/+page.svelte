@@ -340,8 +340,8 @@
   </td>
   <td>
     {r.nSpecies.toLocaleString()}{#if r.nUnmatched > 0}
-      <span class="unm" title="bar-chart rows matching no current taxon">
-        · {r.nUnmatched} unmatched</span
+      <span class="unm" title="spuhs, slashes, and hybrids excluded from forecasts">
+        · {r.nUnmatched} non-species</span
       >{/if}
   </td>
   <td>{fmtDate(r.fetchedAt)}</td>
@@ -823,48 +823,52 @@
 
   {#if data.failed.length > 0}
     <section class="card">
-      <h2>Failed loads ({data.failed.length})</h2>
-      <p class="notice">
-        These locations were attempted but have no stored data. eBird's export
-        sometimes errors on individual hotspots — retrying later often works.
-      </p>
-      <ul class="failed">
-        {#each data.failed as f (f.locCode)}
-          <li>
-            <div class="failinfo">
-              <strong>{f.locName ?? f.locCode}</strong>
-              {#if f.regionName}
-                <span class="region">· {f.regionName}</span>
-              {/if}
-              <span class="code">{f.locCode}</span>
-              <span class="err">{f.error ?? "unknown error"}</span>
-              <span class="when">{fmtDate(f.lastAttemptAt)}</span>
-            </div>
-            {#if !data.isViewer}
-              <form
-                method="POST"
-                action="?/retry"
-                use:enhance={() => {
-                  refreshing = f.locCode;
-                  return async ({ update }) => {
-                    refreshing = null;
-                    await update();
-                  };
-                }}
-              >
-                <input type="hidden" name="loc" value={f.locCode} />
-                <button
-                  type="submit"
-                  class="secondary"
-                  disabled={refreshing !== null}
+      <details class="failed-section">
+        <summary>
+          <h2>Failed loads ({data.failed.length})</h2>
+        </summary>
+        <p class="notice">
+          These locations were attempted but have no stored data. eBird's export
+          sometimes errors on individual hotspots — retrying later often works.
+        </p>
+        <ul class="failed">
+          {#each data.failed as f (f.locCode)}
+            <li>
+              <div class="failinfo">
+                <strong>{f.locName ?? f.locCode}</strong>
+                {#if f.regionName}
+                  <span class="region">· {f.regionName}</span>
+                {/if}
+                <span class="code">{f.locCode}</span>
+                <span class="err">{f.error ?? "unknown error"}</span>
+                <span class="when">{fmtDate(f.lastAttemptAt)}</span>
+              </div>
+              {#if !data.isViewer}
+                <form
+                  method="POST"
+                  action="?/retry"
+                  use:enhance={() => {
+                    refreshing = f.locCode;
+                    return async ({ update }) => {
+                      refreshing = null;
+                      await update();
+                    };
+                  }}
                 >
-                  {refreshing === f.locCode ? "Queueing…" : "Retry"}
-                </button>
-              </form>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+                  <input type="hidden" name="loc" value={f.locCode} />
+                  <button
+                    type="submit"
+                    class="secondary"
+                    disabled={refreshing !== null}
+                  >
+                    {refreshing === f.locCode ? "Queueing…" : "Retry"}
+                  </button>
+                </form>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </details>
     </section>
   {/if}
 
@@ -1086,6 +1090,28 @@
   button.secondary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .failed-section summary {
+    cursor: pointer;
+    list-style: none;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+  }
+  .failed-section summary::-webkit-details-marker {
+    display: none;
+  }
+  .failed-section summary h2 {
+    margin: 0;
+  }
+  .failed-section summary::before {
+    content: "▸";
+    color: var(--accent);
+    margin-right: 8px;
+    font-size: 0.9rem;
+  }
+  .failed-section[open] summary::before {
+    content: "▾";
   }
   .failed {
     list-style: none;

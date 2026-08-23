@@ -286,13 +286,13 @@
           Data: {f.meta.beginYear}–{f.meta.endYear}, fetched
           {fmtDate(f.meta.fetchedAt)} · {f.meta.nSpecies.toLocaleString()} species
           stored{#if f.meta.nUnmatched > 0}
-            · {f.meta.nUnmatched} names not matched to the taxonomy{/if}
+            · {f.meta.nUnmatched} non-species entries{/if}
         </p>
         {#if (f.meta.unmatchedNames?.length ?? 0) > 0}
           <!-- Tier-1 (td-97b22e): the names always shipped; only the count
                rendered. Mostly subspecies/hybrid bar-chart rows. -->
           <details class="unmnames">
-            <summary>Which names?</summary>
+            <summary>Show non-species names</summary>
             <p class="meta">{f.meta.unmatchedNames.join(" · ")}</p>
           </details>
         {/if}
