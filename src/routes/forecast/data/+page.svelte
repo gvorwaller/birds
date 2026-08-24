@@ -107,6 +107,10 @@
     });
   }
 
+  function fmtFrequency(value: number): string {
+    return `${(value * 100).toLocaleString(undefined, { maximumFractionDigits: 4 })}%`;
+  }
+
   function fmtTime(iso: string): string {
     return new Date(iso).toLocaleTimeString(undefined, {
       hour: "numeric",
@@ -489,6 +493,34 @@
         ? `Already loading — ${form.queued.label} is in the queue.`
         : `Queued: ${form.queued.label}.`}
     </p>
+  {/if}
+
+  {#if data.frequencyCorrections.length > 0}
+    <section class="card">
+      <details class="correction-section">
+        <summary>
+          <h2>Adjusted source values ({data.frequencyCorrections.length})</h2>
+        </summary>
+        <p class="notice">
+          eBird occasionally returns a frequency above its documented 100% maximum,
+          usually where very few checklists exist. The forecast stores 100% and keeps
+          the original source value here rather than silently discarding the location.
+        </p>
+        <ul class="corrections">
+          {#each data.frequencyCorrections as correction (`${correction.locCode}-${correction.speciesCode}-${correction.week}`)}
+            <li>
+              <strong>{correction.locName}</strong>
+              <span>{correction.speciesName ?? correction.speciesCode}</span>
+              <span>
+                week {correction.week}: source {fmtFrequency(correction.originalFreq)} → stored
+                {fmtFrequency(correction.storedFreq)} · {correction.sampleSize} checklist{correction.sampleSize === 1 ? "" : "s"}
+              </span>
+              <span class="when">{fmtDate(correction.detectedAt)}</span>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    </section>
   {/if}
 
   <section class="card">
@@ -1331,6 +1363,34 @@
   }
   .attribution a {
     color: var(--muted);
+  }
+  .correction-section summary {
+    cursor: pointer;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+  }
+  .correction-section summary h2 {
+    display: inline;
+    margin: 0;
+  }
+  .corrections {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+  }
+  .corrections li {
+    display: grid;
+    gap: 2px;
+    padding: 10px 0;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .corrections li + li {
+    border-top: 1px solid var(--border);
+  }
+  .corrections strong {
+    color: var(--text);
   }
   @media (min-width: 640px) {
     .page {

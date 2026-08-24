@@ -39,7 +39,8 @@ process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 const { query } = await import("$lib/db");
 const { rankLocsForSpeciesMonth, rankCountiesForNeeds, MIN_MONTH_N } =
   await import("./forecast");
-const { storeFrequencies, WEEKS } = await import("./barchart");
+const { normalizeMatchedBarchart, storeFrequencies, WEEKS } =
+  await import("./barchart");
 
 let dbUp = false;
 try {
@@ -216,6 +217,67 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       "SELECT sample_sizes[1] AS w1 FROM frequency_fetch WHERE loc_code = 'TESTX-STORE'",
     );
     expect(Number(sizesAfter.rows[0].w1)).toBe(100);
+  });
+
+  it("atomically stores bounded source anomalies without weakening the frequency CHECK", async () => {
+    const samples = janSamples(100, 100, 100, 3);
+    const parsed = { sampleSizes: samples, rows: [] };
+    const source = {
+      bySpecies: new Map([
+        ["testsp", [0.5, 0.5, 0.5, 1.3333333, ...Array(WEEKS - 4).fill(0)]],
+      ]),
+      unmatched: [],
+      collisions: 0,
+    };
+    const normalized = normalizeMatchedBarchart(parsed, source);
+
+    await storeFrequencies({
+      locCode: "TESTX-BOUND",
+      locKind: "region",
+      locName: "Bounded fixture",
+      beginYear: 2016,
+      endYear: 2025,
+      parsed,
+      matched: normalized.matched,
+      corrections: normalized.corrections,
+    });
+
+    const stored = await query(
+      `SELECT freq FROM species_frequency
+        WHERE loc_code = 'TESTX-BOUND' AND species_code = 'testsp' AND week = 4`,
+    );
+    expect(Number(stored.rows[0].freq)).toBe(1);
+    const anomaly = await query(
+      `SELECT week, original_freq, stored_freq, sample_size
+         FROM frequency_anomalies
+        WHERE loc_code = 'TESTX-BOUND' AND species_code = 'testsp'`,
+    );
+    expect(anomaly.rows).toEqual([
+      expect.objectContaining({ week: 4, sample_size: 3 }),
+    ]);
+    expect(Number(anomaly.rows[0].original_freq)).toBeCloseTo(1.3333333, 7);
+    expect(Number(anomaly.rows[0].stored_freq)).toBe(1);
+    await expect(insertFreq("TESTX-BOUND", 5, 1.01)).rejects.toThrow(/check/i);
+
+    await storeFrequencies({
+      locCode: "TESTX-BOUND",
+      locKind: "region",
+      locName: "Bounded fixture",
+      beginYear: 2016,
+      endYear: 2025,
+      parsed,
+      matched: {
+        bySpecies: new Map([
+          ["testsp", [0.5, 0.5, 0.5, 0.75, ...Array(WEEKS - 4).fill(0)]],
+        ]),
+        unmatched: [],
+        collisions: 0,
+      },
+    });
+    const staleAnomalies = await query(
+      "SELECT 1 FROM frequency_anomalies WHERE loc_code = 'TESTX-BOUND'",
+    );
+    expect(staleAnomalies.rows).toHaveLength(0);
   });
 
   it("rankCountiesForNeeds counts absent sparse weeks in the denominator", async () => {

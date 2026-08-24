@@ -76,13 +76,25 @@ interface FailedRow {
   region_code: string | null;
 }
 
+interface CorrectionRow {
+  loc_code: string;
+  loc_name: string;
+  species_code: string;
+  com_name: string | null;
+  week: number;
+  original_freq: number;
+  stored_freq: number;
+  sample_size: number;
+  detected_at: string;
+}
+
 // Inventory of stored barchart data. Reads Postgres (and the official-API
 // region-list cache for state names) — never ebird.org/barchartData.
 export const load: PageServerLoad = async ({ locals }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
 
-  const [loadedRes, failedRes, apiKey] = await Promise.all([
+  const [loadedRes, failedRes, correctionsRes, apiKey] = await Promise.all([
     query<LoadedRow>(
       `SELECT loc_code, loc_kind, loc_name, begin_year, end_year, n_species,
               n_unmatched, fetched_at, region_code,
@@ -98,6 +110,14 @@ export const load: PageServerLoad = async ({ locals }) => {
         WHERE a.status = 'error'
           AND NOT EXISTS (SELECT 1 FROM frequency_fetch f WHERE f.loc_code = a.loc_code)
         ORDER BY a.last_attempt_at DESC`,
+    ),
+    query<CorrectionRow>(
+      `SELECT a.loc_code, f.loc_name, a.species_code, t.com_name, a.week,
+              a.original_freq, a.stored_freq, a.sample_size, a.detected_at
+         FROM frequency_anomalies a
+         JOIN frequency_fetch f ON f.loc_code = a.loc_code
+         LEFT JOIN taxonomy_cache t ON t.species_code = a.species_code
+        ORDER BY a.detected_at DESC, f.loc_name, t.com_name NULLS LAST, a.species_code, a.week`,
     ),
     getEbirdApiKey(userId),
   ]);
@@ -277,6 +297,17 @@ export const load: PageServerLoad = async ({ locals }) => {
           ? `${countyNames.get(r.region_code) ?? r.region_code}, ${stateName.get(r.region_code.slice(0, 5)) ?? r.region_code.slice(0, 5)}`
           : (stateName.get(r.region_code) ?? r.region_code)
         : null,
+    })),
+    frequencyCorrections: correctionsRes.rows.map((r) => ({
+      locCode: r.loc_code,
+      locName: r.loc_name,
+      speciesCode: r.species_code,
+      speciesName: r.com_name,
+      week: Number(r.week),
+      originalFreq: Number(r.original_freq),
+      storedFreq: Number(r.stored_freq),
+      sampleSize: Number(r.sample_size),
+      detectedAt: r.detected_at,
     })),
     states: states.filter((s) => !loadedRegionCodes.has(s.code)),
     statesError,

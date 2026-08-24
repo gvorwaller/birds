@@ -33,6 +33,7 @@ import {
   ensureFrequencies,
   lastCompleteYear,
   matchBarchartRows,
+  normalizeMatchedBarchart,
   parseBarchartTsv,
   validateMatchedBarchart,
   type MatchedBarchart,
@@ -226,6 +227,57 @@ describe("validateMatchedBarchart", () => {
   });
 });
 
+describe("normalizeMatchedBarchart", () => {
+  it("bounds finite frequencies above 1 and preserves an explicit audit record", () => {
+    const samples = Array(WEEKS).fill(100);
+    samples[39] = 3;
+    const parsed: ParsedBarchart = { sampleSizes: samples, rows: [] };
+    const source: MatchedBarchart = {
+      bySpecies: new Map([
+        ["grbher3", [...Array(39).fill(0.2), 1.3333333, ...Array(8).fill(0.2)]],
+      ]),
+      unmatched: [],
+      collisions: 0,
+    };
+
+    const normalized = normalizeMatchedBarchart(parsed, source);
+
+    expect(normalized.matched.bySpecies.get("grbher3")![39]).toBe(1);
+    expect(source.bySpecies.get("grbher3")![39]).toBe(1.3333333);
+    expect(normalized.corrections).toEqual([
+      {
+        speciesCode: "grbher3",
+        week: 40,
+        originalFreq: 1.3333333,
+        storedFreq: 1,
+        sampleSize: 3,
+      },
+    ]);
+    expect(() =>
+      validateMatchedBarchart(parsed, normalized.matched, null),
+    ).not.toThrow();
+  });
+
+  it("does not hide negative or non-finite values from validation", () => {
+    const parsed: ParsedBarchart = {
+      sampleSizes: Array(WEEKS).fill(100),
+      rows: [],
+    };
+    const source: MatchedBarchart = {
+      bySpecies: new Map([
+        ["grbher3", [-0.1, Number.POSITIVE_INFINITY, ...Array(46).fill(0.2)]],
+      ]),
+      unmatched: [],
+      collisions: 0,
+    };
+    const normalized = normalizeMatchedBarchart(parsed, source);
+    expect(normalized.corrections).toEqual([]);
+    expect(() =>
+      validateMatchedBarchart(parsed, normalized.matched, null),
+    ).toThrow(/Out-of-range/);
+  });
+});
+
 describe("lastCompleteYear / barchartUrl", () => {
   it("never includes the partial current year", () => {
     expect(lastCompleteYear(new Date(2026, 7, 6))).toBe(2025);
@@ -333,6 +385,43 @@ describe("ensureFrequencies", () => {
       c.text.includes("INSERT INTO frequency_fetch_attempts"),
     );
     expect(attempt?.text).toContain("'ok'");
+  });
+
+  it("stores a bounded frequency plus its source correction instead of failing the location", async () => {
+    queryHandler = taxonomyHandler;
+    const samples = Array(WEEKS).fill("100.0");
+    samples[39] = "3.0";
+    const freqs = Array(WEEKS).fill("0.2500000");
+    freqs[39] = "1.3333333";
+    const fetcher = vi.fn(async () =>
+      [
+        `Sample Size:\t${samples.join("\t")}`,
+        `Great Blue Heron\t${freqs.join("\t")}`,
+      ].join("\n"),
+    );
+
+    const result = await ensureFrequencies(1, [loc("US-BOUND")], {
+      fetcher,
+      sleep: noSleep,
+    });
+
+    expect(result.refreshed).toEqual(["US-BOUND"]);
+    expect(result.failed).toEqual([]);
+    const correctionInsert = dbCalls.find((call) =>
+      call.text.includes("INSERT INTO frequency_anomalies"),
+    );
+    expect(correctionInsert?.params).toEqual([
+      "US-BOUND",
+      "grbher3",
+      40,
+      1.3333333,
+      1,
+      3,
+    ]);
+    const frequencyInsert = dbCalls.find((call) =>
+      call.text.includes("INSERT INTO species_frequency"),
+    );
+    expect(frequencyInsert?.params).toContain(1);
   });
 
   it("enforces the per-invocation fetch cap", async () => {

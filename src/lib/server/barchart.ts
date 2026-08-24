@@ -69,6 +69,14 @@ export interface MatchedBarchart {
 	collisions: number;
 }
 
+export interface FrequencyCorrection {
+	speciesCode: string;
+	week: number;
+	originalFreq: number;
+	storedFreq: number;
+	sampleSize: number;
+}
+
 export interface FrequencyMeta {
 	locCode: string;
 	locKind: 'region' | 'hotspot';
@@ -268,6 +276,47 @@ export function matchBarchartRows(
 }
 
 /**
+ * Bound the one upstream anomaly we can interpret without inventing data:
+ * eBird documents frequency as a proportion of complete checklists, so a
+ * finite value above 1 means 100%, not a valid larger probability. Preserve
+ * every correction for atomic audit persistence. Negative and non-finite
+ * values pass through unchanged so the validation gate still rejects them.
+ */
+export function normalizeMatchedBarchart(
+	parsed: ParsedBarchart,
+	matched: MatchedBarchart
+): { matched: MatchedBarchart; corrections: FrequencyCorrection[] } {
+	const corrections: FrequencyCorrection[] = [];
+	const bySpecies = new Map<string, number[]>();
+
+	for (const [speciesCode, freqs] of matched.bySpecies) {
+		bySpecies.set(
+			speciesCode,
+			freqs.map((freq, index) => {
+				if (!Number.isFinite(freq) || freq <= 1) return freq;
+				corrections.push({
+					speciesCode,
+					week: index + 1,
+					originalFreq: freq,
+					storedFreq: 1,
+					sampleSize: parsed.sampleSizes[index]
+				});
+				return 1;
+			})
+		);
+	}
+
+	return {
+		matched: {
+			bySpecies,
+			unmatched: [...matched.unmatched],
+			collisions: matched.collisions
+		},
+		corrections
+	};
+}
+
+/**
  * Sanity gate before any write. A syntactically valid but degenerate export
  * (zero matched species, out-of-range frequencies, drastic row collapse vs the
  * previously stored fetch) must never replace good cached data.
@@ -320,6 +369,7 @@ export interface StoreParams {
 	regionCode?: string | null;
 	parsed: ParsedBarchart;
 	matched: MatchedBarchart;
+	corrections?: FrequencyCorrection[];
 }
 
 /** Atomic replace of one location's frequency data (+ 'ok' attempt record). */
@@ -351,6 +401,7 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 			]
 		);
 		await client.query('DELETE FROM species_frequency WHERE loc_code = $1', [p.locCode]);
+		await client.query('DELETE FROM frequency_anomalies WHERE loc_code = $1', [p.locCode]);
 
 		// Sparse: only weeks with freq > 0.
 		const rows: { code: string; week: number; freq: number }[] = [];
@@ -371,6 +422,31 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 			});
 			await client.query(
 				`INSERT INTO species_frequency (loc_code, species_code, week, freq)
+				 VALUES ${values.join(',')}`,
+				params
+			);
+		}
+
+		const corrections = p.corrections ?? [];
+		for (let i = 0; i < corrections.length; i += BATCH) {
+			const slice = corrections.slice(i, i + BATCH);
+			const values: string[] = [];
+			const params: unknown[] = [];
+			slice.forEach((correction, j) => {
+				const o = j * 6;
+				values.push(`($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6})`);
+				params.push(
+					p.locCode,
+					correction.speciesCode,
+					correction.week,
+					correction.originalFreq,
+					correction.storedFreq,
+					correction.sampleSize
+				);
+			});
+			await client.query(
+				`INSERT INTO frequency_anomalies
+				   (loc_code, species_code, week, original_freq, stored_freq, sample_size)
 				 VALUES ${values.join(',')}`,
 				params
 			);
@@ -638,9 +714,10 @@ export async function ensureFrequencies(
 			}
 			const parsed = parseBarchartTsv(tsv);
 			const matcher = await getMatcher();
-			const matched = matchBarchartRows(parsed, {
+			const sourceMatched = matchBarchartRows(parsed, {
 				match: (name) => matcher.match(name)
 			});
+			const { matched, corrections } = normalizeMatchedBarchart(parsed, sourceMatched);
 			validateMatchedBarchart(parsed, matched, meta.get(loc.code)?.nSpecies ?? null);
 			await storeFrequencies({
 				locCode: loc.code,
@@ -650,7 +727,8 @@ export async function ensureFrequencies(
 				endYear,
 				regionCode: loc.regionCode ?? null,
 				parsed,
-				matched
+				matched,
+				corrections
 			});
 			result.refreshed.push(loc.code);
 			outcome = { status: 'ok' };
