@@ -107,6 +107,15 @@
 						only).
 					</li>
 					<li>
+						<strong>Tides</strong> — located stops near a NOAA prediction
+						station show high and low tide times, heights, the station name,
+						and its distance from the stop. An active trip shows the next high
+						and low; a future trip shows the full schedule for its first day.
+						Finished trips and stops without a nearby station show no tide
+						card. Heights are relative to MLLW; these are NOAA CO-OPS
+						predictions, not observations, and are not for navigation.
+					</li>
+					<li>
 						<strong>Field tips</strong> — an optional, AI-generated note per stop
 						tying your target species to the season and weather. Treat it as a
 						hint to verify in the field, not gospel.
@@ -497,7 +506,11 @@
 					<li>
 						<strong>Tide tags</strong> are the shorebird special:
 						AI-annotated tidal species can receive one — the stage when
-						it's most findable — and its field craft explains why.
+						it's most findable — and its field craft explains why. When a
+						tide-tagged species page has a location, its
+						<strong>Finding this bird</strong> card also shows the next high and
+						low predictions at the nearest NOAA station, including the
+						station's distance from that location.
 					</li>
 					<li>
 						Results always show your <strong>Seen/Need</strong> badge;
