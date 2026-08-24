@@ -143,7 +143,7 @@
 				<div class="audio-unavailable" role="status">
 					<strong>Audio unavailable</strong>
 					<p>
-						xeno-canto restricts downloads for this species due to conservation concerns.
+						xeno-canto does not currently provide downloadable audio for this species.
 					</p>
 				</div>
 			{/if}
