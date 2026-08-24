@@ -869,7 +869,8 @@ export interface EnrichmentWorkSummary {
  */
 async function enqueueEnrichmentChunks(
 	adminId: number,
-	maxChunks: number
+	maxChunks: number,
+	opts: { retryRecentMediaFailures?: boolean } = {}
 ): Promise<EnrichmentWorkSummary> {
 	// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
 	// the full pipeline; AI-only work (wiki current, AI due) becomes
@@ -915,16 +916,24 @@ async function enqueueEnrichmentChunks(
 		covered += codes.length;
 	}
 	// Media partition (td-86a2b6): separate from wiki/AI — a media failure
-	// never blocks or is blocked by prose/annotation work. Codes about to get
-	// a full wiki refresh are skipped here; enrichSpeciesMedia only needs the
-	// STORED QID, so it runs independently of whether wiki data is fresh.
-	const mediaWork = (await mediaDueCodes()).filter((c) => !wikiSet.has(c)).sort();
+	// never blocks or is blocked by prose/annotation work. Do not subtract
+	// wikiWork here: enrich_species does not repair media, and a species can
+	// legitimately need both independent jobs in the same scan.
+	const mediaWork = (
+		await mediaDueCodes({ includeRecentFailures: opts.retryRecentMediaFailures === true })
+	)
+		.sort();
 	for (let i = 0; i < mediaWork.length && enqueued < maxChunks; i += MEDIA_CHUNK_SIZE) {
 		const codes = mediaWork.slice(i, i + MEDIA_CHUNK_SIZE);
 		const r = await enqueueJob({
 			type: 'enrich_species_media',
-			payload: { codes } satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
-			dedupKey: dedupKeys.enrichMediaChunk(codes),
+			payload: {
+				codes,
+				...(opts.retryRecentMediaFailures ? { force: true } : {})
+			} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
+			dedupKey: opts.retryRecentMediaFailures
+				? dedupKeys.enrichMediaForceChunk(codes)
+				: dedupKeys.enrichMediaChunk(codes),
 			requestedBy: adminId,
 			label: `${codes.length} species media`
 		});
@@ -956,7 +965,12 @@ export async function nudgeEnrichmentScan(): Promise<EnrichmentWorkSummary> {
 	// UNCAPPED (CODEX1): an explicit admin nudge enqueues ALL currently-due
 	// work before returning — no remainder to race a stale running scan's
 	// 24h successor. The per-pass cap protects the recurring cadence only.
-	const summary = await enqueueEnrichmentChunks(adminId, Infinity);
+	// An explicit admin scan is also an explicit retry request: include media
+	// rows currently marked error even when their normal 24-hour retry clock
+	// has not elapsed. The unattended recurring scan retains that backoff.
+	const summary = await enqueueEnrichmentChunks(adminId, Infinity, {
+		retryRecentMediaFailures: true
+	});
 	// Timer pull is purely a cadence assist for the recurring chain.
 	await query(
 		`UPDATE jobs SET next_retry_at = NOW()
@@ -1768,7 +1782,9 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 					codes: remainder,
 					...(force ? { force } : {})
 				} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
-				dedupKey: dedupKeys.enrichMediaChunk(remainder),
+				dedupKey: force
+					? dedupKeys.enrichMediaForceChunk(remainder)
+					: dedupKeys.enrichMediaChunk(remainder),
 				requestedBy: job.requested_by,
 				label: `${remainder.length} species media (spillover)`
 			});

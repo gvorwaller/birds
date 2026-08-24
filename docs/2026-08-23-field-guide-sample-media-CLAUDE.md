@@ -449,21 +449,30 @@ ${SCOPE_SQL}
       AND se.wikidata_qid IS NOT NULL
       AND (
             se.media_status IS NULL
-         OR (se.media_status IN ('ok','partial','no_media')
+         OR (se.media_status IN ('ok','no_media')
              AND se.media_fetched_at < NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
-         OR (se.media_status = 'error'
-             AND se.media_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+         OR (se.media_status IN ('partial','error')
+             AND ($1::boolean
+                  OR se.media_fetched_at <= NOW()
+                     - INTERVAL '24 hours'
+                     + INTERVAL '15 minutes'))
       )
  )
  ORDER BY 1
 ```
 
 Requires `wikidata_qid IS NOT NULL` — media needs a QID for the P18/P51
-SPARQL lookup.
+SPARQL lookup. The recurring scan therefore retries unresolved partial or
+error media on its next daily pass; the 15-minute scheduler-alignment margin
+prevents a worker failure stamped just after one scan from missing the next
+24-hour scan. The explicit Admin scan supplies `$1 = true` and queues forced
+media jobs, so recent partial and error results are retried immediately rather
+than being selected and then freshness-skipped by the worker.
 
 **`mediaFresh(code)`** — Per-species freshness check for idempotent
-overlap in chunks. Returns true if media_status is ok/partial/no_media
-and media_fetched_at is within the refresh window.
+overlap in chunks. Returns true for ok/no_media within 180 days or partial
+within the scheduler-aligned 24-hour retry window. Error is never fresh once
+it has been selected for work.
 
 ### 6d. Orchestrator function
 
@@ -573,9 +582,7 @@ In `enqueueEnrichmentChunks()` (line 849), add a third partition loop
 **after** the wiki and AI loops:
 
 ```typescript
-const mediaWork = (await mediaDueCodes())
-    .filter(c => !wikiSet.has(c))  // skip codes about to get wiki-refreshed
-    .sort();
+const mediaWork = (await mediaDueCodes()).sort();
 
 for (let i = 0; i < mediaWork.length && enqueued < maxChunks; i += MEDIA_CHUNK_SIZE) {
     const codes = mediaWork.slice(i, i + MEDIA_CHUNK_SIZE);
@@ -592,6 +599,10 @@ for (let i = 0; i < mediaWork.length && enqueued < maxChunks; i += MEDIA_CHUNK_S
 }
 ```
 
+Do not subtract `wikiSet` from `mediaWork`. The Wikipedia enrichment job does
+not refresh sample media, so a species that is due in both lanes must receive
+both independently deduplicated jobs.
+
 Add `mediaCandidates: number` to `EnrichmentWorkSummary`.
 
 ---
@@ -604,6 +615,7 @@ Add `mediaCandidates: number` to `EnrichmentWorkSummary`.
 
 ```typescript
 enrichMediaChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media', codes),
+enrichMediaForceChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media_force', codes),
 enrichMediaOne: (code: string) => `enrich_media:one:${code}`,
 ```
 

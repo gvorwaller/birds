@@ -1942,7 +1942,11 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
 
   it("scan_enrichment enqueues bounded content-hashed chunks and reschedules FAST while work remains", async () => {
     const codes = Array.from({ length: 70 }, (_, i) => `spcode${i}`);
-    db.handler = (text) => {
+    db.handler = (text, params) => {
+      if (text.includes("se.media_status IS NULL")) {
+        expect(params).toEqual([false]);
+        return { rows: [] };
+      }
       if (text.includes("FROM taxonomy_cache tc"))
         return { rows: codes.map((c) => ({ species_code: c })) };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
@@ -1976,6 +1980,7 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
     db.handler = (text) => {
       if (text.includes("se.ai_status IS NULL"))
         return { rows: aiCodes.map((c) => ({ species_code: c })) };
+      if (text.includes("se.media_status IS NULL")) return { rows: [] };
       if (text.includes("FROM taxonomy_cache tc"))
         return { rows: [{ species_code: "wikidue1" }] };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
@@ -2003,6 +2008,32 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
       runAfterMs: number;
     };
     expect(successor.runAfterMs).toBe(ENRICH_SCAN_IDLE_MS);
+  });
+
+  it("recurring scan selects due media with normal backoff semantics", async () => {
+    db.handler = (text, params) => {
+      if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("se.media_status IS NULL")) {
+        expect(params).toEqual([false]);
+        return { rows: [{ species_code: "melthr" }] };
+      }
+      if (text.includes("FROM taxonomy_cache tc")) return { rows: [] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+
+    await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
+
+    const media = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { type: string }).type === "enrich_species_media",
+    );
+    expect(media).toBeDefined();
+    expect(media![0]).toMatchObject({
+      type: "enrich_species_media",
+      payload: { codes: ["melthr"] },
+    });
+    expect((media![0] as { dedupKey: string }).dedupKey).toMatch(/^enrich_media:/);
+    expect((media![0] as { payload: { force?: boolean } }).payload.force).toBeUndefined();
   });
 });
 
@@ -2357,6 +2388,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
       // enrichmentScope + wikiStaleCodes both hit taxonomy_cache tc; aiDueCodes too.
       if (text.includes("se.ai_status IS NULL"))
         return { rows: [{ species_code: "aidue1" }, { species_code: "aidue2" }] };
+      if (text.includes("se.media_status IS NULL")) return { rows: [] };
       if (text.includes("FROM taxonomy_cache tc"))
         return { rows: [{ species_code: "wikidue1" }] };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
@@ -2364,11 +2396,13 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     };
     await runJob(jobRow({ type: "scan_enrichment", payload: {} }), ctx);
     const payloads = mocks.enqueueJob.mock.calls.map((c) => c[0] as {
+      type: string;
       payload: { codes: string[]; aiOnly?: boolean };
       dedupKey: string;
     });
-    const wiki = payloads.filter((p) => !p.payload.aiOnly);
+    const wiki = payloads.filter((p) => p.type === "enrich_species" && !p.payload.aiOnly);
     const ai = payloads.filter((p) => p.payload.aiOnly);
+    expect(wiki).toHaveLength(1);
     expect(wiki.flatMap((p) => p.payload.codes)).toContain("wikidue1");
     expect(ai.flatMap((p) => p.payload.codes)).toEqual(["aidue1", "aidue2"]);
     for (const p of ai) expect(p.dedupKey).toMatch(/^enrich_species_ai:/);
@@ -2768,6 +2802,7 @@ describe("nudgeEnrichmentScan (admin impatient nudge — direct enqueue)", () =>
   const scopeDb = (codes: string[]) => {
     db.handler = (text) => {
       if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("se.media_status IS NULL")) return { rows: [] };
       if (text.includes("FROM taxonomy_cache tc"))
         return { rows: codes.map((c) => ({ species_code: c })) };
       if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
@@ -2826,5 +2861,58 @@ describe("nudgeEnrichmentScan (admin impatient nudge — direct enqueue)", () =>
     expect(summary.candidates).toBe(0);
     expect(mocks.enqueueJob).not.toHaveBeenCalled();
     expect(timerPulled).toBe(true);
+  });
+
+  it("explicit admin scan immediately retries a recent partial media failure with force", async () => {
+    db.handler = (text, params) => {
+      if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("se.media_status IS NULL")) {
+        expect(params).toEqual([true]);
+        return { rows: [{ species_code: "melthr" }] };
+      }
+      if (text.includes("FROM taxonomy_cache tc")) return { rows: [] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+
+    const summary = await nudgeEnrichmentScan();
+    expect(summary).toMatchObject({ candidates: 1, mediaCandidates: 1, chunksEnqueued: 1 });
+    const chunk = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { type: string }).type === "enrich_species_media",
+    );
+    expect((chunk![0] as { payload: { codes: string[]; force: boolean } }).payload).toEqual({
+      codes: ["melthr"],
+      force: true,
+    });
+    expect((chunk![0] as { dedupKey: string }).dedupKey).toMatch(/^enrich_media_force:/);
+  });
+
+  it("queues media repair even when the same species also needs wiki enrichment", async () => {
+    db.handler = (text) => {
+      if (text.includes("se.ai_status IS NULL")) return { rows: [] };
+      if (text.includes("se.media_status IS NULL")) {
+        return { rows: [{ species_code: "melthr" }] };
+      }
+      if (text.includes("FROM taxonomy_cache tc")) {
+        return { rows: [{ species_code: "melthr" }] };
+      }
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+
+    const summary = await nudgeEnrichmentScan();
+    expect(summary).toMatchObject({
+      candidates: 2,
+      wikiCandidates: 1,
+      mediaCandidates: 1,
+      chunksEnqueued: 2,
+    });
+    expect(
+      mocks.enqueueJob.mock.calls.map((c) => (c[0] as { type: string }).type),
+    ).toEqual(["enrich_species", "enrich_species_media"]);
+    const media = mocks.enqueueJob.mock.calls.find(
+      (c) => (c[0] as { type: string }).type === "enrich_species_media",
+    );
+    expect((media![0] as { payload: { force: boolean } }).payload.force).toBe(true);
   });
 });

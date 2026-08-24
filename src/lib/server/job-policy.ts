@@ -173,6 +173,7 @@ export const dedupKeys = {
 	enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
 	scanEnrichment: () => 'scan_enrichment:global',
 	enrichMediaChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media', codes),
+	enrichMediaForceChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media_force', codes),
 	enrichMediaOne: (code: string) => `enrich_media:one:${code}`
 } as const;
 

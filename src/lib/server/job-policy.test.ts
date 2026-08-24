@@ -140,6 +140,12 @@ describe("dedup keys", () => {
     expect(dedupKeys.loadHotspots(["L1"])).not.toBe(a);
   });
 
+  it("forced media retries do not dedup against normal scheduled media", () => {
+    const codes = ["melthr", "grycat"];
+    expect(dedupKeys.enrichMediaForceChunk(codes)).toMatch(/^enrich_media_force:/);
+    expect(dedupKeys.enrichMediaForceChunk(codes)).not.toBe(dedupKeys.enrichMediaChunk(codes));
+  });
+
   it("scalar keys embed their target", () => {
     expect(dedupKeys.loadRegion("US-ME")).toBe("load_region:US-ME");
     expect(dedupKeys.analyzeCounties("US-FL")).toBe("analyze_counties:US-FL");

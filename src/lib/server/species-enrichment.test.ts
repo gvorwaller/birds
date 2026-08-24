@@ -1432,24 +1432,28 @@ describe.runIf(dbUp)("species_media DB contract (test cluster)", () => {
         expect(await mediaDueCodes()).toContain(CODE);
         expect(await mediaFresh(CODE)).toBe(false);
 
-        // Error retries after ERROR_RETRY_DAYS, not immediately.
+        // Automatic scans retry media errors after the daily window. An
+        // explicit admin scan can request recent failures immediately.
         await markMediaError(CODE, "boom");
         expect(await mediaDueCodes()).not.toContain(CODE);
+        expect(await mediaDueCodes({ includeRecentFailures: true })).toContain(CODE);
+        expect(await mediaFresh(CODE)).toBe(false);
         await query(
-          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '8 days'
+          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '24 hours 1 second'
           WHERE species_code = $1`,
           [CODE],
         );
         expect(await mediaDueCodes()).toContain(CODE);
 
         // 'partial' is transient (xc outage / missing key) — it retries on
-        // the short ERROR window, NOT the 180-day ok window, so configuring
-        // XENO_CANTO_API_KEY late backfills sounds within days, not months.
+        // the 24-hour media retry window, NOT the 180-day ok window, so
+        // configuring XENO_CANTO_API_KEY late backfills sounds the next day.
         await upsertMediaOk(CODE, [PHOTO], "partial");
         expect(await mediaDueCodes()).not.toContain(CODE);
+        expect(await mediaDueCodes({ includeRecentFailures: true })).toContain(CODE);
         expect(await mediaFresh(CODE)).toBe(true);
         await query(
-          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '8 days'
+          `UPDATE species_enrichment SET media_fetched_at = NOW() - INTERVAL '24 hours 1 second'
           WHERE species_code = $1`,
           [CODE],
         );

@@ -219,8 +219,8 @@
         {nudgeBusy ? "Nudging…" : "⚡ Run enrichment scan now"}
       </button>
       <span class="muted">
-        Skips the idle 24h wait — queues any newly in-scope species (e.g.
-        after fresh hotspot loads).
+        Skips the idle 24h wait — queues newly in-scope species and retries
+        failed sample media now.
       </span>
     </form>
     {#if form && "message" in form && form.message}

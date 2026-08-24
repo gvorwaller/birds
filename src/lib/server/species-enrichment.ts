@@ -46,6 +46,10 @@ import { fetchXenoCantoRecordings, XenoCantoError } from '$server/xeno-canto';
 
 export const WIKI_REFRESH_DAYS = 180;
 export const ERROR_RETRY_DAYS = 7;
+/** Media provider failures retry on the daily scan, not the weekly wiki/AI lane. */
+export const MEDIA_ERROR_RETRY_HOURS = 24;
+/** Align the 24-hour eligibility clock with a 24-hour scan heartbeat. */
+export const MEDIA_RETRY_SCAN_SLACK_MINUTES = 15;
 
 /**
  * search_tsv is computed INSIDE each writing statement, mixing the values
@@ -852,12 +856,15 @@ export async function getSpeciesMedia(code: string): Promise<SampleMedia> {
 }
 
 /**
- * In-scope codes whose media is due: never attempted, past the refresh
- * window, or past the error retry window. Requires a resolved QID — media
- * needs it for the P18/P51 SPARQL lookup, so an unresolved species (still
- * no_mapping) is never a media candidate.
+ * In-scope codes whose media is due: never attempted, stale successful data,
+ * or unresolved partial/error media after the daily 24-hour retry interval.
+ * An explicit admin scan may include recent failures immediately. Requires
+ * a resolved QID — media needs it for the P18/P51 SPARQL lookup, so an
+ * unresolved species (still no_mapping) is never a media candidate.
  */
-export async function mediaDueCodes(): Promise<string[]> {
+export async function mediaDueCodes(
+	opts: { includeRecentFailures?: boolean } = {}
+): Promise<string[]> {
 	const r = await query<{ species_code: string }>(
 		`${SCOPE_SQL}
 		 AND EXISTS (
@@ -869,10 +876,14 @@ export async function mediaDueCodes(): Promise<string[]> {
 		         OR (se.media_status IN ('ok','no_media')
 		             AND se.media_fetched_at < NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
 		         OR (se.media_status IN ('partial','error')
-		             AND se.media_fetched_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		             AND ($1::boolean
+		                  OR se.media_fetched_at <= NOW()
+		                     - INTERVAL '${MEDIA_ERROR_RETRY_HOURS} hours'
+		                     + INTERVAL '${MEDIA_RETRY_SCAN_SLACK_MINUTES} minutes'))
 		      )
 		 )
-		 ORDER BY 1`
+		 ORDER BY 1`,
+		[opts.includeRecentFailures === true]
 	);
 	return r.rows.map((x) => x.species_code);
 }
@@ -882,16 +893,18 @@ export async function mediaDueCodes(): Promise<string[]> {
  * overlap). MUST stay the exact negation of mediaDueCodes' predicate above
  * (minus the never-fresh 'error' state). 'partial' is transient by
  * definition — a xeno-canto outage or an unconfigured XENO_CANTO_API_KEY —
- * so it retries on the short ERROR window, never the 180-day one: species
- * enriched before the key exists get their sounds within days of it being
- * configured, not months.
+ * so it retries on the daily media window, never the 180-day one: species
+ * enriched before the key exists get their sounds on the next daily scan
+ * after the key is configured, not months later.
  */
 export async function mediaFresh(code: string): Promise<boolean> {
 	const r = await query<{ fresh: boolean }>(
 		`SELECT ((media_status IN ('ok','no_media')
 		          AND media_fetched_at > NOW() - INTERVAL '${WIKI_REFRESH_DAYS} days')
 		      OR (media_status = 'partial'
-		          AND media_fetched_at > NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')) AS fresh
+		          AND media_fetched_at > NOW()
+		              - INTERVAL '${MEDIA_ERROR_RETRY_HOURS} hours'
+		              + INTERVAL '${MEDIA_RETRY_SCAN_SLACK_MINUTES} minutes')) AS fresh
 		   FROM species_enrichment WHERE species_code = $1`,
 		[code]
 	);
