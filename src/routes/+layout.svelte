@@ -46,13 +46,13 @@
 	// at index 3 when an item was removed.
 	const primaryItems = [
 		{ href: '/', label: 'Home', ico: '🏠' },
-		{ href: '/trips', label: 'Trips', ico: '🗺️' },
+		{ href: '/species', label: 'Field guide', ico: '📖' },
 		{ href: '/forecast', label: 'Forecast', ico: '📅' },
 		{ href: '/photos', label: 'Photos', ico: '📷' }
 	];
-	// Drawer-only (GROK td-a6c322 pin: not a 5th primary tab, visible to
-	// every role — viewers read the scope-owner's needs).
+	// Drawer-only destinations remain visible to every role.
 	const drawerOnlyItems = [
+		{ href: '/trips', label: 'Trips', ico: '🗺️' },
 		{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' },
 		{ href: '/life', label: 'Life list', ico: '🗺️' }
 	];
@@ -71,7 +71,9 @@
 	);
 
 	function isActive(href: string, path: string): boolean {
-		return href === '/' ? path === '/' : path.startsWith(href);
+		if (href === '/') return path === '/';
+		if (href === '/species') return isFieldGuideActive(path);
+		return path.startsWith(href);
 	}
 
 	// Close the drawer whenever the route changes.
@@ -125,16 +127,6 @@
 						<span class="ico">{item.ico}</span>{item.label}
 					</a>
 				{/each}
-				<!-- Field guide — drawer only (all roles), never a 5th primary tab
-				     (GROK contract). EXACT match: /species/[code] detail pages must
-				     not light this item. -->
-				<a
-					href="/species"
-					class:active={isFieldGuideActive($page.url.pathname)}
-					onclick={() => (menuOpen = false)}
-				>
-					<span class="ico">📖</span>Field guide
-				</a>
 				<!-- Reference-only Help link — drawer only (all roles), not a primary tab. -->
 				<a
 					href="/help"
