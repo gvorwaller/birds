@@ -76,7 +76,7 @@ Birding is not a primary activity — keep scope fun-sized and delightful rather
 **Notes on future work**: Keep the "fun project" mindset. Revisit this doc before starting any Phase 4 item. Prefer small delightful features over big infrastructure.
 
 ## 4. Infrastructure (Shared Droplet)
-- **SSH**: `root@134.199.211.199` (IP only — domain resolves to Cloudflare).
+- **SSH**: Direct target is local-only; see `.local/ops.env` (the public domain resolves to Cloudflare).
 - **App dir**: `/opt/birds`
 - **App port**: `3003` (next after 3002; update all references when co-locating).
 - **PM2 process name**: `birds` (plus optional light `birds-cache` later).

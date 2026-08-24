@@ -39,7 +39,9 @@ When diagnosing errors, follow this methodology instead of guessing:
 ## Production Infrastructure
 
 ### DigitalOcean Droplet (Shared with gaylonphotos, giftlist, madonnahist)
-- **SSH**: `ssh root@134.199.211.199` — **always by IP**; the domain resolves to Cloudflare
+- **SSH**: source the gitignored `.local/ops.env`, then use
+  `ssh "$BIRDS_DROPLET_SSH"`. The configured target uses the direct host because
+  the public domain resolves to Cloudflare. Never publish the target in tracked files.
 - **App directory**: `/opt/birds`
 - **App port**: `3003` (gaylonphotos=3000, giftlist=3001, madonnahist=3002, **birds=3003**)
 - **Process manager**: PM2 (NOT systemd)
@@ -154,6 +156,18 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Commits**: Only commit when explicitly asked
 - **Server restarts**: Ask the user to restart the dev server after config changes
 
+### User-Facing Documentation (Required Review)
+- For every user-visible feature or behavior change, review
+  `src/routes/help/+page.svelte` and update it in the same change when the
+  workflow, controls, data meaning, availability, or limitations need
+  explanation.
+- For every meaningful user-visible release, add or update a plain-language
+  release note in the Version History in `src/routes/about/+page.svelte`.
+- Purely internal refactors, tests, operational changes, and fixes with no
+  user-visible consequence do not require Help or About changes. Apply this
+  exception deliberately; do not omit documentation merely because the code
+  change is small.
+
 ### Verification Commands
 - `npm run build` — production build (always run after code changes)
 - `npm run check` — type checking + framework diagnostics, 0 warnings baseline
@@ -171,7 +185,8 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ## Historical Failures (Learn From These)
 *(Inherited from sibling projects — same infrastructure pattern, same mistakes to avoid)*
 
-- **SSH by domain**: Used `ssh root@<domain>` — timed out because domain resolves to Cloudflare, not the droplet. Always SSH by IP.
+- **SSH by domain**: The public domain resolves to Cloudflare, not the droplet.
+  Use the direct target from `.local/ops.env`.
 - **Wrong process manager**: Used `systemctl restart <app>` — failed because apps use PM2, not systemd. Always use `pm2 restart`.
 - **Manual deploy**: Tried manual `ssh` + `npm run build` to deploy — timed out, host key failures. Deploy scripts handle everything correctly. Never deploy manually.
 - **Synthetic data**: Synthetic IDs/timestamps added to mask broken inserts — broke uniqueness invariants. Never fabricate data to make code "work."

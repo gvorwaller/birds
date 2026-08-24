@@ -21,6 +21,9 @@ file both defer to `cs.md` as the single source of truth.
   (the old V1 `docs/birds-app-design.md` is deprecated and removed).
 - **Devlog:** `docs/devlog/YYYY-MM-DD.md`.
 - **Deploy:** `scripts/deploy-to-DO.sh` (pull → build → migrate → PM2 reload, health-gated).
+- **Local production access:** `.local/ops.env` (gitignored, mode 600) defines
+  `BIRDS_DROPLET_SSH` for deploy, backup, and direct operational access. Never
+  copy its value into tracked documentation or scripts.
 
 ## Local development & test database
 There is **no separate dev cluster** locally — local work runs against the

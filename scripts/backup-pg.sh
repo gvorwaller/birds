@@ -34,7 +34,6 @@ set -euo pipefail
 # Homebrew PostgreSQL client tools below instead of relying on shell startup.
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
-DROPLET="root@134.199.211.199"
 PROD_APP_DIR="/opt/birds"
 PROD_PG_CLUSTER_DIR="/etc/postgresql/17/birds"
 PROD_NGINX_CONF="/etc/nginx/sites-available/birds.gaylon.photos"
@@ -51,6 +50,12 @@ USER_KNOWN_HOSTS="${USER_SSH_DIR}/known_hosts"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+OPS_ENV="${BIRDS_OPS_ENV:-${PROJECT_ROOT}/.local/ops.env}"
+if [[ -f "${OPS_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${OPS_ENV}"
+fi
+DROPLET="${BIRDS_DROPLET_SSH:-}"
 BACKUP_DIR="${PROJECT_ROOT}/data/backup"
 
 LOCAL_BACKUP_DIR="${BACKUP_DIR}/local"
@@ -101,6 +106,11 @@ for arg in "$@"; do
     *) ;; # CCC positional args
   esac
 done
+
+if [[ ${LOCAL_ONLY} -eq 0 && -z "${DROPLET}" ]]; then
+  echo "[backup-pg] missing BIRDS_DROPLET_SSH; define it in ${OPS_ENV}" >&2
+  exit 2
+fi
 
 require_command() {
   local cmd=$1

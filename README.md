@@ -53,17 +53,15 @@ Birds exposes a private server-to-server export endpoint for Trips:
 
 ```
 GET /api/internal/trip-places
-Authorization: Bearer <BIRDS_TRIPS_API_TOKEN>
+Authorization: Bearer <shared-server-token>
 ```
 
-Required env:
-
-```
-BIRDS_TRIPS_API_TOKEN=<shared-token-matching-Trips>
-BIRDS_TRIPS_EXPORT_USERNAME=<default-data-owning-username>
-```
-
-`BIRDS_TRIPS_EXPORT_USERNAME` must resolve to an admin/user account, not a viewer. Trips may also pass `?username=` and `?tripId=` to narrow the export. The endpoint returns normalized trip-stop places with source ids, trip context, coordinates, Google place ids when present, notes, target counts, and optional field tips.
+The server-to-server token and default export owner are deployment runtime
+configuration rather than public documentation. The configured export owner
+must be an admin/user account, not a viewer. Trips may also pass `?username=`
+and `?tripId=` to narrow the export. The endpoint returns normalized trip-stop
+places with source ids, trip context, coordinates, Google place ids when
+present, notes, target counts, and optional field tips.
 
 Production Trips calls this endpoint by loopback (`http://127.0.0.1:3003`) because both apps run on the same droplet. The public hostname is not needed for the current deployment.
 
@@ -82,12 +80,12 @@ on `:3003`, behind nginx + Cloudflare). Health-gated: the deploy requires
 PM2 captures app stdout/stderr:
 
 ```sh
-ssh root@134.199.211.199 'pm2 logs birds --lines 200 --nostream'
-ssh root@134.199.211.199 'grep "\[trip-places-export\]" /var/log/pm2/birds.*.log | tail -100'
+ssh <deploy-user>@<droplet> 'pm2 logs birds --lines 200 --nostream'
+ssh <deploy-user>@<droplet> 'grep "\[trip-places-export\]" /var/log/pm2/birds.*.log | tail -100'
 ```
 
 Trips export requests emit token-free structured JSON lines with prefix `[trip-places-export]`. Trips sends `x-trips-import-request-id`, and Birds logs it as `request_id`, so a single import can be correlated across both apps:
 
 ```sh
-ssh root@134.199.211.199 'grep "REQUEST_ID_HERE" /var/log/pm2/trips.*.log /var/log/pm2/birds.*.log'
+ssh <deploy-user>@<droplet> 'grep "REQUEST_ID_HERE" /var/log/pm2/trips.*.log /var/log/pm2/birds.*.log'
 ```

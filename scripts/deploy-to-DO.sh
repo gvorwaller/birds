@@ -4,7 +4,7 @@
 # Flow:
 #   1. local pre-flight (clean tree, on main, pushed to origin)
 #   2. (optional) push pending commits
-#   3. SSH single-shot to root@134.199.211.199 (IP, never domain — cs.md):
+#   3. SSH single-shot to the target in .local/ops.env (never the public domain):
 #      a. git pull --ff-only
 #      b. NODE_ENV=development npm ci   (devDeps needed for build)
 #      c. npm run build
@@ -18,7 +18,14 @@
 
 set -euo pipefail
 
-DROPLET_IP="134.199.211.199"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+OPS_ENV="${BIRDS_OPS_ENV:-${PROJECT_ROOT}/.local/ops.env}"
+if [[ -f "${OPS_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${OPS_ENV}"
+fi
+DROPLET_SSH="${BIRDS_DROPLET_SSH:-}"
 APP_DIR="/opt/birds"
 PM2_APP="birds"
 NGINX_CONF_SRC="deploy/nginx.conf"
@@ -35,7 +42,7 @@ for arg in "$@"; do
       cat <<EOF
 Usage: $0 [--skip-push]
 
-Deploys current main to ${DROPLET_IP}:${APP_DIR}.
+Deploys current main to the configured droplet at ${APP_DIR}.
 Bails if working tree is dirty or local main is behind origin/main.
 EOF
       exit 0
@@ -48,8 +55,9 @@ say()  { printf '\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!  %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx  %s\033[0m\n' "$*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}/.."
+cd "${PROJECT_ROOT}"
+
+[[ -n "${DROPLET_SSH}" ]] || die "Missing BIRDS_DROPLET_SSH. Define it in ${OPS_ENV}."
 
 say "Local pre-flight"
 
@@ -82,10 +90,10 @@ if [[ -f "${NGINX_CONF_SRC}" ]]; then
 fi
 
 # --- Remote deploy ----------------------------------------------------------
-say "SSH ${DROPLET_IP} for remote deploy"
+say "SSH configured droplet for remote deploy"
 
 ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
-    "root@${DROPLET_IP}" \
+    "${DROPLET_SSH}" \
     NGINX_CHECKSUM_LOCAL="${NGINX_CHECKSUM_LOCAL}" \
     APP_DIR="${APP_DIR}" PM2_APP="${PM2_APP}" \
     NGINX_CONF_SRC="${NGINX_CONF_SRC}" NGINX_CONF_DST="${NGINX_CONF_DST}" \
