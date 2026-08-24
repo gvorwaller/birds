@@ -70,3 +70,12 @@ describe("loadHotspots rejects a county outside the selected region", () => {
     expect(body).toMatch(/counties\.some\(\s*\(c\)\s*=>\s*c\.code === countyCode/);
   });
 });
+
+describe("international country picker validates explicit query state", () => {
+  it("falls back from a country absent from the official country list", () => {
+    const body = loadBody(SPECIES);
+    expect(body).toMatch(
+      /countryList\.length > 0 && !countryList\.some\(\(c\) => c\.code === country\)/,
+    );
+  });
+});

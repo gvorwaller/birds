@@ -105,7 +105,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     const parsedRegion = regionParam ? parseRegionCode(regionParam) : null;
     country = parsedRegion?.country ?? "US";
   }
-  if (!isCountry(country)) country = "US";
+  // Keep the picker, hidden GET field, and region list on a real country.
+  // When the official list is unavailable, retain the existing syntax-only
+  // fallback so cached international forecast data can still render.
+  if (
+    !isCountry(country) ||
+    (countryList.length > 0 && !countryList.some((c) => c.code === country))
+  ) {
+    country = "US";
+  }
 
   // Subnational1 regions of the selected country (cache-first, 30-day TTL,
   // stale fallback) — drives the region picker.
