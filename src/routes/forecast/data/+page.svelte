@@ -26,11 +26,23 @@
       noScroll: true,
     });
   }
+  // US state groups + one entry per non-US CountrySection — the "Loaded
+  // data (N regions)" count (td-f1d6da: countries now count as one region
+  // each, their subnational1 children nested inside rather than counted as
+  // their own top-level siblings).
+  const totalGroupCount = $derived(
+    data.stateGroups.length + data.countrySections.length,
+  );
+
+  // Every StateGroup reaching this template — top-level (US) or nested
+  // inside a CountrySection (everywhere else) — is level "subnational1"; a
+  // level:"country" entry never leaves the loader, it's consumed into the
+  // CountrySection's own header fields instead (td-f1d6da UX restructure).
 
   /** "county"/"counties" for US states; "region"/"regions" everywhere else
-   * (non-US subnational1 regions, and every country-level group). */
+   * (non-US subnational1 regions). */
   function countyNoun(g: PageData["stateGroups"][number]): "county" | "region" {
-    return g.level === "subnational1" && g.countryCode === "US" ? "county" : "region";
+    return g.countryCode === "US" ? "county" : "region";
   }
   function countyWord(g: PageData["stateGroups"][number]): string {
     const noun = countyNoun(g);
@@ -40,9 +52,57 @@
   }
   function groupStatusLabel(g: PageData["stateGroups"][number]): string | null {
     if (!g.state) return null;
-    if (g.level === "country") return g.state.current ? null : "outdated";
     const noun = g.countryCode === "US" ? "statewide" : "regionwide";
     return g.state.current ? noun : `${noun} (outdated)`;
+  }
+  /** The "N of M counties/regions" status fragment — null suppresses it
+   * entirely rather than showing a meaningless "0 of 0" (GBV 2026-08-24:
+   * Norway's fylker have no subnational2, so every "Oppland"/"Oslo"/... group
+   * had a "0 of 0 regions" fragment cluttering the page). Shown without the
+   * "of M" half when the total is unknown (no API key / list fetch failed)
+   * but something is known to be loaded locally. */
+  function regionCountText(g: PageData["stateGroups"][number]): string | null {
+    if (g.countyTotal === 0) return null;
+    if (g.countyTotal == null && g.countiesLoaded === 0) return null;
+    const noun = countyWord(g);
+    return g.countyTotal != null
+      ? `${g.countiesLoaded} of ${g.countyTotal} ${noun}`
+      : `${g.countiesLoaded} ${noun}`;
+  }
+  /** Full "statewide · 5 of 16 counties · 2 hotspots" status line for a
+   * region group's <summary>, same composition for a US state and a nested
+   * non-US region. */
+  function groupStatusText(g: PageData["stateGroups"][number]): string {
+    const parts: string[] = [];
+    const status = groupStatusLabel(g);
+    if (status) parts.push(status);
+    const regionPart = regionCountText(g);
+    if (regionPart) parts.push(regionPart);
+    parts.push(`${g.hotspotCount} hotspot${g.hotspotCount === 1 ? "" : "s"}`);
+    return parts.join(" · ");
+  }
+  /** Same status-line composition for a country section's own header (GBV:
+   * "Countries need to be treated like states") — "countrywide"/"not
+   * loaded" in place of "statewide"/"regionwide", "regions" always (a
+   * country's children are never "counties"). */
+  function sectionStatusText(s: PageData["countrySections"][number]): string {
+    const parts: string[] = [];
+    parts.push(
+      s.countrywide
+        ? s.countrywide.current
+          ? "countrywide"
+          : "countrywide (outdated)"
+        : "not loaded",
+    );
+    if (s.regionTotal != null && s.regionTotal > 0) {
+      parts.push(
+        `${s.regionsLoaded} of ${s.regionTotal} region${s.regionTotal === 1 ? "" : "s"}`,
+      );
+    } else if (s.regionTotal == null && s.regionsLoaded > 0) {
+      parts.push(`${s.regionsLoaded} region${s.regionsLoaded === 1 ? "" : "s"}`);
+    }
+    parts.push(`${s.hotspotCount} hotspot${s.hotspotCount === 1 ? "" : "s"}`);
+    return parts.join(" · ");
   }
 
   let refreshing = $state<string | null>(null);
@@ -180,52 +240,72 @@
   }
   let hubSearch = $state("");
   const hubQuery = $derived(hubSearch.trim().toLowerCase());
-  const hubIndex = $derived.by((): HubHit[] => {
-    const out: HubHit[] = [];
-    for (const g of data.stateGroups) {
-      if (g.state) {
+  // A StateGroup's own hits (state/region row, counties, hotspots) — shared
+  // between the top-level US loop and each CountrySection's nested groups
+  // (td-f1d6da UX restructure).
+  function pushGroupHits(out: HubHit[], g: PageData["stateGroups"][number]) {
+    if (g.state) {
+      out.push({
+        kind: "state",
+        code: g.stateCode,
+        name: g.stateName,
+        context: g.countryCode === "US" ? "statewide" : "regionwide",
+        row: g.state,
+      });
+    }
+    for (const b of g.countyBlocks) {
+      if (b.county) {
         out.push({
-          kind: "state",
-          code: g.stateCode,
-          name: g.stateName,
-          context:
-            g.level === "country"
-              ? "countrywide"
-              : g.countryCode === "US"
-                ? "statewide"
-                : "regionwide",
-          row: g.state,
+          kind: "county",
+          code: b.countyCode,
+          name: b.countyName,
+          context: g.stateName,
+          row: b.county,
         });
       }
-      for (const b of g.countyBlocks) {
-        if (b.county) {
-          out.push({
-            kind: "county",
-            code: b.countyCode,
-            name: b.countyName,
-            context: g.stateName,
-            row: b.county,
-          });
-        }
-        for (const h of b.hotspots) {
-          out.push({
-            kind: "hotspot",
-            code: h.locCode,
-            name: h.locName,
-            context: `${b.countyName}, ${g.stateName}`,
-            row: h,
-          });
-        }
-      }
-      for (const h of g.stateHotspots) {
+      for (const h of b.hotspots) {
         out.push({
           kind: "hotspot",
           code: h.locCode,
           name: h.locName,
-          context: g.stateName,
+          context: `${b.countyName}, ${g.stateName}`,
           row: h,
         });
       }
+    }
+    for (const h of g.stateHotspots) {
+      out.push({
+        kind: "hotspot",
+        code: h.locCode,
+        name: h.locName,
+        context: g.stateName,
+        row: h,
+      });
+    }
+  }
+  const hubIndex = $derived.by((): HubHit[] => {
+    const out: HubHit[] = [];
+    for (const g of data.stateGroups) pushGroupHits(out, g);
+    for (const s of data.countrySections) {
+      if (s.countrywide) {
+        out.push({
+          kind: "state",
+          code: s.countryCode,
+          name: s.countryName,
+          context: "countrywide",
+          row: s.countrywide,
+        });
+      }
+      for (const h of s.countryHotspots) {
+        out.push({
+          kind: "hotspot",
+          code: h.locCode,
+          name: h.locName,
+          context: s.countryName,
+          row: h,
+        });
+      }
+      for (const g of s.groups) pushGroupHits(out, g);
     }
     for (const h of data.orphanHotspots) {
       out.push({ kind: "hotspot", code: h.locCode, name: h.locName, context: "", row: h });
@@ -458,6 +538,193 @@
       </tbody>
     </table>
   </div>
+{/snippet}
+
+{#snippet regionGroup(g: PageData["stateGroups"][number], nested: boolean)}
+  <!-- Shared by a top-level US state group and a non-US region nested
+       inside its CountrySection (td-f1d6da UX restructure) — identical
+       body, only the indentation ("nested") differs. -->
+  <details
+    class="stategroup"
+    class:nested
+    open={openStates.includes(g.stateCode)}
+    ontoggle={(e) => toggleState(g.stateCode, e.currentTarget.open)}
+  >
+    <summary>
+      <strong>{g.stateName}</strong>
+      <span class="groupmeta">{groupStatusText(g)}</span>
+    </summary>
+    {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
+      {@const missing = g.countyRemaining ?? 0}
+      {@const noun = countyNoun(g)}
+      {#if data.hasLogin}
+        <form
+          method="POST"
+          action="?/analyzeCounties"
+          class="groupaction"
+          use:enhance={() => {
+            refreshing = `counties-${g.stateCode}`;
+            return async ({ update }) => {
+              refreshing = null;
+              await update();
+            };
+          }}
+        >
+          <input type="hidden" name="region" value={g.stateCode} />
+          <button type="submit" disabled={refreshing !== null}>
+            {refreshing === `counties-${g.stateCode}`
+              ? "Queueing…"
+              : `Analyze ${missing} remaining ${missing === 1 ? noun : noun === "county" ? "counties" : "regions"}`}
+          </button>
+        </form>
+      {:else}
+        <p class="notice">
+          Analyzing {noun === "county" ? "counties" : "regions"} uses your
+          eBird sign-in — add it in
+          <a href="/settings">Settings</a>.
+        </p>
+      {/if}
+    {/if}
+    {#if g.state}
+      {@render dataTable(g.countryCode === "US" ? "Statewide" : "Regionwide", [g.state])}
+    {/if}
+    {#if g.countyBlocks.length > 0}
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{countyNoun(g) === "county" ? "County" : "Region"} · hotspots</th>
+              <th>Years</th>
+              <th>Species</th>
+              <th>Loaded</th>
+              {#if !data.isViewer}<th></th>{/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#each g.countyBlocks as b (b.countyCode)}
+              {@const open = openCounties.includes(b.countyCode)}
+              <tr>
+                <td>
+                  {#if b.hotspots.length > 0}
+                    <button
+                      type="button"
+                      class="ctoggle"
+                      aria-expanded={open}
+                      onclick={() => toggleCounty(b.countyCode)}
+                    >
+                      <span class="chev" aria-hidden="true"
+                        >{open ? "▾" : "▸"}</span
+                      >
+                      <strong>{b.countyName}</strong>
+                      <span class="hscount"
+                        >{b.hotspots.length} hotspot{b.hotspots.length === 1
+                          ? ""
+                          : "s"}</span
+                      >
+                    </button>
+                  {:else}
+                    <strong>{b.countyName}</strong>
+                  {/if}
+                  {#if b.seat}
+                    <span class="seat">· {b.seat}</span>
+                  {/if}
+                  <a
+                    class="seatmap"
+                    href={mapsPlaceUrl({ name: b.mapQuery })}
+                    target="_blank"
+                    rel="noopener"
+                    title="Show {b.countyName} on Google Maps">📍 Map</a
+                  >
+                  <span class="code">{b.countyCode}</span>
+                </td>
+                {#if b.county}
+                  {@render metaCells(b.county)}
+                {:else}
+                  <!-- Hotspots loaded before their county was analyzed -->
+                  <td colspan={data.isViewer ? 3 : 4} class="muted"
+                    >{countyNoun(g)} not analyzed yet</td
+                  >
+                {/if}
+              </tr>
+              {#if open}
+                {#each b.hotspots as h (h.locCode)}
+                  {@render dataRowCells(h, true)}
+                {/each}
+              {/if}
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+    {#if g.stateHotspots.length > 0}
+      <p class="notice">
+        Hotspots below have no recorded {countyNoun(g)} — refreshing them
+        (or the next area load) files them correctly.
+      </p>
+      {@render dataTable("Hotspot", g.stateHotspots)}
+    {/if}
+  </details>
+{/snippet}
+
+{#snippet countrySection(s: PageData["countrySections"][number])}
+  <!-- One top-level group per non-US country, behaving like a state group
+       (its own "Countrywide" row + "Analyze remaining regions" action)
+       with the country's subnational1 regions nested inside rather than
+       flat top-level siblings (GBV 2026-08-24: "Countries need to be
+       treated like states; regions in the countries nested under the
+       country."). -->
+  <details
+    class="stategroup"
+    open={openStates.includes(s.countryCode)}
+    ontoggle={(e) => toggleState(s.countryCode, e.currentTarget.open)}
+  >
+    <summary>
+      <strong>{s.countryName}</strong>
+      <span class="groupmeta">{sectionStatusText(s)}</span>
+    </summary>
+    {#if !data.isViewer && (s.regionRemaining ?? 0) > 0}
+      {@const missing = s.regionRemaining ?? 0}
+      {#if data.hasLogin}
+        <form
+          method="POST"
+          action="?/analyzeCounties"
+          class="groupaction"
+          use:enhance={() => {
+            refreshing = `counties-${s.countryCode}`;
+            return async ({ update }) => {
+              refreshing = null;
+              await update();
+            };
+          }}
+        >
+          <input type="hidden" name="region" value={s.countryCode} />
+          <button type="submit" disabled={refreshing !== null}>
+            {refreshing === `counties-${s.countryCode}`
+              ? "Queueing…"
+              : `Analyze ${missing} remaining region${missing === 1 ? "" : "s"}`}
+          </button>
+        </form>
+      {:else}
+        <p class="notice">
+          Analyzing regions uses your eBird sign-in — add it in
+          <a href="/settings">Settings</a>.
+        </p>
+      {/if}
+    {/if}
+    {#if s.countrywide}
+      {@render dataTable("Countrywide", [s.countrywide])}
+    {/if}
+    {#if s.countryHotspots.length > 0}
+      <p class="notice">
+        Hotspots below have no recorded region — refreshing them (or the
+        next area load) files them correctly.
+      </p>
+      {@render dataTable("Hotspot", s.countryHotspots)}
+    {/if}
+    {#each s.groups as g (g.stateCode)}
+      {@render regionGroup(g, true)}
+    {/each}
+  </details>
 {/snippet}
 
 <svelte:head>
@@ -761,10 +1028,7 @@
   <section class="card">
     <div class="section-head">
       <h2>
-        Loaded data ({data.stateGroups.length} region{data.stateGroups
-          .length === 1
-          ? ""
-          : "s"})
+        Loaded data ({totalGroupCount} region{totalGroupCount === 1 ? "" : "s"})
       </h2>
       <button
         type="button"
@@ -775,157 +1039,14 @@
         {reloading ? "Reloading…" : "Reload"}
       </button>
     </div>
-    {#if data.stateGroups.length === 0}
+    {#if totalGroupCount === 0}
       <p class="notice">Nothing loaded yet — load a region above.</p>
     {:else}
       {#each data.stateGroups as g (g.stateCode)}
-        <details
-          class="stategroup"
-          open={openStates.includes(g.stateCode)}
-          ontoggle={(e) => toggleState(g.stateCode, e.currentTarget.open)}
-        >
-          <summary>
-            <strong
-              >{g.level === "country"
-                ? `${g.stateName} — countrywide`
-                : g.stateName}</strong
-            >
-            {#if g.level === "subnational1" && g.countryCode !== "US"}
-              <span class="groupmeta">· {g.countryName}</span>
-            {/if}
-            <span class="groupmeta">
-              {#if groupStatusLabel(g)}
-                {groupStatusLabel(g)} ·
-              {/if}
-              {g.countiesLoaded}{g.countyTotal != null
-                ? ` of ${g.countyTotal}`
-                : ""}
-              {countyWord(g)}
-              · {g.hotspotCount} hotspot{g.hotspotCount === 1 ? "" : "s"}
-            </span>
-          </summary>
-          {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
-            {@const missing = g.countyRemaining ?? 0}
-            {@const noun = countyNoun(g)}
-            {#if data.hasLogin}
-              <form
-                method="POST"
-                action="?/analyzeCounties"
-                class="groupaction"
-                use:enhance={() => {
-                  refreshing = `counties-${g.stateCode}`;
-                  return async ({ update }) => {
-                    refreshing = null;
-                    await update();
-                  };
-                }}
-              >
-                <input type="hidden" name="region" value={g.stateCode} />
-                <button type="submit" disabled={refreshing !== null}>
-                  {refreshing === `counties-${g.stateCode}`
-                    ? "Queueing…"
-                    : `Analyze ${missing} remaining ${missing === 1 ? noun : noun === "county" ? "counties" : "regions"}`}
-                </button>
-              </form>
-            {:else}
-              <p class="notice">
-                Analyzing {noun === "county" ? "counties" : "regions"} uses your
-                eBird sign-in — add it in
-                <a href="/settings">Settings</a>.
-              </p>
-            {/if}
-          {/if}
-          {#if g.state}
-            {@render dataTable(
-              g.level === "country"
-                ? "Countrywide"
-                : g.countryCode === "US"
-                  ? "Statewide"
-                  : "Regionwide",
-              [g.state],
-            )}
-          {/if}
-          {#if g.countyBlocks.length > 0}
-            <div class="tablewrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th
-                      >{countyNoun(g) === "county"
-                        ? "County"
-                        : "Region"} · hotspots</th
-                    >
-                    <th>Years</th>
-                    <th>Species</th>
-                    <th>Loaded</th>
-                    {#if !data.isViewer}<th></th>{/if}
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each g.countyBlocks as b (b.countyCode)}
-                    {@const open = openCounties.includes(b.countyCode)}
-                    <tr>
-                      <td>
-                        {#if b.hotspots.length > 0}
-                          <button
-                            type="button"
-                            class="ctoggle"
-                            aria-expanded={open}
-                            onclick={() => toggleCounty(b.countyCode)}
-                          >
-                            <span class="chev" aria-hidden="true"
-                              >{open ? "▾" : "▸"}</span
-                            >
-                            <strong>{b.countyName}</strong>
-                            <span class="hscount"
-                              >{b.hotspots.length} hotspot{b.hotspots.length ===
-                              1
-                                ? ""
-                                : "s"}</span
-                            >
-                          </button>
-                        {:else}
-                          <strong>{b.countyName}</strong>
-                        {/if}
-                        {#if b.seat}
-                          <span class="seat">· {b.seat}</span>
-                        {/if}
-                        <a
-                          class="seatmap"
-                          href={mapsPlaceUrl({ name: b.mapQuery })}
-                          target="_blank"
-                          rel="noopener"
-                          title="Show {b.countyName} on Google Maps">📍 Map</a
-                        >
-                        <span class="code">{b.countyCode}</span>
-                      </td>
-                      {#if b.county}
-                        {@render metaCells(b.county)}
-                      {:else}
-                        <!-- Hotspots loaded before their county was analyzed -->
-                        <td colspan={data.isViewer ? 3 : 4} class="muted"
-                          >{countyNoun(g)} not analyzed yet</td
-                        >
-                      {/if}
-                    </tr>
-                    {#if open}
-                      {#each b.hotspots as h (h.locCode)}
-                        {@render dataRowCells(h, true)}
-                      {/each}
-                    {/if}
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
-          {#if g.stateHotspots.length > 0}
-            <p class="notice">
-              Hotspots below have no recorded {countyNoun(g)} — refreshing them
-              (or the next area load) files them correctly.
-            </p>
-            {@render dataTable("Hotspot", g.stateHotspots)}
-          {/if}
-        </details>
+        {@render regionGroup(g, false)}
+      {/each}
+      {#each data.countrySections as s (s.countryCode)}
+        {@render countrySection(s)}
       {/each}
       {#if data.orphanHotspots.length > 0}
         <details class="stategroup">
@@ -1083,6 +1204,12 @@
   }
   .stategroup:first-of-type {
     border-top: none;
+  }
+  /* A country's subnational1 regions, nested one level in (td-f1d6da UX
+   * restructure) — same indentation convention as .tablewrap/.groupaction
+   * below (12px), not a new design language. */
+  .stategroup.nested {
+    margin-left: 12px;
   }
   .stategroup summary {
     cursor: pointer;

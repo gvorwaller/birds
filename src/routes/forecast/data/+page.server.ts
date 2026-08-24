@@ -63,17 +63,24 @@ export interface CountyBlock {
 }
 
 /** One region's data grouped for the collapsible display (GBV request).
- * "state" is either a subnational1 region (a US state, a Norwegian fylke)
- * or, for a country-level load, the whole country — level distinguishes
- * the two (td-f1d6da). Field names kept from the US-only original to avoid
- * churning the svelte template; they generalize to "region" throughout. */
+ * "state" is a subnational1 region (a US state, a Norwegian fylke). Field
+ * names kept from the US-only original to avoid churning the svelte
+ * template; they generalize to "region" throughout.
+ *
+ * `level` can still be "country" internally — the grouping pass below uses
+ * a level:"country" StateGroup as a scratch container while it tallies a
+ * country's own countrywide row + child totals — but no such entry is ever
+ * returned to the client. It's consumed into a CountrySection's header
+ * fields instead (td-f1d6da UX restructure, GBV 2026-08-24: "Countries need
+ * to be treated like states; regions in the countries nested under the
+ * country."). Every StateGroup that actually reaches the page — top-level
+ * (US) or nested inside a CountrySection (everywhere else) — is always
+ * level "subnational1". */
 export interface StateGroup {
   stateCode: string;
   stateName: string;
   state: DataRow | null;
-  /** Counties (with their nested hotspots), sorted by name. Only ever
-   * populated for subnational1-level groups — a country group's own
-   * children (subnational1 regions) land as their own sibling groups. */
+  /** Counties (with their nested hotspots), sorted by name. */
   countyBlocks: CountyBlock[];
   /** Hotspots whose county isn't recorded (pre-0014 rows never re-cached). */
   stateHotspots: DataRow[];
@@ -86,6 +93,35 @@ export interface StateGroup {
   countryCode: string;
   countryName: string;
   level: "country" | "subnational1";
+}
+
+/** A non-US country's top-level group (td-f1d6da UX restructure): behaves
+ * like a StateGroup one level up — its own "Countrywide" row, its own
+ * "Analyze N remaining regions" action — with the country's subnational1
+ * StateGroups nested inside rather than rendered as flat siblings. US
+ * states stay out of this entirely (returned via `stateGroups`, unchanged). */
+export interface CountrySection {
+  countryCode: string;
+  countryName: string;
+  /** The country-level frequency row ("Entire Norway"), or null when only
+   * subnational1 regions have been loaded — the section still exists so
+   * the "Analyze remaining regions" action has somewhere to live. */
+  countrywide: DataRow | null;
+  /** Hotspots recorded directly under the country (no subnational1 on
+   * record) — parallels a StateGroup's stateHotspots. */
+  countryHotspots: DataRow[];
+  /** Nested subnational1 groups, sorted by name — same StateGroup shape
+   * (and same CountyBlock nesting for countries with subnational2, e.g.
+   * Germany's Landkreise) a US state group uses. */
+  groups: StateGroup[];
+  /** countryHotspots + every nested group's own hotspotCount. */
+  hotspotCount: number;
+  /** Total subnational1 regions eBird lists for this country (null when
+   * unknown, e.g. no API key). */
+  regionTotal: number | null;
+  regionsLoaded: number;
+  /** Subnational1 regions still fetchable (not current, not in cooldown). */
+  regionRemaining: number | null;
 }
 
 interface FailedRow {
@@ -203,11 +239,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Group by region; within a subnational1 region, hotspots nest under their
   // subnational2 block (GBV 2026-08-14 — region_code holds it since 0014).
-  // A country-level load ("Entire Iceland") is its own sibling group keyed
-  // by the country code — its children (subnational1 regions), once
-  // analyzed, land as their OWN top-level sibling groups, not nested blocks
-  // (td-f1d6da edge case #2 — mirrors how subnational2 never becomes its
-  // own top-level group either, it always nests).
+  // A country-level load ("Entire Iceland") keys a level:"country" scratch
+  // group by the country code, same Map as everything else — but it's a
+  // container, not a sibling: the partition step below folds it (plus any
+  // subnational1 groups sharing its countryCode) into one CountrySection,
+  // nested one level in from the US state groups (td-f1d6da UX restructure,
+  // GBV 2026-08-24 — supersedes the original flat-sibling-groups design
+  // after seeing it live with Norway's 19 fylker as noisy top-level peers).
   const groups = new Map<string, StateGroup>();
   const blocks = new Map<string, CountyBlock>(); // by subnational2 code
   const orphanHotspots: DataRow[] = [];
@@ -257,14 +295,26 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
     return b;
   };
+  // A non-US country needs its level:"country" scratch container even when
+  // ONLY subnational1 (or deeper) rows are loaded for it — otherwise a
+  // country with just "Oslo · Norway" loaded would have nowhere for the
+  // CountrySection partition below to hang its child-region total /
+  // "Analyze remaining regions" data on (td-f1d6da edge case: country
+  // loaded via subnational1 only, no countrywide row). US never gets one —
+  // US states stay flat, no country wrapper.
+  const ensureCountryContainer = (country: string) => {
+    if (country !== "US") groupFor(country, "country", country);
+  };
   for (const { row, regionCode } of rows) {
     if (row.locKind === "region") {
       const parsed = parseRegionCode(row.locCode);
       if (parsed?.level === "subnational1") {
         neededCountries.add(parsed.country);
+        ensureCountryContainer(parsed.country);
         groupFor(parsed.code, "subnational1", parsed.country).state = row;
       } else if (parsed?.level === "subnational2") {
         neededCountries.add(parsed.country);
+        ensureCountryContainer(parsed.country);
         const b = blockFor(parsed.code, parsed.country);
         b.county = row;
         b.countyName = row.locName;
@@ -277,9 +327,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       const parsed = regionCode ? parseRegionCode(regionCode) : null;
       if (parsed?.level === "subnational2") {
         neededCountries.add(parsed.country);
+        ensureCountryContainer(parsed.country);
         blockFor(parsed.code, parsed.country).hotspots.push(row);
       } else if (parsed?.level === "subnational1") {
         neededCountries.add(parsed.country);
+        ensureCountryContainer(parsed.country);
         groupFor(parsed.code, "subnational1", parsed.country).stateHotspots.push(row);
       } else if (parsed?.level === "country") {
         groupFor(parsed.code, "country", parsed.country).stateHotspots.push(row);
@@ -345,31 +397,24 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       g.stateHotspots.length +
       g.countyBlocks.reduce((n, b) => n + b.hotspots.length, 0);
   }
-  // US groups first, then by country display name, then by region name —
-  // keeps the US display byte-identical (design decision #3).
-  const stateGroups = [...groups.values()].sort((a, b) => {
-    const aUS = a.countryCode === "US";
-    const bUS = b.countryCode === "US";
-    if (aUS !== bUS) return aUS ? -1 : 1;
-    if (!aUS) {
-      const c = a.countryName.localeCompare(b.countryName);
-      if (c !== 0) return c;
-    }
-    return a.stateName.localeCompare(b.stateName);
-  });
+  // Ungrouped/unsorted for now — final ordering happens after the US /
+  // country-section partition below, since a level:"country" scratch entry
+  // never itself appears in the sorted output.
+  const allGroups = [...groups.values()];
   // Child-region totals per loaded group (cache-first region lists) so each
   // group can say "1 of 16 counties" and offer the analyze action (GBV:
   // Maine had zero counties and no way to populate them from this page).
   // Subnational1 groups' children are subnational2 (unchanged); a
-  // country-level group's children are subnational1 — those land as their
-  // OWN sibling groups once loaded, so "loaded" is counted by checking
-  // whether each child code already has a group with a stored row, not via
-  // countyBlocks (which only ever nests subnational2).
+  // country-level (scratch) group's children are subnational1 — those are
+  // their own StateGroup entries in `groups` (nested into the CountrySection
+  // below once loaded), so "loaded" is counted by checking whether each
+  // child code already has a group with a stored row, not via countyBlocks
+  // (which only ever nests subnational2).
   const countyNames = new Map<string, string>(); // subnational2 (or, for a
   // country group's children, subnational1) code -> display name.
   if (apiKey) {
     await Promise.all(
-      stateGroups.map(async (g) => {
+      allGroups.map(async (g) => {
         const childLvl = childLevel(g.level);
         if (!childLvl) {
           g.countyTotal = null;
@@ -415,17 +460,70 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   }
   // Subnational1 groups compute countiesLoaded from their blocks even when
   // the fetch above failed or the API key is absent (unchanged behavior).
-  for (const g of stateGroups) {
+  for (const g of allGroups) {
     if (g.level === "subnational1" && g.countyTotal == null) {
       g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
     }
   }
   const loadedRegionCodes = new Set(
-    stateGroups.filter((g) => g.state).map((g) => g.stateCode),
+    allGroups.filter((g) => g.state).map((g) => g.stateCode),
   );
   const wholeCountryLoaded =
     groups.get(selectedCountry)?.level === "country" &&
     groups.get(selectedCountry)?.state != null;
+
+  // Partition: US state groups stay top-level exactly as before (design
+  // decision "US: UNCHANGED"). Every non-US group — whether it's the
+  // country's own level:"country" scratch container or one of its
+  // subnational1 children — folds into that country's single CountrySection,
+  // the country's children nested inside rather than flat siblings
+  // (td-f1d6da UX restructure).
+  const stateGroups: StateGroup[] = [];
+  const countrySections = new Map<string, CountrySection>();
+  const sectionFor = (code: string, name: string): CountrySection => {
+    let s = countrySections.get(code);
+    if (!s) {
+      s = {
+        countryCode: code,
+        countryName: name,
+        countrywide: null,
+        countryHotspots: [],
+        groups: [],
+        hotspotCount: 0,
+        regionTotal: null,
+        regionsLoaded: 0,
+        regionRemaining: null,
+      };
+      countrySections.set(code, s);
+    }
+    return s;
+  };
+  for (const g of allGroups) {
+    if (g.countryCode === "US") {
+      stateGroups.push(g);
+      continue;
+    }
+    const s = sectionFor(g.countryCode, g.countryName);
+    if (g.level === "country") {
+      s.countrywide = g.state;
+      s.countryHotspots = g.stateHotspots;
+      s.regionTotal = g.countyTotal;
+      s.regionsLoaded = g.countiesLoaded;
+      s.regionRemaining = g.countyRemaining;
+    } else {
+      s.groups.push(g);
+    }
+  }
+  stateGroups.sort((a, b) => a.stateName.localeCompare(b.stateName));
+  for (const s of countrySections.values()) {
+    s.groups.sort((a, b) => a.stateName.localeCompare(b.stateName));
+    s.hotspotCount =
+      s.countryHotspots.length +
+      s.groups.reduce((n, g) => n + g.hotspotCount, 0);
+  }
+  const sortedCountrySections = [...countrySections.values()].sort((a, b) =>
+    a.countryName.localeCompare(b.countryName),
+  );
 
   // US pinned first, then alphabetical by display name (AGY-accepted pin 2).
   const sortedCountries = [...countryList].sort((a, b) => {
@@ -436,6 +534,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   return {
     stateGroups,
+    countrySections: sortedCountrySections,
     orphanHotspots,
     failed: failedRes.rows.map((r) => {
       const parsed = r.region_code ? parseRegionCode(r.region_code) : null;
