@@ -11,6 +11,12 @@
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import { calendarMonth } from "$lib/forecast-calendar";
+  import {
+    formatFeet,
+    formatTideDate,
+    tideWord,
+    TIDE_ATTRIBUTION_URL,
+  } from "$lib/tide-format";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -43,6 +49,7 @@
     }
     return calendarMonth();
   });
+  const anyTides = $derived(Object.keys(data.tidesByStop ?? {}).length > 0);
   function stopForecastHref(s: {
     lat: number | null;
     lon: number | null;
@@ -393,10 +400,13 @@
                 <!-- Tier-1 (td-97b22e): the need SET was always computed for
                      this count — the names are the point of the trip. -->
                 <details class="stopneeds">
-                  <summary>Which {stopNeeds.length === 1 ? "one" : "ones"}?</summary>
+                  <summary
+                    >Which {stopNeeds.length === 1 ? "one" : "ones"}?</summary
+                  >
                   <span class="needlist">
                     {#each stopNeeds as sp, i (sp.code)}
-                      <a href={`/species/${sp.code}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
+                      <a
+                        href={`/species/${sp.code}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
                         >{sp.comName}</a
                       >{i < stopNeeds.length - 1 ? " · " : ""}
                     {/each}
@@ -417,6 +427,39 @@
             <a class="stop-forecast" href={stopForecastHref(s)}
               >📅 Forecast for {MONTH_ABBR[tripMonth - 1]}</a
             >
+          {/if}
+          {#if data.tidesByStop[String(s.id)]}
+            {@const t = data.tidesByStop[String(s.id)]}
+            <div class="tideline">
+              <span class="tidehead"
+                >🌊 {t.mode === "day"
+                  ? `Tides ${formatTideDate(t.date)}`
+                  : "Tide"}
+                {#if t.stale}<Badge kind="stale" label="cached" />{/if}</span
+              >
+              <span class="tidetimes">
+                {#if t.mode === "next"}
+                  {#if t.nextHigh}<span class="tideitem"
+                      >{t.nextHigh.phrase}</span
+                    >{/if}
+                  {#if t.nextLow}<span class="tideitem">{t.nextLow.phrase}</span
+                    >{/if}
+                {:else}
+                  {#each t.day as e, i (e.at + i)}
+                    <span class="tideitem"
+                      >{tideWord(e.type)}
+                      {e.timeLabel}&nbsp;({formatFeet(e.feetMllw)})</span
+                    >
+                  {/each}
+                {/if}
+              </span>
+              <span class="tidestation"
+                >{t.station.name} · {formatDistance(
+                  t.station.distanceKm,
+                  distanceUnit,
+                )} away</span
+              >
+            </div>
           {/if}
           {#if s.notes}<div class="stopnote">
               {normalizeTripStopNote(s.notes)}
@@ -477,6 +520,16 @@
         {/if}
       </div>
     {/each}
+    {#if anyTides}
+      <p class="wx-attr">
+        Tide predictions from <a
+          href={TIDE_ATTRIBUTION_URL}
+          target="_blank"
+          rel="noopener">NOAA CO-OPS</a
+        >
+        · heights relative to MLLW · predictions, not observations · not for navigation.
+      </p>
+    {/if}
   </section>
 
   {#if data.canEdit}
@@ -811,6 +864,32 @@
     font-size: 0.76rem;
     font-style: italic;
     margin-top: 3px;
+  }
+  /* Tide line (td-6a3d2e) — same tokens as the species-page tide chip
+     (#dcebf7 bg / #163e5e text = 9.16:1, AAA). Do NOT use .muted here:
+     var(--muted) on #dcebf7 is not guaranteed to hit 7:1. */
+  .tideline {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: #dcebf7;
+    border-left: 3px solid #163e5e;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: #163e5e;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tidehead {
+    font-weight: 700;
+  }
+  .tidetimes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .tidestation {
+    font-size: 0.76rem;
   }
   .card h2 {
     font-size: 1.05rem;

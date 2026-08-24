@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   ALL_TAGS,
   groupTags,
+  isTideTagged,
   MAX_TAGS,
   TAG_VOCABULARY,
   tagLabel,
+  tideTagValues,
   validateTags,
 } from "./species-tags";
 
@@ -34,7 +36,11 @@ describe("species tag vocabulary (plan Phase 2, GROK v1)", () => {
   });
 
   it("groupTags orders by dimension and strips prefixes", () => {
-    const groups = groupTags(["tide:falling", "habitat:mudflat", "habitat:beach"]);
+    const groups = groupTags([
+      "tide:falling",
+      "habitat:mudflat",
+      "habitat:beach",
+    ]);
     expect(groups).toEqual([
       { dimension: "habitat", values: ["mudflat", "beach"] },
       { dimension: "tide", values: ["falling"] },
@@ -59,5 +65,36 @@ describe("species tag vocabulary (plan Phase 2, GROK v1)", () => {
     expect(TAG_VOCABULARY.movement).toContain("altitudinal");
     expect(TAG_VOCABULARY.find).toContain("canopy");
     expect(TAG_VOCABULARY.find).toContain("overhead-flight");
+  });
+});
+
+describe("tideTagValues / isTideTagged (td-6a3d2e)", () => {
+  it("returns actionable tide stages only, excluding tide-independent", () => {
+    expect(
+      tideTagValues(["tide:falling", "tide:low", "habitat:mudflat"]),
+    ).toEqual(["falling", "low"]);
+  });
+
+  it("tide-independent alone yields an empty array / false", () => {
+    expect(tideTagValues(["tide:tide-independent"])).toEqual([]);
+    expect(isTideTagged(["tide:tide-independent"])).toBe(false);
+  });
+
+  it("out-of-vocabulary tide value is dropped, not passed through", () => {
+    expect(tideTagValues(["tide:bogus"])).toEqual([]);
+    expect(isTideTagged(["tide:bogus"])).toBe(false);
+  });
+
+  it("untagged / non-tide tags yield false", () => {
+    expect(isTideTagged([])).toBe(false);
+    expect(isTideTagged(["habitat:mudflat", "movement:resident"])).toBe(false);
+  });
+
+  it("at least one actionable stage → true", () => {
+    expect(isTideTagged(["tide:high-roost"])).toBe(true);
+    expect(tideTagValues(["tide:mid-tide", "tide:rising"])).toEqual([
+      "mid-tide",
+      "rising",
+    ]);
   });
 });

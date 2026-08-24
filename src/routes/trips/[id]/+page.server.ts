@@ -13,6 +13,8 @@ import {
 } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { rankedNeedPlacesNear, type PlaceRanking } from "$server/needs";
+import { tidesForStops } from "$server/tides";
+import type { TideResult } from "$lib/tide-format";
 import { weatherFor, type WeatherResult } from "$server/weather";
 import { generateFieldTips, GuidanceError } from "$server/ai-guidance";
 import {
@@ -97,16 +99,19 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const needs = await needsCountForStops(userId, apiKey, stops);
   const home = await homeOf(userId);
 
-  // Weather for the trip area (first located stop). Supplementary — never blocks
-  // the page; null when there's no stop, no US coverage, or the provider fails.
+  // Weather for the trip area (first located stop) + tides for every located
+  // stop (td-6a3d2e). Both are supplementary — never block the page; run in
+  // parallel so tides add no wall-clock over weather alone.
   const firstLocated = stops.find((s) => s.lat != null && s.lon != null);
-  let weather: WeatherResult | null = null;
-  if (firstLocated) {
-    weather = await weatherFor(
-      firstLocated.lat as number,
-      firstLocated.lon as number,
-    );
-  }
+  const [weather, tidesByStop] = await Promise.all([
+    firstLocated
+      ? weatherFor(firstLocated.lat as number, firstLocated.lon as number)
+      : Promise.resolve(null as WeatherResult | null),
+    tidesForStops(stops, {
+      startDate: trip.start_date,
+      endDate: trip.end_date,
+    }).catch(() => ({}) as Record<string, TideResult>),
+  ]);
 
   // Optional "find hotspots near <place>" search.
   const hs = (url.searchParams.get("hs") ?? "").trim();
@@ -208,6 +213,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     suggestionBackDays: SUGGESTION_BACK_DAYS,
     suggestionDistKm: SUGGESTION_DIST_KM,
     weather,
+    tidesByStop,
   };
 };
 

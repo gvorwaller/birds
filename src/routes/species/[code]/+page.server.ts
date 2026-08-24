@@ -7,6 +7,9 @@ import {
   getSpeciesMedia,
 } from "$server/species-enrichment";
 import { validSpeciesCode } from "$server/wikidata";
+import { isTideTagged } from "$lib/species-tags";
+import { tidesNear } from "$server/tides";
+import type { TideResult } from "$lib/tide-format";
 import { enqueueJob } from "$server/jobs";
 import { AI_STAGE_ENABLED, dedupKeys } from "$server/job-policy";
 import { query } from "$lib/db";
@@ -241,6 +244,20 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     getSpeciesMedia(code),
   ]);
 
+  // Tides beside the tide tags (td-6a3d2e): only for species with an actionable
+  // tide stage ('tide-independent' does not count) and only with an origin.
+  // Gated on field_craft too — matches the "Finding this bird" card's own
+  // render guard, so a partial enrichment row never spends a tide lookup for
+  // markup the page hides.
+  let tide: TideResult | null = null;
+  if (
+    origin &&
+    enrichment?.field_craft &&
+    isTideTagged(enrichment.tags ?? [])
+  ) {
+    tide = await tidesNear(origin.lat, origin.lon).catch(() => null);
+  }
+
   return {
     taxon: t,
     enrichment,
@@ -264,6 +281,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     distKm,
     backDays,
     returnLink,
+    tide,
   };
 };
 

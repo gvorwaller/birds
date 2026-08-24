@@ -1,0 +1,226 @@
+{
+  "count": 10,
+  "units": null,
+  "stations": [
+    {
+      "state": "FL",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8726364/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": -75,
+      "reference_id": "",
+      "timezonecorr": -5,
+      "id": "8726364",
+      "name": "Mullet Key Channel (Skyway)",
+      "lat": 27.615,
+      "lng": -82.7267,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "FL",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8726601/tidepredoffsets.json"
+      },
+      "type": "S",
+      "timemeridian": -75,
+      "reference_id": "8726724",
+      "timezonecorr": -6,
+      "id": "8726601",
+      "name": "Indian Rocks Beach (Coastal)",
+      "lat": 27.873300552368164,
+      "lng": -82.85169982910156,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "CA",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9410032/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": -120,
+      "reference_id": "",
+      "timezonecorr": -8,
+      "id": "9410032",
+      "name": "Wilson Cove, San Clemente Island",
+      "lat": 33.005001068115234,
+      "lng": -118.55699920654297,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "AK",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9450041/tidepredoffsets.json"
+      },
+      "type": "S",
+      "timemeridian": -135,
+      "reference_id": "9451600",
+      "timezonecorr": -9,
+      "id": "9450041",
+      "name": "Minnie Bay",
+      "lat": 54.7267,
+      "lng": -132.302,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "AK",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9458519/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": -135,
+      "reference_id": "",
+      "timezonecorr": -10,
+      "id": "9458519",
+      "name": "Chowiet Island, Semidi Island",
+      "lat": 56.0517,
+      "lng": -156.698,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "HI",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/1610367/tidepredoffsets.json"
+      },
+      "type": "S",
+      "timemeridian": -150,
+      "reference_id": "1612340",
+      "timezonecorr": -10,
+      "id": "1610367",
+      "name": "Nonopapa, Niihau Island",
+      "lat": 21.87,
+      "lng": -160.235,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "PR",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9751082/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": 0,
+      "reference_id": "",
+      "timezonecorr": -4,
+      "id": "9751082",
+      "name": "Grapetree Bay, St, Croix",
+      "lat": 17.740699768066406,
+      "lng": -64.60579681396484,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "VI",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9751309/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": -60,
+      "reference_id": "",
+      "timezonecorr": -4,
+      "id": "9751309",
+      "name": "Leinster Point, Leinster Bay, St. Johns Island",
+      "lat": 18.36761111111111,
+      "lng": -64.72072222222222,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/1619000/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": -150,
+      "reference_id": "",
+      "timezonecorr": -10,
+      "id": "1619000",
+      "name": "JOHNSTON ATOLL",
+      "lat": 16.7383,
+      "lng": -169.53,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    },
+    {
+      "state": "GU",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/1633227/tidepredoffsets.json"
+      },
+      "type": "R",
+      "timemeridian": 150,
+      "reference_id": "",
+      "timezonecorr": 10,
+      "id": "1633227",
+      "name": "Tanapag Harbor, Saipan Island",
+      "lat": 15.2267,
+      "lng": 145.737,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    }
+  ]
+}

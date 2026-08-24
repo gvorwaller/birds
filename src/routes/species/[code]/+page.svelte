@@ -13,6 +13,7 @@
   import { sectionBlocks } from "$lib/wiki-render";
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
   import { allAboutBirdsUrl } from "$lib/species-links";
+  import { formatFeet, tideWord, TIDE_ATTRIBUTION_URL } from "$lib/tide-format";
   import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -105,10 +106,13 @@
   );
   const tagGroups = $derived(groupTags(en?.tags ?? []));
   const aiGeneratedOn = $derived(
-    en?.ai_generated_at ? new Date(en.ai_generated_at).toLocaleDateString() : null,
+    en?.ai_generated_at
+      ? new Date(en.ai_generated_at).toLocaleDateString()
+      : null,
   );
   const hasFacts = $derived(
-    !!en && (en.iucn_status != null || massBadge != null || wingspanBadge != null),
+    !!en &&
+      (en.iucn_status != null || massBadge != null || wingspanBadge != null),
   );
   // Attribution date = when the STORED prose was successfully retrieved —
   // never the failed-attempt clock (CODEX1 round 3).
@@ -251,9 +255,43 @@
           {/each}
         </div>
       {/if}
+      {#if data.tide}
+        {@const t = data.tide}
+        <div class="tideline">
+          <span class="tidehead"
+            >🌊 Tide at {t.station.name}
+            {#if t.stale}<Badge kind="stale" label="cached" />{/if}</span
+          >
+          <span class="tidetimes">
+            {#if t.mode === "next"}
+              {#if t.nextHigh}<span class="tideitem">{t.nextHigh.phrase}</span
+                >{/if}
+              {#if t.nextLow}<span class="tideitem">{t.nextLow.phrase}</span
+                >{/if}
+            {:else}
+              {#each t.day as e, i (e.at + i)}
+                <span class="tideitem"
+                  >{tideWord(e.type)}
+                  {e.timeLabel}&nbsp;({formatFeet(e.feetMllw)})</span
+                >
+              {/each}
+            {/if}
+          </span>
+          <span class="tidestation"
+            >{formatDistance(t.station.distanceKm, distanceUnit)} from {originName}
+            · NOAA CO-OPS predictions, MLLW</span
+          >
+        </div>
+      {/if}
       <p class="ai-attrib muted">
         AI-generated from the Wikipedia article{#if aiGeneratedOn}&nbsp;·
-          {aiGeneratedOn}{/if} · verify in the field ·
+          {aiGeneratedOn}{/if} · verify in the field
+        {#if data.tide}
+          · <a href={TIDE_ATTRIBUTION_URL} target="_blank" rel="noopener"
+            >Tides: NOAA CO-OPS</a
+          >
+        {/if}
+        ·
         <a href="/species">Browse field guide →</a>
       </p>
       {#if data.isAdmin}
@@ -263,7 +301,11 @@
           use:enhance={() => {
             refreshBusy = true;
             return async ({ update }) => {
-              try { await update(); } finally { refreshBusy = false; }
+              try {
+                await update();
+              } finally {
+                refreshBusy = false;
+              }
             };
           }}
           aria-busy={refreshBusy}
@@ -366,7 +408,8 @@
               {o.howMany ?? 1}
               {(o.howMany ?? 1) === 1 ? "bird" : "birds"}
               {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
-              {#if o.locationPrivate}<span class="privloc"
+              {#if o.locationPrivate}<span
+                  class="privloc"
                   title="Reported from someone's personal (non-hotspot) location"
                   >personal location</span
                 >{/if}
@@ -408,16 +451,14 @@
       </h2>
       {#if !data.wantNearest}
         <p class="muted">
-          How far away is the closest current report? One eBird lookup,
-          any distance from home.
+          How far away is the closest current report? One eBird lookup, any
+          distance from home.
         </p>
         <!-- Preserve every existing param (location context, back, returnTo)
              — a bare ?nearest=1 clobbered the query and silently retargeted
              the nearby card to home (GROK P2-1/P2-2). -->
-        <a
-          class="nearestcta"
-          href={nearestHref}
-          data-sveltekit-noscroll>Check nearest reports</a
+        <a class="nearestcta" href={nearestHref} data-sveltekit-noscroll
+          >Check nearest reports</a
         >
       {:else if data.nearest?.error}
         <p class="muted">{data.nearest.error}</p>
@@ -430,26 +471,44 @@
           <div class="nrow">
             <div class="nline1">
               {#if o.distanceKm != null}
-                <span class="ndist">{formatDistance(o.distanceKm, distanceUnit)}</span>
+                <span class="ndist"
+                  >{formatDistance(o.distanceKm, distanceUnit)}</span
+                >
               {/if}
               {#if isHotspotLocId(o.locId)}
                 <!-- returnTo carries the full URL so Back reopens the card
                      with its context intact (GROK P3 on 3b12042). -->
-                <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                <a
+                  class="nplace"
+                  href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
                   >{o.locName}</a
                 >
               {:else}
                 <span class="nplace">{o.locName}</span>
-                {#if o.locationPrivate}<span class="privloc">personal location</span>{/if}
+                {#if o.locationPrivate}<span class="privloc"
+                    >personal location</span
+                  >{/if}
               {/if}
             </div>
             <div class="nline2">
               <span class="muted">{o.obsDt}</span>
-              {#if o.howMany != null && o.howMany > 1}<span class="muted">×{o.howMany}</span>{/if}
+              {#if o.howMany != null && o.howMany > 1}<span class="muted"
+                  >×{o.howMany}</span
+                >{/if}
               {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
-              <MapLink lat={o.lat} lng={o.lng} name={o.locName} googlePlaceId={o.googlePlaceId} />
+              <MapLink
+                lat={o.lat}
+                lng={o.lng}
+                name={o.locName}
+                googlePlaceId={o.googlePlaceId}
+              />
               {#if o.subId}
-                <a class="cl" href={`https://ebird.org/checklist/${o.subId}`} target="_blank" rel="noopener">checklist ↗</a>
+                <a
+                  class="cl"
+                  href={`https://ebird.org/checklist/${o.subId}`}
+                  target="_blank"
+                  rel="noopener">checklist ↗</a
+                >
               {/if}
             </div>
           </div>
@@ -458,7 +517,7 @@
     </section>
   {/if}
 
-  {#if data.taxon.category === 'species'}
+  {#if data.taxon.category === "species"}
     <section class="card">
       <h2>
         About {data.taxon.com_name}
@@ -491,8 +550,8 @@
       {#if hasProse}
         {#if proseStale}
           <p class="muted">
-            ⚠ The last refresh failed — showing the previously fetched
-            article text.
+            ⚠ The last refresh failed — showing the previously fetched article
+            text.
           </p>
         {/if}
         <p bind:this={leadEl} class="lead" class:clamped={!aboutExpanded}>
@@ -572,17 +631,24 @@
           use:enhance={() => {
             refreshBusy = true;
             return async ({ update }) => {
-              try { await update(); } finally { refreshBusy = false; }
+              try {
+                await update();
+              } finally {
+                refreshBusy = false;
+              }
             };
           }}
           aria-busy={refreshBusy}
         >
           <button type="submit" class="secondary" disabled={refreshBusy}>
-            {refreshBusy ? "Loading… this can take up to 20 seconds" : "Load Wikipedia notes"}
+            {refreshBusy
+              ? "Loading… this can take up to 20 seconds"
+              : "Load Wikipedia notes"}
           </button>
         </form>
         <p class="muted" style="margin-top:6px;font-size:0.78rem">
-          Adds Wikipedia notes to the shared field guide. Your sightings won't change.
+          Adds Wikipedia notes to the shared field guide. Your sightings won't
+          change.
         </p>
       {/if}
       {#if data.isAdmin && en?.wiki_fetched_at && !hasFieldCraft}
@@ -592,7 +658,11 @@
           use:enhance={() => {
             refreshBusy = true;
             return async ({ update }) => {
-              try { await update(); } finally { refreshBusy = false; }
+              try {
+                await update();
+              } finally {
+                refreshBusy = false;
+              }
             };
           }}
           aria-busy={refreshBusy}
@@ -768,6 +838,33 @@
     background: #dcebf7;
     color: #163e5e;
     border: 1px solid #b3d1e8;
+  }
+  /* Tide line (td-6a3d2e) — same tokens as .tag-tide (#dcebf7 bg / #163e5e
+     text = 9.16:1, AAA). Do NOT use .muted here: var(--muted) on #dcebf7 is
+     not guaranteed to hit 7:1. */
+  .tideline {
+    margin-top: 6px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: #dcebf7;
+    border-left: 3px solid #163e5e;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: #163e5e;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tidehead {
+    font-weight: 700;
+  }
+  .tidetimes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .tidestation {
+    font-size: 0.76rem;
   }
   .ai-attrib {
     font-size: 0.78rem;
