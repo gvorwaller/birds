@@ -26,8 +26,25 @@
   );
   // US pinned first with its own <optgroup> so a ~250-country list doesn't
   // read as unsorted (GROK UX review #2).
-  const usCountry = $derived(data.countries.find((c) => c.code === "US") ?? null);
-  const otherCountries = $derived(data.countries.filter((c) => c.code !== "US"));
+  // Typing narrows both optgroups (GBV 2026-08-24 — ~250 entries is a lot of
+  // scrolling). The current selection always survives the filter, or the
+  // <select> would render blank.
+  let countryFilter = $state("");
+  const countryMatches = $derived((c: { code: string; name: string }) => {
+    const q = countryFilter.trim().toLowerCase();
+    return (
+      q === "" ||
+      c.code === data.country ||
+      c.name.toLowerCase().includes(q) ||
+      c.code.toLowerCase().startsWith(q)
+    );
+  });
+  const usCountry = $derived(
+    data.countries.find((c) => c.code === "US" && countryMatches(c)) ?? null,
+  );
+  const otherCountries = $derived(
+    data.countries.filter((c) => c.code !== "US" && countryMatches(c)),
+  );
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     const params = new URLSearchParams(page.url.searchParams);
     params.set("country", e.currentTarget.value);
@@ -209,8 +226,20 @@
   <section class="card">
     {#if data.countries.length > 0}
       <div class="row countrypick">
-        <label for="country">Country</label>
-        <select id="country" value={data.country} onchange={onCountryChange}>
+        <label for="country-search">Country</label>
+        <input
+          id="country-search"
+          type="search"
+          placeholder="Search {data.countries.length} countries…"
+          autocomplete="off"
+          bind:value={countryFilter}
+        />
+        <select
+          id="country"
+          aria-label="Country"
+          value={data.country}
+          onchange={onCountryChange}
+        >
           {#if usCountry}
             <optgroup label="United States">
               <option value={usCountry.code}>{usCountry.name}</option>

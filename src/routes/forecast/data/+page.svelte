@@ -18,14 +18,37 @@
   );
   // US pinned first with its own <optgroup> so a ~250-country list doesn't
   // read as unsorted (GROK UX review #2).
-  const usCountry = $derived(data.countries.find((c) => c.code === "US") ?? null);
-  const otherCountries = $derived(data.countries.filter((c) => c.code !== "US"));
+  // Typing narrows both optgroups so reaching Norway doesn't mean scrolling
+  // ~250 entries (GBV 2026-08-24). The current selection always survives the
+  // filter — a <select> whose value has no matching option renders blank.
+  let countryFilter = $state("");
+  const countryMatches = $derived((c: { code: string; name: string }) => {
+    const q = countryFilter.trim().toLowerCase();
+    return (
+      q === "" ||
+      c.code === data.selectedCountry ||
+      c.name.toLowerCase().includes(q) ||
+      c.code.toLowerCase().startsWith(q)
+    );
+  });
+  const usCountry = $derived(
+    data.countries.find((c) => c.code === "US" && countryMatches(c)) ?? null,
+  );
+  const otherCountries = $derived(
+    data.countries.filter((c) => c.code !== "US" && countryMatches(c)),
+  );
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     void goto(`?country=${e.currentTarget.value}`, {
       keepFocus: true,
       noScroll: true,
     });
   }
+  // Nothing left to offer: every subnational1 region is loaded, and so is the
+  // countrywide export where one is offered (never for US).
+  const nothingLeftToLoad = $derived(
+    data.states.length === 0 &&
+      (data.selectedCountry === "US" || data.wholeCountryLoaded),
+  );
   // US state groups + one entry per non-US CountrySection — the "Loaded
   // data (N regions)" count (td-f1d6da: countries now count as one region
   // each, their subnational1 children nested inside rather than counted as
@@ -965,9 +988,17 @@
       {:else}
         {#if data.countries.length > 0}
           <div class="countrypick">
-            <label for="country-select">Country</label>
+            <label for="country-search">Country</label>
+            <input
+              id="country-search"
+              type="search"
+              placeholder="Search {data.countries.length} countries…"
+              autocomplete="off"
+              bind:value={countryFilter}
+            />
             <select
               id="country-select"
+              aria-label="Country"
               value={data.selectedCountry}
               onchange={onCountryChange}
             >
@@ -986,6 +1017,15 @@
         {/if}
         {#if data.statesError}
           <p class="error">{data.statesError}</p>
+        {:else if nothingLeftToLoad}
+          <!-- Every region of this country (and its countrywide export) is
+               already loaded — an empty <select> holding only the placeholder
+               reads as a broken picker (GBV 2026-08-24, Norway). -->
+          <p class="notice">
+            Every {data.selectedCountry === "US" ? "state" : "region"} eBird lists
+            for {selectedCountryName} is already loaded. Pick another country above,
+            or refresh one below.
+          </p>
         {:else}
           <form
             method="POST"
@@ -1402,6 +1442,16 @@
   .countrypick label {
     font-weight: 600;
     font-size: 0.88rem;
+  }
+  .countrypick input[type="search"] {
+    flex: 1 1 100%;
+    font-size: 16px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    min-height: 48px;
   }
   .countrypick select {
     flex: 1;
