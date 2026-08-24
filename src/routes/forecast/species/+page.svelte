@@ -24,6 +24,10 @@
   const selectedCountryName = $derived(
     data.countries.find((c) => c.code === data.country)?.name ?? data.country,
   );
+  // US pinned first with its own <optgroup> so a ~250-country list doesn't
+  // read as unsorted (GROK UX review #2).
+  const usCountry = $derived(data.countries.find((c) => c.code === "US") ?? null);
+  const otherCountries = $derived(data.countries.filter((c) => c.code !== "US"));
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     const params = new URLSearchParams(page.url.searchParams);
     params.set("country", e.currentTarget.value);
@@ -46,6 +50,20 @@
   );
   const countyNounPlural = $derived(countyNoun === "county" ? "counties" : "regions");
 
+  // Deep link fail-soft (GROK UX review #4): a region param whose code isn't
+  // in the fetched subnational1 list or the "Entire {Country}" option (e.g.
+  // no API key, or a fetch failure) still needs to render as the visibly
+  // selected value rather than falling back to the blank prompt.
+  const regionIsWholeCountryOption = $derived(
+    data.region != null && data.country !== "US" && data.region.code === data.country,
+  );
+  const regionInStatesList = $derived(
+    data.region != null && data.states.some((s) => s.code === data.region!.code),
+  );
+  const regionMissingFromList = $derived(
+    data.region != null && !regionIsWholeCountryOption && !regionInStatesList,
+  );
+
   // Whole-state county analysis is now ONE background job — the old
   // ≤12-per-click resubmit loop is gone. The worker reports per-county
   // progress; the throttled invalidateAll refreshes the ranking as counties
@@ -66,6 +84,19 @@
     const q = form && "queued" in form ? form.queued : null;
     if (q) jobsPoll.track(q.jobId);
   });
+
+  // Preserves month (and county, when it belongs to the current region) so
+  // "change" doesn't silently reset the month picker back to default
+  // (GROK UX review #8). Country is inferred from region on the next load.
+  function changeSpeciesHref(): string {
+    const p = new URLSearchParams();
+    if (data.region) p.set("region", data.region.code);
+    p.set("month", String(data.month));
+    if (data.county && data.region && data.county.code.startsWith(`${data.region.code}-`)) {
+      p.set("county", data.county.code);
+    }
+    return `?${p.toString()}`;
+  }
 
   function countyHref(
     countyCode: string | null,
@@ -176,14 +207,23 @@
   </p>
 
   <section class="card">
-    <div class="row countrypick">
-      <label for="country">Country</label>
-      <select id="country" value={data.country} onchange={onCountryChange}>
-        {#each data.countries as c (c.code)}
-          <option value={c.code}>{c.name}</option>
-        {/each}
-      </select>
-    </div>
+    {#if data.countries.length > 0}
+      <div class="row countrypick">
+        <label for="country">Country</label>
+        <select id="country" value={data.country} onchange={onCountryChange}>
+          {#if usCountry}
+            <optgroup label="United States">
+              <option value={usCountry.code}>{usCountry.name}</option>
+            </optgroup>
+          {/if}
+          <optgroup label="All countries">
+            {#each otherCountries as c (c.code)}
+              <option value={c.code}>{c.name}</option>
+            {/each}
+          </optgroup>
+        </select>
+      </div>
+    {/if}
     <form method="GET" class="pick">
       <div class="row">
         <label for="q">Species</label>
@@ -191,11 +231,7 @@
           <div class="chosen">
             <strong>{data.taxon.com_name}</strong>
             <span class="sci">{data.taxon.sci_name}</span>
-            <a
-              class="change"
-              href="?region={encodeURIComponent(data.region?.code ?? '')}"
-              >change</a
-            >
+            <a class="change" href={changeSpeciesHref()}>change</a>
           </div>
           <input type="hidden" name="species" value={data.taxon.species_code} />
         {:else}
@@ -224,6 +260,9 @@
               >{s.name}</option
             >
           {/each}
+          {#if regionMissingFromList && data.region}
+            <option value={data.region.code} selected>{data.region.name}</option>
+          {/if}
         </select>
       </div>
       <input type="hidden" name="country" value={data.country} />

@@ -288,6 +288,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       }
     }
   }
+  // Failed loads also need their country's subnational1 list resolved so the
+  // "Failed loads" section can show real region names, not raw codes, even
+  // when nothing in that country ever loaded successfully (GROK UX review
+  // #5 — cache-first, same call the successful-row path already makes).
+  for (const f of failedRes.rows) {
+    const parsed = f.region_code ? parseRegionCode(f.region_code) : null;
+    if (parsed) neededCountries.add(parsed.country);
+  }
 
   // Resolve real subnational1 display names (one cache-first fetch per
   // distinct country involved, not per group) and backfill group names.
@@ -309,9 +317,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   for (const { list } of subnat1ByCountry) {
     for (const r of list) regionDisplayName.set(r.code, r.name);
   }
+  // Fallback chain (GROK UX review #5): the real eBird list name wins; when
+  // it's unavailable (list fetch failed, or the country wasn't in
+  // neededCountries) fall back to the loaded row's own stored loc_name
+  // ("Alaska", "Ontario") before ever showing the raw code.
   for (const g of groups.values()) {
     if (g.level === "subnational1") {
-      g.stateName = regionDisplayName.get(g.stateCode) ?? g.stateCode;
+      g.stateName = regionDisplayName.get(g.stateCode) ?? g.state?.locName ?? g.stateCode;
+    } else if (g.level === "country") {
+      g.stateName = countryName.get(g.stateCode) ?? g.state?.locName ?? g.stateCode;
     }
   }
   // The selected country's own subregion fetch also gates the picker —

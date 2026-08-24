@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.0': true,
+		'v0.1.1': true,
+		'v0.1.0': false,
 		'v0.0.9': false,
 		'v0.0.8': false,
 		'v0.0.5': false,
@@ -97,6 +98,34 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.1 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.1']}
+					aria-expanded={openVersions['v0.1.1']}
+					onclick={() => toggleVersion('v0.1.1')}
+				>
+					<span class="v-tag current">v0.1.1</span>
+					<span class="v-title">International Region Loads</span>
+					<span class="v-date">August 2026</span>
+					<span class="chev">{openVersions['v0.1.1'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.1']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>International Region Loads</strong> — A Country picker on the forecast
+								data and species pages now reaches any of eBird's countries, not just US states;
+								countries with coarse or no state-level divisions can load a single "Entire
+								{'{Country}'}" whole-country dataset instead.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.0 -->
 			<div class="version-entry">
 				<button
@@ -106,7 +135,7 @@
 					aria-expanded={openVersions['v0.1.0']}
 					onclick={() => toggleVersion('v0.1.0')}
 				>
-					<span class="v-tag current">v0.1.0</span>
+					<span class="v-tag">v0.1.0</span>
 					<span class="v-title">Field Guide Media, Life List Map &amp; Universal Search</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.0'] ? '▾' : '▸'}</span>
@@ -132,12 +161,6 @@
 							<li>
 								<strong>Universal Species Search</strong> — Zero-empty search covering the full
 								eBird taxonomy by common name, scientific name, or four-letter code.
-							</li>
-							<li>
-								<strong>International Region Loads</strong> — A Country picker on the forecast
-								data and species pages now reaches any of eBird's countries, not just US states;
-								countries with coarse or no state-level divisions can load a single "Entire
-								{'{Country}'}" whole-country dataset instead.
 							</li>
 						</ul>
 					</div>

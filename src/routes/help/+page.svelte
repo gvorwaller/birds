@@ -276,7 +276,7 @@
 						counties land, and you don't have to stay on the page.
 					</li>
 					<li>
-						Tapping a county ranks its top hotspots (picked by species count +
+						Tapping a county or region ranks its top hotspots (picked by species count +
 						recent activity, expandable with "analyze 6 more") on a map — gray
 						pins are candidates with no data loaded yet. Every hotspot row has
 						Map, Directions, its eBird page, <strong>My needs here</strong>

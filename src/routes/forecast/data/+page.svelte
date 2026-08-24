@@ -16,6 +16,10 @@
     data.countries.find((c) => c.code === data.selectedCountry)?.name ??
       data.selectedCountry,
   );
+  // US pinned first with its own <optgroup> so a ~250-country list doesn't
+  // read as unsorted (GROK UX review #2).
+  const usCountry = $derived(data.countries.find((c) => c.code === "US") ?? null);
+  const otherCountries = $derived(data.countries.filter((c) => c.code !== "US"));
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     void goto(`?country=${e.currentTarget.value}`, {
       keepFocus: true,
@@ -37,7 +41,8 @@
   function groupStatusLabel(g: PageData["stateGroups"][number]): string | null {
     if (!g.state) return null;
     if (g.level === "country") return g.state.current ? null : "outdated";
-    return g.state.current ? "statewide" : "statewide (outdated)";
+    const noun = g.countryCode === "US" ? "statewide" : "regionwide";
+    return g.state.current ? noun : `${noun} (outdated)`;
   }
 
   let refreshing = $state<string | null>(null);
@@ -183,7 +188,12 @@
           kind: "state",
           code: g.stateCode,
           name: g.stateName,
-          context: "statewide",
+          context:
+            g.level === "country"
+              ? "countrywide"
+              : g.countryCode === "US"
+                ? "statewide"
+                : "regionwide",
           row: g.state,
         });
       }
@@ -685,54 +695,65 @@
           The region list needs an eBird API key — add one in
           <a href="/settings">Settings</a>.
         </p>
-      {:else if data.statesError}
-        <p class="error">{data.statesError}</p>
       {:else}
-        <div class="countrypick">
-          <label for="country-select">Country</label>
-          <select
-            id="country-select"
-            value={data.selectedCountry}
-            onchange={onCountryChange}
+        {#if data.countries.length > 0}
+          <div class="countrypick">
+            <label for="country-select">Country</label>
+            <select
+              id="country-select"
+              value={data.selectedCountry}
+              onchange={onCountryChange}
+            >
+              {#if usCountry}
+                <optgroup label="United States">
+                  <option value={usCountry.code}>{usCountry.name}</option>
+                </optgroup>
+              {/if}
+              <optgroup label="All countries">
+                {#each otherCountries as c (c.code)}
+                  <option value={c.code}>{c.name}</option>
+                {/each}
+              </optgroup>
+            </select>
+          </div>
+        {/if}
+        {#if data.statesError}
+          <p class="error">{data.statesError}</p>
+        {:else}
+          <form
+            method="POST"
+            action="?/loadRegion"
+            class="loadstate"
+            use:enhance={() => {
+              refreshing = "new-region";
+              return async ({ update }) => {
+                refreshing = null;
+                await update();
+              };
+            }}
           >
-            {#each data.countries as c (c.code)}
-              <option value={c.code}>{c.name}</option>
-            {/each}
-          </select>
-        </div>
-        <form
-          method="POST"
-          action="?/loadRegion"
-          class="loadstate"
-          use:enhance={() => {
-            refreshing = "new-region";
-            return async ({ update }) => {
-              refreshing = null;
-              await update();
-            };
-          }}
-        >
-          <select name="region" required>
-            <option value="">Choose a region…</option>
-            {#if data.selectedCountry !== "US" && !data.wholeCountryLoaded}
-              <option value={data.selectedCountry}
-                >Entire {selectedCountryName}</option
-              >
-            {/if}
-            {#each data.states as s (s.code)}
-              <option value={s.code}>{s.name}</option>
-            {/each}
-          </select>
-          <button type="submit" disabled={refreshing !== null}>
-            {refreshing === "new-region"
-              ? "Queueing…"
-              : "Load data (one eBird request)"}
-          </button>
-        </form>
-        <p class="notice">
-          Region data powers the Species forecast month curves. Already
-          loaded regions aren't listed.
-        </p>
+            <select name="region" required>
+              <option value="">Choose a region…</option>
+              {#if data.selectedCountry !== "US" && !data.wholeCountryLoaded}
+                <option value={data.selectedCountry}
+                  >Entire {selectedCountryName}</option
+                >
+              {/if}
+              {#each data.states as s (s.code)}
+                <option value={s.code}>{s.name}</option>
+              {/each}
+            </select>
+            <button type="submit" disabled={refreshing !== null}>
+              {refreshing === "new-region"
+                ? "Queueing…"
+                : "Load data (one eBird request)"}
+            </button>
+          </form>
+          <p class="notice">
+            Region data powers the Species forecast month curves. Already
+            loaded regions aren't listed.
+          </p>
+        {/if}
       {/if}
     </section>
   {/if}
@@ -816,7 +837,11 @@
           {/if}
           {#if g.state}
             {@render dataTable(
-              g.level === "country" ? "Countrywide" : "Statewide",
+              g.level === "country"
+                ? "Countrywide"
+                : g.countryCode === "US"
+                  ? "Statewide"
+                  : "Regionwide",
               [g.state],
             )}
           {/if}
