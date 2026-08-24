@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
@@ -9,13 +10,41 @@
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { countryOf, regionLevel } from "$lib/region-code";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let loading = $state(false);
 
+  // Country picker (td-f1d6da): switching countries reloads the loader with
+  // the new ?country=, dropping the now-stale region/county selection so the
+  // region select resets to its prompt (AGY-accepted pin 1) rather than
+  // carrying over a region that belongs to the previous country.
+  const selectedCountryName = $derived(
+    data.countries.find((c) => c.code === data.country)?.name ?? data.country,
+  );
+  function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
+    const params = new URLSearchParams(page.url.searchParams);
+    params.set("country", e.currentTarget.value);
+    params.delete("region");
+    params.delete("county");
+    void goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
+  }
+
   const progress = $derived(data.countyCoverage);
+
+  // "county"/"counties" for US states' subnational2 children; "region"/
+  // "regions" everywhere else (non-US subnational1's children, and any
+  // country-level region's subnational1 children) — td-f1d6da.
+  const countyNoun = $derived(
+    data.region &&
+      regionLevel(data.region.code) === "subnational1" &&
+      countryOf(data.region.code) === "US"
+      ? "county"
+      : "region",
+  );
+  const countyNounPlural = $derived(countyNoun === "county" ? "counties" : "regions");
 
   // Whole-state county analysis is now ONE background job — the old
   // ≤12-per-click resubmit loop is gone. The worker reports per-county
@@ -147,6 +176,14 @@
   </p>
 
   <section class="card">
+    <div class="row countrypick">
+      <label for="country">Country</label>
+      <select id="country" value={data.country} onchange={onCountryChange}>
+        {#each data.countries as c (c.code)}
+          <option value={c.code}>{c.name}</option>
+        {/each}
+      </select>
+    </div>
     <form method="GET" class="pick">
       <div class="row">
         <label for="q">Species</label>
@@ -172,9 +209,16 @@
         {/if}
       </div>
       <div class="row">
-        <label for="region">State</label>
+        <label for="region">Region</label>
         <select id="region" name="region">
-          <option value="">Choose a state…</option>
+          <option value="">Choose a region…</option>
+          {#if data.country !== "US"}
+            <option
+              value={data.country}
+              selected={data.country === data.region?.code}
+              >Entire {selectedCountryName}</option
+            >
+          {/if}
           {#each data.states as s (s.code)}
             <option value={s.code} selected={s.code === data.region?.code}
               >{s.name}</option
@@ -182,6 +226,7 @@
           {/each}
         </select>
       </div>
+      <input type="hidden" name="country" value={data.country} />
       <input type="hidden" name="month" value={data.month} />
       {#if data.county && data.region && data.county.code.startsWith(`${data.region.code}-`)}
         <input type="hidden" name="county" value={data.county.code} />
@@ -199,13 +244,13 @@
     {/if}
     {#if !data.hasApiKey}
       <p class="notice">
-        The state list needs an eBird API key — add one in
+        The region list needs an eBird API key — add one in
         <a href="/settings">Settings</a>.
       </p>
     {:else if data.statesError}
       <p class="error">{data.statesError}</p>
     {:else if data.statesStale}
-      <p class="notice">State list shown from cache.</p>
+      <p class="notice">Region list shown from cache.</p>
     {/if}
 
     {#if !data.taxon && data.q}
@@ -332,7 +377,7 @@
         {/if}
         {#if data.isViewer}
           <p class="notice">
-            The account owner hasn't loaded forecast data for this state yet.
+            The account owner hasn't loaded forecast data for this region yet.
           </p>
         {:else if !data.hasLogin}
           <p class="notice">
@@ -389,8 +434,8 @@
         {#if data.countyError}
           <p class="error">{data.countyError}</p>
           <p class="notice">
-            Any previously analyzed counties still rank below; reload the page
-            to retry the county list.
+            Any previously analyzed {countyNounPlural} still rank below; reload
+            the page to retry the {countyNoun} list.
           </p>
         {/if}
 
@@ -398,7 +443,8 @@
           <p class="coverage">
             {#if data.countyDataYears}{data.countyDataYears.begin}–{data
                 .countyDataYears.end} ·
-            {/if}{#if data.hasApiKey}{progress.current}/{progress.total} counties{:else}{progress.current} counties loaded{/if}
+            {/if}{#if data.hasApiKey}{progress.current}/{progress.total}
+              {countyNounPlural}{:else}{progress.current} {countyNounPlural} loaded{/if}
             {#if progress.stale > 0}
               · <span class="lowflag">{progress.stale} outdated</span>
             {/if}
@@ -469,24 +515,25 @@
                   {loading
                     ? "Queueing…"
                     : progress.current === 0
-                      ? `Analyze all ${progress.total} counties`
+                      ? `Analyze all ${progress.total} ${countyNounPlural}`
                       : progress.stale > 0 &&
                           progress.current + progress.stale === progress.total
-                        ? "Refresh outdated counties"
-                        : `Analyze ${progress.remaining} remaining counties`}
+                        ? `Refresh outdated ${countyNounPlural}`
+                        : `Analyze ${progress.remaining} remaining ${countyNounPlural}`}
                 </button>
               </form>
             {:else}
               <p class="notice">
-                Analyzing counties uses your eBird sign-in — add it in
+                Analyzing {countyNounPlural} uses your eBird sign-in — add it
+                in
                 <a href="/settings">Settings</a>.
               </p>
             {/if}
           {:else if progress.remaining > 0 && data.isViewer}
             <p class="notice">
               {progress.current === 0
-                ? "The account owner hasn't analyzed this state's counties yet."
-                : "More counties can be analyzed by the account owner."}
+                ? `The account owner hasn't analyzed this region's ${countyNounPlural} yet.`
+                : `More ${countyNounPlural} can be analyzed by the account owner.`}
             </p>
           {/if}
         {/if}
@@ -498,13 +545,13 @@
           {@const unreported = data.countyRanking.length - reported.length}
           {#if reported.length === 0}
             <p>
-              Not reported in any analyzed county's checklists in
+              Not reported in any analyzed {countyNoun}'s checklists in
               {MONTH_NAMES[data.month - 1]}.
             </p>
           {:else}
             {#if adequate.length > 0}
               <p class="summary">
-                Best counties for {data.taxon.com_name} in
+                Best {countyNounPlural} for {data.taxon.com_name} in
                 {MONTH_NAMES[data.month - 1]}:
               </p>
               <ol class="ranked">
@@ -548,10 +595,9 @@
             {#if lowSampleCounties.length > 0}
               <details class="lown">
                 <summary>
-                  {lowSampleCounties.length} count{lowSampleCounties.length === 1
-                    ? "y"
-                    : "ies"} with small samples (fewer than 40 checklists) —
-                  not ranked
+                  {lowSampleCounties.length}
+                  {lowSampleCounties.length === 1 ? countyNoun : countyNounPlural}
+                  with small samples (fewer than 40 checklists) — not ranked
                 </summary>
                 <ul class="ranked">
                   {#each lowSampleCounties as c (c.code)}
@@ -581,17 +627,15 @@
             {/if}
             {#if unreported > 0}
               <p class="notice">
-                Not reported in {unreported} other analyzed count{unreported ===
-                1
-                  ? "y"
-                  : "ies"} that month.
+                Not reported in {unreported} other analyzed
+                {unreported === 1 ? countyNoun : countyNounPlural} that month.
               </p>
             {/if}
             {#if progress && progress.stale > 0}
               <p class="meta">
-                Includes {progress.stale} count{progress.stale === 1
-                  ? "y"
-                  : "ies"} from an older year window.
+                Includes {progress.stale}
+                {progress.stale === 1 ? countyNoun : countyNounPlural} from an
+                older year window.
               </p>
             {/if}
           {/if}
@@ -635,7 +679,7 @@
               >analyze 6 more</a
             >
           {/if}
-          · <a href={countyHref(null)}>close county</a>
+          · <a href={countyHref(null)}>close {countyNoun}</a>
         </p>
 
         {#if uncovered > 0 && !data.isViewer}
@@ -800,6 +844,12 @@
     margin: 0 0 10px;
   }
   .pick .row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .countrypick {
     display: flex;
     flex-direction: column;
     gap: 4px;

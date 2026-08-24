@@ -1,14 +1,26 @@
 import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { getEbirdApiKey, subregions, EbirdError } from "$server/ebird";
+import {
+  getEbirdApiKey,
+  subregions,
+  countries as ebirdCountries,
+  EbirdError,
+} from "$server/ebird";
 import { coverageFromMeta, recentFailures } from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
+import {
+  parseRegionCode,
+  isCountry,
+  childLevel,
+  parentOf,
+  type RegionLevel,
+} from "$lib/region-code";
 
-const STATE_CODE_RE = /^US-[A-Z]{2}$/;
+const DEFAULT_COUNTRY = "US";
 
 interface LoadedRow {
   loc_code: string;
@@ -50,21 +62,30 @@ export interface CountyBlock {
   hotspots: DataRow[];
 }
 
-/** One state's data grouped for the collapsible display (GBV request). */
+/** One region's data grouped for the collapsible display (GBV request).
+ * "state" is either a subnational1 region (a US state, a Norwegian fylke)
+ * or, for a country-level load, the whole country — level distinguishes
+ * the two (td-f1d6da). Field names kept from the US-only original to avoid
+ * churning the svelte template; they generalize to "region" throughout. */
 export interface StateGroup {
   stateCode: string;
   stateName: string;
   state: DataRow | null;
-  /** Counties (with their nested hotspots), sorted by name. */
+  /** Counties (with their nested hotspots), sorted by name. Only ever
+   * populated for subnational1-level groups — a country group's own
+   * children (subnational1 regions) land as their own sibling groups. */
   countyBlocks: CountyBlock[];
   /** Hotspots whose county isn't recorded (pre-0014 rows never re-cached). */
   stateHotspots: DataRow[];
   countiesLoaded: number;
   hotspotCount: number;
-  /** How many counties the state has in total (null when unknown). */
+  /** How many child regions the group has in total (null when unknown). */
   countyTotal: number | null;
-  /** Counties still fetchable (not current, not in failure cooldown). */
+  /** Child regions still fetchable (not current, not in failure cooldown). */
   countyRemaining: number | null;
+  countryCode: string;
+  countryName: string;
+  level: "country" | "subnational1";
 }
 
 interface FailedRow {
@@ -89,8 +110,8 @@ interface CorrectionRow {
 }
 
 // Inventory of stored barchart data. Reads Postgres (and the official-API
-// region-list cache for state names) — never ebird.org/barchartData.
-export const load: PageServerLoad = async ({ locals }) => {
+// region-list cache for country/region names) — never ebird.org/barchartData.
+export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
 
@@ -140,21 +161,30 @@ export const load: PageServerLoad = async ({ locals }) => {
   );
   const hasLogin = credsRow.rows[0]?.login_set === true;
 
-  // US states: populate the "Load a state" picker and translate region codes
-  // (US-ME → Maine) on failed rows. Cache-first with stale fallback.
-  let states: { code: string; name: string }[] = [];
+  // Countries: drives the picker + display names for country-level groups
+  // and non-US region labels. Cache-first with stale fallback (cs.md).
+  let countryList: { code: string; name: string }[] = [];
   let statesError: string | null = null;
   if (apiKey) {
     try {
-      states = (await subregions(apiKey, "US", "subnational1")).data;
+      countryList = (await ebirdCountries(apiKey)).data;
     } catch (err) {
       statesError =
         err instanceof EbirdError
           ? err.message
-          : "Could not load the state list.";
+          : "Could not load the country list.";
     }
   }
-  const stateName = new Map(states.map((s) => [s.code, s.name]));
+  const countryName = new Map(countryList.map((c) => [c.code, c.name]));
+
+  const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
+  let selectedCountry = DEFAULT_COUNTRY;
+  if (
+    isCountry(countryParam) &&
+    (countryList.length === 0 || countryName.has(countryParam))
+  ) {
+    selectedCountry = countryParam;
+  }
 
   const rows = loadedRes.rows.map((r) => ({
     row: {
@@ -171,19 +201,30 @@ export const load: PageServerLoad = async ({ locals }) => {
     regionCode: r.region_code,
   }));
 
-  // Group by state; within a state, hotspots nest under their county block
-  // (GBV 2026-08-14 — region_code holds the county for hotspots since 0014).
-  const STATE_RE = /^US-[A-Z]{2}$/;
-  const COUNTY_RE = /^US-[A-Z]{2}-\d{3}$/;
+  // Group by region; within a subnational1 region, hotspots nest under their
+  // subnational2 block (GBV 2026-08-14 — region_code holds it since 0014).
+  // A country-level load ("Entire Iceland") is its own sibling group keyed
+  // by the country code — its children (subnational1 regions), once
+  // analyzed, land as their OWN top-level sibling groups, not nested blocks
+  // (td-f1d6da edge case #2 — mirrors how subnational2 never becomes its
+  // own top-level group either, it always nests).
   const groups = new Map<string, StateGroup>();
-  const blocks = new Map<string, CountyBlock>(); // by county code
+  const blocks = new Map<string, CountyBlock>(); // by subnational2 code
   const orphanHotspots: DataRow[] = [];
-  const groupFor = (code: string): StateGroup => {
+  // Countries whose subnational1 name list we need to resolve display names
+  // for groups found below — always includes the selected country (picker).
+  const neededCountries = new Set<string>([selectedCountry]);
+
+  const groupFor = (
+    code: string,
+    level: RegionLevel,
+    countryCode: string,
+  ): StateGroup => {
     let g = groups.get(code);
     if (!g) {
       g = {
         stateCode: code,
-        stateName: stateName.get(code) ?? code,
+        stateName: level === "country" ? (countryName.get(code) ?? code) : code,
         state: null,
         countyBlocks: [],
         stateHotspots: [],
@@ -191,67 +232,142 @@ export const load: PageServerLoad = async ({ locals }) => {
         hotspotCount: 0,
         countyTotal: null,
         countyRemaining: null,
+        countryCode,
+        countryName: countryName.get(countryCode) ?? countryCode,
+        level: level === "country" ? "country" : "subnational1",
       };
       groups.set(code, g);
     }
     return g;
   };
-  const blockFor = (countyCode: string): CountyBlock => {
-    let b = blocks.get(countyCode);
+  const blockFor = (code: string, country: string): CountyBlock => {
+    let b = blocks.get(code);
     if (!b) {
       b = {
-        countyCode,
-        countyName: countyCode,
-        seat: countySeat(countyCode),
+        countyCode: code,
+        countyName: code,
+        seat: countySeat(code),
         mapQuery: "",
         county: null,
         hotspots: [],
       };
-      blocks.set(countyCode, b);
-      groupFor(countyCode.slice(0, 5)).countyBlocks.push(b);
+      blocks.set(code, b);
+      const parentCode = parentOf(code)!; // subnational2 always has a subnational1 parent
+      groupFor(parentCode, "subnational1", country).countyBlocks.push(b);
     }
     return b;
   };
   for (const { row, regionCode } of rows) {
-    if (row.locKind === "region" && STATE_RE.test(row.locCode)) {
-      groupFor(row.locCode).state = row;
-    } else if (row.locKind === "region" && COUNTY_RE.test(row.locCode)) {
-      const b = blockFor(row.locCode);
-      b.county = row;
-      b.countyName = row.locName;
-    } else if (row.locKind === "region") {
-      orphanHotspots.push(row); // unrecognized region shape — surface, don't hide
-    } else if (regionCode && COUNTY_RE.test(regionCode)) {
-      blockFor(regionCode).hotspots.push(row);
-    } else if (regionCode && STATE_RE.test(regionCode)) {
-      groupFor(regionCode).stateHotspots.push(row);
+    if (row.locKind === "region") {
+      const parsed = parseRegionCode(row.locCode);
+      if (parsed?.level === "subnational1") {
+        neededCountries.add(parsed.country);
+        groupFor(parsed.code, "subnational1", parsed.country).state = row;
+      } else if (parsed?.level === "subnational2") {
+        neededCountries.add(parsed.country);
+        const b = blockFor(parsed.code, parsed.country);
+        b.county = row;
+        b.countyName = row.locName;
+      } else if (parsed?.level === "country") {
+        groupFor(parsed.code, "country", parsed.country).state = row;
+      } else {
+        orphanHotspots.push(row); // unrecognized region shape — surface, don't hide
+      }
     } else {
-      orphanHotspots.push(row);
+      const parsed = regionCode ? parseRegionCode(regionCode) : null;
+      if (parsed?.level === "subnational2") {
+        neededCountries.add(parsed.country);
+        blockFor(parsed.code, parsed.country).hotspots.push(row);
+      } else if (parsed?.level === "subnational1") {
+        neededCountries.add(parsed.country);
+        groupFor(parsed.code, "subnational1", parsed.country).stateHotspots.push(row);
+      } else if (parsed?.level === "country") {
+        groupFor(parsed.code, "country", parsed.country).stateHotspots.push(row);
+      } else {
+        orphanHotspots.push(row);
+      }
     }
   }
+
+  // Resolve real subnational1 display names (one cache-first fetch per
+  // distinct country involved, not per group) and backfill group names.
+  const subnat1ByCountry = await Promise.all(
+    [...neededCountries].map(async (country) => {
+      if (!apiKey) return { country, list: [] as { code: string; name: string }[], error: null as string | null };
+      try {
+        return { country, list: (await subregions(apiKey, country, "subnational1")).data, error: null as string | null };
+      } catch (err) {
+        return {
+          country,
+          list: [] as { code: string; name: string }[],
+          error: err instanceof EbirdError ? err.message : "Could not load the region list.",
+        };
+      }
+    }),
+  );
+  const regionDisplayName = new Map<string, string>();
+  for (const { list } of subnat1ByCountry) {
+    for (const r of list) regionDisplayName.set(r.code, r.name);
+  }
+  for (const g of groups.values()) {
+    if (g.level === "subnational1") {
+      g.stateName = regionDisplayName.get(g.stateCode) ?? g.stateCode;
+    }
+  }
+  // The selected country's own subregion fetch also gates the picker —
+  // surface its error the same way the old single-country fetch did.
+  if (!statesError) {
+    statesError = subnat1ByCountry.find((s) => s.country === selectedCountry)?.error ?? null;
+  }
+  const selectedCountryRegions =
+    subnat1ByCountry.find((s) => s.country === selectedCountry)?.list ?? [];
+
   for (const g of groups.values()) {
     g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
     for (const b of g.countyBlocks) {
       b.mapQuery = countyMapQuery(b.countyCode, b.countyName, g.stateName);
     }
-    g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
     g.hotspotCount =
       g.stateHotspots.length +
       g.countyBlocks.reduce((n, b) => n + b.hotspots.length, 0);
   }
-  const stateGroups = [...groups.values()].sort((a, b) =>
-    a.stateName.localeCompare(b.stateName),
-  );
-  // County totals per loaded state (cache-first region lists) so each group
-  // can say "1 of 16 counties" and offer the analyze action (GBV: Maine had
-  // zero counties and no way to populate them from this page).
-  const countyNames = new Map<string, string>();
+  // US groups first, then by country display name, then by region name —
+  // keeps the US display byte-identical (design decision #3).
+  const stateGroups = [...groups.values()].sort((a, b) => {
+    const aUS = a.countryCode === "US";
+    const bUS = b.countryCode === "US";
+    if (aUS !== bUS) return aUS ? -1 : 1;
+    if (!aUS) {
+      const c = a.countryName.localeCompare(b.countryName);
+      if (c !== 0) return c;
+    }
+    return a.stateName.localeCompare(b.stateName);
+  });
+  // Child-region totals per loaded group (cache-first region lists) so each
+  // group can say "1 of 16 counties" and offer the analyze action (GBV:
+  // Maine had zero counties and no way to populate them from this page).
+  // Subnational1 groups' children are subnational2 (unchanged); a
+  // country-level group's children are subnational1 — those land as their
+  // OWN sibling groups once loaded, so "loaded" is counted by checking
+  // whether each child code already has a group with a stored row, not via
+  // countyBlocks (which only ever nests subnational2).
+  const countyNames = new Map<string, string>(); // subnational2 (or, for a
+  // country group's children, subnational1) code -> display name.
   if (apiKey) {
     await Promise.all(
       stateGroups.map(async (g) => {
+        const childLvl = childLevel(g.level);
+        if (!childLvl) {
+          g.countyTotal = null;
+          g.countyRemaining = null;
+          return;
+        }
         try {
-          const list = (await subregions(apiKey, g.stateCode, "subnational2"))
-            .data;
+          // childLvl is never "country" — g.level is always country|subnational1,
+          // so childLevel() only ever returns subnational1|subnational2 here.
+          const list = (
+            await subregions(apiKey, g.stateCode, childLvl as "subnational1" | "subnational2")
+          ).data;
           g.countyTotal = list.length;
           for (const c of list) countyNames.set(c.code, c.name);
           // Blocks created from hotspots alone get their county's real name.
@@ -261,6 +377,10 @@ export const load: PageServerLoad = async ({ locals }) => {
           g.countyBlocks.sort((a, b) =>
             a.countyName.localeCompare(b.countyName),
           );
+          g.countiesLoaded =
+            g.level === "country"
+              ? list.filter((c) => groups.get(c.code)?.state != null).length
+              : g.countyBlocks.filter((b) => b.county).length;
           const codes = list.map((c) => c.code);
           const [meta, attempts] = await Promise.all([
             frequencyMeta(codes),
@@ -279,25 +399,52 @@ export const load: PageServerLoad = async ({ locals }) => {
       }),
     );
   }
+  // Subnational1 groups compute countiesLoaded from their blocks even when
+  // the fetch above failed or the API key is absent (unchanged behavior).
+  for (const g of stateGroups) {
+    if (g.level === "subnational1" && g.countyTotal == null) {
+      g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
+    }
+  }
   const loadedRegionCodes = new Set(
     stateGroups.filter((g) => g.state).map((g) => g.stateCode),
   );
+  const wholeCountryLoaded =
+    groups.get(selectedCountry)?.level === "country" &&
+    groups.get(selectedCountry)?.state != null;
+
+  // US pinned first, then alphabetical by display name (AGY-accepted pin 2).
+  const sortedCountries = [...countryList].sort((a, b) => {
+    if (a.code === DEFAULT_COUNTRY) return -1;
+    if (b.code === DEFAULT_COUNTRY) return 1;
+    return a.name.localeCompare(b.name);
+  });
 
   return {
     stateGroups,
     orphanHotspots,
-    failed: failedRes.rows.map((r) => ({
-      locCode: r.loc_code,
-      lastAttemptAt: r.last_attempt_at,
-      error: r.error,
-      locName: r.loc_name,
-      // "Sears Island · Hancock, Maine" beats "L602509 · US-ME-009".
-      regionName: r.region_code
-        ? r.region_code.match(/^US-[A-Z]{2}-\d{3}$/)
-          ? `${countyNames.get(r.region_code) ?? r.region_code}, ${stateName.get(r.region_code.slice(0, 5)) ?? r.region_code.slice(0, 5)}`
-          : (stateName.get(r.region_code) ?? r.region_code)
-        : null,
-    })),
+    failed: failedRes.rows.map((r) => {
+      const parsed = r.region_code ? parseRegionCode(r.region_code) : null;
+      let regionName: string | null = null;
+      if (parsed?.level === "subnational2") {
+        const parent = parentOf(parsed.code)!;
+        // "Sears Island · Hancock, Maine" beats "L602509 · US-ME-009".
+        regionName = `${countyNames.get(parsed.code) ?? parsed.code}, ${regionDisplayName.get(parent) ?? countryName.get(parent) ?? parent}`;
+      } else if (parsed?.level === "subnational1") {
+        regionName = regionDisplayName.get(parsed.code) ?? parsed.code;
+      } else if (parsed?.level === "country") {
+        regionName = countryName.get(parsed.code) ?? parsed.code;
+      } else if (r.region_code) {
+        regionName = r.region_code;
+      }
+      return {
+        locCode: r.loc_code,
+        lastAttemptAt: r.last_attempt_at,
+        error: r.error,
+        locName: r.loc_name,
+        regionName,
+      };
+    }),
     frequencyCorrections: correctionsRes.rows.map((r) => ({
       locCode: r.loc_code,
       locName: r.loc_name,
@@ -309,8 +456,11 @@ export const load: PageServerLoad = async ({ locals }) => {
       sampleSize: Number(r.sample_size),
       detectedAt: r.detected_at,
     })),
-    states: states.filter((s) => !loadedRegionCodes.has(s.code)),
+    countries: sortedCountries,
+    selectedCountry,
+    states: selectedCountryRegions.filter((s) => !loadedRegionCodes.has(s.code)),
     statesError,
+    wholeCountryLoaded,
     hasApiKey: !!apiKey,
     hasLogin,
     isViewer,
@@ -320,16 +470,19 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   /**
-   * Load a whole state's frequency data (1 eBird request). The code is
-   * re-validated against the official state list — form values are never
+   * Load a whole region's frequency data (1 eBird request) — a subnational1
+   * region (a US state, a Norwegian fylke) or, for countries with no/coarse
+   * subnational1, the whole country ("Entire Iceland"). The code is
+   * re-validated against the official eBird list — form values are never
    * trusted as fetch targets.
    */
   loadRegion: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const regionCode = (form.get("region") ?? "").toString().trim();
+    const regionCode = (form.get("region") ?? "").toString();
+    const parsed = parseRegionCode(regionCode);
 
-    if (!STATE_CODE_RE.test(regionCode)) {
+    if (!parsed || parsed.level === "subnational2") {
       return fail(400, { error: "Unrecognized region code." });
     }
     const apiKey = await getEbirdApiKey(userId);
@@ -341,9 +494,11 @@ export const actions: Actions = {
     let name: string | null = null;
     try {
       name =
-        (await subregions(apiKey, "US", "subnational1")).data.find(
-          (s) => s.code === regionCode,
-        )?.name ?? null;
+        parsed.level === "country"
+          ? ((await ebirdCountries(apiKey)).data.find((c) => c.code === parsed.code)?.name ?? null)
+          : ((await subregions(apiKey, parsed.country, "subnational1")).data.find(
+              (s) => s.code === parsed.code,
+            )?.name ?? null);
     } catch (err) {
       return fail(502, {
         error:
@@ -352,32 +507,41 @@ export const actions: Actions = {
             : "Could not verify the region against eBird.",
       });
     }
-    if (!name) return fail(400, { error: "That region is not a US state." });
+    if (!name) return fail(400, { error: "eBird doesn't list that region." });
 
+    const label =
+      parsed.level === "country" ? `${name} — countrywide` : `${name} statewide`;
     const { jobId, deduped } = await enqueueJob({
       type: "load_region",
       payload: {
-        locs: [{ code: regionCode, kind: "region", name, regionCode }],
+        locs: [{ code: parsed.code, kind: "region", name, regionCode: parsed.code }],
       },
-      dedupKey: dedupKeys.loadRegion(regionCode),
+      dedupKey: dedupKeys.loadRegion(parsed.code),
       requestedBy: userId,
-      label: `${name} statewide`,
+      label,
     });
-    return { queued: { jobId, deduped, label: `${name} statewide` } };
+    return { queued: { jobId, deduped, label } };
   },
 
   /**
-   * Analyze ALL of a state's counties as one background job — county data is
+   * Analyze ALL of a region's children as one background job — child data is
    * species-agnostic, so it can be populated from this page as well as from
    * the species forecast. Enqueue-time resolution (CODEX1 #1): the official
-   * county list is snapshotted into the payload here.
+   * child list is snapshotted into the payload here. For a subnational1
+   * region the children are subnational2 counties; for a country they're
+   * subnational1 regions.
    */
   analyzeCounties: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const regionCode = (form.get("region") ?? "").toString().trim();
-    if (!STATE_CODE_RE.test(regionCode)) {
+    const regionCode = (form.get("region") ?? "").toString();
+    const parsed = parseRegionCode(regionCode);
+    if (!parsed || parsed.level === "subnational2") {
       return fail(400, { error: "Unrecognized region code." });
+    }
+    const childLvl = childLevel(parsed.level);
+    if (!childLvl) {
+      return fail(400, { error: "That region has no child regions to analyze." });
     }
     const apiKey = await getEbirdApiKey(userId);
     if (!apiKey) {
@@ -386,36 +550,45 @@ export const actions: Actions = {
       });
     }
     let regionName: string | null = null;
-    let counties: { code: string; name: string }[];
+    let children: { code: string; name: string }[];
     try {
       regionName =
-        (await subregions(apiKey, "US", "subnational1")).data.find(
-          (s) => s.code === regionCode,
-        )?.name ?? null;
+        parsed.level === "country"
+          ? ((await ebirdCountries(apiKey)).data.find((c) => c.code === parsed.code)?.name ?? null)
+          : ((await subregions(apiKey, parsed.country, "subnational1")).data.find(
+              (s) => s.code === parsed.code,
+            )?.name ?? null);
       if (!regionName) {
-        return fail(400, { error: "That region is not a US state." });
+        return fail(400, { error: "eBird doesn't list that region." });
       }
-      counties = (await subregions(apiKey, regionCode, "subnational2")).data;
+      // childLvl is never "country" — parsed.level here is country|subnational1.
+      children = (
+        await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
+      ).data;
     } catch (err) {
       return fail(502, {
         error:
           err instanceof EbirdError
             ? err.message
-            : "Could not list counties for that state.",
+            : "Could not list child regions for that region.",
       });
     }
-    if (counties.length === 0) {
-      return fail(404, { error: "eBird lists no counties for that state." });
+    if (children.length === 0) {
+      return fail(404, { error: "eBird lists no child regions for that region." });
     }
 
+    // "Counties" wording only for US states — every other case (non-US
+    // subnational1 regions, or any country-level load) says "regions".
+    const noun = parsed.level === "subnational1" && parsed.country === "US" ? "counties" : "regions";
+    const label = `${children.length} ${regionName} ${noun}`;
     const { jobId, deduped } = await enqueueJob({
       type: "analyze_counties",
-      payload: { regionCode, regionName, counties },
-      dedupKey: dedupKeys.analyzeCounties(regionCode),
+      payload: { regionCode: parsed.code, regionName, counties: children },
+      dedupKey: dedupKeys.analyzeCounties(parsed.code),
       requestedBy: userId,
-      label: `${counties.length} ${regionName} counties`,
+      label,
     });
-    return { queued: { jobId, deduped, label: `${counties.length} ${regionName} counties` } };
+    return { queued: { jobId, deduped, label } };
   },
 
   /**

@@ -78,11 +78,15 @@ async function insertFreq(code: string, week: number, freq: number) {
 const cleanup = async () => {
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'TESTX-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'US-QQ-%'");
+  await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'ZZ%'");
   await query(
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'TESTX-%'",
   );
   await query(
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'US-QQ-%'",
+  );
+  await query(
+    "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'ZZ%'",
   );
 };
 
@@ -291,6 +295,34 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     expect(ranks[0].likely).toBe(0);
     expect(ranks[0].possible).toBe(1);
     expect(ranks[0].n).toBe(400);
+  });
+
+  it("rankCountiesForNeeds handles variable-width codes and excludes grandchildren under a country-level code (td-f1d6da)", async () => {
+    // "ZZ" is a country-level code with two subnational1 children of
+    // DIFFERENT segment widths ("ZZ-A", "ZZ-ABC") — the old US-only regex
+    // assumed a fixed 2-letter state / 3-digit county shape and would have
+    // rejected both. "ZZ-A-01" is a subnational2 GRANDCHILD of "ZZ": a bare
+    // `LIKE 'ZZ-%'` would also match it, so it must be excluded by the
+    // parentOf(loc_code) === regionCode TS filter, not double-counted as a
+    // direct child of "ZZ".
+    await insertLoc("ZZ-A", janSamples(100, 100, 100, 100));
+    await insertFreq("ZZ-A", 1, 0.9); // weighted: 0.9*100/400 = 22.5% -> likely
+    await insertLoc("ZZ-ABC", janSamples(100, 100, 100, 100));
+    await insertFreq("ZZ-ABC", 1, 0.3); // weighted: 0.3*100/400 = 7.5% -> possible
+    await insertLoc("ZZ-A-01", janSamples(100, 100, 100, 100));
+    await insertFreq("ZZ-A-01", 1, 1.0); // grandchild — must not appear at all
+
+    const ranks = await rankCountiesForNeeds(0, "ZZ", 1);
+    expect(ranks.map((r) => r.code).sort()).toEqual(["ZZ-A", "ZZ-ABC"]);
+    const byCode = new Map(ranks.map((r) => [r.code, r]));
+    expect(byCode.get("ZZ-A")?.likely).toBe(1);
+    expect(byCode.get("ZZ-A")?.possible).toBe(0);
+    expect(byCode.get("ZZ-ABC")?.likely).toBe(0);
+    expect(byCode.get("ZZ-ABC")?.possible).toBe(1);
+  });
+
+  it("rankCountiesForNeeds returns [] for a subnational2 code (never a valid target)", async () => {
+    expect(await rankCountiesForNeeds(0, "US-QQ-001", 1)).toEqual([]);
   });
 });
 

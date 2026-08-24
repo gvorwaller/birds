@@ -375,6 +375,15 @@ export async function subregions(
 	);
 }
 
+/** All eBird countries (ref/region/list/country/world) — drives the country
+ * picker for international region loads (td-f1d6da). Same cache/TTL shape
+ * as subregions(): political geography barely changes. */
+export async function countries(apiKey: string): Promise<CachedResult<EbirdRegion[]>> {
+	return cachedFetch('regions:country:world', REGION_TTL_MIN, () =>
+		ebirdFetch<EbirdRegion[]>('/ref/region/list/country/world?fmt=json', apiKey)
+	);
+}
+
 interface TaxonEntry {
 	sciName: string;
 	comName: string;

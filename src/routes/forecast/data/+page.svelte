@@ -1,13 +1,44 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
-  import { invalidateAll } from "$app/navigation";
+  import { goto, invalidateAll } from "$app/navigation";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { fmtNextScan } from "$lib/next-scan";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Country picker (td-f1d6da): switching countries reloads the loader with
+  // the new ?country= so the region select + stored-data labels update —
+  // no client-side eBird calls, no new endpoint.
+  const selectedCountryName = $derived(
+    data.countries.find((c) => c.code === data.selectedCountry)?.name ??
+      data.selectedCountry,
+  );
+  function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
+    void goto(`?country=${e.currentTarget.value}`, {
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
+  /** "county"/"counties" for US states; "region"/"regions" everywhere else
+   * (non-US subnational1 regions, and every country-level group). */
+  function countyNoun(g: PageData["stateGroups"][number]): "county" | "region" {
+    return g.level === "subnational1" && g.countryCode === "US" ? "county" : "region";
+  }
+  function countyWord(g: PageData["stateGroups"][number]): string {
+    const noun = countyNoun(g);
+    const singular = g.countiesLoaded === 1 && g.countyTotal == null;
+    if (singular) return noun;
+    return noun === "county" ? "counties" : "regions";
+  }
+  function groupStatusLabel(g: PageData["stateGroups"][number]): string | null {
+    if (!g.state) return null;
+    if (g.level === "country") return g.state.current ? null : "outdated";
+    return g.state.current ? "statewide" : "statewide (outdated)";
+  }
 
   let refreshing = $state<string | null>(null);
   let reloading = $state(false);
@@ -426,7 +457,7 @@
 <div class="page">
   <h1>Hotspots &amp; data</h1>
   <p class="intro">
-    Every hotspot, county, and state this app has loaded — how current the
+    Every hotspot, county, and region this app has loaded — how current the
     data is, what's running, and what failed. Data refreshes matter only once
     a year, when a new complete year of checklists becomes available.
     <a href="/forecast">← Back to Forecast</a>
@@ -437,7 +468,7 @@
     <input
       class="hubsearch"
       type="search"
-      placeholder="Type a hotspot, county, or state name"
+      placeholder="Type a hotspot, county, or region name"
       aria-label="Search stored hotspots and regions"
       bind:value={hubSearch}
     />
@@ -445,7 +476,8 @@
       {#if hubHits.length === 0}
         <p class="notice">
           Nothing stored matches “{hubSearch.trim()}”. To bring a new area in,
-          load hotspots from <a href="/forecast">Forecast</a> or a state below.
+          load hotspots from <a href="/forecast">Forecast</a> or a region
+          below.
         </p>
       {:else}
         <ul class="hits">
@@ -647,15 +679,27 @@
 
   {#if !data.isViewer}
     <section class="card">
-      <h2>Load a state</h2>
+      <h2>Load a region</h2>
       {#if !data.hasApiKey}
         <p class="notice">
-          The state list needs an eBird API key — add one in
+          The region list needs an eBird API key — add one in
           <a href="/settings">Settings</a>.
         </p>
       {:else if data.statesError}
         <p class="error">{data.statesError}</p>
       {:else}
+        <div class="countrypick">
+          <label for="country-select">Country</label>
+          <select
+            id="country-select"
+            value={data.selectedCountry}
+            onchange={onCountryChange}
+          >
+            {#each data.countries as c (c.code)}
+              <option value={c.code}>{c.name}</option>
+            {/each}
+          </select>
+        </div>
         <form
           method="POST"
           action="?/loadRegion"
@@ -669,7 +713,12 @@
           }}
         >
           <select name="region" required>
-            <option value="">Choose a state…</option>
+            <option value="">Choose a region…</option>
+            {#if data.selectedCountry !== "US" && !data.wholeCountryLoaded}
+              <option value={data.selectedCountry}
+                >Entire {selectedCountryName}</option
+              >
+            {/if}
             {#each data.states as s (s.code)}
               <option value={s.code}>{s.name}</option>
             {/each}
@@ -681,8 +730,8 @@
           </button>
         </form>
         <p class="notice">
-          Statewide data powers the Species forecast month curves. Already
-          loaded states aren't listed.
+          Region data powers the Species forecast month curves. Already
+          loaded regions aren't listed.
         </p>
       {/if}
     </section>
@@ -691,8 +740,8 @@
   <section class="card">
     <div class="section-head">
       <h2>
-        Loaded data ({data.stateGroups.length} state{data.stateGroups.length ===
-        1
+        Loaded data ({data.stateGroups.length} region{data.stateGroups
+          .length === 1
           ? ""
           : "s"})
       </h2>
@@ -706,7 +755,7 @@
       </button>
     </div>
     {#if data.stateGroups.length === 0}
-      <p class="notice">Nothing loaded yet — load a state above.</p>
+      <p class="notice">Nothing loaded yet — load a region above.</p>
     {:else}
       {#each data.stateGroups as g (g.stateCode)}
         <details
@@ -715,21 +764,28 @@
           ontoggle={(e) => toggleState(g.stateCode, e.currentTarget.open)}
         >
           <summary>
-            <strong>{g.stateName}</strong>
+            <strong
+              >{g.level === "country"
+                ? `${g.stateName} — countrywide`
+                : g.stateName}</strong
+            >
+            {#if g.level === "subnational1" && g.countryCode !== "US"}
+              <span class="groupmeta">· {g.countryName}</span>
+            {/if}
             <span class="groupmeta">
-              {#if g.state}
-                statewide{g.state.current ? "" : " (outdated)"} ·
+              {#if groupStatusLabel(g)}
+                {groupStatusLabel(g)} ·
               {/if}
               {g.countiesLoaded}{g.countyTotal != null
                 ? ` of ${g.countyTotal}`
-                : ""} count{g.countiesLoaded === 1 && g.countyTotal == null
-                ? "y"
-                : "ies"}
+                : ""}
+              {countyWord(g)}
               · {g.hotspotCount} hotspot{g.hotspotCount === 1 ? "" : "s"}
             </span>
           </summary>
           {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
             {@const missing = g.countyRemaining ?? 0}
+            {@const noun = countyNoun(g)}
             {#if data.hasLogin}
               <form
                 method="POST"
@@ -747,25 +803,33 @@
                 <button type="submit" disabled={refreshing !== null}>
                   {refreshing === `counties-${g.stateCode}`
                     ? "Queueing…"
-                    : `Analyze ${missing} remaining ${missing === 1 ? "county" : "counties"}`}
+                    : `Analyze ${missing} remaining ${missing === 1 ? noun : noun === "county" ? "counties" : "regions"}`}
                 </button>
               </form>
             {:else}
               <p class="notice">
-                Analyzing counties uses your eBird sign-in — add it in
+                Analyzing {noun === "county" ? "counties" : "regions"} uses your
+                eBird sign-in — add it in
                 <a href="/settings">Settings</a>.
               </p>
             {/if}
           {/if}
           {#if g.state}
-            {@render dataTable("Statewide", [g.state])}
+            {@render dataTable(
+              g.level === "country" ? "Countrywide" : "Statewide",
+              [g.state],
+            )}
           {/if}
           {#if g.countyBlocks.length > 0}
             <div class="tablewrap">
               <table>
                 <thead>
                   <tr>
-                    <th>County · hotspots</th>
+                    <th
+                      >{countyNoun(g) === "county"
+                        ? "County"
+                        : "Region"} · hotspots</th
+                    >
                     <th>Years</th>
                     <th>Species</th>
                     <th>Loaded</th>
@@ -815,7 +879,7 @@
                       {:else}
                         <!-- Hotspots loaded before their county was analyzed -->
                         <td colspan={data.isViewer ? 3 : 4} class="muted"
-                          >county not analyzed yet</td
+                          >{countyNoun(g)} not analyzed yet</td
                         >
                       {/if}
                     </tr>
@@ -831,8 +895,8 @@
           {/if}
           {#if g.stateHotspots.length > 0}
             <p class="notice">
-              Hotspots below have no recorded county — refreshing them (or the
-              next area load) files them correctly.
+              Hotspots below have no recorded {countyNoun(g)} — refreshing them
+              (or the next area load) files them correctly.
             </p>
             {@render dataTable("Hotspot", g.stateHotspots)}
           {/if}
@@ -843,7 +907,7 @@
           <summary>
             <strong>Other hotspots</strong>
             <span class="groupmeta">
-              {data.orphanHotspots.length} without a recorded state — Forecast
+              {data.orphanHotspots.length} without a recorded region — Forecast
               near the hotspot to record it
             </span>
           </summary>
@@ -1175,6 +1239,28 @@
   }
   .region {
     color: var(--muted);
+  }
+  .countrypick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .countrypick label {
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .countrypick select {
+    flex: 1;
+    min-width: 200px;
+    font-size: 16px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    min-height: 48px;
   }
   .loadstate {
     display: flex;

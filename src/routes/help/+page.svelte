@@ -249,12 +249,14 @@
 						month. The <em>eBird ↗</em> badge still opens eBird itself.
 					</li>
 				</ul>
-				<h3>Where can I find this bird? (species + state)</h3>
+				<h3>Where can I find this bird? (species + region)</h3>
 				<ul>
 					<li>
-						Species search is bounded to birds actually reported in the
-						selected state, most frequent first — type "storm petrel" and you
-						get the four Florida ones, not the world's twenty-odd.
+						A <strong>Country</strong> picker sits above the region select — it
+						defaults to the US, but any of eBird's countries works. Species
+						search is bounded to birds actually reported in the selected
+						region, most frequent first — type "storm petrel" and you get the
+						four Florida ones, not the world's twenty-odd.
 					</li>
 					<li>
 						You get a month-by-month chart with the best month called out —
@@ -268,10 +270,10 @@
 						April") and the <strong>good window</strong> ("good Dec–Mar"):
 						every month within 80% of the peak, since trips rarely land on the
 						single best month.
-						<strong>Analyze all N counties</strong> queues one background job
-						for the whole state (one eBird request per county, cached for the
-						year) — results stream in as counties land, and you don't have to
-						stay on the page.
+						<strong>Analyze all N counties</strong> (or "regions" outside the
+						US) queues one background job for the whole region (one eBird
+						request per county, cached for the year) — results stream in as
+						counties land, and you don't have to stay on the page.
 					</li>
 					<li>
 						Tapping a county ranks its top hotspots (picked by species count +
@@ -298,17 +300,22 @@
 						<strong>Hotspots &amp; data</strong> (the page behind the coverage
 						pill's <em>details</em> link) is the inventory <em>and</em> the
 						load hub. A <strong>search box</strong> at the top finds any
-						stored hotspot, county, or state by name and shows its status —
+						stored hotspot, county, or region by name and shows its status —
 						hotspot names there (and throughout the tree) open their own
 						page. Background loads show live progress with an
 						<strong>Activity</strong> feed per load (which location just
 						loaded, which failed and why), Cancel, and recent history; below,
-						states expand to counties, counties to their hotspots, each row
+						regions expand to counties, counties to their hotspots, each row
 						showing its year span, species count (with any unmatched
 						bar-chart rows), load date, and a Refresh; failed loads keep a
-						Retry. Load new states and analyze counties from here too. Note:
-						eBird's bar-chart export can't tell provisional or escaped-exotic
-						records apart, so those are included in frequencies.
+						Retry. Load new regions and analyze counties from here too — pick
+						a <strong>Country</strong> above the region select to load
+						anywhere eBird covers; countries with coarse or no state-level
+						divisions offer an <strong>Entire {'{Country}'}</strong> whole-country
+						load instead (not offered for the US, whose bar-chart export would
+						be disproportionate). Note: eBird's bar-chart export can't tell
+						provisional or escaped-exotic records apart, so those are included
+						in frequencies.
 					</li>
 					<li>
 						Species pages show a <strong>Best time of year</strong> chart with

@@ -542,7 +542,7 @@ export interface LocToEnsure {
 	code: string;
 	kind: 'region' | 'hotspot';
 	name: string;
-	/** State/province of a hotspot (e.g. 'US-ME'); the code itself for regions. */
+	/** Containing region of a hotspot (e.g. 'US-ME', 'NO-03'); the code itself for regions. */
 	regionCode?: string | null;
 }
 

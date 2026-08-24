@@ -21,6 +21,7 @@ import {
 import { hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
+import { countryOf, isCountry, isSubnational1, parentOf } from '$lib/region-code';
 
 /**
  * Months whose 4-week checklist total is below this are excluded from
@@ -764,11 +765,12 @@ export async function forecastNeedsNear(
 	const fetchDates = analyzed.filter((a) => a.fetchedAt).map((a) => a.fetchedAt!);
 	const usedMetas = withData.map((id) => meta.get(id)!);
 	const rawRegion = majorityRegionCode(loaded.length > 0 ? loaded : inRange);
-	const regionCode = rawRegion && /^US-[A-Z]{2}$/.test(rawRegion) ? rawRegion : null;
+	const regionCode = rawRegion && isSubnational1(rawRegion) ? rawRegion : null;
 	let regionName: string | null = null;
 	if (regionCode) {
 		try {
-			const states = (await subregions(apiKey, 'US', 'subnational1')).data;
+			const parentCountry = countryOf(regionCode)!;
+			const states = (await subregions(apiKey, parentCountry, 'subnational1')).data;
 			regionName = states.find((s) => s.code === regionCode)?.name ?? null;
 		} catch {
 			regionName = null;
@@ -1020,19 +1022,22 @@ export async function rankCountiesForNeeds(
 	month: number,
 	seen?: ReadonlySet<string>
 ): Promise<CountyNeedsRank[]> {
-	if (!/^US-[A-Z]{2}$/.test(regionCode)) return [];
+	if (!isSubnational1(regionCode) && !isCountry(regionCode)) return [];
 	const { from, to } = monthWeeks(month);
-	const [counties, seenResolved] = await Promise.all([
+	const [countiesRaw, seenResolved] = await Promise.all([
 		query<{ loc_code: string; loc_name: string }>(
 			`SELECT loc_code, loc_name FROM frequency_fetch
 			  WHERE loc_kind = 'region' AND loc_code LIKE $1`,
-			[`${regionCode}-___`]
+			[`${regionCode}-%`]
 		),
 		seen ?? seenSet(userId)
 	]);
-	if (counties.rows.length === 0) return [];
-	const codes = counties.rows.map((c) => c.loc_code);
-	const names = new Map(counties.rows.map((c) => [c.loc_code, c.loc_name]));
+	// LIKE alone also matches grandchildren under a country-level code (e.g.
+	// 'US-FL-057' under 'US') — keep only direct children of regionCode.
+	const counties = countiesRaw.rows.filter((c) => parentOf(c.loc_code) === regionCode);
+	if (counties.length === 0) return [];
+	const codes = counties.map((c) => c.loc_code);
+	const names = new Map(counties.map((c) => [c.loc_code, c.loc_name]));
 	const r = await query<{ loc_code: string; species_code: string; freq: number | null; n: number }>(
 		`SELECT ff.loc_code, sp.species_code,
 		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
@@ -1167,8 +1172,9 @@ export interface SpeciesTeaserPick {
 }
 
 /**
- * Among loaded US states, pick the one where this species is most findable.
- * One query for every stored US-XX row — no N+1.
+ * Among loaded subnational1 regions and whole-country loads, pick the one
+ * where this species is most findable. One query for every stored
+ * countrywide or subnational1 row (e.g. 'US-FL', 'NO-03', 'IS') — no N+1.
  */
 export async function pickSpeciesTeaserState(
 	speciesCode: string
@@ -1184,7 +1190,7 @@ export async function pickSpeciesTeaserState(
 		   FROM frequency_fetch ff
 		   LEFT JOIN species_frequency sf
 		     ON sf.loc_code = ff.loc_code AND sf.species_code = $1
-		  WHERE ff.loc_kind = 'region' AND ff.loc_code ~ '^US-[A-Z]{2}$'`,
+		  WHERE ff.loc_kind = 'region' AND ff.loc_code ~ '^[A-Z]{2}(-[^-]+)?$'`,
 		[speciesCode]
 	);
 	if (r.rows.length === 0) return null;

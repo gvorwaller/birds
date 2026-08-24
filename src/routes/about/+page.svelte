@@ -133,6 +133,12 @@
 								<strong>Universal Species Search</strong> — Zero-empty search covering the full
 								eBird taxonomy by common name, scientific name, or four-letter code.
 							</li>
+							<li>
+								<strong>International Region Loads</strong> — A Country picker on the forecast
+								data and species pages now reaches any of eBird's countries, not just US states;
+								countries with coarse or no state-level divisions can load a single "Entire
+								{'{Country}'}" whole-country dataset instead.
+							</li>
 						</ul>
 					</div>
 				{/if}

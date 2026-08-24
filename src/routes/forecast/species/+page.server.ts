@@ -5,6 +5,7 @@ import {
   getEbirdApiKey,
   hotspotsInRegion,
   subregions,
+  countries as ebirdCountries,
   EbirdError,
   type EbirdHotspot,
 } from "$server/ebird";
@@ -17,6 +18,13 @@ import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
 import {
+  parseRegionCode,
+  isCountry,
+  childLevel,
+  parentOf,
+  regionLevel,
+} from "$lib/region-code";
+import {
   selectCountyHotspots,
   calendarMonth,
   COUNTY_HOTSPOT_LIMIT,
@@ -28,8 +36,6 @@ import {
   type RankedLoc,
 } from "$server/forecast";
 
-const STATE_CODE_RE = /^US-[A-Z]{2}$/;
-const COUNTY_CODE_RE = /^US-[A-Z]{2}-\d{3}$/;
 const SPECIES_CODE_RE = /^[a-z0-9]{4,12}$/;
 
 interface SpeciesMatch {
@@ -76,20 +82,45 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   );
   const hasLogin = credsRow.rows[0]?.login_set === true;
 
-  // US states via the official API (cache-first, 30-day TTL, stale fallback).
-  let states: { code: string; name: string }[] = [];
-  let statesStale = false;
+  // Countries (world list), for the country picker + country-level region
+  // validation. Cache-first with stale fallback (cs.md).
+  let countryList: { code: string; name: string }[] = [];
   let statesError: string | null = null;
   if (apiKey) {
     try {
-      const r = await subregions(apiKey, "US", "subnational1");
+      countryList = (await ebirdCountries(apiKey)).data;
+    } catch (err) {
+      statesError =
+        err instanceof EbirdError
+          ? err.message
+          : "Could not load the country list.";
+    }
+  }
+
+  // Country param: explicit ?country=, else the selected region's own
+  // country (deep links keep working), else US.
+  const countryParamRaw = (url.searchParams.get("country") ?? "").trim().toUpperCase();
+  let country = countryParamRaw;
+  if (!country) {
+    const parsedRegion = regionParam ? parseRegionCode(regionParam) : null;
+    country = parsedRegion?.country ?? "US";
+  }
+  if (!isCountry(country)) country = "US";
+
+  // Subnational1 regions of the selected country (cache-first, 30-day TTL,
+  // stale fallback) — drives the region picker.
+  let states: { code: string; name: string }[] = [];
+  let statesStale = false;
+  if (apiKey && !statesError) {
+    try {
+      const r = await subregions(apiKey, country, "subnational1");
       states = r.data;
       statesStale = r.stale;
     } catch (err) {
       statesError =
         err instanceof EbirdError
           ? err.message
-          : "Could not load the state list.";
+          : "Could not load the region list.";
     }
   }
 
@@ -111,28 +142,36 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Selected region, validated by syntax + membership in the state list.
+  // Selected region, validated by syntax + membership in the country's
+  // region list (subnational1) or the world country list (country-level —
+  // a whole-country load, e.g. "IS").
   let region: { code: string; name: string } | null = null;
   let regionError: string | null = null;
   if (regionParam) {
-    if (!STATE_CODE_RE.test(regionParam)) {
+    const parsed = parseRegionCode(regionParam);
+    if (!parsed || parsed.level === "subnational2") {
       regionError = "Unrecognized region code.";
-    } else {
-      const match = states.find((s) => s.code === regionParam);
+    } else if (parsed.level === "country") {
+      const match = countryList.find((c) => c.code === parsed.code);
       if (match) region = match;
-      else if (states.length > 0) regionError = "That region is not a US state.";
-      // With no state list (no API key / API down) fall back to syntax-valid:
-      // cached forecast data can still render read-only.
-      else region = { code: regionParam, name: regionParam };
+      else if (countryList.length > 0) regionError = "eBird doesn't list that region.";
+      // With no country list (no API key / API down) fall back to
+      // syntax-valid: cached forecast data can still render read-only.
+      else region = { code: parsed.code, name: parsed.code };
+    } else {
+      const match = states.find((s) => s.code === parsed.code);
+      if (match) region = match;
+      else if (states.length > 0) regionError = "eBird doesn't list that region.";
+      else region = { code: parsed.code, name: parsed.code };
     }
   }
 
   // Species search (server-side, taxonomy cache only). Word gaps become
   // wildcards so "storm petrel" finds "Wilson's Storm-Petrel", "screech owl"
-  // finds "Eastern Screech-Owl", etc. When the selected state's data is
+  // finds "Eastern Screech-Owl", etc. When the selected region's data is
   // loaded, results are BOUNDED to species actually reported there, ordered
   // by how frequently they occur — "which storm-petrel?" answers itself.
-  // Falls back to the full taxonomy (flagged) when nothing matches in-state.
+  // Falls back to the full taxonomy (flagged) when nothing matches in-region.
   let speciesMatches: SpeciesMatch[] = [];
   let searchScope: "state" | "all" = "all";
   let searchFellBack = false;
@@ -196,7 +235,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     monthParam ?? forecast?.best?.month ?? calendarMonth();
 
   // ---- County analysis (cached reads only) ------------------------------
+  // "County" here means the region's direct children: subnational2 counties
+  // under a subnational1 region (unchanged US behavior), or subnational1
+  // regions under a whole-country region (td-f1d6da — e.g. Norway's fylker
+  // under a countrywide "NO" load).
   const newestYear = lastCompleteYear();
+  const regionChildLevel = region ? childLevel(regionLevel(region.code)!) : null;
   let counties: { code: string; name: string }[] = [];
   let countyError: string | null = null;
   let countyCoverage: {
@@ -212,15 +256,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   })[] = [];
   let countyPeaks: Record<string, { month: number; freq: number }> = {};
   let countyDataYears: { begin: number; end: number } | null = null;
-  if (taxon && region) {
+  if (taxon && region && regionChildLevel) {
     if (apiKey) {
       try {
-        counties = (await subregions(apiKey, region.code, "subnational2")).data;
+        // regionChildLevel is never "country" — it is childLevel() of a
+        // country|subnational1 region, i.e. always subnational1|subnational2.
+        counties = (
+          await subregions(apiKey, region.code, regionChildLevel as "subnational1" | "subnational2")
+        ).data;
       } catch (err) {
         countyError =
           err instanceof EbirdError
             ? err.message
-            : "Could not load the county list from eBird — try again shortly.";
+            : "Could not load the region list from eBird — try again shortly.";
       }
     }
     if (counties.length === 0) {
@@ -228,12 +276,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         `SELECT loc_code, loc_name FROM frequency_fetch
           WHERE loc_kind = 'region' AND loc_code LIKE $1
           ORDER BY loc_name`,
-        [`${region.code}-___`],
+        [`${region.code}-%`],
       );
-      counties = stored.rows.map((r) => ({
-        code: r.loc_code,
-        name: r.loc_name,
-      }));
+      // LIKE alone also matches grandchildren under a country-level region
+      // (e.g. 'US-FL-057' under 'US') — keep only direct children.
+      counties = stored.rows
+        .filter((r) => parentOf(r.loc_code) === region!.code)
+        .map((r) => ({
+          code: r.loc_code,
+          name: r.loc_name,
+        }));
     }
     if (counties.length > 0) {
       const codes = counties.map((c) => c.code);
@@ -308,7 +360,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     maxLimit: number;
     totalInCounty: number;
   } | null = null;
-  if (countyParam && COUNTY_CODE_RE.test(countyParam) && region) {
+  if (
+    countyParam &&
+    region &&
+    regionChildLevel &&
+    regionLevel(countyParam) === regionChildLevel &&
+    countyParam.startsWith(`${region.code}-`)
+  ) {
     const found = counties.find((c) => c.code === countyParam) ?? null;
     county = found
       ? {
@@ -360,6 +418,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
+  // US pinned first, then alphabetical by display name (AGY-accepted pin 2).
+  const sortedCountries = [...countryList].sort((a, b) => {
+    if (a.code === "US") return -1;
+    if (b.code === "US") return 1;
+    return a.name.localeCompare(b.name);
+  });
+
   return {
     q,
     speciesMatches,
@@ -369,6 +434,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     speciesError,
     region,
     regionError,
+    countries: sortedCountries,
+    country,
     states,
     statesStale,
     statesError,
@@ -389,29 +456,38 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   };
 };
 
-/** Validate a state against the official list; returns its display name. */
-async function validateState(
+/** Validate a region against the official eBird list; returns its display
+ * name. Country-level codes validate against the world country list;
+ * subnational1 codes against their parent country's region list. */
+async function validateRegion(
   apiKey: string,
   regionCode: string,
 ): Promise<string | null> {
-  const r = await subregions(apiKey, "US", "subnational1");
-  return r.data.find((s) => s.code === regionCode)?.name ?? null;
+  const parsed = parseRegionCode(regionCode);
+  if (!parsed || parsed.level === "subnational2") return null;
+  if (parsed.level === "country") {
+    const r = await ebirdCountries(apiKey);
+    return r.data.find((c) => c.code === parsed.code)?.name ?? null;
+  }
+  const r = await subregions(apiKey, parsed.country, "subnational1");
+  return r.data.find((s) => s.code === parsed.code)?.name ?? null;
 }
 
 export const actions: Actions = {
   /**
-   * Fetch/refresh the state-level barchart (1 eBird request). Owner-only
+   * Fetch/refresh the region-level barchart (1 eBird request). Owner-only
    * (viewers are blocked from POSTs in hooks.server.ts). The region is
-   * re-validated server-side against the official state list — form values
+   * re-validated server-side against the official eBird list — form values
    * are never trusted as fetch targets.
    */
   loadState: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const regionCode = (form.get("region") ?? "").toString().trim();
+    const regionCode = (form.get("region") ?? "").toString();
     const force = form.get("force") === "1";
 
-    if (!STATE_CODE_RE.test(regionCode)) {
+    const parsed = parseRegionCode(regionCode);
+    if (!parsed || parsed.level === "subnational2") {
       return fail(400, { error: "Unrecognized region code." });
     }
     const apiKey = await getEbirdApiKey(userId);
@@ -422,7 +498,7 @@ export const actions: Actions = {
     }
     let stateName: string | null = null;
     try {
-      stateName = await validateState(apiKey, regionCode);
+      stateName = await validateRegion(apiKey, parsed.code);
     } catch (err) {
       return fail(502, {
         error:
@@ -432,35 +508,42 @@ export const actions: Actions = {
       });
     }
     if (!stateName) {
-      return fail(400, { error: "That region is not a US state." });
+      return fail(400, { error: "eBird doesn't list that region." });
     }
 
+    const label =
+      parsed.level === "country" ? `${stateName} — countrywide` : `${stateName} statewide`;
     const { jobId, deduped } = await enqueueJob({
       type: "load_region",
       payload: {
-        locs: [{ code: regionCode, kind: "region", name: stateName, regionCode }],
+        locs: [{ code: parsed.code, kind: "region", name: stateName, regionCode: parsed.code }],
         force,
       },
-      dedupKey: dedupKeys.loadRegion(regionCode),
+      dedupKey: dedupKeys.loadRegion(parsed.code),
       requestedBy: userId,
-      label: `${stateName} statewide`,
+      label,
     });
-    return { queued: { jobId, deduped, label: `${stateName} statewide` } };
+    return { queued: { jobId, deduped, label } };
   },
 
   /**
-   * Analyze ALL of a state's counties as ONE job. Enqueue-time resolution
-   * (CODEX1 #1): the official state is validated and the full county list is
+   * Analyze ALL of a region's children as ONE job. Enqueue-time resolution
+   * (CODEX1 #1): the official region is validated and the full child list is
    * resolved HERE and written into the payload — the worker consumes that
    * snapshot and never re-derives or re-authorizes targets.
    */
   analyzeCounties: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const regionCode = (form.get("region") ?? "").toString().trim();
+    const regionCode = (form.get("region") ?? "").toString();
 
-    if (!STATE_CODE_RE.test(regionCode)) {
+    const parsed = parseRegionCode(regionCode);
+    if (!parsed || parsed.level === "subnational2") {
       return fail(400, { error: "Unrecognized region code." });
+    }
+    const childLvl = childLevel(parsed.level);
+    if (!childLvl) {
+      return fail(400, { error: "That region has no child regions to analyze." });
     }
     const apiKey = await getEbirdApiKey(userId);
     if (!apiKey) {
@@ -471,51 +554,65 @@ export const actions: Actions = {
     let regionName: string | null = null;
     let counties: { code: string; name: string }[];
     try {
-      regionName = await validateState(apiKey, regionCode);
+      regionName = await validateRegion(apiKey, parsed.code);
       if (!regionName) {
-        return fail(400, { error: "That region is not a US state." });
+        return fail(400, { error: "eBird doesn't list that region." });
       }
-      counties = (await subregions(apiKey, regionCode, "subnational2")).data;
+      // childLvl is never "country" — parsed.level here is country|subnational1.
+      counties = (
+        await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
+      ).data;
     } catch (err) {
       return fail(502, {
         error:
           err instanceof EbirdError
             ? err.message
-            : "Could not list counties for that state.",
+            : "Could not list child regions for that region.",
       });
     }
     if (counties.length === 0) {
-      return fail(404, { error: "eBird lists no counties for that state." });
+      return fail(404, { error: "eBird lists no child regions for that region." });
     }
 
+    // "Counties" wording only for US states — every other case (non-US
+    // subnational1 regions, or any country-level load) says "regions".
+    const noun = parsed.level === "subnational1" && parsed.country === "US" ? "counties" : "regions";
+    const label = `${counties.length} ${regionName} ${noun}`;
     const { jobId, deduped } = await enqueueJob({
       type: "analyze_counties",
-      payload: { regionCode, regionName, counties },
-      dedupKey: dedupKeys.analyzeCounties(regionCode),
+      payload: { regionCode: parsed.code, regionName, counties },
+      dedupKey: dedupKeys.analyzeCounties(parsed.code),
       requestedBy: userId,
-      label: `${counties.length} ${regionName} counties`,
+      label,
     });
-    return { queued: { jobId, deduped, label: `${counties.length} ${regionName} counties` } };
+    return { queued: { jobId, deduped, label } };
   },
 
   /**
    * Load barchart data for one county's top hotspots (≤ COUNTY_HOTSPOT_LIMIT
-   * eBird requests). The SELECTED STATE is validated as an official state and
-   * the county must belong to it (CODEX8 #2: a forged county from another
-   * state must be rejected, not validated against its own forged state).
+   * eBird requests). The SELECTED REGION is validated as an official eBird
+   * region and the county must belong to it (CODEX8 #2: a forged county from
+   * another region must be rejected, not validated against its own forged
+   * region).
    */
   loadHotspots: async ({ locals, request }) => {
     const userId = locals.scopeId!;
     const form = await request.formData();
-    const regionCode = (form.get("region") ?? "").toString().trim();
+    const regionCode = (form.get("region") ?? "").toString();
     const countyCode = (form.get("county") ?? "").toString().trim();
     const limit = parseHotspotLimit((form.get("limit") ?? "").toString());
 
-    if (!STATE_CODE_RE.test(regionCode)) {
+    const parsed = parseRegionCode(regionCode);
+    if (!parsed || parsed.level === "subnational2") {
       return fail(400, { error: "Unrecognized region code." });
     }
-    if (!COUNTY_CODE_RE.test(countyCode) || !countyCode.startsWith(`${regionCode}-`)) {
-      return fail(400, { error: "That county is not in the selected state." });
+    const childLvl = childLevel(parsed.level);
+    if (
+      !childLvl ||
+      !parseRegionCode(countyCode) ||
+      !countyCode.startsWith(`${parsed.code}-`)
+    ) {
+      return fail(400, { error: "That county is not in the selected region." });
     }
     const apiKey = await getEbirdApiKey(userId);
     if (!apiKey) {
@@ -526,14 +623,16 @@ export const actions: Actions = {
 
     let selected: EbirdHotspot[];
     try {
-      const stateName = await validateState(apiKey, regionCode);
-      if (!stateName) {
-        return fail(400, { error: "That region is not a US state." });
+      const regionName = await validateRegion(apiKey, parsed.code);
+      if (!regionName) {
+        return fail(400, { error: "eBird doesn't list that region." });
       }
-      const counties = (await subregions(apiKey, regionCode, "subnational2"))
-        .data;
+      // childLvl is never "country" — parsed.level here is country|subnational1.
+      const counties = (
+        await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
+      ).data;
       if (!counties.some((c) => c.code === countyCode)) {
-        return fail(400, { error: "That county is not in the selected state." });
+        return fail(400, { error: "That county is not in the selected region." });
       }
       selected = selectCountyHotspots(
         (await hotspotsInRegion(apiKey, countyCode)).data,

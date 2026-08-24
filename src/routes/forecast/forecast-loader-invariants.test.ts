@@ -56,13 +56,17 @@ describe("Forecast loaders never fetch barchart data", () => {
   }
 });
 
-describe("loadHotspots rejects a county outside the selected state", () => {
+describe("loadHotspots rejects a county outside the selected region", () => {
   it("validates region, then requires county membership under that region", () => {
     const body = exportBody(readFileSync(SPECIES, "utf8"), "actions");
-    // Syntax + prefix check (US-FL-051 under US-FL, not US-ME-009).
-    expect(body).toMatch(/countyCode\.startsWith\(`\$\{regionCode\}-`\)/);
-    // Official list membership, not just the code shape.
-    expect(body).toMatch(/subregions\(\s*apiKey,\s*regionCode,\s*['"]subnational2['"]/);
+    // Syntax + prefix check (US-FL-051 under US-FL, not US-ME-009). The
+    // parent is `parsed.code` (td-f1d6da — a normalized code, country or
+    // subnational1), not a raw form value.
+    expect(body).toMatch(/countyCode\.startsWith\(`\$\{parsed\.code\}-`\)/);
+    // Official list membership, not just the code shape. The level is
+    // `childLvl` (subnational2 under a state, or subnational1 under a
+    // whole-country region) rather than a hardcoded 'subnational2'.
+    expect(body).toMatch(/subregions\(\s*apiKey,\s*parsed\.code,\s*childLvl/);
     expect(body).toMatch(/counties\.some\(\s*\(c\)\s*=>\s*c\.code === countyCode/);
   });
 });
