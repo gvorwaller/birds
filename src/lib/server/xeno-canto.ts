@@ -124,7 +124,10 @@ export function licenseUrl(lic: string): string {
 
 interface XcApiRecording {
 	id: string;
-	file: string;
+	// xeno-canto returns null when downloads are disabled for the entire
+	// species (currently used for conservation restrictions). The rest of the
+	// recording metadata and the spectrogram URLs are still present.
+	file: string | null;
 	type: string;
 	q: string;
 	length: string;
@@ -141,7 +144,11 @@ interface XcApiResponse {
 	message?: string;
 }
 
-function toRecording(r: XcApiRecording): XenoCantoRecording {
+function hasDownloadUrl(r: XcApiRecording): r is XcApiRecording & { file: string } {
+	return typeof r.file === 'string' && r.file.trim().length > 0;
+}
+
+function toRecording(r: XcApiRecording & { file: string }): XenoCantoRecording {
 	if (typeof r.length !== 'string') {
 		throw new XenoCantoError(
 			'xeno-canto query failed: malformed recording (missing length)',
@@ -172,7 +179,11 @@ function toRecording(r: XcApiRecording): XenoCantoRecording {
 export async function fetchXenoCantoRecordings(
 	sciName: string,
 	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
-): Promise<{ song: XenoCantoRecording | null; call: XenoCantoRecording | null }> {
+): Promise<{
+	song: XenoCantoRecording | null;
+	call: XenoCantoRecording | null;
+	downloadsRestricted: boolean;
+}> {
 	if (!validSciName(sciName)) {
 		throw new Error(`invalid sci name: ${sciName}`);
 	}
@@ -232,8 +243,16 @@ export async function fetchXenoCantoRecordings(
 			false
 		);
 	}
+	// A successful species query can contain complete recording metadata but
+	// null `file` values when xeno-canto has disabled downloads for that
+	// species. That is a stable provider policy, not a transient outage. Keep
+	// the state so the UI can explain the missing player, and never manufacture
+	// a /download URL: the endpoint returns an HTML restriction page.
+	const downloadsRestricted =
+		body.recordings.length > 0 && body.recordings.every((r) => !hasDownloadUrl(r));
 	const candidates = body.recordings
 		.filter((r) => r.q === 'A' || r.q === 'B')
+		.filter(hasDownloadUrl)
 		.map(toRecording)
 		.filter((r) => r.duration >= MIN_DURATION_S && r.duration <= MAX_DURATION_S)
 		.sort((a, b) => {
@@ -242,5 +261,5 @@ export async function fetchXenoCantoRecordings(
 		});
 	const song = candidates.find((r) => categorizeType(r.type) === 'song') ?? null;
 	const call = candidates.find((r) => categorizeType(r.type) === 'call') ?? null;
-	return { song, call };
+	return { song, call, downloadsRestricted };
 }

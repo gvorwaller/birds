@@ -200,7 +200,11 @@ const enrichMocks = vi.hoisted(() => ({
   fetchWikidataMedia: vi.fn<(qids: readonly string[]) => Promise<Map<string, unknown>>>(),
   fetchCommonsFileInfo: vi.fn<(filenames: readonly string[]) => Promise<Map<string, unknown>>>(),
   fetchXenoCantoRecordings: vi.fn<
-    (sciName: string) => Promise<{ song: unknown; call: unknown }>
+    (sciName: string) => Promise<{
+      song: unknown;
+      call: unknown;
+      downloadsRestricted: boolean;
+    }>
   >(),
 }));
 
@@ -2525,6 +2529,7 @@ describe("runJob — species media enrichment (td-86a2b6)", () => {
     enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
       song: SONG_REC,
       call: CALL_REC,
+      downloadsRestricted: false,
     });
 
     await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
@@ -2569,6 +2574,7 @@ describe("runJob — species media enrichment (td-86a2b6)", () => {
     enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
       song: null,
       call: null,
+      downloadsRestricted: false,
     });
 
     await runJob(jobRow({ type: "enrich_species_media", payload: { codes: ["margod"] } }), ctx);
@@ -2614,6 +2620,7 @@ describe("runJob — species media enrichment (td-86a2b6)", () => {
     enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
       song: null,
       call: null,
+      downloadsRestricted: false,
     });
     await runJob(
       jobRow({
@@ -2686,6 +2693,7 @@ describe("runJob — species media enrichment (td-86a2b6)", () => {
       enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
         song: null,
         call: null,
+        downloadsRestricted: false,
       });
       await runJob(
         jobRow({
@@ -2729,6 +2737,7 @@ describe("runJob — species media enrichment (td-86a2b6)", () => {
     enrichMocks.fetchXenoCantoRecordings.mockResolvedValue({
       song: null,
       call: null,
+      downloadsRestricted: false,
     });
     mocks.updateProgress.mockResolvedValue({ cancelRequested: true });
     await runJob(

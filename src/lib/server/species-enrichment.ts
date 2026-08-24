@@ -732,6 +732,7 @@ export interface SampleMedia {
 	sounds: MediaRow[];
 	status: string | null;
 	mediaError: string | null;
+	audioStatus: 'restricted' | null;
 }
 
 /** A row shape not yet persisted — media_id/species_code are assigned by the write. */
@@ -749,6 +750,7 @@ export async function upsertMediaOk(
 	code: string,
 	rows: readonly MediaCandidate[],
 	status: 'ok' | 'partial' | 'no_media',
+	audioStatus: 'restricted' | null = null,
 	exec?: Exec
 ): Promise<void> {
 	const replace = async (run: Exec): Promise<void> => {
@@ -782,12 +784,13 @@ export async function upsertMediaOk(
 			);
 		}
 		await run(
-			`INSERT INTO species_enrichment (species_code, media_status, media_fetched_at, media_ok_at)
-		 VALUES ($1, $2, NOW(), NOW())
+			`INSERT INTO species_enrichment
+		   (species_code, media_status, media_fetched_at, media_ok_at, media_audio_status)
+		 VALUES ($1, $2, NOW(), NOW(), $3)
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   media_status = $2, media_fetched_at = NOW(), media_ok_at = NOW(),
-		   media_error = NULL, updated_at = NOW()`,
-			[code, status]
+		   media_error = NULL, media_audio_status = $3, updated_at = NOW()`,
+			[code, status, audioStatus]
 		);
 	};
 	if (exec) {
@@ -829,8 +832,13 @@ export async function getSpeciesMedia(code: string): Promise<SampleMedia> {
 			   FROM species_media WHERE species_code = $1 ORDER BY kind, rank`,
 			[code]
 		),
-		query<{ media_status: string | null; media_error: string | null }>(
-			`SELECT media_status, media_error FROM species_enrichment WHERE species_code = $1`,
+		query<{
+			media_status: string | null;
+			media_error: string | null;
+			media_audio_status: 'restricted' | null;
+		}>(
+			`SELECT media_status, media_error, media_audio_status
+			   FROM species_enrichment WHERE species_code = $1`,
 			[code]
 		)
 	]);
@@ -838,7 +846,8 @@ export async function getSpeciesMedia(code: string): Promise<SampleMedia> {
 		photo: mediaRes.rows.find((r) => r.kind === 'photo') ?? null,
 		sounds: mediaRes.rows.filter((r) => r.kind === 'sound'),
 		status: statusRes.rows[0]?.media_status ?? null,
-		mediaError: statusRes.rows[0]?.media_error ?? null
+		mediaError: statusRes.rows[0]?.media_error ?? null,
+		audioStatus: statusRes.rows[0]?.media_audio_status ?? null
 	};
 }
 
@@ -1002,9 +1011,14 @@ export async function enrichSpeciesMedia(
 	// a partial Commons result. A provider rate limit must retain ownership in
 	// the worker so Retry-After is honored and last-good rows are preserved.
 	let xcOk = true;
-	let xc: { song: XenoCantoRecording | null; call: XenoCantoRecording | null } = {
+	let xc: {
+		song: XenoCantoRecording | null;
+		call: XenoCantoRecording | null;
+		downloadsRestricted: boolean;
+	} = {
 		song: null,
-		call: null
+		call: null,
+		downloadsRestricted: false
 	};
 	try {
 		xc = await fetchXenoCantoRecordings(sciName, opts);
@@ -1054,7 +1068,11 @@ export async function enrichSpeciesMedia(
 	// Belt-and-braces (§6d step 7) — the Commons builders enforce this by
 	// construction; xeno-canto's license passes through unchecked, so an
 	// empty-string license is still caught here.
-	const accepted = candidates.filter((c) => c.source_url && c.license_code);
+	const accepted = candidates.filter(
+		(c) => c.media_url.trim().length > 0 && c.source_url && c.license_code
+	);
+	const hasAcceptedSound = accepted.some((c) => c.kind === 'sound');
+	const audioStatus = xcOk && xc.downloadsRestricted && !hasAcceptedSound ? 'restricted' : null;
 
 	const status: 'ok' | 'partial' | 'no_media' = !xcOk
 		? 'partial'
@@ -1063,6 +1081,6 @@ export async function enrichSpeciesMedia(
 			: 'no_media';
 
 	// upsertMediaOk owns its own transaction when called without an executor.
-	await upsertMediaOk(code, accepted, status);
+	await upsertMediaOk(code, accepted, status, audioStatus);
 	return status;
 }

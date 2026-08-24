@@ -28,6 +28,7 @@
 		sounds: MediaRow[];
 		status: string | null;
 		mediaError: string | null;
+		audioStatus: 'restricted' | null;
 	}
 </script>
 
@@ -71,7 +72,10 @@
 					? 'reference sounds'
 					: null
 	);
-	const hasBoth = $derived(!!media.photo && media.sounds.length > 0);
+	const audioRestricted = $derived(
+		media.audioStatus === 'restricted' && media.sounds.length === 0
+	);
+	const hasBoth = $derived(!!media.photo && (media.sounds.length > 0 || audioRestricted));
 	const lastGood = $derived(!!media.photo || media.sounds.length > 0);
 </script>
 
@@ -90,7 +94,7 @@
 	{:else if isAdmin && media.status === 'no_media'}
 		<p class="notice muted">No sample media found for {comName} yet.</p>
 	{/if}
-	{#if media.photo || media.sounds.length > 0}
+	{#if media.photo || media.sounds.length > 0 || audioRestricted}
 		<div class="layout" class:has-both={hasBoth}>
 			{#if media.photo}
 				<div class="photo-col">
@@ -135,6 +139,13 @@
 						/>
 					{/each}
 				</div>
+			{:else if audioRestricted}
+				<div class="audio-unavailable" role="status">
+					<strong>Audio unavailable</strong>
+					<p>
+						xeno-canto restricts downloads for this species due to conservation concerns.
+					</p>
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -162,6 +173,18 @@
 	}
 	.notice {
 		margin-bottom: 10px;
+	}
+	.audio-unavailable {
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 14px;
+		color: var(--text);
+		background: var(--surface-subtle, var(--card));
+	}
+	.audio-unavailable p {
+		margin: 4px 0 0;
+		color: var(--muted);
+		font-size: 0.89rem;
 	}
 	.err {
 		color: var(--danger);
@@ -225,7 +248,8 @@
 			flex: 0 0 50%;
 			max-width: 50%;
 		}
-		.layout.has-both .players {
+		.layout.has-both .players,
+		.layout.has-both .audio-unavailable {
 			flex: 1;
 			min-width: 0;
 		}

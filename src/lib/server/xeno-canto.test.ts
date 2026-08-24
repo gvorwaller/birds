@@ -163,13 +163,73 @@ describe("fetchXenoCantoRecordings", () => {
         }),
         { status: 200 },
       )) as typeof fetch;
-    const { song, call } = await fetchXenoCantoRecordings("Limosa fedoa", { fetcher });
+    const { song, call, downloadsRestricted } = await fetchXenoCantoRecordings(
+      "Limosa fedoa",
+      { fetcher },
+    );
     expect(song?.xcId).toBe("XC4"); // quality A wins over B
     expect(song?.quality).toBe("A");
     expect(call?.xcId).toBe("XC5");
     expect(call?.location).toBe("Some Marsh");
     expect(call?.license).toBe("CC BY 4.0");
     expect(call?.sourceUrl).toBe("https://xeno-canto.org/5");
+    expect(downloadsRestricted).toBe(false);
+  });
+
+  it("reports conservation-restricted downloads without manufacturing media URLs", async () => {
+    setKey("test-key");
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          recordings: [
+            {
+              id: "99",
+              file: null,
+              type: "song",
+              q: "A",
+              length: "0:12",
+              rec: "R",
+              lic: "//creativecommons.org/licenses/by-nc-sa/4.0/",
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const result = await fetchXenoCantoRecordings("Limosa fedoa", { fetcher });
+    expect(result).toEqual({ song: null, call: null, downloadsRestricted: true });
+  });
+
+  it("skips a null download while retaining another usable recording", async () => {
+    setKey("test-key");
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          recordings: [
+            {
+              id: "98",
+              file: null,
+              type: "song",
+              q: "A",
+              length: "0:10",
+              rec: "R",
+              lic: "//creativecommons.org/licenses/by/4.0/",
+            },
+            {
+              id: "99",
+              file: "usable",
+              type: "song",
+              q: "B",
+              length: "0:12",
+              rec: "R",
+              lic: "//creativecommons.org/licenses/by/4.0/",
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const result = await fetchXenoCantoRecordings("Limosa fedoa", { fetcher });
+    expect(result.song?.xcId).toBe("XC99");
+    expect(result.downloadsRestricted).toBe(false);
   });
 
   it("rejects a malformed v3 recording without a length field", async () => {
@@ -219,8 +279,12 @@ describe("fetchXenoCantoRecordings", () => {
     setKey("test-key");
     const fetcher = (async () =>
       new Response(JSON.stringify({ recordings: [] }), { status: 200 })) as typeof fetch;
-    const { song, call } = await fetchXenoCantoRecordings("Limosa fedoa", { fetcher });
+    const { song, call, downloadsRestricted } = await fetchXenoCantoRecordings(
+      "Limosa fedoa",
+      { fetcher },
+    );
     expect(song).toBeNull();
     expect(call).toBeNull();
+    expect(downloadsRestricted).toBe(false);
   });
 });

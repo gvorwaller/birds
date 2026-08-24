@@ -1502,7 +1502,7 @@ describe.runIf(dbUp)("enrichSpeciesMedia orchestrator (injected fetchers, td-86a
     imageFilename?: string | null;
     audioFilename?: string | null;
     commonsPages?: object[];
-    xc?: "ok" | "empty" | "error" | "rate_limited";
+    xc?: "ok" | "empty" | "error" | "rate_limited" | "restricted";
   }) {
     const fetcher = (async (input: URL | RequestInfo) => {
       const url = String(input);
@@ -1546,6 +1546,23 @@ describe.runIf(dbUp)("enrichSpeciesMedia orchestrator (injected fetchers, td-86a
           return new Response(JSON.stringify({ recordings: [] }), {
             status: 200,
           });
+        if (opts.xc === "restricted")
+          return new Response(
+            JSON.stringify({
+              recordings: [
+                {
+                  id: "10",
+                  file: null,
+                  type: "song",
+                  q: "A",
+                  length: "0:12",
+                  rec: "R",
+                  lic: "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                },
+              ],
+            }),
+            { status: 200 },
+          );
         return new Response(
           JSON.stringify({
             recordings: [
@@ -1633,6 +1650,28 @@ describe.runIf(dbUp)("enrichSpeciesMedia orchestrator (injected fetchers, td-86a
         [2, "call", "xeno_canto"],
       ]);
       expect(media.status).toBe("ok");
+    } finally {
+      await wipe();
+    }
+  });
+
+  it("restricted xeno-canto downloads persist a stable audio status without inserting a null URL", async () => {
+    await wipe();
+    setXcKey("test-key");
+    try {
+      const fetcher = fakeMediaNet({
+        imageFilename: "Test bird.jpg",
+        commonsPages: [commonsPhotoPage("Test bird.jpg")],
+        xc: "restricted",
+      });
+      const status = await enrichSpeciesMedia(CODE, QID, SCI, { fetcher });
+      expect(status).toBe("ok");
+      const media = await getSpeciesMedia(CODE);
+      expect(media.photo?.provider).toBe("wikimedia_commons");
+      expect(media.sounds).toEqual([]);
+      expect(media.status).toBe("ok");
+      expect(media.audioStatus).toBe("restricted");
+      expect(media.mediaError).toBeNull();
     } finally {
       await wipe();
     }

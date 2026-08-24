@@ -217,7 +217,7 @@
     </section>
   {/if}
 
-  {#if hasMedia || (data.isAdmin && data.sampleMedia.status != null)}
+  {#if hasMedia || data.sampleMedia.audioStatus === "restricted" || (data.isAdmin && data.sampleMedia.status != null)}
     <SpeciesMediaCard
       media={data.sampleMedia}
       comName={data.taxon.com_name}

@@ -152,10 +152,12 @@ describe.runIf(dbUp)(
             sounds: { provider_id: string; vocalization_type: string | null }[];
             status: string | null;
             mediaError: string | null;
+            audioStatus: "restricted" | null;
           };
         };
         expect(data.sampleMedia.status).toBe("ok");
         expect(data.sampleMedia.mediaError).toBeNull();
+        expect(data.sampleMedia.audioStatus).toBeNull();
         expect(data.sampleMedia.photo?.provider_id).toBe("Testbird.jpg");
         expect(data.sampleMedia.photo?.width).toBe(800);
         expect(data.sampleMedia.sounds).toHaveLength(1);
