@@ -7,6 +7,7 @@ import {
   countries as ebirdCountries,
   EbirdError,
 } from "$server/ebird";
+import { sweepAreaHotspots } from "$server/hotspot-sweep";
 import { coverageFromMeta, recentFailures } from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
@@ -702,6 +703,22 @@ export const actions: Actions = {
       label,
     });
     return { queued: { jobId, deduped, label } };
+  },
+
+  /**
+   * Load EVERY eBird hotspot in one county (or, for countries without
+   * subnational2, one region) — td-372d2a. Shared with the hotspot page via
+   * sweepAreaHotspots so both offer the identical sweep.
+   */
+  loadCountyHotspots: async ({ locals, request }) => {
+    const userId = locals.scopeId!;
+    const form = await request.formData();
+    const areaCode = (form.get("county") ?? "").toString().trim();
+    const res = await sweepAreaHotspots(userId, areaCode);
+    if (!res.ok) return fail(res.status, { error: res.error });
+    return {
+      queued: { jobId: res.jobId, deduped: res.deduped, label: res.label },
+    };
   },
 
   /**

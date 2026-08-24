@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.1': true,
+		'v0.1.2': true,
+		'v0.1.1': false,
 		'v0.1.0': false,
 		'v0.0.9': false,
 		'v0.0.8': false,
@@ -98,6 +99,34 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.2 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.2']}
+					aria-expanded={openVersions['v0.1.2']}
+					onclick={() => toggleVersion('v0.1.2')}
+				>
+					<span class="v-tag current">v0.1.2</span>
+					<span class="v-title">County Hotspot Sweep</span>
+					<span class="v-date">August 2026</span>
+					<span class="chev">{openVersions['v0.1.2'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.2']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>Load every hotspot in a county</strong> — One action on the forecast
+								data page's county rows, and on any hotspot page, queues all of that county's
+								eBird hotspots at once instead of loading them a few at a time. Already-loaded
+								hotspots are skipped, so re-running only fills gaps.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.1 -->
 			<div class="version-entry">
 				<button
@@ -107,7 +136,7 @@
 					aria-expanded={openVersions['v0.1.1']}
 					onclick={() => toggleVersion('v0.1.1')}
 				>
-					<span class="v-tag current">v0.1.1</span>
+					<span class="v-tag">v0.1.1</span>
 					<span class="v-title">International Region Loads</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.1'] ? '▾' : '▸'}</span>

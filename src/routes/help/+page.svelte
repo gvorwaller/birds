@@ -283,6 +283,13 @@
 						(jumps to the other tab at that spot), and
 						<strong>Add to trip</strong>.
 					</li>
+					<li>
+						<strong>Load hotspots</strong> on a county row here, or "Load every
+						hotspot in …" on any hotspot page, sweeps <em>all</em> of that
+						county's eBird hotspots in one background job instead of picking them
+						off a few at a time. It skips whatever is already loaded, so
+						re-running only fills gaps. Countries without counties sweep by region.
+					</li>
 				</ul>
 				<h3>Reading the numbers</h3>
 				<ul>

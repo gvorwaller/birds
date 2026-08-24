@@ -16,6 +16,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
   let loadBusy = $state(false);
+  let areaBusy = $state(false);
   // Monthly list default view is capped for scanability; expansion exposes
   // EVERY row — never a hidden reduction (cs.md, CODEX1 on 84a1c4b).
   let showAllMonthly = $state(false);
@@ -195,6 +196,31 @@
           </button>
           <span class="muted">
             Fetches ~10 years of eBird checklist frequencies in the background.
+          </span>
+        </form>
+      {/if}
+      {#if !data.isViewer && data.sweepArea}
+        <!-- Loading one hotspot at a time leaves patchy coverage; sweeping the
+             whole county is the systematic unit (td-372d2a). -->
+        <form
+          method="POST"
+          action="?/load_area_hotspots"
+          use:enhance={() => {
+            areaBusy = true;
+            return async ({ update }) => {
+              await update();
+              areaBusy = false;
+            };
+          }}
+        >
+          <input type="hidden" name="area" value={data.sweepArea.code} />
+          <button type="submit" class="secondary" disabled={areaBusy}>
+            {areaBusy
+              ? "Queuing…"
+              : `⬇ Load every hotspot in ${data.sweepArea.name}`}
+          </button>
+          <span class="muted">
+            Queues the ones that aren't loaded yet — skips anything current.
           </span>
         </form>
       {/if}

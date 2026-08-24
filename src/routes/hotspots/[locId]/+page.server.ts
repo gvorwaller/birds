@@ -6,6 +6,7 @@ import { frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { seenSet } from "$server/needs";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
+import { sweepAreaHotspots } from "$server/hotspot-sweep";
 import { haversineKm } from "$lib/geo";
 import {
   groupRecent,
@@ -109,6 +110,13 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     lat: meta?.lat ?? null,
     lng: meta?.lng ?? null,
     countyName: meta?.countyCode ? (regions.get(meta.countyCode) ?? null) : null,
+    // The area this hotspot sits in, for the "load every hotspot here" sweep
+    // (td-372d2a) — county when eBird records one, else the region.
+    sweepArea: meta?.countyCode
+      ? { code: meta.countyCode, name: regions.get(meta.countyCode) ?? meta.countyCode }
+      : meta?.stateCode
+        ? { code: meta.stateCode, name: regions.get(meta.stateCode) ?? meta.stateCode }
+        : null,
     stateName: meta?.stateCode ? (regions.get(meta.stateCode) ?? null) : null,
     venueTypes: place.venueTypes,
     googlePlaceId: place.googlePlaceId,
@@ -175,5 +183,16 @@ export const actions: Actions = {
       label: `1 hotspot — ${name}`,
     });
     return { queued: { jobId, deduped, label: name } };
+  },
+
+  /** Sweep every hotspot in this one's county — same helper /forecast/data
+   * uses, so the two entry points can't drift (td-372d2a). */
+  load_area_hotspots: async ({ locals, request }) => {
+    const userId = locals.scopeId!;
+    const form = await request.formData();
+    const areaCode = (form.get("area") ?? "").toString().trim();
+    const res = await sweepAreaHotspots(userId, areaCode);
+    if (!res.ok) return fail(res.status, { error: res.error });
+    return { queued: { jobId: res.jobId, deduped: res.deduped, label: res.label } };
   },
 };

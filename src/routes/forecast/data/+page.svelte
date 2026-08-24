@@ -479,6 +479,35 @@
   </details>
 {/snippet}
 
+{#snippet loadHotspotsButton(areaCode: string, areaName: string)}
+  <!-- Sweep every eBird hotspot in one county/region (td-372d2a). The action
+       skips whatever is already current, so this stays useful on re-visits. -->
+  {#if !data.isViewer}
+    <form
+      method="POST"
+      action="?/loadCountyHotspots"
+      class="hsload"
+      use:enhance={() => {
+        refreshing = `hotspots-${areaCode}`;
+        return async ({ update }) => {
+          refreshing = null;
+          await update();
+        };
+      }}
+    >
+      <input type="hidden" name="county" value={areaCode} />
+      <button
+        type="submit"
+        class="secondary"
+        disabled={refreshing !== null}
+        title="Queue every eBird hotspot in {areaName} that isn't loaded yet"
+      >
+        {refreshing === `hotspots-${areaCode}` ? "Queueing…" : "Load hotspots"}
+      </button>
+    </form>
+  {/if}
+{/snippet}
+
 {#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number])}
   <td>
     {r.beginYear}–{r.endYear}
@@ -608,6 +637,13 @@
         </p>
       {/if}
     {/if}
+    {#if g.countyTotal === 0}
+      <!-- No child regions to drill into (e.g. Norwegian fylker have no
+           subnational2), so the region itself is the sweep unit. -->
+      <div class="groupaction">
+        {@render loadHotspotsButton(g.stateCode, g.stateName)}
+      </div>
+    {/if}
     {#if g.state}
       {@render dataTable(g.countryCode === "US" ? "Statewide" : "Regionwide", [g.state])}
     {/if}
@@ -659,6 +695,7 @@
                     title="Show {b.countyName} on Google Maps">📍 Map</a
                   >
                   <span class="code">{b.countyCode}</span>
+                  {@render loadHotspotsButton(b.countyCode, b.countyName)}
                 </td>
                 {#if b.county}
                   {@render metaCells(b.county)}
