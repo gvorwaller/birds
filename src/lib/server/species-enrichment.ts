@@ -256,10 +256,21 @@ export async function upsertAiData(
 		tags: string[];
 		model: string;
 		sourceRevId: number;
-		/** Validated, closed-set notes. Empty is a normal, successful result. */
+		/** Validated, closed-set notes. */
 		similar?: readonly { code: string; note: string }[];
 		/** Candidate-set fingerprint these notes were generated for. */
 		similarCandidatesHash?: string | null;
+		/**
+		 * How many candidates were OFFERED. Required to tell two very different
+		 * outcomes apart, which the old code collapsed into 'none':
+		 *   0 candidates + 0 notes  -> genuinely nothing to say (terminal, correct)
+		 *   N candidates + 0 notes  -> the model owed a note and did not give one
+		 * The second is a MISS. Recording it as 'none' made it terminal and
+		 * unretryable, which is how Bimaculated Lark ended up permanently
+		 * note-less despite Calandra Lark being in the schema's `required`
+		 * (GROK P1). It is now an error, so the 7-day window applies.
+		 */
+		candidateCount?: number;
 	}
 ): Promise<void> {
 	// SET expressions read the OLD row for untouched columns, so mixing the
@@ -271,10 +282,14 @@ export async function upsertAiData(
 	});
 	const similar = data.similar ?? [];
 	const hash = data.similarCandidatesHash ?? null;
-	// A run with no candidates on offer is 'none', not 'ok' — it records that
-	// the substage completed with nothing to say, so it is not retried as if
-	// it had never run.
-	const similarStatus = hash == null ? null : similar.length > 0 ? 'ok' : 'none';
+	const candidateCount = data.candidateCount ?? 0;
+	// 'none' is legal ONLY when nothing was offered. See candidateCount above.
+	const similarStatus =
+		hash == null ? null : similar.length > 0 ? 'ok' : candidateCount === 0 ? 'none' : 'error';
+	const similarError =
+		similarStatus === 'error'
+			? `No usable note returned for ${candidateCount} candidate(s) after retries.`
+			: null;
 
 	await withTransaction(async (client) => {
 		await client.query(
@@ -288,13 +303,25 @@ export async function upsertAiData(
 			   similar_model = CASE WHEN $6 IS NULL THEN similar_model ELSE $4 END,
 			   similar_generated_at = CASE WHEN $6 IS NULL THEN similar_generated_at ELSE NOW() END,
 			   similar_attempted_at = CASE WHEN $6 IS NULL THEN similar_attempted_at ELSE NOW() END,
-			   similar_error = CASE WHEN $6 IS NULL THEN similar_error ELSE NULL END
+			   similar_error = CASE WHEN $6 IS NULL THEN similar_error ELSE $8 END
 			 WHERE species_code = $1`,
-			[code, data.fieldCraft, data.tags, data.model, data.sourceRevId, similarStatus, hash]
+			[
+				code,
+				data.fieldCraft,
+				data.tags,
+				data.model,
+				data.sourceRevId,
+				similarStatus,
+				hash,
+				similarError
+			]
 		);
-		// Only touch the notes when this run actually produced a verdict on
-		// them; otherwise last-good rows are preserved untouched.
+		// Only touch the notes when this run produced a verdict on them.
 		if (similarStatus == null) return;
+		// A MISS must not wipe last-good notes. Deleting here would let a single
+		// bad response blank a species page that was previously correct — the
+		// same last-good rule markMediaError follows for photos (GROK P2).
+		if (similarStatus === 'error') return;
 		await client.query(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
 		for (const s of similar) {
 			await client.query(

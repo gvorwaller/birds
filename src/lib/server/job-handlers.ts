@@ -1364,24 +1364,42 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 
 			let ann = await annotate();
 			// An empty `similar` when candidates WERE offered is ambiguous: either
-			// the model judged none of them worth a note, or it simply omitted the
-			// field. Both were observed on identical input during bring-up, so left
-			// alone they are indistinguishable and both persist as 'none' — which is
-			// terminal, meaning a transient omission costs that species its notes
-			// permanently.
+			// the model judged none of them worth a note, or it returned nothing
+			// usable. Both were observed on identical input, so left alone they are
+			// indistinguishable.
 			//
-			// Measured empty rate is ~1 in 5 after prompt calibration (it was ~1 in 3
-			// before). Retries are cheap and fire ONLY on empty, so the expected extra
-			// spend is a fraction of a call per species, while each attempt cuts the
-			// permanent-miss rate fivefold: ~20% -> ~4% -> ~0.8%.
+			// The retry must never LOSE a good attempt. A first call can succeed
+			// (valid tags + field craft, empty similar) and the retry then throw —
+			// e.g. on the request timeout — which previously discarded the first
+			// result entirely and cost a first-time species its field craft too
+			// (GROK P1). Keep the best result seen and let a failing retry fall
+			// back to it rather than propagate.
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {
 				if (candidates.length === 0 || ann.similar.length > 0) break;
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
-				ann = await annotate();
+				try {
+					const next = await annotate();
+					if (next.similar.length > 0) {
+						ann = next;
+						break;
+					}
+					ann = next;
+				} catch (err) {
+					// Keep the earlier successful annotation and stop retrying; the
+					// species still gets its field craft, and the missing notes are
+					// recorded below so the substage retries on its own clock.
+					await recordEvent(job.id, 'progress', {
+						code,
+						similarEmpty: 'retry_failed',
+						error: sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 120)
+					});
+					break;
+				}
 			}
 			if (candidates.length > 0 && ann.similar.length === 0) {
-				// Survived every attempt — recorded so a rising count is visible
-				// rather than silently becoming a corpus of note-less species.
+				// Survived every attempt. upsertAiData records this as an ERROR, not
+				// 'none', so the 7-day window applies — 'none' is terminal and is
+				// reserved for species that were offered no candidates at all.
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'confirmed' });
 			}
 			await upsertAiData(code, {
@@ -1390,7 +1408,8 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				model: AI_MODEL,
 				sourceRevId: prose.revId,
 				similar: ann.similar,
-				similarCandidatesHash: hash
+				similarCandidatesHash: hash,
+				candidateCount: candidates.length
 			});
 			counts.aiOk++;
 			if (ann.droppedTags.length > 0) {

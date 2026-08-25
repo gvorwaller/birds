@@ -2397,6 +2397,46 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
   });
 
+  // Regression (GROK P1): attempt 0 succeeded with empty similar, the retry
+  // threw on the request timeout, and the whole annotation was discarded —
+  // costing a first-time species its field craft as well as its notes.
+// Regression: attempt 0 succeeded with empty similar, the retry threw on the
+  // request timeout, and the whole annotation was discarded — costing a
+  // first-time species its field craft as well as its notes.
+  it("keeps attempt 0's field craft when the retry throws", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
+      .mockRejectedValueOnce(new EnrichmentAiError("AI request exceeded 120s.", 0, false));
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    // Field craft still written, not an AI-stage failure.
+    const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
+    expect(aiWrite).toBeDefined();
+    const failed = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_failed");
+    expect(failed).toHaveLength(0);
+  });
+
+  it("records retry_failed so the swallowed retry error is visible", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
+      .mockRejectedValueOnce(new EnrichmentAiError("AI request exceeded 120s.", 0, false));
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const ev = mocks.recordEvent.mock.calls.filter(
+      (c) => (c[2] as { similarEmpty?: string })?.similarEmpty === "retry_failed",
+    );
+    expect(ev).toHaveLength(1);
+  });
+
+  it("passes candidateCount so a miss is stored as error, not terminal 'none'", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    // $6 is the similar status; a miss with candidates offered must be 'error'.
+    expect(aiWrite?.params?.[5]).toBe("error");
+  });
+
   it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {
     freshAiDueDb();
     enrichMocks.generateSpeciesAnnotation.mockRejectedValue(

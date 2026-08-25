@@ -11,6 +11,7 @@ const {
   clampNote,
   buildOutputSchema,
   SIMILAR_NOTE_MIN_CHARS,
+  isMalformedNote,
 } = await import("./ai-enrichment");
 
 describe("parseAnnotation (pure response parser)", () => {
@@ -159,10 +160,12 @@ describe("parseAnnotation — similar species", () => {
     expect(out.similar).toHaveLength(MAX_SIMILAR);
   });
 
-  it("skips an entry with an empty note — the basis line already says why the link exists", () => {
+  it("RECORDS an empty note rather than skipping it silently", () => {
+    // A required-but-empty value satisfies json_schema and used to look
+    // identical to "the model had nothing to say".
     const out = ok('[{"code": "haiwoo", "note": "   "}]');
     expect(out.similar).toEqual([]);
-    expect(out.droppedSimilar).toEqual([]);
+    expect(out.droppedSimilar).toEqual(["haiwoo:empty"]);
   });
 
   it("rejects a stub note that games the required-field schema", () => {
@@ -364,5 +367,82 @@ describe("buildOutputSchema — shape is the guarantee", () => {
     };
     expect(s.properties.similar.additionalProperties).toBe(false);
     expect(s.properties.similar.properties).not.toHaveProperty("lessca1");
+  });
+});
+
+describe("isMalformedNote — structural damage, not meaning", () => {
+  it("catches the exact corruption that reached production", () => {
+    const real =
+      "Body and breast are warm brown rather than blackish, so the contrast with the pink flanks looks softer. Distant or worn birds in poor light can be genuinely tricky, and mixed flocks demand care on each individual., bircapped birds aside, focus on body tone.the bircolour is the cleanest mark.";
+    expect(isMalformedNote(real)).toBe(true);
+  });
+
+  it("catches sentence-end punctuation followed by a comma or semicolon", () => {
+    expect(isMalformedNote("Larger overall., and paler.")).toBe(true);
+    expect(isMalformedNote("Larger overall.; paler below.")).toBe(true);
+  });
+
+  it("catches a period glued to the next word", () => {
+    expect(isMalformedNote("Focus on body tone.the colour is cleanest.")).toBe(true);
+  });
+
+  it("catches doubled sentence-enders but not an ellipsis", () => {
+    expect(isMalformedNote("Really?? Larger overall.")).toBe(true);
+    expect(isMalformedNote("Larger overall.. Paler below.")).toBe(true);
+    expect(isMalformedNote("Larger overall… paler below.")).toBe(false);
+  });
+
+  it("does NOT reject common abbreviations", () => {
+    // The whole risk of this check is false positives on correct notes.
+    for (const ok of [
+      "Larger, e.g. noticeably bulkier through the chest and neck.",
+      "Paler overall, i.e. washed out rather than saturated brown.",
+      "Compare ssp. alticola, which shows a broader grey crown band.",
+      "See cf. the Hepburn's form for the full grey face.",
+      "Bill is ~1.5x the head length; the nape shows a dark spur.",
+      "Voice only; plumage identical.",
+      "Larger overall, with a bill roughly as long as the head is wide.",
+    ]) {
+      expect(isMalformedNote(ok)).toBe(false);
+    }
+  });
+
+  it("does not reject a decimal or an abbreviation followed by lowercase", () => {
+    expect(isMalformedNote("Around 1.5x larger, with a heavier bill.")).toBe(false);
+  });
+});
+
+describe("parseAnnotation — malformed and over-cap handling", () => {
+  const CANDS = ["haiwoo", "labwoo", "brnpel", "dalpel1", "grwpel1", "lessca"];
+  const p = (similar: string) =>
+    parseAnnotation(`{"tags": [], "field_craft": "x", "similar": ${similar}}`, {
+      candidates: CANDS,
+      focalCode: "dowwoo",
+    });
+
+  it("drops a malformed note and records why", () => {
+    const out = p('{"haiwoo": "Larger overall., bircapped birds aside, focus on body tone."}');
+    expect(out.similar).toEqual([]);
+    expect(out.droppedSimilar).toEqual(["haiwoo:malformed"]);
+  });
+
+  it("keeps a good note alongside a malformed sibling", () => {
+    const good = "Barred black-and-white back rather than a clean white stripe.";
+    const out = p(`{"haiwoo": "Bad., glued.the word", "labwoo": "${good}"}`);
+    expect(out.similar).toEqual([{ code: "labwoo", note: good }]);
+    expect(out.droppedSimilar).toEqual(["haiwoo:malformed"]);
+  });
+
+  it("records over-cap candidates instead of silently truncating", () => {
+    const note = "Larger overall, with a bill roughly as long as the head is wide.";
+    const body = CANDS.map((c) => `"${c}": "${note}"`).join(",");
+    const out = p(`{${body}}`);
+    expect(out.similar).toHaveLength(MAX_SIMILAR);
+    expect(out.droppedSimilar).toEqual([`${CANDS[MAX_SIMILAR]}:over-cap`]);
+  });
+
+  it("accepts a terse voice-only answer that the old 40-char floor rejected", () => {
+    const out = p('{"lessca": "Voice only; plumage identical."}');
+    expect(out.similar).toEqual([{ code: "lessca", note: "Voice only; plumage identical." }]);
   });
 });

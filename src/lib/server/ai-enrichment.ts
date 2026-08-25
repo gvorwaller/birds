@@ -28,6 +28,12 @@ export const FIELD_CRAFT_MAX_CHARS = 700;
 /** Prompt input cap — extract + selected sections, roughly 10k chars. */
 const PROSE_CAP = 10_000;
 /**
+ * Per-request budget. Opus 5 with adaptive thinking runs 7-41s on this prompt,
+ * so the previous 45s sat directly on the tail and silently cost species to
+ * timeouts that were then mislabelled as network failures.
+ */
+export const AI_TIMEOUT_MS = 120_000;
+/**
  * Upper bound on one distinguishing note.
  *
  * This is a safety valve, not a design target. The earlier value (200) was
@@ -53,8 +59,15 @@ export const MAX_SIMILAR = 5;
  * and the nape shows a dark spur") cannot be expressed in a handful of
  * characters, so anything shorter is treated as a non-answer and routed to the
  * retry rather than written to the page.
+ *
+ * Set to 20, not 40: "Voice only; plumage identical" is 29 characters and is
+ * EXACTLY the answer the prompt asks for on an inseparable slash pair, so a
+ * 40-char floor rejected the truth and pushed those pairs toward a permanent
+ * miss (GROK P2). Length is a weak predicate in both directions — it cannot
+ * tell a terse truth from a stub — which is why the malformed-text check below
+ * carries the real quality load.
  */
-export const SIMILAR_NOTE_MIN_CHARS = 40;
+export const SIMILAR_NOTE_MIN_CHARS = 20;
 
 export class EnrichmentAiError extends Error {
 	constructor(
@@ -248,8 +261,13 @@ export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Reco
 		// "these are effectively inseparable except by X" — which is itself the
 		// useful answer.
 		//
-		// `additionalProperties: false` plus one property per candidate also
-		// makes an invented code (the observed "brnpel1") unrepresentable.
+		// `additionalProperties: false` plus one property per candidate makes an
+		// invented code (the observed "brnpel1") unrepresentable — that part IS
+		// structural. `required` is NOT: it guarantees the key exists, not that
+		// its value is a sentence, and "" satisfies it (the subset has no
+		// minLength, just as it has no maxLength). Live runs returned empty
+		// values for required slash keys, so the retry loop and the validator
+		// below are load-bearing, not belt-and-braces (GROK P2).
 		const noteProps: Record<string, unknown> = {};
 		for (const c of candidates) noteProps[c.code] = { type: 'string' };
 
@@ -333,9 +351,20 @@ export async function generateSpeciesAnnotation(
 				system: SYSTEM,
 				messages: [{ role: 'user', content: buildUserPrompt(input) }]
 			}),
-			signal: AbortSignal.timeout(45_000)
+			signal: AbortSignal.timeout(AI_TIMEOUT_MS)
 		});
-	} catch {
+	} catch (err) {
+		// Distinguishing these is not cosmetic: two species were lost on the first
+		// Opus 5 drain to a 45s abort that was reported as a network failure, in
+		// both the job event and similar_error (GROK P1). Happy-path latency is
+		// 7-41s, so the old budget sat on the tail of the real distribution.
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			throw new EnrichmentAiError(
+				`AI request exceeded ${Math.round(AI_TIMEOUT_MS / 1000)}s.`,
+				0,
+				false
+			);
+		}
 		throw new EnrichmentAiError('Could not reach the AI service.', 0, false);
 	}
 	if (res.status === 429) {
@@ -369,6 +398,38 @@ export async function generateSpeciesAnnotation(
 		candidates: (input.candidates ?? []).map((c) => c.code),
 		focalCode: input.speciesCode
 	});
+}
+
+/**
+ * Reject a note whose TEXT is malformed, independent of whether its content is
+ * true. This is not a nonsense detector — no such thing exists for free prose —
+ * but the one corrupted note that reached production had objective structural
+ * damage, and that is codeable:
+ *
+ *   "...care on each individual., bircapped birds aside, focus on
+ *    body tone.the bircolour is the cleanest mark."
+ *
+ * Two signatures there are ungrammatical in any English sentence: sentence-end
+ * punctuation immediately followed by a comma or semicolon, and a sentence-end
+ * period butted straight against a lowercase letter with no space. Both are
+ * degeneration artefacts, not style.
+ *
+ * Deliberately conservative — it must never reject a correct note:
+ *   - the period-then-lowercase rule ignores short leading tokens, so "e.g.",
+ *     "i.e.", "cf.", "ssp." and similar abbreviations pass untouched;
+ *   - nothing here judges meaning, so a fluent-but-wrong field mark still gets
+ *     through. That risk is real and is why the card carries the verify-in-the-
+ *     field caveat; this only catches text that is broken on its face.
+ */
+export function isMalformedNote(note: string): boolean {
+	// "individual., bircapped" — sentence end followed by more punctuation.
+	if (/[.!?]\s*[,;]/.test(note)) return true;
+	// "tone.the" — sentence end glued to the next word. A token of 4+ characters
+	// before the period rules out the common abbreviations.
+	if (/[A-Za-z]{4}\.[a-z]/.test(note)) return true;
+	// Doubled sentence-enders that are not an ellipsis.
+	if (/[!?]{2,}|\.{2}(?!\.)/.test(note)) return true;
+	return false;
 }
 
 /**
@@ -437,7 +498,14 @@ function validateSimilar(
 	const seen = new Set<string>();
 
 	for (const entry of raw) {
-		if (similar.length >= MAX_SIMILAR) break;
+		if (similar.length >= MAX_SIMILAR) {
+			// Observed fan-out reaches 7; silently dropping the tail would hide
+			// which candidates never got a note (GROK P2).
+			if (typeof (entry as { code?: unknown }).code === 'string') {
+				dropped.push(`${String((entry as { code: string }).code).slice(0, 40)}:over-cap`);
+			}
+			continue;
+		}
 		if (typeof entry !== 'object' || entry === null) continue;
 		const { code, note } = entry as { code?: unknown; note?: unknown };
 		if (typeof code !== 'string') continue;
@@ -450,11 +518,20 @@ function validateSimilar(
 		if (seen.has(canonical)) continue;
 
 		const text = typeof note === 'string' ? clampNote(note) : '';
-		// Too short to be a real field mark — see SIMILAR_NOTE_MIN_CHARS. Counted
-		// as dropped rather than silently skipped so schema-gaming is visible in
-		// job events instead of quietly producing a page of stub notes.
+		// Every rejection is RECORDED. Empty used to be skipped silently, which
+		// is how a required-but-empty value looked identical to "the model had
+		// nothing to say" (GROK P1) — json_schema `required` guarantees the key,
+		// not a sentence, and "" satisfies it.
+		if (text.length === 0) {
+			dropped.push(`${canonical}:empty`);
+			continue;
+		}
 		if (text.length < SIMILAR_NOTE_MIN_CHARS) {
-			if (text.length > 0) dropped.push(`${canonical}:too-short`);
+			dropped.push(`${canonical}:too-short`);
+			continue;
+		}
+		if (isMalformedNote(text)) {
+			dropped.push(`${canonical}:malformed`);
 			continue;
 		}
 
