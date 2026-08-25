@@ -1382,20 +1382,26 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			// set the schema marks required and the set a birder is owed.
 			const owed = () => {
 				const have = new Set(ann.similar.map((s) => s.code));
-				return candidates.filter((c) => c.basis === 'ebird_slash' && !have.has(c.code)).length;
+				return candidates
+					.filter((c) => c.basis === 'ebird_slash' && !have.has(c.code))
+					.map((c) => c.code);
 			};
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {
 				if (candidates.length === 0) break;
-				if (ann.similar.length > 0 && owed() === 0) break;
+				if (ann.similar.length > 0 && owed().length === 0) break;
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
 				try {
 					const next = await annotate();
-					// Keep whichever attempt owes fewer notes, so a retry can only
-					// improve the result, never regress it.
-					const before = owed();
+					// Keep the new attempt ONLY if it owes strictly fewer notes. On a
+					// tie the earlier attempt wins: an equal-count retry can fill a
+					// different slash candidate or drop genus notes, so "no worse"
+					// is not the same as "no change" and churn is not an improvement
+					// (GROK — the previous >-comparison let a tie replace the result
+					// while the comment claimed it could not).
+					const before = owed().length;
 					const prev = ann;
 					ann = next;
-					if (owed() > before) ann = prev;
+					if (owed().length >= before) ann = prev;
 				} catch (err) {
 					// Keep the earlier successful annotation and stop retrying; the
 					// species still gets its field craft, and the missing notes are
@@ -1408,11 +1414,18 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					break;
 				}
 			}
-			if (candidates.length > 0 && ann.similar.length === 0) {
-				// Survived every attempt. upsertAiData records this as an ERROR, not
-				// 'none', so the 7-day window applies — 'none' is terminal and is
-				// reserved for species that were offered no candidates at all.
-				await recordEvent(job.id, 'progress', { code, similarEmpty: 'confirmed' });
+			const stillOwed = owed();
+			if (candidates.length > 0 && stillOwed.length > 0) {
+				// Survived every attempt. Recorded with the OWED CODES, not just a
+				// flag: a partial miss leaves real notes on the page, so without
+				// this the only breadcrumb was droppedSimilar on the kept attempt.
+				// upsertAiData stores this as an ERROR, not 'none' or 'ok', so the
+				// 7-day window applies and the good notes are preserved.
+				await recordEvent(job.id, 'progress', {
+					code,
+					similarEmpty: ann.similar.length === 0 ? 'confirmed' : 'partial',
+					owed: stillOwed
+				});
 			}
 			await upsertAiData(code, {
 				fieldCraft: ann.fieldCraft,
@@ -1421,7 +1434,8 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				sourceRevId: prose.revId,
 				similar: ann.similar,
 				similarCandidatesHash: hash,
-				candidateCount: candidates.length
+				candidateCount: candidates.length,
+				owedCodes: stillOwed
 			});
 			counts.aiOk++;
 			if (ann.droppedTags.length > 0) {

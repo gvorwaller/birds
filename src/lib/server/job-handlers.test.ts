@@ -2453,15 +2453,68 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
   });
 
-  it("a retry can only improve the result, never regress it", async () => {
+  it("does not retry when the first attempt already owes nothing", async () => {
     freshAiDueDbWithCandidates();
     const good = "Longer, straighter bill and bolder wingbar than the focal bird.";
-    enrichMocks.generateSpeciesAnnotation
-      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "hudgod", note: good }] })
-      .mockResolvedValue({ ...ANNOTATION, similar: [] });
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValueOnce({
+      ...ANNOTATION,
+      similar: [{ code: "hudgod", note: good }],
+    });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    // First attempt already satisfied every owed slash candidate: no retry.
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+  });
+
+  it("REGRESSION BRANCH: a tie keeps the earlier attempt, not the newer one", async () => {
+    // GROK: the old comparison replaced the result on an equal owed() count, so
+    // an equal-count retry could swap which candidate was filled or drop genus
+    // notes while the comment claimed it "can only improve". This test actually
+    // enters that branch — the previous one never did.
+    freshAiDueDbWithCandidates();
+    const first = "FIRST: longer, straighter bill and a bolder wingbar overall.";
+    const second = "SECOND: longer, straighter bill and a bolder wingbar overall.";
+    enrichMocks.generateSpeciesAnnotation
+      // Attempt 0 owes hudgod (note is for an unrelated code).
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "other1", note: first }] })
+      // Attempt 1 also owes hudgod — same count, different content.
+      .mockResolvedValue({ ...ANNOTATION, similar: [{ code: "other2", note: second }] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const write = db.calls.filter((c) => c.text.includes("INSERT INTO species_similar"));
+    // The earlier attempt's note survives the tie.
+    expect(write.some((c) => String(c.params?.[2]).startsWith("FIRST"))).toBe(true);
+    expect(write.some((c) => String(c.params?.[2]).startsWith("SECOND"))).toBe(false);
+  });
+
+  it("PARTIAL miss is stored as error and preserves the missing candidate's row", async () => {
+    // Two of N notes written, one slash candidate still owed. Previously this
+    // stamped 'ok' and DELETEd every row, destroying the missing candidate's
+    // last-good note, with aiDueCodes then declining to reselect.
+    freshAiDueDbWithCandidates();
+    const note = "Longer, straighter bill and bolder wingbar than the focal bird.";
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
+      ...ANNOTATION,
+      similar: [{ code: "other1", note }],
+    });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    expect(aiWrite?.params?.[5]).toBe("error");
+    // Targeted delete, never a blanket one.
+    const del = db.calls.find((c) => c.text.includes("DELETE FROM species_similar"));
+    expect(del?.text).toContain("similar_code <> ALL");
+    expect(del?.params?.[1]).toContain("hudgod");
+  });
+
+  it("records the owed codes, not just a flag", async () => {
+    freshAiDueDbWithCandidates();
+    const note = "Longer, straighter bill and bolder wingbar than the focal bird.";
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
+      ...ANNOTATION,
+      similar: [{ code: "other1", note }],
+    });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const ev = mocks.recordEvent.mock.calls.find(
+      (c) => (c[2] as { similarEmpty?: string })?.similarEmpty === "partial",
+    );
+    expect((ev?.[2] as { owed?: string[] })?.owed).toEqual(["hudgod"]);
   });
 
   it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {

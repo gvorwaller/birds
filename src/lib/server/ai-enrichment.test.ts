@@ -413,7 +413,10 @@ describe("isMalformedNote — structural damage, not meaning", () => {
 });
 
 describe("parseAnnotation — malformed and over-cap handling", () => {
-  const CANDS = ["haiwoo", "labwoo", "brnpel", "dalpel1", "grwpel1", "lessca"];
+  // Must exceed MAX_SIMILAR so the over-cap path is actually reached; sized
+  // from the constant rather than hardcoded so raising the cap cannot silently
+  // stop testing it.
+  const CANDS = Array.from({ length: MAX_SIMILAR + 1 }, (_, i) => `cand${i}`);
   const p = (similar: string) =>
     parseAnnotation(`{"tags": [], "field_craft": "x", "similar": ${similar}}`, {
       candidates: CANDS,
@@ -421,16 +424,16 @@ describe("parseAnnotation — malformed and over-cap handling", () => {
     });
 
   it("drops a malformed note and records why", () => {
-    const out = p('{"haiwoo": "Larger overall., bircapped birds aside, focus on body tone."}');
+    const out = p('{"cand0": "Larger overall., bircapped birds aside, focus on body tone."}');
     expect(out.similar).toEqual([]);
-    expect(out.droppedSimilar).toEqual(["haiwoo:malformed"]);
+    expect(out.droppedSimilar).toEqual(["cand0:malformed"]);
   });
 
   it("keeps a good note alongside a malformed sibling", () => {
     const good = "Barred black-and-white back rather than a clean white stripe.";
-    const out = p(`{"haiwoo": "Bad., glued.the word", "labwoo": "${good}"}`);
-    expect(out.similar).toEqual([{ code: "labwoo", note: good }]);
-    expect(out.droppedSimilar).toEqual(["haiwoo:malformed"]);
+    const out = p(`{"cand0": "Bad., glued.the word", "cand1": "${good}"}`);
+    expect(out.similar).toEqual([{ code: "cand1", note: good }]);
+    expect(out.droppedSimilar).toEqual(["cand0:malformed"]);
   });
 
   it("records over-cap candidates instead of silently truncating", () => {
@@ -442,7 +445,7 @@ describe("parseAnnotation — malformed and over-cap handling", () => {
   });
 
   it("accepts a terse voice-only answer that the old 40-char floor rejected", () => {
-    const out = p('{"lessca": "Voice only; plumage identical."}');
-    expect(out.similar).toEqual([{ code: "lessca", note: "Voice only; plumage identical." }]);
+    const out = p('{"cand0": "Voice only; plumage identical."}');
+    expect(out.similar).toEqual([{ code: "cand0", note: "Voice only; plumage identical." }]);
   });
 });

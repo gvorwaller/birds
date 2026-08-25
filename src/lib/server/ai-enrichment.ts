@@ -48,8 +48,14 @@ export const AI_TIMEOUT_MS = 120_000;
  * an essay in a card.
  */
 export const SIMILAR_NOTE_MAX_CHARS = 500;
-/** Cap on notes per species — the observed maximum candidate fan-out is 7. */
-export const MAX_SIMILAR = 5;
+/**
+ * Cap on notes per species. Set to the measured maximum fan-out (7) rather than
+ * below it: at 5 the schema could mark 6-7 slash keys required and the parser
+ * would then truncate the surplus, discarding notes the model was obliged to
+ * write. Over-cap rejections are still recorded, but they should now be
+ * unreachable via the slash tier.
+ */
+export const MAX_SIMILAR = 7;
 /**
  * Floor on a usable note.
  *
@@ -230,9 +236,12 @@ export function buildUserPrompt(input: {
  *     'none' and silently cost that species its notes;
  *   - a code returned as "brnpel1" when the list said "brnpel" — right species,
  *     invented identifier.
- * Marking `similar` REQUIRED fixes the first structurally, and pinning `code`
- * to an `enum` of the offered candidates makes the second unrepresentable
- * rather than merely rejected after the fact.
+ * Pinning `code` to the offered candidates makes the second UNREPRESENTABLE —
+ * that part is structural. Marking `similar` required does NOT do the same for
+ * the first: it guarantees the key, not a sentence, and "" satisfies it. The
+ * retry loop and the validator carry that load. (This sentence previously
+ * claimed otherwise; it was wrong, in the same way three earlier claims in this
+ * file were wrong.)
  *
  * Deliberately no maxLength/maxItems: the structured-output schema subset does
  * not support string or complex array constraints, so length capping stays in
@@ -420,6 +429,12 @@ export async function generateSpeciesAnnotation(
  *   - nothing here judges meaning, so a fluent-but-wrong field mark still gets
  *     through. That risk is real and is why the card carries the verify-in-the-
  *     field caveat; this only catches text that is broken on its face.
+ *
+ * IMPORTANT, so the catch rate is not misread: this does NOT detect the
+ * syllable-doubling itself. "plplainer", "parparrow", "slorter", "rufer" are
+ * invisible to it. Every one of the 10 corrupted prod notes was caught because
+ * it ALSO carried punctuation damage. A degenerated tail with clean punctuation
+ * still ships. The audit rate is a property of that corpus, not a guarantee.
  */
 export function isMalformedNote(note: string): boolean {
 	// "individual., bircapped" — sentence end followed by more punctuation.

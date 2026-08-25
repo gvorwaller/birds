@@ -271,6 +271,16 @@ export async function upsertAiData(
 		 * (GROK P1). It is now an error, so the 7-day window applies.
 		 */
 		candidateCount?: number;
+		/**
+		 * eBird-slash candidates this run OWED a note and did not deliver.
+		 *
+		 * Partial success was the last-good wipe in a new shape (GROK): two of
+		 * three notes written with the third dropped as malformed stamped 'ok',
+		 * DELETEd every row, and re-inserted the subset — destroying the missing
+		 * candidate's previously-good note, with aiDueCodes then declining to
+		 * reselect because status was ok and the hash matched.
+		 */
+		owedCodes?: readonly string[];
 	}
 ): Promise<void> {
 	// SET expressions read the OLD row for untouched columns, so mixing the
@@ -283,12 +293,23 @@ export async function upsertAiData(
 	const similar = data.similar ?? [];
 	const hash = data.similarCandidatesHash ?? null;
 	const candidateCount = data.candidateCount ?? 0;
-	// 'none' is legal ONLY when nothing was offered. See candidateCount above.
+	const owed = data.owedCodes ?? [];
+	// 'ok' requires COMPLETENESS, not merely a non-empty result: any slash
+	// candidate still owed a note leaves the substage due. 'none' remains legal
+	// only when nothing was offered at all.
 	const similarStatus =
-		hash == null ? null : similar.length > 0 ? 'ok' : candidateCount === 0 ? 'none' : 'error';
+		hash == null
+			? null
+			: candidateCount === 0
+				? 'none'
+				: owed.length === 0 && similar.length > 0
+					? 'ok'
+					: 'error';
 	const similarError =
 		similarStatus === 'error'
-			? `No usable note returned for ${candidateCount} candidate(s) after retries.`
+			? owed.length > 0
+				? `No usable note for ${owed.length} of ${candidateCount} candidate(s): ${owed.join(', ')}.`
+				: `No usable note returned for ${candidateCount} candidate(s) after retries.`
 			: null;
 
 	await withTransaction(async (client) => {
@@ -318,16 +339,27 @@ export async function upsertAiData(
 		);
 		// Only touch the notes when this run produced a verdict on them.
 		if (similarStatus == null) return;
-		// A MISS must not wipe last-good notes. Deleting here would let a single
-		// bad response blank a species page that was previously correct — the
-		// same last-good rule markMediaError follows for photos (GROK P2).
-		if (similarStatus === 'error') return;
-		await client.query(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
+
+		// Replace per-code rather than wholesale. A blanket DELETE discards the
+		// previous good note for any candidate this run failed on, which is how
+		// both the full-miss and the partial-miss cases destroyed working data.
+		// Rows are removed only when their candidate is no longer offered at all
+		// (a taxonomy change), and otherwise upserted in place.
+		if (similar.length > 0) {
+			await client.query(
+				`DELETE FROM species_similar
+				  WHERE species_code = $1 AND similar_code <> ALL($2::text[])`,
+				[code, [...similar.map((x) => x.code), ...owed]]
+			);
+		}
 		for (const s of similar) {
 			await client.query(
 				`INSERT INTO species_similar
 			   (species_code, similar_code, note, ai_model, ai_source_rev_id)
-			 VALUES ($1, $2, $3, $4, $5)`,
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (species_code, similar_code) DO UPDATE SET
+			   note = EXCLUDED.note, ai_model = EXCLUDED.ai_model,
+			   ai_source_rev_id = EXCLUDED.ai_source_rev_id, generated_at = NOW()`,
 				[code, s.code, s.note, data.model, data.sourceRevId]
 			);
 		}
