@@ -1115,12 +1115,20 @@ async function candidateSet(code: string, sciName: string): Promise<CandidateSet
 export async function similarCandidatesFor(
 	code: string,
 	sciName: string
-): Promise<{ code: string; comName: string; sciName: string }[]> {
+): Promise<
+	{ code: string; comName: string; sciName: string; basis: 'ebird_slash' | 'genus' }[]
+> {
 	const set = await candidateSet(code, sciName);
-	return [...set.slash, ...set.genus].map((r) => ({
+	// Tier is passed through, not flattened: the model needs to know which
+	// candidates carry Cornell's "these are confused in the field" judgement.
+	return [
+		...set.slash.map((r) => ({ ...r, basis: 'ebird_slash' as const })),
+		...set.genus.map((r) => ({ ...r, basis: 'genus' as const }))
+	].map((r) => ({
 		code: r.species_code,
 		comName: r.com_name,
-		sciName: r.sci_name
+		sciName: r.sci_name,
+		basis: r.basis
 	}));
 }
 

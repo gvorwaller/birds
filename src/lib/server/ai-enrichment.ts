@@ -44,6 +44,17 @@ const PROSE_CAP = 10_000;
 export const SIMILAR_NOTE_MAX_CHARS = 500;
 /** Cap on notes per species — the observed maximum candidate fan-out is 7. */
 export const MAX_SIMILAR = 5;
+/**
+ * Floor on a usable note.
+ *
+ * Making `similar` a required schema field guarantees the key is PRESENT, not
+ * that it is MEANINGFUL — a live run returned a one-character note, satisfying
+ * the schema with junk. A real separating mark ("Bill is longer than the head,
+ * and the nape shows a dark spur") cannot be expressed in a handful of
+ * characters, so anything shorter is treated as a non-answer and routed to the
+ * retry rather than written to the page.
+ */
+export const SIMILAR_NOTE_MIN_CHARS = 40;
 
 export class EnrichmentAiError extends Error {
 	constructor(
@@ -63,6 +74,14 @@ export interface SimilarCandidate {
 	code: string;
 	comName: string;
 	sciName: string;
+	/**
+	 * Which tier produced this candidate. Surfaced to the model because the two
+	 * carry very different priors: an eBird slash taxon means Cornell groups the
+	 * pair precisely BECAUSE field separation is hard, so "no useful difference"
+	 * is essentially never right there. A same-genus candidate may genuinely not
+	 * be a look-alike.
+	 */
+	basis: 'ebird_slash' | 'genus';
 }
 
 export interface SpeciesAnnotation {
@@ -109,7 +128,15 @@ function proseBlock(extract: string, sections: readonly WikiSection[]): string {
  * `validateTags` gives the tag vocabulary.
  */
 function candidateBlock(candidates: readonly SimilarCandidate[]): string {
-	return candidates.map((c) => `${c.code} = ${c.comName} (${c.sciName})`).join('\n');
+	return candidates
+		.map(
+			(c) =>
+				`${c.code} = ${c.comName} (${c.sciName}) — ` +
+				(c.basis === 'ebird_slash'
+					? 'eBird reporting group: routinely confused in the field'
+					: 'same genus: may or may not be a look-alike')
+		)
+		.join('\n');
 }
 
 export function buildUserPrompt(input: {
@@ -129,7 +156,18 @@ export function buildUserPrompt(input: {
 		`${vocabularyBlock()}\n\n` +
 		(candidates.length > 0
 			? `Species this one might be confused with (the ONLY allowed codes):\n` +
-				`${candidateBlock(candidates)}\n\n`
+				`${candidateBlock(candidates)}\n` +
+				// Observed in production on day one: for American White Pelican the
+				// model returned "brnpel1" when the list said "brnpel". It knew the
+				// right species and mistyped the identifier — almost certainly
+				// pattern-matching eBird's common trailing-digit convention. The
+				// closed-set check rejects that, so the cost is a silently missing
+				// note rather than bad data; this line is the cheap way to stop
+				// losing the note in the first place.
+				`Copy each code EXACTLY as written above, character for character. ` +
+				`Do not add or remove a trailing digit, do not "correct" a code to ` +
+				`the form you expect, and do not construct a code for any species ` +
+				`not listed.\n\n`
 			: '') +
 		`Produce:\n` +
 		`1. "tags": up to ${MAX_TAGS} tags chosen ONLY from the vocabulary above, ` +
@@ -141,26 +179,90 @@ export function buildUserPrompt(input: {
 		`cue to look or listen for. For tidal species, explicitly state which tide ` +
 		`stage is most productive and why. Under ${FIELD_CRAFT_MAX_CHARS} characters.\n` +
 		(candidates.length > 0
-			? `3. "similar": up to ${MAX_SIMILAR} entries, each {"code", "note"}. Use ONLY ` +
-				`codes from the list above — never invent a species. Include an entry ONLY ` +
-				`where you can state a genuinely useful difference; omit a candidate rather ` +
-				`than padding.\n` +
+			? `3. "similar": an object whose KEYS are candidate codes from the list ` +
+				`above and whose values are the note for that species.\n` +
+				// Calibration, not decoration. Under a flat "an empty list is a valid
+				// answer" this stage returned NOTHING on roughly one call in three
+				// during bring-up — including for pairs eBird itself groups as
+				// confusable, where silence is close to always wrong.
+				`   ALWAYS write a note for every "eBird reporting group" candidate: ` +
+				`those are grouped because experienced birders confuse them, so a ` +
+				`separating mark always exists even when it is subtle. Say what it is, ` +
+				`and say plainly when the two are effectively inseparable except by ` +
+				`voice or in certain plumages — that is itself the useful answer. For ` +
+				`"same genus" candidates, include one only if the two could actually be ` +
+				`mistaken for each other; skip the rest.\n` +
 				`   Each "note" tells a birder in the field how to separate THAT species ` +
 				`from ${input.comName}. Write about the candidate, not about ` +
 				`${input.comName}. Lead with the single most reliable mark, then add the ` +
 				`one or two secondary marks that confirm it — structure and proportion ` +
 				`(bill-to-head ratio, relative size), plumage detail, or voice. Prefer ` +
 				`marks visible on a bird in the field over range or behaviour. One to ` +
-				`three sentences, under ${SIMILAR_NOTE_MAX_CHARS} characters; use the ` +
-				`space only if the extra marks genuinely help clinch the ID — a pair that ` +
-				`separates on one clean mark needs one sentence. An empty list is a valid ` +
-				`answer.\n`
+				`three sentences, under ${SIMILAR_NOTE_MAX_CHARS} characters — a pair that ` +
+				`separates on one clean mark needs only one sentence.\n`
 			: '') +
 		`\nRespond with ONLY this JSON object, nothing else:\n` +
 		(candidates.length > 0
-			? `{"tags": ["..."], "field_craft": "...", "similar": [{"code": "...", "note": "..."}]}`
+			? `{"tags": ["..."], "field_craft": "...", "similar": {"<code>": "<note>"}}`
 			: `{"tags": ["..."], "field_craft": "..."}`)
 	);
+}
+
+/**
+ * Response schema for structured outputs.
+ *
+ * This replaces asking nicely. Two failures were measured against a prose-only
+ * prompt on live traffic:
+ *   - `similar` omitted entirely on ~1 call in 5, which persisted as a terminal
+ *     'none' and silently cost that species its notes;
+ *   - a code returned as "brnpel1" when the list said "brnpel" — right species,
+ *     invented identifier.
+ * Marking `similar` REQUIRED fixes the first structurally, and pinning `code`
+ * to an `enum` of the offered candidates makes the second unrepresentable
+ * rather than merely rejected after the fact.
+ *
+ * Deliberately no maxLength/maxItems: the structured-output schema subset does
+ * not support string or complex array constraints, so length capping stays in
+ * clampNote() and the MAX_SIMILAR slice. The schema governs SHAPE; the parser
+ * still governs SIZE.
+ */
+export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Record<string, unknown> {
+	const properties: Record<string, unknown> = {
+		tags: { type: 'array', items: { type: 'string' } },
+		field_craft: { type: 'string' }
+	};
+	const required = ['tags', 'field_craft'];
+
+	if (candidates.length > 0) {
+		// `similar` is an OBJECT keyed by species code, not an array of
+		// {code, note}. That is what lets the schema distinguish the two tiers:
+		// every eBird-slash candidate goes in `required`, so a note for it is
+		// structurally mandatory, while genus candidates stay optional.
+		//
+		// The array form could not express this — the schema subset has no
+		// minItems — and it showed: with one slash candidate and nothing else,
+		// the model returned an empty array on 3 of 5 live runs, judging a hard
+		// pair (Greater/Lesser Scaup) unseparable. But eBird grouping a pair IS
+		// the claim that birders need help telling them apart, so silence is the
+		// one answer that cannot be right. Now it must say something, including
+		// "these are effectively inseparable except by X" — which is itself the
+		// useful answer.
+		//
+		// `additionalProperties: false` plus one property per candidate also
+		// makes an invented code (the observed "brnpel1") unrepresentable.
+		const noteProps: Record<string, unknown> = {};
+		for (const c of candidates) noteProps[c.code] = { type: 'string' };
+
+		properties.similar = {
+			type: 'object',
+			properties: noteProps,
+			required: candidates.filter((c) => c.basis === 'ebird_slash').map((c) => c.code),
+			additionalProperties: false
+		};
+		required.push('similar');
+	}
+
+	return { type: 'object', properties, required, additionalProperties: false };
 }
 
 type Fetcher = typeof fetch;
@@ -215,9 +317,13 @@ export async function generateSpeciesAnnotation(
 				// — on Opus 5 that is documented to occasionally leak <thinking> tags
 				// into the visible response, which would break parseAnnotation.
 				thinking: { type: 'adaptive' },
-				// Default is `high`; medium is the cost/quality balance for a
-				// bounded annotation task with the source text already supplied.
-				output_config: { effort: 'medium' },
+				output_config: {
+					// Default is `high`; medium is the cost/quality balance for a
+					// bounded annotation task with the source text already supplied.
+					effort: 'medium',
+					// Constrains the response shape — see buildOutputSchema.
+					format: { type: 'json_schema', schema: buildOutputSchema(input.candidates ?? []) }
+				},
 				// Opus 5 ships elevated safety classifiers that can decline a request
 				// outright. Bird identification will not realistically trip them, but
 				// a decline is otherwise a hard stop for that species, so let the API
@@ -313,6 +419,16 @@ function validateSimilar(
 	candidates: readonly string[],
 	focalCode: string | null
 ): { similar: { code: string; note: string }[]; dropped: string[] } {
+	// Structured outputs return `similar` as an object keyed by species code
+	// (see buildOutputSchema). The array-of-{code,note} form is still accepted
+	// because it is what an unconstrained response produces — the schema is the
+	// guarantee, this is the fallback if a call ever runs without one.
+	if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+		raw = Object.entries(raw as Record<string, unknown>).map(([code, note]) => ({
+			code,
+			note
+		}));
+	}
 	if (!Array.isArray(raw)) return { similar: [], dropped: [] };
 
 	const allowed = new Map(candidates.map((c) => [c.toLowerCase(), c]));
@@ -334,9 +450,13 @@ function validateSimilar(
 		if (seen.has(canonical)) continue;
 
 		const text = typeof note === 'string' ? clampNote(note) : '';
-		// A candidate with no usable note is not worth a row: the structured
-		// basis line already says why the link exists.
-		if (text.length === 0) continue;
+		// Too short to be a real field mark — see SIMILAR_NOTE_MIN_CHARS. Counted
+		// as dropped rather than silently skipped so schema-gaming is visible in
+		// job events instead of quietly producing a page of stub notes.
+		if (text.length < SIMILAR_NOTE_MIN_CHARS) {
+			if (text.length > 0) dropped.push(`${canonical}:too-short`);
+			continue;
+		}
 
 		seen.add(canonical);
 		similar.push({ code: canonical, note: text });

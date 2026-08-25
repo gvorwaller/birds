@@ -261,6 +261,7 @@ const {
   ENRICH_SCAN_DRAIN_MS,
   ENRICH_SCAN_IDLE_MS,
 } = await import("./job-handlers");
+const { SIMILAR_EMPTY_RETRIES } = await import("./job-handlers");
 const { RATE_LIMIT_RETRY_DELAY_MS, TRANSIENT_RETRY_DELAYS_MS } = await import(
   "./job-policy"
 );
@@ -2366,11 +2367,34 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
   });
 
-  it("accepts a second empty result as a genuine judgement — no third call", async () => {
+  it("stops retrying as soon as notes come back", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
+      ...ANNOTATION,
+      similar: [{ code: "hudgod", note: "Longer, straighter bill." }],
+    });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after SIMILAR_EMPTY_RETRIES and records the miss", async () => {
     freshAiDueDbWithCandidates();
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(
+      SIMILAR_EMPTY_RETRIES + 1,
+    );
+    const confirmed = mocks.recordEvent.mock.calls.filter(
+      (c) => (c[2] as { similarEmpty?: string })?.similarEmpty === "confirmed",
+    );
+    expect(confirmed).toHaveLength(1);
+  });
+
+  it("never retries when there were no candidates to begin with", async () => {
+    freshAiDueDb();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
   });
 
   it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {

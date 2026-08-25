@@ -9,6 +9,8 @@ const {
   SIMILAR_NOTE_MAX_CHARS,
   MAX_SIMILAR,
   clampNote,
+  buildOutputSchema,
+  SIMILAR_NOTE_MIN_CHARS,
 } = await import("./ai-enrichment");
 
 describe("parseAnnotation (pure response parser)", () => {
@@ -86,17 +88,34 @@ describe("parseAnnotation — similar species", () => {
       { candidates: CANDIDATES, focalCode: "dowwoo" },
     );
 
+  it("accepts the KEYED-OBJECT form that structured outputs returns", () => {
+    const out = parseAnnotation(
+      '{"tags": [], "field_craft": "x", "similar": {"haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
+      { candidates: CANDIDATES, focalCode: "dowwoo" },
+    );
+    expect(out.similar).toEqual([{ code: "haiwoo", note: "Larger overall, with a bill roughly as long as the head is wide." }]);
+  });
+
+  it("still drops an out-of-set key in the object form", () => {
+    const out = parseAnnotation(
+      '{"tags": [], "field_craft": "x", "similar": {"brnpel1": "Barred black-and-white back rather than a clean white stripe.", "haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
+      { candidates: CANDIDATES, focalCode: "dowwoo" },
+    );
+    expect(out.similar.map((s) => s.code)).toEqual(["haiwoo"]);
+    expect(out.droppedSimilar).toEqual(["brnpel1"]);
+  });
+
   it("keeps entries whose code is in the candidate set", () => {
-    const out = ok('[{"code": "haiwoo", "note": "Larger, with a longer bill."}]');
+    const out = ok('[{"code": "haiwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]');
     expect(out.similar).toEqual([
-      { code: "haiwoo", note: "Larger, with a longer bill." },
+      { code: "haiwoo", note: "Larger overall, with a bill roughly as long as the head is wide." },
     ]);
     expect(out.droppedSimilar).toEqual([]);
   });
 
   it("DROPS a code outside the candidate set and reports it", () => {
     const out = ok(
-      '[{"code": "haiwoo", "note": "Larger."}, {"code": "invented1", "note": "Nope."}]',
+      '[{"code": "haiwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}, {"code": "invented1", "note": "Barred black-and-white back rather than a clean white stripe."}]',
     );
     expect(out.similar.map((s) => s.code)).toEqual(["haiwoo"]);
     expect(out.droppedSimilar).toEqual(["invented1"]);
@@ -104,7 +123,7 @@ describe("parseAnnotation — similar species", () => {
 
   it("drops a self-reference even if it is somehow in the candidate list", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": [{"code": "dowwoo", "note": "Me."}]}',
+      '{"tags": [], "field_craft": "x", "similar": [{"code": "dowwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
       { candidates: ["dowwoo", "haiwoo"], focalCode: "dowwoo" },
     );
     expect(out.similar).toEqual([]);
@@ -113,14 +132,14 @@ describe("parseAnnotation — similar species", () => {
 
   it("dedupes repeated codes, keeping the first", () => {
     const out = ok(
-      '[{"code": "haiwoo", "note": "First."}, {"code": "haiwoo", "note": "Second."}]',
+      '[{"code": "haiwoo", "note": "First: larger overall, with a notably longer, heavier bill."}, {"code": "haiwoo", "note": "Second: larger overall, with a notably longer, heavier bill."}]',
     );
-    expect(out.similar).toEqual([{ code: "haiwoo", note: "First." }]);
+    expect(out.similar).toEqual([{ code: "haiwoo", note: "First: larger overall, with a notably longer, heavier bill." }]);
   });
 
   it("matches codes case-insensitively but stores the canonical casing", () => {
-    const out = ok('[{"code": "HAIWOO", "note": "Larger."}]');
-    expect(out.similar).toEqual([{ code: "haiwoo", note: "Larger." }]);
+    const out = ok('[{"code": "HAIWOO", "note": "Larger overall, with a bill roughly as long as the head is wide."}]');
+    expect(out.similar).toEqual([{ code: "haiwoo", note: "Larger overall, with a bill roughly as long as the head is wide." }]);
   });
 
   it("caps note length", () => {
@@ -132,7 +151,7 @@ describe("parseAnnotation — similar species", () => {
 
   it("caps the number of entries at MAX_SIMILAR", () => {
     const many = Array.from({ length: 12 }, (_, i) => `c${i}`);
-    const body = many.map((c) => `{"code": "${c}", "note": "n"}`).join(",");
+    const body = many.map((c) => `{"code": "${c}", "note": "Larger overall, with a bill roughly as long as the head is wide."}`).join(",");
     const out = parseAnnotation(
       `{"tags": [], "field_craft": "x", "similar": [${body}]}`,
       { candidates: many, focalCode: "dowwoo" },
@@ -143,11 +162,25 @@ describe("parseAnnotation — similar species", () => {
   it("skips an entry with an empty note — the basis line already says why the link exists", () => {
     const out = ok('[{"code": "haiwoo", "note": "   "}]');
     expect(out.similar).toEqual([]);
+    expect(out.droppedSimilar).toEqual([]);
+  });
+
+  it("rejects a stub note that games the required-field schema", () => {
+    // Observed live: a required `similar` key satisfied with a 1-char value.
+    const out = ok('[{"code": "haiwoo", "note": "."}]');
+    expect(out.similar).toEqual([]);
+    expect(out.droppedSimilar).toEqual(["haiwoo:too-short"]);
+  });
+
+  it("accepts a note at exactly the minimum length", () => {
+    const note = "x".repeat(SIMILAR_NOTE_MIN_CHARS);
+    const out = ok(`[{"code": "haiwoo", "note": "${note}"}]`);
+    expect(out.similar).toEqual([{ code: "haiwoo", note }]);
   });
 
   it("accepts NO candidates at all: nothing is allowed through", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": [{"code": "haiwoo", "note": "Larger."}]}',
+      '{"tags": [], "field_craft": "x", "similar": [{"code": "haiwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
     );
     expect(out.similar).toEqual([]);
     expect(out.droppedSimilar).toEqual(["haiwoo"]);
@@ -192,6 +225,17 @@ describe("buildUserPrompt — candidate block", () => {
     expect(p).toContain('{"tags": ["..."], "field_craft": "..."}');
   });
 
+  it("tells the model to copy codes verbatim (guards the brnpel1 miss)", () => {
+    const p = buildUserPrompt({
+      ...base,
+      candidates: [
+        { code: "brnpel", comName: "Brown Pelican", sciName: "Pelecanus occidentalis", basis: "ebird_slash" as const },
+      ],
+    });
+    expect(p).toContain("Copy each code EXACTLY as written above");
+    expect(p).toContain("trailing digit");
+  });
+
   it("lists candidate codes and asks for notes about the CANDIDATE", () => {
     const p = buildUserPrompt({
       ...base,
@@ -199,12 +243,14 @@ describe("buildUserPrompt — candidate block", () => {
         {
           code: "haiwoo",
           comName: "Hairy Woodpecker",
-          sciName: "Dryobates villosus",
+          sciName: "Dryobates villosus", basis: "ebird_slash" as const,
         },
       ],
     });
     expect(p).toContain("haiwoo = Hairy Woodpecker (Dryobates villosus)");
-    expect(p).toContain("never invent a species");
+    // The "don't invent a code" rule now lives in the candidate block, next to
+    // the codes themselves, rather than in instruction 3.
+    expect(p).toContain("do not construct a code for any species");
     expect(p).toContain("Write about the candidate, not about Downy Woodpecker.");
   });
 });
@@ -272,5 +318,51 @@ describe("clampNote — graceful length capping (Opus 5 writes long)", () => {
       expect(out.length).toBeLessThanOrEqual(CAP + 1);
       expect(out).not.toMatch(/\s$/);
     }
+  });
+});
+
+describe("buildOutputSchema — shape is the guarantee", () => {
+  const slash = {
+    code: "lessca",
+    comName: "Lesser Scaup",
+    sciName: "Aythya affinis",
+    basis: "ebird_slash" as const,
+  };
+  const genus = {
+    code: "dalpel1",
+    comName: "Dalmatian Pelican",
+    sciName: "Pelecanus crispus",
+    basis: "genus" as const,
+  };
+
+  it("omits `similar` entirely when there are no candidates", () => {
+    const s = buildOutputSchema([]) as never as { properties: Record<string, unknown>; required: string[] };
+    expect(s.properties.similar).toBeUndefined();
+    expect(s.required).not.toContain("similar");
+  });
+
+  it("REQUIRES a note for every eBird-slash candidate", () => {
+    // This is the whole point: an eBird reporting group is the assertion that
+    // birders confuse the pair, so silence is the one answer that can't be right.
+    const s = buildOutputSchema([slash, genus]) as never as {
+      properties: { similar: { required: string[]; properties: Record<string, unknown> } };
+    };
+    expect(s.properties.similar.required).toEqual(["lessca"]);
+    expect(Object.keys(s.properties.similar.properties).sort()).toEqual(["dalpel1", "lessca"]);
+  });
+
+  it("leaves same-genus candidates optional", () => {
+    const s = buildOutputSchema([genus]) as never as {
+      properties: { similar: { required: string[] } };
+    };
+    expect(s.properties.similar.required).toEqual([]);
+  });
+
+  it("makes an invented code unrepresentable", () => {
+    const s = buildOutputSchema([slash]) as never as {
+      properties: { similar: { additionalProperties: boolean; properties: Record<string, unknown> } };
+    };
+    expect(s.properties.similar.additionalProperties).toBe(false);
+    expect(s.properties.similar.properties).not.toHaveProperty("lessca1");
   });
 });
