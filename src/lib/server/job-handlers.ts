@@ -1374,16 +1374,28 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			// result entirely and cost a first-time species its field craft too
 			// (GROK P1). Keep the best result seen and let a failing retry fall
 			// back to it rather than propagate.
+			// Retrying only on a WHOLLY empty result misses the partial case: with
+			// three candidates and one note dropped as malformed, `similar` is
+			// non-empty and the dropped candidate silently gets nothing. ~2% of
+			// live notes were corrupted, so this is not hypothetical. Trigger on
+			// "some eBird-slash candidate still has no note" instead — that is the
+			// set the schema marks required and the set a birder is owed.
+			const owed = () => {
+				const have = new Set(ann.similar.map((s) => s.code));
+				return candidates.filter((c) => c.basis === 'ebird_slash' && !have.has(c.code)).length;
+			};
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {
-				if (candidates.length === 0 || ann.similar.length > 0) break;
+				if (candidates.length === 0) break;
+				if (ann.similar.length > 0 && owed() === 0) break;
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
 				try {
 					const next = await annotate();
-					if (next.similar.length > 0) {
-						ann = next;
-						break;
-					}
+					// Keep whichever attempt owes fewer notes, so a retry can only
+					// improve the result, never regress it.
+					const before = owed();
+					const prev = ann;
 					ann = next;
+					if (owed() > before) ann = prev;
 				} catch (err) {
 					// Keep the earlier successful annotation and stop retrying; the
 					// species still gets its field craft, and the missing notes are

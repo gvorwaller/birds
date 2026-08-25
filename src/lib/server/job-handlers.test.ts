@@ -2361,7 +2361,10 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
       .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
       .mockResolvedValueOnce({
         ...ANNOTATION,
-        similar: [{ code: "haiwoo", note: "Larger, longer-billed." }],
+        // Must be the fixture's slash candidate: the retry now triggers on
+        // "a slash candidate is still owed a note", so a note for some other
+        // species would (correctly) keep retrying.
+        similar: [{ code: "hudgod", note: "Longer, straighter bill and bolder wingbar." }],
       });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
@@ -2435,6 +2438,30 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
     // $6 is the similar status; a miss with candidates offered must be 'error'.
     expect(aiWrite?.params?.[5]).toBe("error");
+  });
+
+  it("retries when a slash candidate is owed a note, even if others got one", async () => {
+    // ~2% of live notes came back corrupted and were dropped as malformed. With
+    // several candidates that leaves `similar` non-empty while the dropped
+    // candidate silently gets nothing, so an empty-only trigger never fires.
+    freshAiDueDbWithCandidates();
+    const good = "Longer, straighter bill and bolder wingbar than the focal bird.";
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "hudgod", note: good }] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
+  });
+
+  it("a retry can only improve the result, never regress it", async () => {
+    freshAiDueDbWithCandidates();
+    const good = "Longer, straighter bill and bolder wingbar than the focal bird.";
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "hudgod", note: good }] })
+      .mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    // First attempt already satisfied every owed slash candidate: no retry.
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
   });
 
   it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {
