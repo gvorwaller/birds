@@ -1387,8 +1387,11 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					.map((c) => c.code);
 			};
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {
-				if (candidates.length === 0) break;
-				if (ann.similar.length > 0 && owed().length === 0) break;
+				// Retry on what is OWED, not on emptiness. A genus-only candidate set
+				// that the model correctly skipped is empty AND complete — gating on
+				// `similar.length > 0` retried it twice for nothing, the same
+				// coupling that left it stuck in 'error' on the persist side (GROK).
+				if (candidates.length === 0 || owed().length === 0) break;
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
 				try {
 					const next = await annotate();

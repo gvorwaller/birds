@@ -2465,11 +2465,18 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
           ],
         };
       }
+      // The GENUS tier: previously unmocked, so no genus candidate was ever
+      // offered and any test claiming to cover genus behaviour was really just
+      // inspecting the slash keep-list.
+      if (text.includes("split_part(tc.sci_name, ' ', 1)")) {
+        return { rows: [{ species_code: "batgod", com_name: "Bar-tailed Godwit" }] };
+      }
       if (text.includes("lower(sci_name) = ANY")) {
         return {
           rows: [
             { species_code: "hudgod", com_name: "Hudsonian Godwit", sci_name: "Limosa haemastica" },
             { species_code: "biltai", com_name: "Black-tailed Godwit", sci_name: "Limosa limosa" },
+            { species_code: "batgod", com_name: "Bar-tailed Godwit", sci_name: "Limosa lapponica" },
           ],
         };
       }
@@ -2490,11 +2497,12 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(ins.some((c) => String(c.params?.[2]).startsWith("SECOND"))).toBe(false);
   });
 
-  it("keeps a still-offered candidate's last-good note when this run omits it", async () => {
-    // Genus notes are optional, so a run can legitimately complete the slash
-    // notes and return nothing for a genus candidate. That must not delete the
-    // previous genus note (GROK: the keep-list was the written set, not the
-    // offered set).
+  it("keeps a still-offered GENUS candidate this run omitted", async () => {
+    // Genus notes are optional, so a run can complete both slash notes and
+    // legitimately return nothing for the genus candidate. Its previous note
+    // must survive. batgod is the genus candidate and is NOT in this run's
+    // output — the keep-list must still contain it, which is the whole point
+    // of keying the delete on the OFFERED set rather than the written one.
     freshAiDueDbTwoSlash();
     const note = "Longer, straighter bill and a bolder wingbar than the focal bird.";
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
@@ -2506,8 +2514,37 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     const del = db.calls.find((c) => c.text.includes("DELETE FROM species_similar"));
-    // Keep-list is the OFFERED set — every candidate survives the delete.
-    expect(del?.params?.[1]).toEqual(expect.arrayContaining(["hudgod", "biltai"]));
+    const keep = del?.params?.[1] as string[];
+    expect(keep).toContain("batgod");
+    expect(keep).toEqual(expect.arrayContaining(["hudgod", "biltai"]));
+  });
+
+  it("a genus-only set the model skips entirely is 'ok', not a perpetual error", async () => {
+    // Nothing was OWED, so nothing was incomplete. Requiring similar.length > 0
+    // left these species in 'error' forever: the retry could never succeed, and
+    // they re-entered the 7-day lane on every pass (GROK).
+    freshAiDueDb();
+    const base = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("category = 'slash'")) return { rows: [] };
+      if (text.includes("split_part(tc.sci_name, ' ', 1)")) {
+        return { rows: [{ species_code: "batgod" }] };
+      }
+      if (text.includes("lower(sci_name) = ANY")) {
+        return {
+          rows: [
+            { species_code: "batgod", com_name: "Bar-tailed Godwit", sci_name: "Limosa lapponica" },
+          ],
+        };
+      }
+      return base(text, params);
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    expect(aiWrite?.params?.[5]).toBe("ok");
+    // No slash candidate was owed, so no retry should have fired either.
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
   });
 
   it("retries when a slash candidate is owed a note, even if others got one", async () => {

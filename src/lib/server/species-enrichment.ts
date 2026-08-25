@@ -292,7 +292,29 @@ export async function upsertAiData(
 		 * 'ok', and was never reselected (GROK). Absence in one response is not
 		 * evidence a note is wrong: we have measured that omissions are often
 		 * spurious and have NOT measured that they are considered judgements, so
-		 * last-good wins, exactly as it does for wiki prose and media.
+		 * last-good wins on the MISS path.
+		 *
+		 * That is narrower than it first looks, and the wiki/media analogy is NOT
+		 * the justification (GROK): those protect FETCH FAILURES, which are not
+		 * judgements at all, while tags and field_craft are already
+		 * this-run-is-truth. Two paths, deliberately not split today:
+		 *
+		 *   miss/error (slash owed, empty result, retry threw) — last-good for
+		 *     every still-offered row. Destroying a good note here is the bug
+		 *     that recurred three times. This is what the code does.
+		 *   complete success (nothing owed) — an omitted GENUS key is the only
+		 *     channel the prompt and schema give the model to say "not a
+		 *     look-alike". Last-good makes that claim un-withdrawable: the row
+		 *     renders either way (getSimilarSpecies always lists genus mates and
+		 *     the note is an overlay), so what survives is a field-separation
+		 *     sentence implying the birds ARE confusable, above card copy saying
+		 *     they may not be.
+		 *
+		 * The cost of today's choice is a frozen confusion claim; the cost of the
+		 * alternative is silent destruction, which has already happened three
+		 * times. Split it only with evidence about how often an omitted optional
+		 * key is a considered skip rather than a drop — which nothing measured so
+		 * far tells us.
 		 */
 		offeredCodes?: readonly string[];
 	}
@@ -312,14 +334,14 @@ export async function upsertAiData(
 	// 'ok' requires COMPLETENESS, not merely a non-empty result: any slash
 	// candidate still owed a note leaves the substage due. 'none' remains legal
 	// only when nothing was offered at all.
+	// Completeness is about what was REQUIRED, not about whether anything was
+	// written. Requiring similar.length > 0 left a genus-only candidate set that
+	// the model correctly skipped in 'error' forever: nothing was owed, so the
+	// retry could never succeed, and the species re-entered the 7-day lane on
+	// every pass (GROK). Genus notes are optional; skipping all of them IS a
+	// complete answer.
 	const similarStatus =
-		hash == null
-			? null
-			: candidateCount === 0
-				? 'none'
-				: owed.length === 0 && similar.length > 0
-					? 'ok'
-					: 'error';
+		hash == null ? null : candidateCount === 0 ? 'none' : owed.length === 0 ? 'ok' : 'error';
 	const similarError =
 		similarStatus === 'error'
 			? owed.length > 0
