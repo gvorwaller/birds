@@ -16,39 +16,49 @@
 	 */
 	let {
 		mode,
-		params,
+		params = '',
 		month
 	}: {
-		mode: 'area' | 'species';
-		/** Current page's query string (no leading "?"). */
-		params: string;
-		month: number;
+		/** 'data' is the Hotspots & data hub — a plain destination with no
+		 * remembered search of its own (GBV 2026-08-24: reaching it via a link
+		 * buried in body copy was hard to find). */
+		mode: 'area' | 'species' | 'data';
+		/** Current page's query string (no leading "?"). Unused for 'data'. */
+		params?: string;
+		/** Omitted by the hub, which has no month of its own — leaving each
+		 * search tab's remembered month intact instead of forcing today's. */
+		month?: number;
 	} = $props();
 
-	const ROUTES = { area: '/forecast', species: '/forecast/species' } as const;
+	const ROUTES = { area: '/forecast', species: '/forecast/species', data: '/forecast/data' } as const;
 	// Keys are scoped by the LOGIN identity (not the viewed data owner): on a
 	// shared browser profile, one account's remembered search must neither
 	// leak into nor be overwritten by another's (CODEX1 2026-08-15 #3).
-	const KEY = (m: 'area' | 'species') =>
+	const KEY = (m: 'area' | 'species' | 'data') =>
 		`forecast-params-${m}-u${page.data.user?.id ?? 'anon'}`;
 
-	let remembered = $state('');
-	const other = $derived<'area' | 'species'>(mode === 'area' ? 'species' : 'area');
+	let remembered = $state<Record<'area' | 'species', string>>({ area: '', species: '' });
 
 	$effect(() => {
 		if (!browser) return;
 		try {
-			const sp = new URLSearchParams(params);
-			const hasIdentity = !!(
-				sp.get('place') ||
-				sp.get('lat') ||
-				sp.get('species') ||
-				sp.get('q') ||
-				sp.get('region') ||
-				sp.get('dist')
-			);
-			if (hasIdentity) localStorage.setItem(KEY(mode), params);
-			remembered = localStorage.getItem(KEY(other)) ?? '';
+			// The hub carries no search of its own, so it only reads.
+			if (mode !== 'data') {
+				const sp = new URLSearchParams(params);
+				const hasIdentity = !!(
+					sp.get('place') ||
+					sp.get('lat') ||
+					sp.get('species') ||
+					sp.get('q') ||
+					sp.get('region') ||
+					sp.get('dist')
+				);
+				if (hasIdentity) localStorage.setItem(KEY(mode), params);
+			}
+			remembered = {
+				area: localStorage.getItem(KEY('area')) ?? '',
+				species: localStorage.getItem(KEY('species')) ?? ''
+			};
 		} catch {
 			// Safari private mode / blocked storage
 		}
@@ -86,6 +96,9 @@
 			});
 	}
 	afterNavigate(() => {
+		// The hub has no search to restore — and a goto here would bounce the
+		// user off the page they just opened.
+		if (mode === 'data') return;
 		try {
 			// Decide from the CURRENT url, never a stale prop snapshot.
 			const search = page.url.search.replace(/^\?/, '');
@@ -98,29 +111,35 @@
 		}
 	});
 
-	const otherHref = $derived.by(() => {
-		const sp = new URLSearchParams(remembered);
-		sp.set('month', String(month));
-		return `${ROUTES[other]}?${sp.toString()}`;
-	});
-
-	const selfHref = $derived.by(() => {
-		const sp = new URLSearchParams(params);
-		sp.set('month', String(month));
-		return `${ROUTES[mode]}?${sp.toString()}`;
-	});
+	/** A search tab's href: its own current params when active, else the
+	 * search it last had. Month always carries across. */
+	function searchHref(target: 'area' | 'species'): string {
+		const sp = new URLSearchParams(target === mode ? params : remembered[target]);
+		if (month != null) sp.set('month', String(month));
+		const qs = sp.toString();
+		return qs ? `${ROUTES[target]}?${qs}` : ROUTES[target];
+	}
+	const areaHref = $derived(searchHref('area'));
+	const speciesHref = $derived(searchHref('species'));
 </script>
 
 <nav class="tabs" aria-label="Forecast mode">
-	<a href={mode === 'area' ? selfHref : otherHref} class:active={mode === 'area'} aria-current={mode === 'area' ? 'page' : undefined}>
+	<a href={areaHref} class:active={mode === 'area'} aria-current={mode === 'area' ? 'page' : undefined}>
 		What can I see?
 	</a>
 	<a
-		href={mode === 'species' ? selfHref : otherHref}
+		href={speciesHref}
 		class:active={mode === 'species'}
 		aria-current={mode === 'species' ? 'page' : undefined}
 	>
 		Where can I find this bird?
+	</a>
+	<a
+		href={ROUTES.data}
+		class:active={mode === 'data'}
+		aria-current={mode === 'data' ? 'page' : undefined}
+	>
+		Hotspots &amp; data
 	</a>
 </nav>
 

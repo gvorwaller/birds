@@ -5,6 +5,7 @@
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { fmtNextScan } from "$lib/next-scan";
+  import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -849,11 +850,11 @@
 
 <div class="page">
   <h1>Hotspots &amp; data</h1>
+  <ForecastTabs mode="data" />
   <p class="intro">
     Every hotspot, county, and region this app has loaded — how current the
     data is, what's running, and what failed. Data refreshes matter only once
     a year, when a new complete year of checklists becomes available.
-    <a href="/forecast">← Back to Forecast</a>
   </p>
 
   <section class="card">

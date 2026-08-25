@@ -52,6 +52,10 @@
 	];
 	// Drawer-only destinations remain visible to every role.
 	const drawerOnlyItems = [
+		// The load/progress hub used to be reachable only from a link inside
+		// the Forecast page's body copy — hard to find (GBV 2026-08-24). It's
+		// also a Forecast subtab now.
+		{ href: '/forecast/data', label: 'Hotspots & data', ico: '📊' },
 		{ href: '/trips', label: 'Trips', ico: '🗺️' },
 		{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' },
 		{ href: '/life', label: 'Life list', ico: '🗺️' }
@@ -73,6 +77,9 @@
 	function isActive(href: string, path: string): boolean {
 		if (href === '/') return path === '/';
 		if (href === '/species') return isFieldGuideActive(path);
+		// The hub is its own drawer entry, so Forecast shouldn't also light up
+		// there — but it still owns /forecast/species.
+		if (href === '/forecast') return path.startsWith('/forecast') && !path.startsWith('/forecast/data');
 		return path.startsWith(href);
 	}
 

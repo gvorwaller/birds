@@ -304,8 +304,8 @@
 						"best month" or a ranking.
 					</li>
 					<li>
-						<strong>Hotspots &amp; data</strong> (the page behind the coverage
-						pill's <em>details</em> link) is the inventory <em>and</em> the
+						<strong>Hotspots &amp; data</strong> (menu → 📊 Hotspots &amp; data,
+						or the third Forecast tab) is the inventory <em>and</em> the
 						load hub. A <strong>search box</strong> at the top finds any
 						stored hotspot, county, or region by name and shows its status —
 						hotspot names there (and throughout the tree) open their own
