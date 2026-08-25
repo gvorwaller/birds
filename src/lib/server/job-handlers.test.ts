@@ -2315,6 +2315,64 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     enrichMocks.generateSpeciesAnnotation.mockReset();
   });
 
+  /**
+   * freshAiDueDb + a slash taxon that actually resolves, so the AI stage is
+   * handed a non-empty candidate set. Without candidates the empty-similar
+   * retry correctly does not fire and these cases prove nothing.
+   */
+  const freshAiDueDbWithCandidates = () => {
+    freshAiDueDb();
+    const base = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("category = 'slash'")) {
+        return {
+          rows: [
+            {
+              species_code: "y00001",
+              com_name: "Marbled/Hudsonian Godwit",
+              sci_name: "Limosa fedoa/haemastica",
+            },
+          ],
+        };
+      }
+      if (text.includes("lower(sci_name) = ANY")) {
+        return {
+          rows: [
+            {
+              species_code: "hudgod",
+              com_name: "Hudsonian Godwit",
+              sci_name: "Limosa haemastica",
+            },
+          ],
+        };
+      }
+      return base(text, params);
+    };
+  };
+
+  it("retries ONCE when similar comes back empty despite candidates (td-8f0ed8)", async () => {
+    // Observed during bring-up: the model returned notes on one call and
+    // omitted the field entirely on the next, same input. Without the retry a
+    // transient omission is indistinguishable from a real judgement and
+    // persists as terminal 'none'.
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
+      .mockResolvedValueOnce({
+        ...ANNOTATION,
+        similar: [{ code: "haiwoo", note: "Larger, longer-billed." }],
+      });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts a second empty result as a genuine judgement — no third call", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
+  });
+
   it("fresh-wiki + AI 500: NO unit_ok, unit counted FAILED, narrowed aiOnly remediation enqueued", async () => {
     freshAiDueDb();
     enrichMocks.generateSpeciesAnnotation.mockRejectedValue(

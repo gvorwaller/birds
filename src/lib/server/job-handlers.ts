@@ -1344,15 +1344,32 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				return 'ok';
 			}
 
-			const ann = await generateSpeciesAnnotation({
-				comName: t.com_name,
-				sciName: t.sci_name,
-				family: t.family,
-				extract: prose.extract,
-				sections: prose.sections,
-				candidates,
-				speciesCode: code
-			});
+			const annotate = () =>
+				generateSpeciesAnnotation({
+					comName: t.com_name,
+					sciName: t.sci_name,
+					family: t.family,
+					extract: prose.extract,
+					sections: prose.sections,
+					candidates,
+					speciesCode: code
+				});
+
+			let ann = await annotate();
+			// An empty `similar` when candidates WERE offered is ambiguous: either
+			// the model judged none of them worth a note, or it simply omitted the
+			// field. Both were observed on identical input during bring-up. Left
+			// alone the two are indistinguishable and both persist as 'none', which
+			// is terminal — a transient omission would cost that species its notes
+			// permanently. One bounded retry separates them; a second empty result
+			// is taken as a genuine judgement.
+			if (candidates.length > 0 && ann.similar.length === 0) {
+				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying' });
+				ann = await annotate();
+				if (ann.similar.length === 0) {
+					await recordEvent(job.id, 'progress', { code, similarEmpty: 'confirmed' });
+				}
+			}
 			await upsertAiData(code, {
 				fieldCraft: ann.fieldCraft,
 				tags: ann.tags,

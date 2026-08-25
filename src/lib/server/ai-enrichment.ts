@@ -16,12 +16,32 @@ import { TAG_VOCABULARY, TAG_DIMENSIONS, validateTags, MAX_TAGS } from '$lib/spe
 import { parseRetryAfterMs } from '$server/wikidata';
 import type { WikiSection } from '$server/wikipedia';
 
-export const AI_MODEL = 'claude-sonnet-4-6';
+/**
+ * Opus tier, deliberately (td-8f0ed8): this stage is a knowledge-and-judgment
+ * task — "given these candidates and this article, state the mark that
+ * separates them" — and the failure mode is a plausible-but-wrong field mark,
+ * which nobody can cheaply audit across ~1,400 notes. The cost delta over
+ * Sonnet is tens of dollars one-time; a wrong field mark is wrong forever.
+ */
+export const AI_MODEL = 'claude-opus-5';
 export const FIELD_CRAFT_MAX_CHARS = 700;
 /** Prompt input cap — extract + selected sections, roughly 10k chars. */
 const PROSE_CAP = 10_000;
-/** One "how to tell them apart" line, sized for a compact card row. */
-export const SIMILAR_NOTE_MAX_CHARS = 200;
+/**
+ * Upper bound on one distinguishing note.
+ *
+ * This is a safety valve, not a design target. The earlier value (200) was
+ * chosen to fit a card row before any real note existed, which optimised
+ * layout tidiness over field usefulness — the wrong trade for a birding app.
+ * A real guide's Downy-vs-Hairy entry is several sentences (relative size,
+ * bill-to-head ratio, outer tail pattern, call), and one clause cannot clinch
+ * an ID that genuinely needs three marks.
+ *
+ * `species_similar.note` is Postgres TEXT — unbounded — so nothing downstream
+ * requires a limit. This exists only to stop a runaway response from putting
+ * an essay in a card.
+ */
+export const SIMILAR_NOTE_MAX_CHARS = 500;
 /** Cap on notes per species — the observed maximum candidate fan-out is 7. */
 export const MAX_SIMILAR = 5;
 
@@ -124,10 +144,17 @@ export function buildUserPrompt(input: {
 			? `3. "similar": up to ${MAX_SIMILAR} entries, each {"code", "note"}. Use ONLY ` +
 				`codes from the list above — never invent a species. Include an entry ONLY ` +
 				`where you can state a genuinely useful difference; omit a candidate rather ` +
-				`than padding. Each "note" is ONE sentence, under ${SIMILAR_NOTE_MAX_CHARS} ` +
-				`characters, telling a birder in the field how to separate THAT species from ` +
-				`${input.comName} — plumage, structure, size, or voice. Write about the ` +
-				`candidate, not about ${input.comName}. An empty list is a valid answer.\n`
+				`than padding.\n` +
+				`   Each "note" tells a birder in the field how to separate THAT species ` +
+				`from ${input.comName}. Write about the candidate, not about ` +
+				`${input.comName}. Lead with the single most reliable mark, then add the ` +
+				`one or two secondary marks that confirm it — structure and proportion ` +
+				`(bill-to-head ratio, relative size), plumage detail, or voice. Prefer ` +
+				`marks visible on a bird in the field over range or behaviour. One to ` +
+				`three sentences, under ${SIMILAR_NOTE_MAX_CHARS} characters; use the ` +
+				`space only if the extra marks genuinely help clinch the ID — a pair that ` +
+				`separates on one clean mark needs one sentence. An empty list is a valid ` +
+				`answer.\n`
 			: '') +
 		`\nRespond with ONLY this JSON object, nothing else:\n` +
 		(candidates.length > 0
@@ -166,13 +193,37 @@ export async function generateSpeciesAnnotation(
 			headers: {
 				'x-api-key': apiKey,
 				'anthropic-version': '2023-06-01',
+				// Gates the `fallbacks: 'default'` parameter below. The scalar
+				// 'default' form takes THIS header specifically — the array form
+				// takes -2026-06-01, and pairing either with the other returns 400.
+				'anthropic-beta': 'server-side-fallback-2026-07-01',
 				'content-type': 'application/json'
 			},
 			body: JSON.stringify({
 				model: AI_MODEL,
-				// Headroom for up to MAX_SIMILAR notes alongside tags + field craft;
-				// 800 fit the original two outputs with nothing to spare.
-				max_tokens: 1600,
+				// max_tokens caps thinking AND response text together. Opus 5 thinks
+				// by default, so the 1600 that fit Sonnet 4.6's no-thinking output
+				// would now truncate mid-JSON. Sized for adaptive thinking at medium
+				// effort plus tags + field craft + MAX_SIMILAR notes at the full
+				// SIMILAR_NOTE_MAX_CHARS. This is a ceiling, not a reservation —
+				// billing follows tokens actually generated, so headroom is free and
+				// a truncated JSON response costs the whole species a 7-day retry.
+				max_tokens: 8000,
+				// Explicit rather than relying on the default: Opus 5 runs adaptive
+				// when `thinking` is omitted, but stating it keeps the intent legible
+				// and survives a future default change. Do NOT disable thinking here
+				// — on Opus 5 that is documented to occasionally leak <thinking> tags
+				// into the visible response, which would break parseAnnotation.
+				thinking: { type: 'adaptive' },
+				// Default is `high`; medium is the cost/quality balance for a
+				// bounded annotation task with the source text already supplied.
+				output_config: { effort: 'medium' },
+				// Opus 5 ships elevated safety classifiers that can decline a request
+				// outright. Bird identification will not realistically trip them, but
+				// a decline is otherwise a hard stop for that species, so let the API
+				// re-run it on the recommended fallback rather than burning the
+				// substage's 7-day error window.
+				fallbacks: 'default',
 				system: SYSTEM,
 				messages: [{ role: 'user', content: buildUserPrompt(input) }]
 			}),
@@ -215,6 +266,37 @@ export async function generateSpeciesAnnotation(
 }
 
 /**
+ * Trim an over-long note to the cap WITHOUT cutting a word in half.
+ *
+ * A blunt `.slice()` was fine when this stage ran on a model that respected the
+ * length instruction; on an Opus-tier model, which writes longer by default,
+ * it reliably produced notes ending mid-word ("...roughly equal to hea"). That
+ * reads as a rendering bug on the species page.
+ *
+ * Prefer the last sentence boundary inside the cap; fall back to the last word
+ * boundary with an ellipsis so the truncation is visibly deliberate. The
+ * ellipsis is not placeholder content — it marks elision of real text.
+ */
+export function clampNote(raw: string): string {
+	const note = raw.trim().replace(/\s+/g, ' ');
+	if (note.length <= SIMILAR_NOTE_MAX_CHARS) return note;
+
+	const head = note.slice(0, SIMILAR_NOTE_MAX_CHARS);
+	// Both boundaries need the same floor: a break too early in the string
+	// (an abbreviation's period at char 6, or the single space in
+	// "Approx. cccc…") would throw away almost the whole note. Below the floor
+	// it is better to hard-cut at the cap than to emit a two-word fragment.
+	const floor = SIMILAR_NOTE_MAX_CHARS * 0.5;
+
+	const sentence = head.search(/[.!?](?=[^.!?]*$)/);
+	if (sentence >= floor) return head.slice(0, sentence + 1);
+
+	const word = head.lastIndexOf(' ');
+	const cut = word >= floor ? head.slice(0, word) : head.slice(0, SIMILAR_NOTE_MAX_CHARS - 1);
+	return `${cut.replace(/[,;:—-]$/, '')}…`;
+}
+
+/**
  * Closed-set validation for the similar-species list — the `validateTags`
  * analogue, and the whole reason an invented SPECIES cannot reach the page.
  *
@@ -251,7 +333,7 @@ function validateSimilar(
 		}
 		if (seen.has(canonical)) continue;
 
-		const text = typeof note === 'string' ? note.trim().slice(0, SIMILAR_NOTE_MAX_CHARS) : '';
+		const text = typeof note === 'string' ? clampNote(note) : '';
 		// A candidate with no usable note is not worth a row: the structured
 		// basis line already says why the link exists.
 		if (text.length === 0) continue;

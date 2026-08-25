@@ -8,6 +8,7 @@ const {
   FIELD_CRAFT_MAX_CHARS,
   SIMILAR_NOTE_MAX_CHARS,
   MAX_SIMILAR,
+  clampNote,
 } = await import("./ai-enrichment");
 
 describe("parseAnnotation (pure response parser)", () => {
@@ -123,8 +124,10 @@ describe("parseAnnotation — similar species", () => {
   });
 
   it("caps note length", () => {
-    const out = ok(`[{"code": "haiwoo", "note": "${"x".repeat(400)}"}]`);
-    expect(out.similar[0].note).toHaveLength(SIMILAR_NOTE_MAX_CHARS);
+    // Input is sized RELATIVE to the cap: a hardcoded length silently stops
+    // testing anything the moment SIMILAR_NOTE_MAX_CHARS moves.
+    const out = ok(`[{"code": "haiwoo", "note": "${"x".repeat(SIMILAR_NOTE_MAX_CHARS + 200)}"}]`);
+    expect(out.similar[0].note.length).toBeLessThanOrEqual(SIMILAR_NOTE_MAX_CHARS);
   });
 
   it("caps the number of entries at MAX_SIMILAR", () => {
@@ -203,5 +206,71 @@ describe("buildUserPrompt — candidate block", () => {
     expect(p).toContain("haiwoo = Hairy Woodpecker (Dryobates villosus)");
     expect(p).toContain("never invent a species");
     expect(p).toContain("Write about the candidate, not about Downy Woodpecker.");
+  });
+});
+
+describe("clampNote — graceful length capping (Opus 5 writes long)", () => {
+  const CAP = SIMILAR_NOTE_MAX_CHARS;
+
+  it("leaves a note within the cap untouched", () => {
+    const short = "Larger overall, with a bill about as long as the head is wide.";
+    expect(clampNote(short)).toBe(short);
+  });
+
+  it("normalises internal whitespace", () => {
+    expect(clampNote("  Larger   overall.  ")).toBe("Larger overall.");
+  });
+
+  it("NEVER cuts a word in half", () => {
+    // The real failure this guards: a blunt slice produced
+    // "...roughly equal to hea" on live Opus 5 output.
+    const long = `${"marbled ".repeat(Math.ceil(CAP / 4))}headlength`;
+    const out = clampNote(long);
+    expect(out.length).toBeLessThanOrEqual(CAP + 1);
+    expect(out.endsWith("…")).toBe(true);
+    // Every surviving word must be a whole word from the original.
+    for (const w of out.replace(/…$/, "").trim().split(" ")) {
+      expect(long).toContain(w);
+    }
+    expect(out).not.toMatch(/\bmarble…$/);
+  });
+
+  it("prefers a late sentence boundary over a word cut", () => {
+    const first = "a".repeat(CAP - 50);
+    const out = clampNote(`${first}. ${"b".repeat(CAP)}`);
+    expect(out).toBe(`${first}.`);
+    expect(out).not.toContain("…");
+  });
+
+  it("ignores an early sentence boundary that would gut the note", () => {
+    // A period at char ~7 must not reduce the note to a two-word fragment.
+    const out = clampNote(`Approx. ${"c".repeat(CAP * 2)}`);
+    expect(out.length).toBeGreaterThan(CAP * 0.5);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("does not leave dangling punctuation before the ellipsis", () => {
+    const out = clampNote(`${"word ".repeat(Math.ceil(CAP / 5))}however, ${"x".repeat(80)}`);
+    expect(out).not.toMatch(/[,;:—-]…$/);
+  });
+
+  it("clamps a single unbroken token without crashing", () => {
+    const out = clampNote("z".repeat(CAP * 2));
+    expect(out.length).toBeLessThanOrEqual(CAP);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("holds these guarantees at any cap value", () => {
+    // Belt-and-braces: the properties above must not depend on CAP's value.
+    for (const sample of [
+      "short note.",
+      `${"alpha ".repeat(200)}omega`,
+      `Approx. ${"q".repeat(900)}`,
+      "y".repeat(1200),
+    ]) {
+      const out = clampNote(sample);
+      expect(out.length).toBeLessThanOrEqual(CAP + 1);
+      expect(out).not.toMatch(/\s$/);
+    }
   });
 });
