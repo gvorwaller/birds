@@ -242,10 +242,17 @@ export function scrubStoredValue<T>(value: T): T {
 export function jobTarget(type: string, payload: unknown): string | null {
 	const p = payload as {
 		regionCode?: unknown;
+		areaCode?: unknown;
 		locs?: { code?: unknown }[];
 	} | null;
 	if (type === 'analyze_counties' && typeof p?.regionCode === 'string') {
 		return p.regionCode;
+	}
+	// A county sweep (td-372d2a) answers with the county it covers so the row
+	// that launched it can show progress; piecemeal hotspot loads still answer
+	// null — many locs, no single identity.
+	if (type === 'load_hotspots' && typeof p?.areaCode === 'string') {
+		return p.areaCode;
 	}
 	if (
 		(type === 'load_region' || type === 'refresh_loc' || type === 'retry_loc') &&

@@ -17,7 +17,7 @@ vi.mock("$server/ebird", () => ebird);
 vi.mock("$server/barchart", () => barchart);
 vi.mock("$server/jobs", () => jobs);
 
-const { sweepAreaHotspots } = await import("./hotspot-sweep");
+const { sweepAreaHotspots, areaHotspotCounts } = await import("./hotspot-sweep");
 
 const COUNTY = "US-WA-033";
 const hotspot = (locId: string, locName = locId) => ({
@@ -128,5 +128,59 @@ describe("sweepAreaHotspots", () => {
     expect(ebird.subregions).toHaveBeenCalledWith("key", "NO", "subnational1");
     // No county on record — the region itself tags the row.
     expect(jobs.enqueueJob.mock.calls[0][0].payload.locs[0].regionCode).toBe("NO-03");
+  });
+});
+
+describe("areaHotspotCounts", () => {
+  const inCounty = (locId: string, county: string | null) => ({
+    locId,
+    locName: locId,
+    subnational2Code: county,
+  });
+
+  it("tallies total/loaded/pending per county from one region-wide call", async () => {
+    ebird.hotspotsInRegion.mockResolvedValue({
+      data: [
+        inCounty("L1", "US-WA-033"),
+        inCounty("L2", "US-WA-033"),
+        inCounty("L3", "US-WA-033"),
+        inCounty("L4", "US-WA-061"),
+      ],
+    });
+    barchart.frequencyMeta.mockResolvedValue(
+      new Map([
+        ["L1", { endYear: 2025 }], // current
+        ["L2", { endYear: 2018 }], // stale — a sweep would reload it
+      ]),
+    );
+    barchart.attemptMeta.mockResolvedValue(
+      new Map([["L3", { status: "error", lastAttemptAt: new Date() }]]), // cooling
+    );
+
+    const counts = await areaHotspotCounts(1, "US-WA");
+
+    // One call for the whole state, not one per county.
+    expect(ebird.hotspotsInRegion).toHaveBeenCalledTimes(1);
+    expect(ebird.hotspotsInRegion).toHaveBeenCalledWith("key", "US-WA");
+    expect(counts?.get("US-WA-033")).toEqual({ total: 3, loaded: 1, pending: 1 });
+    expect(counts?.get("US-WA-061")).toEqual({ total: 1, loaded: 0, pending: 1 });
+  });
+
+  it("files hotspots with no county under the region itself", async () => {
+    ebird.hotspotsInRegion.mockResolvedValue({ data: [inCounty("L9", null)] });
+
+    const counts = await areaHotspotCounts(1, "NO-03");
+
+    expect(counts?.get("NO-03")).toEqual({ total: 1, loaded: 0, pending: 1 });
+  });
+
+  it("returns null rather than throwing when eBird is unavailable", async () => {
+    ebird.hotspotsInRegion.mockRejectedValue(new Error("502"));
+    expect(await areaHotspotCounts(1, "US-WA")).toBeNull();
+  });
+
+  it("returns null for a county code — counts are per child area", async () => {
+    expect(await areaHotspotCounts(1, "US-WA-033")).toBeNull();
+    expect(ebird.hotspotsInRegion).not.toHaveBeenCalled();
   });
 });

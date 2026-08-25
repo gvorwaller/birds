@@ -180,6 +180,7 @@
     const next = openStates.filter((c) => c !== code);
     if (open) next.push(code);
     openStates = next;
+    if (open) void loadHotspotCounts(code);
     if (browser) {
       try {
         localStorage.setItem(OPEN_KEY, JSON.stringify(next));
@@ -187,6 +188,36 @@
         // private mode
       }
     }
+  }
+
+  // Hotspot tallies per county ("229 of 312 loaded · 83 to load"), fetched
+  // only for groups you actually open — one cached eBird request per region
+  // covers all of its counties, but 20 groups shouldn't fan out on page load.
+  type HotspotCounts = { total: number; loaded: number; pending: number };
+  let hotspotCounts = $state<Record<string, HotspotCounts>>({});
+  const countsFetched = new Set<string>();
+  async function loadHotspotCounts(regionCode: string) {
+    if (!browser || countsFetched.has(regionCode)) return;
+    countsFetched.add(regionCode);
+    try {
+      const res = await fetch(
+        `/api/hotspot-counts?region=${encodeURIComponent(regionCode)}`,
+      );
+      if (!res.ok) return; // decoration only — a failure just shows no counts
+      const body = (await res.json()) as { counts: Record<string, HotspotCounts> };
+      hotspotCounts = { ...hotspotCounts, ...body.counts };
+    } catch {
+      countsFetched.delete(regionCode); // transient — allow a retry on reopen
+    }
+  }
+  // Groups restored open from localStorage need their counts too.
+  $effect(() => {
+    for (const code of openStates) void loadHotspotCounts(code);
+  });
+
+  /** The running/queued sweep for one county, if any (jobTarget = area code). */
+  function sweepJob(areaCode: string) {
+    return jobsPoll.active.find((j) => j.target === areaCode && j.type === "load_hotspots");
   }
 
   // Hotspot rows collapse under their county row (GBV: dozens of hotspots
@@ -483,6 +514,8 @@
   <!-- Sweep every eBird hotspot in one county/region (td-372d2a). The action
        skips whatever is already current, so this stays useful on re-visits. -->
   {#if !data.isViewer}
+    {@const counts = hotspotCounts[areaCode]}
+    {@const job = sweepJob(areaCode)}
     <form
       method="POST"
       action="?/loadCountyHotspots"
@@ -499,11 +532,34 @@
       <button
         type="submit"
         class="secondary"
-        disabled={refreshing !== null}
+        disabled={refreshing !== null || !!job || counts?.pending === 0}
         title="Queue every eBird hotspot in {areaName} that isn't loaded yet"
       >
         {refreshing === `hotspots-${areaCode}` ? "Queueing…" : "Load hotspots"}
       </button>
+      {#if job}
+        <!-- Live sweep progress right where it was launched, so you don't
+             have to scroll up to the Background loads card. -->
+        {@const done = job.progress.unitsDone ?? 0}
+        {@const total = job.progress.unitsTotal ?? 0}
+        {@const failed = job.progress.unitsFailed ?? 0}
+        <span class="hsprogress">
+          {job.status === "running" && total > 0
+            ? `Loading ${Math.min(done + 1, total)} of ${total}…`
+            : total > 0
+              ? `Queued · ${total} hotspots`
+              : "Queued…"}
+          {#if failed > 0}
+            <span class="hsfail">· {failed} failed</span>
+          {/if}
+        </span>
+      {:else if counts}
+        <span class="hscounts">
+          {counts.loaded} of {counts.total} loaded{counts.pending > 0
+            ? ` · ${counts.pending} to load`
+            : " · all current"}
+        </span>
+      {/if}
     </form>
   {/if}
 {/snippet}
@@ -1338,6 +1394,23 @@
     color: var(--accent);
     font-size: 0.82rem;
     white-space: nowrap;
+  }
+  .hsload {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .hscounts,
+  .hsprogress {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .hsprogress {
+    color: var(--accent);
+  }
+  .hsfail {
+    color: var(--danger, #b3261e);
   }
   tr.indent strong {
     font-weight: 500;

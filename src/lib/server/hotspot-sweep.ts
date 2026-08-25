@@ -5,6 +5,64 @@ import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { parseRegionCode, parentOf } from "$lib/region-code";
 
+/** Per-child-area hotspot tally for the "229 of 312 loaded · 83 to load"
+ * line on each county row (GBV 2026-08-24 — the sweep button gave no sense of
+ * its own size). */
+export interface AreaHotspotCounts {
+  /** Every hotspot eBird lists in the child area. */
+  total: number;
+  /** Of those, ones with current stored frequency data. */
+  loaded: number;
+  /** What a sweep would actually queue right now (excludes cooldowns). */
+  pending: number;
+}
+
+/**
+ * Tally hotspots per child area of `regionCode`, keyed by child code.
+ *
+ * One eBird call for the WHOLE parent region (its hotspot list carries each
+ * hotspot's subnational2Code) instead of one per county — a 67-county state
+ * costs a single cached request. Called lazily when a group is expanded, not
+ * on page load, so a page listing 20 states doesn't fan out into 20 fetches.
+ */
+export async function areaHotspotCounts(
+  userId: number,
+  regionCode: string,
+): Promise<Map<string, AreaHotspotCounts> | null> {
+  const parsed = parseRegionCode(regionCode);
+  if (!parsed || parsed.level === "subnational2") return null;
+  const apiKey = await getEbirdApiKey(userId);
+  if (!apiKey) return null;
+
+  let hotspots: Awaited<ReturnType<typeof hotspotsInRegion>>["data"];
+  try {
+    hotspots = (await hotspotsInRegion(apiKey, parsed.code)).data;
+  } catch {
+    return null; // counts are decoration — never break the page for them
+  }
+
+  const [meta, attempts] = await Promise.all([
+    frequencyMeta(hotspots.map((h) => h.locId)),
+    attemptMeta(hotspots.map((h) => h.locId)),
+  ]);
+  const cooling = recentFailures(attempts, new Date());
+  const cutoff = lastCompleteYear();
+  const out = new Map<string, AreaHotspotCounts>();
+  for (const h of hotspots) {
+    // Hotspots with no county on record belong to the region itself — the
+    // same bucket the region-level sweep would cover.
+    const key = h.subnational2Code ?? parsed.code;
+    const c = out.get(key) ?? { total: 0, loaded: 0, pending: 0 };
+    c.total += 1;
+    const m = meta.get(h.locId);
+    const current = !!m && m.endYear >= cutoff;
+    if (current) c.loaded += 1;
+    else if (!cooling.has(h.locId)) c.pending += 1;
+    out.set(key, c);
+  }
+  return out;
+}
+
 export interface SweepFailure {
   ok: false;
   status: 400 | 404 | 502;
@@ -109,7 +167,10 @@ export async function sweepAreaHotspots(
   const label = `${locs.length} hotspot${locs.length === 1 ? "" : "s"} in ${areaName}`;
   const { jobId, deduped } = await enqueueJob({
     type: "load_hotspots",
-    payload: { locs },
+    // areaCode identifies the sweep to the UI (jobTarget) so the county row
+    // that launched it can show live progress. Single-hotspot loads omit it
+    // and keep answering null, as before.
+    payload: { locs, areaCode: parsed.code },
     dedupKey: dedupKeys.loadHotspots(locs.map((l) => l.code)),
     requestedBy: userId,
     label,
