@@ -281,6 +281,20 @@ export async function upsertAiData(
 		 * reselect because status was ok and the hash matched.
 		 */
 		owedCodes?: readonly string[];
+		/**
+		 * Every candidate OFFERED this run. Drives the delete: a row survives if
+		 * its candidate is still on the list, whatever this run returned for it.
+		 *
+		 * Without it the keep-list was "notes written this run + owed slash
+		 * codes", which never contains a still-offered GENUS candidate — so a run
+		 * that completed the slash notes and (legitimately, they are optional)
+		 * returned no genus note deleted the previous good genus rows, stamped
+		 * 'ok', and was never reselected (GROK). Absence in one response is not
+		 * evidence a note is wrong: we have measured that omissions are often
+		 * spurious and have NOT measured that they are considered judgements, so
+		 * last-good wins, exactly as it does for wiki prose and media.
+		 */
+		offeredCodes?: readonly string[];
 	}
 ): Promise<void> {
 	// SET expressions read the OLD row for untouched columns, so mixing the
@@ -294,6 +308,7 @@ export async function upsertAiData(
 	const hash = data.similarCandidatesHash ?? null;
 	const candidateCount = data.candidateCount ?? 0;
 	const owed = data.owedCodes ?? [];
+	const offered = data.offeredCodes ?? [];
 	// 'ok' requires COMPLETENESS, not merely a non-empty result: any slash
 	// candidate still owed a note leaves the substage due. 'none' remains legal
 	// only when nothing was offered at all.
@@ -340,16 +355,19 @@ export async function upsertAiData(
 		// Only touch the notes when this run produced a verdict on them.
 		if (similarStatus == null) return;
 
-		// Replace per-code rather than wholesale. A blanket DELETE discards the
-		// previous good note for any candidate this run failed on, which is how
-		// both the full-miss and the partial-miss cases destroyed working data.
-		// Rows are removed only when their candidate is no longer offered at all
-		// (a taxonomy change), and otherwise upserted in place.
-		if (similar.length > 0) {
+		// Replace per-code rather than wholesale. A row is deleted ONLY when its
+		// candidate is no longer offered at all — i.e. the candidate set changed
+		// under it, which in practice means a taxonomy revision. Anything still
+		// offered keeps its last-good note regardless of what this run returned
+		// for it. The keep-list is therefore the OFFERED set, not the set this
+		// run happened to write; conflating the two is what destroyed good notes
+		// in three successive shapes (full miss, partial miss, optional genus).
+		const keep = [...new Set([...offered, ...similar.map((x) => x.code), ...owed])];
+		if (keep.length > 0) {
 			await client.query(
 				`DELETE FROM species_similar
 				  WHERE species_code = $1 AND similar_code <> ALL($2::text[])`,
-				[code, [...similar.map((x) => x.code), ...owed]]
+				[code, keep]
 			);
 		}
 		for (const s of similar) {

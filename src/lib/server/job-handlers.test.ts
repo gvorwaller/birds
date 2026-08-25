@@ -2440,6 +2440,76 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(aiWrite?.params?.[5]).toBe("error");
   });
 
+  /**
+   * Two slash candidates plus a genus one. freshAiDueDbWithCandidates offers a
+   * single slash code, which makes a same-count SWAP between slash candidates
+   * untestable (GROK).
+   */
+  const freshAiDueDbTwoSlash = () => {
+    freshAiDueDb();
+    const base = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("category = 'slash'")) {
+        return {
+          rows: [
+            {
+              species_code: "y00001",
+              com_name: "Marbled/Hudsonian Godwit",
+              sci_name: "Limosa fedoa/haemastica",
+            },
+            {
+              species_code: "y00002",
+              com_name: "Marbled/Black-tailed Godwit",
+              sci_name: "Limosa fedoa/limosa",
+            },
+          ],
+        };
+      }
+      if (text.includes("lower(sci_name) = ANY")) {
+        return {
+          rows: [
+            { species_code: "hudgod", com_name: "Hudsonian Godwit", sci_name: "Limosa haemastica" },
+            { species_code: "biltai", com_name: "Black-tailed Godwit", sci_name: "Limosa limosa" },
+          ],
+        };
+      }
+      return base(text, params);
+    };
+  };
+
+  it("SWAP: a same-count retry filling a DIFFERENT slash candidate keeps the first", async () => {
+    freshAiDueDbTwoSlash();
+    const a = "FIRST: longer, straighter bill with a bolder wingbar overall.";
+    const b = "SECOND: longer, straighter bill with a bolder wingbar overall.";
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "hudgod", note: a }] })
+      .mockResolvedValue({ ...ANNOTATION, similar: [{ code: "biltai", note: b }] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const ins = db.calls.filter((c) => c.text.includes("INSERT INTO species_similar"));
+    expect(ins.some((c) => String(c.params?.[2]).startsWith("FIRST"))).toBe(true);
+    expect(ins.some((c) => String(c.params?.[2]).startsWith("SECOND"))).toBe(false);
+  });
+
+  it("keeps a still-offered candidate's last-good note when this run omits it", async () => {
+    // Genus notes are optional, so a run can legitimately complete the slash
+    // notes and return nothing for a genus candidate. That must not delete the
+    // previous genus note (GROK: the keep-list was the written set, not the
+    // offered set).
+    freshAiDueDbTwoSlash();
+    const note = "Longer, straighter bill and a bolder wingbar than the focal bird.";
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
+      ...ANNOTATION,
+      similar: [
+        { code: "hudgod", note },
+        { code: "biltai", note },
+      ],
+    });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const del = db.calls.find((c) => c.text.includes("DELETE FROM species_similar"));
+    // Keep-list is the OFFERED set — every candidate survives the delete.
+    expect(del?.params?.[1]).toEqual(expect.arrayContaining(["hudgod", "biltai"]));
+  });
+
   it("retries when a slash candidate is owed a note, even if others got one", async () => {
     // ~2% of live notes came back corrupted and were dropped as malformed. With
     // several candidates that leaves `similar` non-empty while the dropped

@@ -1435,7 +1435,8 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				similar: ann.similar,
 				similarCandidatesHash: hash,
 				candidateCount: candidates.length,
-				owedCodes: stillOwed
+				owedCodes: stillOwed,
+				offeredCodes: candidates.map((c) => c.code)
 			});
 			counts.aiOk++;
 			if (ann.droppedTags.length > 0) {
