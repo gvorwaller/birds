@@ -77,6 +77,9 @@ import {
 	markWikiNoArticle,
 	mediaDueCodes,
 	mediaFresh,
+	similarCandidatesFor,
+	similarCandidatesHash,
+	touchSimilarFresh,
 	upsertAiData,
 	upsertResolution,
 	upsertWikiOk,
@@ -1296,7 +1299,19 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 	 */
 	const runAiStage = async (
 		code: string,
-		prose: { extract: string; sections: { title: string; text: string }[]; revId: number }
+		// The substage fields are OPTIONAL because the just-fetched-article
+		// caller has no stored state to pass. Absent means "cannot be fresh",
+		// which is correct there: new prose always means new notes.
+		prose: {
+			extract: string;
+			sections: { title: string; text: string }[];
+			revId: number;
+			aiStatus?: string | null;
+			aiSourceRevId?: number | null;
+			similarStatus?: string | null;
+			similarCandidatesHash?: string | null;
+			similarSourceRevId?: number | null;
+		}
 	): Promise<AiOutcome> => {
 		if (!AI_STAGE_ENABLED) return 'disabled';
 		const t = taxa.get(code);
@@ -1307,23 +1322,53 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			return 'no_taxonomy';
 		}
 		try {
+			// Closed candidate set for the similar-species notes (td-8f0ed8).
+			// Same set the page renders, by construction — see candidateSet.
+			const candidates = await similarCandidatesFor(code, t.sci_name);
+			const hash = similarCandidatesHash(candidates.map((c) => c.code));
+
+			// The scanner deliberately over-selects after a taxonomy sync. If
+			// the candidate set is actually unchanged and everything else is
+			// current, there is nothing to ask the model — re-stamp the clock
+			// and skip the call rather than spend it.
+			const nothingToDo =
+				prose.aiStatus === 'ok' &&
+				prose.aiSourceRevId === prose.revId &&
+				prose.similarStatus != null &&
+				prose.similarStatus !== 'error' &&
+				prose.similarCandidatesHash === hash &&
+				prose.similarSourceRevId === prose.revId;
+			if (nothingToDo) {
+				await touchSimilarFresh(code);
+				counts.fresh++;
+				return 'ok';
+			}
+
 			const ann = await generateSpeciesAnnotation({
 				comName: t.com_name,
 				sciName: t.sci_name,
 				family: t.family,
 				extract: prose.extract,
-				sections: prose.sections
+				sections: prose.sections,
+				candidates,
+				speciesCode: code
 			});
 			await upsertAiData(code, {
 				fieldCraft: ann.fieldCraft,
 				tags: ann.tags,
 				model: AI_MODEL,
-				sourceRevId: prose.revId
+				sourceRevId: prose.revId,
+				similar: ann.similar,
+				similarCandidatesHash: hash
 			});
 			counts.aiOk++;
 			if (ann.droppedTags.length > 0) {
 				// Vocabulary gaps surface in events, never silently (plan rule).
 				await recordEvent(job.id, 'progress', { code, droppedTags: ann.droppedTags });
+			}
+			if (ann.droppedSimilar.length > 0) {
+				// Codes outside the closed set — same "never silently" rule.
+				await recordEvent(job.id, 'progress', { code, droppedSimilar: ann.droppedSimilar });
 			}
 			return 'ok';
 		} catch (err) {
@@ -1383,26 +1428,21 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 						aiPending.push(code);
 						progress.unitsSkipped++;
 						await recordEvent(job.id, 'unit_skipped', { code, reason: 'ai_rate_limited' });
-					} else {
-						const ai = await aiStageInputFor(code);
-						if (ai == null) {
-							progress.unitsSkipped++;
-							await recordEvent(job.id, 'unit_skipped', { code, reason: 'no-prose' });
 						} else {
-							const aiDue =
-								force ||
-								ai.aiStatus == null ||
-								ai.aiStatus === 'error' ||
-								(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId);
-							if (!aiDue) {
-								counts.fresh++;
+							const ai = await aiStageInputFor(code);
+							if (ai == null) {
 								progress.unitsSkipped++;
-								await recordEvent(job.id, 'unit_skipped', { code, reason: 'fresh' });
+								await recordEvent(job.id, 'unit_skipped', { code, reason: 'no-prose' });
 							} else {
+								// Presence in an aiOnly payload is the durable due decision. It
+								// may have been selected by the legacy AI clock OR solely by the
+								// similar-note substage (backfill, error retry, taxonomy sync).
+								// Re-applying only the legacy predicates here silently discards
+								// the latter. runAiStage's candidate hash is the authoritative
+								// cheap no-op check for taxonomy over-selection.
 								await accountAiAttempt(code, await runAiStage(code, ai));
 							}
 						}
-					}
 				} catch (err) {
 					const message = sanitizeErrorText(
 						err instanceof Error ? err.message : String(err)
@@ -1466,12 +1506,24 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					ai?.aiStatus === 'error' &&
 					(ai.aiAttemptedAt == null ||
 						Date.now() - new Date(ai.aiAttemptedAt).getTime() > 7 * 86_400_000);
+				// The similar-note substage has its OWN due conditions
+				// (td-8f0ed8). Without them the 1,123 species already annotated
+				// at the current revision are invisible to this gate and would
+				// never generate a note — the schema growing a field is not
+				// something a revision-based clock can see.
+				const similarErrorRetryDue =
+					ai?.similarStatus === 'error' &&
+					(ai.similarAttemptedAt == null ||
+						Date.now() - new Date(ai.similarAttemptedAt).getTime() > 7 * 86_400_000);
+				const similarDue =
+					ai != null && (ai.similarStatus == null || similarErrorRetryDue);
 				const aiDue =
 					ai != null &&
 					(force ||
 						ai.aiStatus == null ||
 						(ai.aiStatus === 'ok' && ai.aiSourceRevId !== ai.revId) ||
-						errorRetryDue);
+						errorRetryDue ||
+						similarDue);
 				if (aiDue && aiRateLimited) {
 					aiPending.push(code);
 					progress.unitsSkipped++;

@@ -4,6 +4,7 @@ import {
   enrichOneNow,
   enrichOneNowCoalesced,
   getEnrichment,
+  getSimilarSpecies,
   getSpeciesMedia,
 } from "$server/species-enrichment";
 import { validSpeciesCode } from "$server/wikidata";
@@ -239,9 +240,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 
   // DB-only (spec invariant #1): never calls Commons/xeno-canto on GET.
   // Independent reads — run in parallel.
-  const [enrichment, sampleMedia] = await Promise.all([
+  const [enrichment, sampleMedia, similar] = await Promise.all([
     getEnrichment(code),
     getSpeciesMedia(code),
+    getSimilarSpecies(code, t.sci_name, userId),
   ]);
 
   // Tides beside the tide tags (td-6a3d2e): only for species with an actionable
@@ -262,6 +264,11 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     taxon: t,
     enrichment,
     sampleMedia,
+    similar,
+    /** Carried into similar-species links: without lat/lng the next species
+     * page reports around the SAVED HOME rather than the searched place
+     * (see the header comment in $lib/species-context). */
+    locationContext,
     isAdmin: locals.user!.role === "admin",
     seen: seen.rows[0] ?? null,
     forecastTeaser,

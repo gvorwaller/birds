@@ -31,6 +31,7 @@ import {
   factsFromWikidata,
   getEnrichment,
   iucnCode,
+  markAiError,
   markWikiError,
   markWikiNoArticle,
   wikiStaleCodes,
@@ -1868,6 +1869,82 @@ describe.runIf(dbUp)("enrichSpeciesMedia orchestrator (injected fetchers, td-86a
       await expect(enrichSpeciesMedia(CODE, QID, SCI, { fetcher })).rejects.toThrow();
     } finally {
       await wipe();
+    }
+  });
+});
+
+describe.runIf(dbUp)("AI error backoff covers the similar-note substage (td-8f0ed8)", () => {
+  const CODE = "aibackoff1";
+
+  async function wipeCode() {
+    await query(`DELETE FROM species_similar WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM seen_species WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
+  }
+
+  it("a failed AI attempt is NOT immediately due again — it retries after the window", async () => {
+    // Regression guard. The substage's "never attempted" clause
+    // (similar_status IS NULL) is true forever unless a failure stamps it too,
+    // which would make a persistently-failing species re-run the AI stage on
+    // EVERY scan pass with no backoff at all.
+    await wipeCode();
+    const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`))
+      .rows[0].id;
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Backoff Testbird', 'Backoffus testus', 'species', 'Testidae')`,
+      [CODE],
+    );
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source)
+       VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+      [uid, CODE],
+    );
+    try {
+      await upsertWikiOk(CODE, { title: "T", revId: 9, extract: "prose", sections: [] });
+      expect(await aiDueCodes()).toContain(CODE); // never attempted
+
+      await markAiError(CODE, "boom");
+      expect(await aiDueCodes()).not.toContain(CODE); // backoff in effect
+
+      await query(
+        `UPDATE species_enrichment
+            SET ai_attempted_at = NOW() - INTERVAL '8 days',
+                similar_attempted_at = NOW() - INTERVAL '8 days'
+          WHERE species_code = $1`,
+        [CODE],
+      );
+      expect(await aiDueCodes()).toContain(CODE); // window elapsed
+    } finally {
+      await wipeCode();
+    }
+  });
+
+  it("a failed attempt PRESERVES existing notes (last-good, as markMediaError does)", async () => {
+    await wipeCode();
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1, 'Backoff Testbird', 'Backoffus testus', 'species', 'Testidae')`,
+      [CODE],
+    );
+    try {
+      await upsertWikiOk(CODE, { title: "T", revId: 9, extract: "prose", sections: [] });
+      await upsertAiData(CODE, {
+        fieldCraft: "Craft.",
+        tags: [],
+        model: "test-model",
+        sourceRevId: 9,
+        similar: [{ code: "haiwoo", note: "Larger." }],
+        similarCandidatesHash: "hash1",
+      });
+      await markAiError(CODE, "boom");
+      const rows = await query(`SELECT note FROM species_similar WHERE species_code = $1`, [
+        CODE,
+      ]);
+      expect(rows.rows).toHaveLength(1);
+    } finally {
+      await wipeCode();
     }
   });
 });

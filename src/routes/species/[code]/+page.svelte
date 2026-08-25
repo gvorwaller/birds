@@ -15,6 +15,7 @@
   import { allAboutBirdsUrl } from "$lib/species-links";
   import { formatFeet, tideWord, TIDE_ATTRIBUTION_URL } from "$lib/tide-format";
   import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
+  import SimilarSpeciesCard from "$components/SimilarSpeciesCard.svelte";
   import type { ActionData, PageData } from "./$types";
 
   const MONTH_NAMES = [
@@ -228,6 +229,14 @@
       isAdmin={data.isAdmin}
     />
   {/if}
+
+  <SimilarSpeciesCard
+    similar={data.similar.similar}
+    related={data.similar.related}
+    backDays={data.backDays}
+    returnTo={data.returnLink.href}
+    context={data.locationContext}
+  />
 
   {#if hasFieldCraft}
     <section class="card">

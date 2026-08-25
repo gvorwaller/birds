@@ -10,7 +10,9 @@
  * can't leave stale lexemes (CODEX1 #4). Every writer recomputes it via the
  * same upsert→UPDATE CTE so both stages keep it correct atomically.
  */
+import { createHash } from 'node:crypto';
 import { query, withTransaction } from '$lib/db';
+import { slashPartnersFor } from '$lib/similar-species';
 import type pg from 'pg';
 
 /**
@@ -231,7 +233,22 @@ export async function markWikiError(code: string, message: string): Promise<void
 	);
 }
 
-/** Phase 2 writer — present now so the schema/tsv contract is complete. */
+/**
+ * Phase 2 writer — field craft, tags, AND the similar-species notes, in ONE
+ * transaction (td-8f0ed8, CODEX1 P1 #2).
+ *
+ * Atomicity is the point: a loose note write beside this UPDATE could fail
+ * AFTER the substage had been stamped fresh, leaving the feature permanently
+ * suppressed for that species until its Wikipedia revision happened to change.
+ *
+ * The whole note set for the focal species is REPLACED, which also removes
+ * notes for candidates the model no longer returns or that have left the
+ * candidate set entirely.
+ *
+ * `search_tsv` deliberately does NOT include the notes: the search discipline
+ * on this table is enrichment-owned prose about the FOCAL species, and indexing
+ * comparison text would make a search for one species match another's page.
+ */
 export async function upsertAiData(
 	code: string,
 	data: {
@@ -239,6 +256,10 @@ export async function upsertAiData(
 		tags: string[];
 		model: string;
 		sourceRevId: number;
+		/** Validated, closed-set notes. Empty is a normal, successful result. */
+		similar?: readonly { code: string; note: string }[];
+		/** Candidate-set fingerprint these notes were generated for. */
+		similarCandidatesHash?: string | null;
 	}
 ): Promise<void> {
 	// SET expressions read the OLD row for untouched columns, so mixing the
@@ -248,20 +269,90 @@ export async function upsertAiData(
 		prose: `coalesce(wikipedia_extract, '') || ' ' || coalesce($2, '')`,
 		sections: `wikipedia_sections`
 	});
+	const similar = data.similar ?? [];
+	const hash = data.similarCandidatesHash ?? null;
+	// A run with no candidates on offer is 'none', not 'ok' — it records that
+	// the substage completed with nothing to say, so it is not retried as if
+	// it had never run.
+	const similarStatus = hash == null ? null : similar.length > 0 ? 'ok' : 'none';
+
+	await withTransaction(async (client) => {
+		await client.query(
+			`UPDATE species_enrichment SET
+			   field_craft = $2, tags = $3::text[], ai_model = $4, ai_generated_at = NOW(),
+			   ai_source_rev_id = $5, ai_status = 'ok', ai_error = NULL,
+			   ai_attempted_at = NOW(), search_tsv = ${tsv}, updated_at = NOW(),
+			   similar_status = COALESCE($6, similar_status),
+			   similar_candidates_hash = COALESCE($7, similar_candidates_hash),
+			   similar_source_rev_id = CASE WHEN $6 IS NULL THEN similar_source_rev_id ELSE $5 END,
+			   similar_model = CASE WHEN $6 IS NULL THEN similar_model ELSE $4 END,
+			   similar_generated_at = CASE WHEN $6 IS NULL THEN similar_generated_at ELSE NOW() END,
+			   similar_attempted_at = CASE WHEN $6 IS NULL THEN similar_attempted_at ELSE NOW() END,
+			   similar_error = CASE WHEN $6 IS NULL THEN similar_error ELSE NULL END
+			 WHERE species_code = $1`,
+			[code, data.fieldCraft, data.tags, data.model, data.sourceRevId, similarStatus, hash]
+		);
+		// Only touch the notes when this run actually produced a verdict on
+		// them; otherwise last-good rows are preserved untouched.
+		if (similarStatus == null) return;
+		await client.query(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
+		for (const s of similar) {
+			await client.query(
+				`INSERT INTO species_similar
+			   (species_code, similar_code, note, ai_model, ai_source_rev_id)
+			 VALUES ($1, $2, $3, $4, $5)`,
+				[code, s.code, s.note, data.model, data.sourceRevId]
+			);
+		}
+	});
+}
+
+/**
+ * Clear a taxonomy-sync over-selection without spending an API call.
+ *
+ * aiDueCodes re-selects every species whose notes predate the last taxonomy
+ * sync. When the candidate set turns out to be unchanged, this re-stamps the
+ * substage clock so the next scan stops selecting it — and touches nothing
+ * else, so the stored notes and their provenance stay exactly as they were.
+ */
+export async function touchSimilarFresh(code: string): Promise<void> {
 	await query(
-		`UPDATE species_enrichment SET
-		   field_craft = $2, tags = $3::text[], ai_model = $4, ai_generated_at = NOW(),
-		   ai_source_rev_id = $5, ai_status = 'ok', ai_error = NULL,
-		   ai_attempted_at = NOW(), search_tsv = ${tsv}, updated_at = NOW()
-		 WHERE species_code = $1`,
-		[code, data.fieldCraft, data.tags, data.model, data.sourceRevId]
+		`UPDATE species_enrichment
+		    SET similar_generated_at = NOW(), similar_attempted_at = NOW(), updated_at = NOW()
+		  WHERE species_code = $1`,
+		[code]
 	);
 }
 
+/**
+ * Fingerprint of the candidate set the notes were generated for.
+ *
+ * Computed in Node, not SQL: expanding 1,035 slash taxa per in-scope species
+ * inside the scanner's selection query would cost far more than one in-memory
+ * pass. The scanner over-selects cheaply (any species whose notes predate the
+ * last taxonomy sync) and this hash is what prevents an actual API call when
+ * the candidate set turns out to be unchanged.
+ */
+export function similarCandidatesHash(codes: readonly string[]): string {
+	return createHash('sha1').update([...codes].sort().join(',')).digest('hex').slice(0, 16);
+}
+
 export async function markAiError(code: string, message: string): Promise<void> {
+	// The similar-note substage shares this failure because it shares the CALL:
+	// one request produces field craft and notes together, so if it failed,
+	// neither ran. Stamping the substage too is what gives it the same 7-day
+	// backoff — leaving similar_status NULL after a failure would make
+	// aiDueCodes' "never attempted" clause true on every single scan, and the
+	// species would retry the AI stage every pass forever with no backoff at
+	// all (the same shape as the quarter-hourly WDQS loop noted in the wiki
+	// lane). Existing notes are PRESERVED: a transient failure must not blank
+	// out rows that are already on the page (same last-good rule as
+	// markMediaError).
 	await query(
 		`UPDATE species_enrichment SET
-		   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(), updated_at = NOW()
+		   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(),
+		   similar_status = 'error', similar_error = $2, similar_attempted_at = NOW(),
+		   updated_at = NOW()
 		 WHERE species_code = $1`,
 		[code, sanitizeErrorText(message).slice(0, 500)]
 	);
@@ -272,16 +363,18 @@ export async function markAiError(code: string, message: string): Promise<void> 
  * seen ∪ frequency ∪ photos (NULLs removed), category='species' applied ONCE
  * via taxonomy.
  */
-const SCOPE_SQL = `
-  SELECT DISTINCT tc.species_code
-    FROM taxonomy_cache tc
-   WHERE tc.category = 'species'
-     AND tc.species_code IN (
+const IN_SCOPE_CODES_SQL = `
            SELECT species_code FROM seen_species
            UNION
            SELECT species_code FROM species_frequency
            UNION
-           SELECT species_code FROM photo_links WHERE species_code IS NOT NULL
+           SELECT species_code FROM photo_links WHERE species_code IS NOT NULL`;
+
+const SCOPE_SQL = `
+  SELECT DISTINCT tc.species_code
+    FROM taxonomy_cache tc
+   WHERE tc.category = 'species'
+     AND tc.species_code IN (${IN_SCOPE_CODES_SQL}
          )`;
 
 /** In-scope codes never wiki-attempted (no row, or row without a clock). */
@@ -354,6 +447,22 @@ export async function aiDueCodes(): Promise<string[]> {
 		            se.ai_status IS NULL
 		         OR (se.ai_status = 'ok' AND se.ai_source_rev_id IS DISTINCT FROM se.wikipedia_rev_id)
 		         OR (se.ai_status = 'error' AND se.ai_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		         -- Similar-note substage (td-8f0ed8). It needs its own conditions
+		         -- because the three above cannot see either of the two things
+		         -- that make NOTES stale: a species already annotated at the
+		         -- current revision is invisible to them, so without this the
+		         -- whole existing corpus would never generate a note at all.
+		         OR se.similar_status IS NULL
+		         OR (se.similar_status = 'error'
+		             AND se.similar_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		         -- A taxonomy re-sync can change the candidate set without
+		         -- touching wikipedia_rev_id. This is a deliberate
+		         -- OVER-approximation: it re-selects every species annotated
+		         -- before the last sync, and the candidate-set hash checked in
+		         -- the handler is what stops an actual API call when the set
+		         -- turns out to be unchanged.
+		         OR (se.similar_generated_at IS NOT NULL
+		             AND se.similar_generated_at < (SELECT MAX(fetched_at) FROM taxonomy_cache))
 		      )
 		 )
 		 ORDER BY 1`
@@ -658,6 +767,11 @@ export interface AiStageInput {
 	aiStatus: string | null;
 	aiSourceRevId: number | null;
 	aiAttemptedAt: string | null;
+	/** Similar-note substage state — its own clock (td-8f0ed8). */
+	similarStatus: string | null;
+	similarCandidatesHash: string | null;
+	similarSourceRevId: number | null;
+	similarAttemptedAt: string | null;
 }
 
 /**
@@ -672,9 +786,15 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		ai_status: string | null;
 		ai_source_rev_id: string | null;
 		ai_attempted_at: string | null;
+		similar_status: string | null;
+		similar_candidates_hash: string | null;
+		similar_source_rev_id: string | null;
+		similar_attempted_at: string | null;
 	}>(
 		`SELECT wikipedia_extract, wikipedia_sections, wikipedia_rev_id::text,
-		        ai_status, ai_source_rev_id::text, ai_attempted_at::text
+		        ai_status, ai_source_rev_id::text, ai_attempted_at::text,
+		        similar_status, similar_candidates_hash,
+		        similar_source_rev_id::text, similar_attempted_at::text
 		   FROM species_enrichment
 		  WHERE species_code = $1 AND wiki_status = 'ok' AND wikipedia_extract IS NOT NULL`,
 		[code]
@@ -687,7 +807,12 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		revId: Number(row.wikipedia_rev_id),
 		aiStatus: row.ai_status,
 		aiSourceRevId: row.ai_source_rev_id == null ? null : Number(row.ai_source_rev_id),
-		aiAttemptedAt: row.ai_attempted_at
+		aiAttemptedAt: row.ai_attempted_at,
+		similarStatus: row.similar_status,
+		similarCandidatesHash: row.similar_candidates_hash,
+		similarSourceRevId:
+			row.similar_source_rev_id == null ? null : Number(row.similar_source_rev_id),
+		similarAttemptedAt: row.similar_attempted_at
 	};
 }
 
@@ -852,6 +977,229 @@ export async function getSpeciesMedia(code: string): Promise<SampleMedia> {
 		status: statusRes.rows[0]?.media_status ?? null,
 		mediaError: statusRes.rows[0]?.media_error ?? null,
 		audioStatus: statusRes.rows[0]?.media_audio_status ?? null
+	};
+}
+
+/** One candidate on the species page's similar/related list. */
+export interface SimilarSpeciesRow {
+	species_code: string;
+	com_name: string;
+	sci_name: string;
+	basis: 'ebird_slash' | 'genus';
+	/** The slash taxon that groups them, e.g. "Downy/Hairy Woodpecker". */
+	slash_com_name: string | null;
+	/** AI "how to tell them apart" line; null until the note stage runs. */
+	note: string | null;
+	photo: {
+		thumbnail_url: string | null;
+		source_url: string;
+		creator: string | null;
+		license_code: string;
+		license_url: string | null;
+		width: number | null;
+		height: number | null;
+	} | null;
+	seen: boolean;
+}
+
+export interface SimilarSpeciesResult {
+	/** eBird slash taxa — Cornell's own "these are confusable" claim. */
+	similar: SimilarSpeciesRow[];
+	/** Same genus — taxonomically close, explicitly NOT a confusion claim. */
+	related: SimilarSpeciesRow[];
+}
+
+/** Genus mates beyond this are a family index, not a shortlist — tier 2 is dropped entirely. */
+const MAX_GENUS_MATES = 3;
+
+/** Candidate rows before any per-user data is attached. */
+interface CandidateSet {
+	slash: { species_code: string; com_name: string; sci_name: string; slash_com_name: string }[];
+	genus: { species_code: string; com_name: string; sci_name: string }[];
+}
+
+/**
+ * The candidate species for one focal species, tier 1 then tier 2.
+ *
+ * Shared deliberately between the page loader and the AI note stage: the
+ * stored candidate-set hash is only meaningful if both see the SAME set, so
+ * there must be exactly one place that decides it.
+ */
+async function candidateSet(code: string, sciName: string): Promise<CandidateSet> {
+	const genus = sciName.trim().split(/\s+/)[0] ?? '';
+
+	const [slashRes, genusRes] = await Promise.all([
+		// All 1,035 slash taxa. ORDER BY is load-bearing, not tidiness: a species
+		// can belong to several slash taxa (Cooper's Hawk sits in both
+		// "Accipiter striatus/Astur cooperii" and "Astur cooperii/atricapillus"),
+		// so without a deterministic row order the merged candidate order — and
+		// therefore which duplicate survives dedupe — would vary between loads.
+		query<{ species_code: string; com_name: string; sci_name: string }>(
+			`SELECT species_code, com_name, sci_name
+			   FROM taxonomy_cache WHERE category = 'slash' ORDER BY species_code`
+		),
+		genus
+			? query<{ species_code: string }>(
+					`SELECT tc.species_code
+					   FROM taxonomy_cache tc
+					  WHERE tc.category = 'species'
+					    AND split_part(tc.sci_name, ' ', 1) = $1
+					    AND tc.species_code <> $2
+					    AND tc.species_code IN (${IN_SCOPE_CODES_SQL}
+					        )
+					  ORDER BY tc.species_code`,
+					[genus, code]
+				)
+			: Promise.resolve({ rows: [] as { species_code: string }[] })
+	]);
+
+	// Tier 1: expand every slash taxon this species belongs to, ordered by
+	// (slash taxon code, member ordinal), then dedupe by target keeping first.
+	const slashByName = new Map<string, string>();
+	for (const row of slashRes.rows) {
+		for (const p of slashPartnersFor(sciName, row.sci_name)) {
+			const key = p.sciName.toLowerCase();
+			if (!slashByName.has(key)) slashByName.set(key, row.com_name);
+		}
+	}
+	const slashNames = [...slashByName.keys()];
+
+	// Tier 2 is gated on CARDINALITY, and the gate is checked BEFORE the
+	// tier-1 exclusion below: a genus that is large overall is dropped whole,
+	// rather than sneaking in because tier 1 happened to absorb most of it.
+	const genusCodes =
+		genusRes.rows.length >= 1 && genusRes.rows.length <= MAX_GENUS_MATES
+			? genusRes.rows.map((r) => r.species_code)
+			: [];
+
+	if (slashNames.length === 0 && genusCodes.length === 0) return { slash: [], genus: [] };
+
+	const res = await query<{ species_code: string; com_name: string; sci_name: string }>(
+		// category='species' is required, not decorative: taxonomy_sci_idx is NOT
+		// unique and taxonomy_cache holds issf/hybrid/slash/spuh rows whose
+		// sci_name can collide with a species binomial.
+		`SELECT species_code, com_name, sci_name
+		   FROM taxonomy_cache
+		  WHERE category = 'species'
+		    AND (lower(sci_name) = ANY($1::text[]) OR species_code = ANY($2::text[]))`,
+		// $1 is ALREADY lowercased — expandSlashSciNames preserves the stored
+		// capitalisation, so comparing it raw against lower(sci_name) matches
+		// nothing at all and the feature ships silently empty.
+		[slashNames, genusCodes]
+	);
+	const byName = new Map(res.rows.map((r) => [r.sci_name.toLowerCase(), r]));
+	const byCode = new Map(res.rows.map((r) => [r.species_code, r]));
+
+	const slash: CandidateSet['slash'] = [];
+	for (const name of slashNames) {
+		const r = byName.get(name);
+		// A member that resolves to nothing is DROPPED, never surfaced as a bare
+		// code or a synthesised name (cs.md: no placeholder data).
+		if (r) slash.push({ ...r, slash_com_name: slashByName.get(name) ?? '' });
+	}
+
+	const shown = new Set(slash.map((s) => s.species_code));
+	const genusRows = genusCodes
+		.filter((c) => !shown.has(c))
+		.map((c) => byCode.get(c))
+		.filter((r): r is NonNullable<typeof r> => r != null)
+		.sort((a, b) => a.com_name.localeCompare(b.com_name));
+
+	return { slash, genus: genusRows };
+}
+
+/**
+ * The closed candidate list handed to the model, in display order. Same set the
+ * page shows, by construction — see candidateSet.
+ */
+export async function similarCandidatesFor(
+	code: string,
+	sciName: string
+): Promise<{ code: string; comName: string; sciName: string }[]> {
+	const set = await candidateSet(code, sciName);
+	return [...set.slash, ...set.genus].map((r) => ({
+		code: r.species_code,
+		comName: r.com_name,
+		sciName: r.sci_name
+	}));
+}
+
+/**
+ * Candidates for the species page's "Similar species" / "Related species" card
+ * (td-8f0ed8). DB-only, like getSpeciesMedia: never calls out on GET.
+ *
+ * Edges are DERIVED here rather than stored — see 0031_species_similar.sql for
+ * why. Only the note is persisted.
+ */
+export async function getSimilarSpecies(
+	code: string,
+	sciName: string,
+	userId: number
+): Promise<SimilarSpeciesResult> {
+	const set = await candidateSet(code, sciName);
+	const codes = [...set.slash, ...set.genus].map((r) => r.species_code);
+	if (codes.length === 0) return { similar: [], related: [] };
+
+	const extra = await query<{
+		species_code: string;
+		seen: boolean;
+		note: string | null;
+		thumbnail_url: string | null;
+		source_url: string | null;
+		creator: string | null;
+		license_code: string | null;
+		license_url: string | null;
+		width: number | null;
+		height: number | null;
+	}>(
+		`SELECT tc.species_code,
+		        (ss.species_code IS NOT NULL) AS seen,
+		        sim.note,
+		        sm.thumbnail_url, sm.source_url, sm.creator,
+		        sm.license_code, sm.license_url, sm.width, sm.height
+		   FROM taxonomy_cache tc
+		   LEFT JOIN seen_species ss
+		          ON ss.species_code = tc.species_code AND ss.user_id = $1
+		   LEFT JOIN species_similar sim
+		          ON sim.species_code = $2 AND sim.similar_code = tc.species_code
+		   LEFT JOIN species_media sm
+		          ON sm.species_code = tc.species_code AND sm.kind = 'photo' AND sm.rank = 1
+		  WHERE tc.species_code = ANY($3::text[])`,
+		[userId, code, codes]
+	);
+	const byCode = new Map(extra.rows.map((r) => [r.species_code, r]));
+
+	const toRow = (
+		base: { species_code: string; com_name: string; sci_name: string },
+		basis: 'ebird_slash' | 'genus',
+		slashComName: string | null
+	): SimilarSpeciesRow => {
+		const x = byCode.get(base.species_code);
+		return {
+			species_code: base.species_code,
+			com_name: base.com_name,
+			sci_name: base.sci_name,
+			basis,
+			slash_com_name: slashComName,
+			note: x?.note ?? null,
+			photo: x?.source_url
+				? {
+						thumbnail_url: x.thumbnail_url,
+						source_url: x.source_url,
+						creator: x.creator,
+						license_code: x.license_code ?? '',
+						license_url: x.license_url,
+						width: x.width,
+						height: x.height
+					}
+				: null,
+			seen: x?.seen ?? false
+		};
+	};
+
+	return {
+		similar: set.slash.map((r) => toRow(r, 'ebird_slash', r.slash_com_name || null)),
+		related: set.genus.map((r) => toRow(r, 'genus', null))
 	};
 }
 

@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.2': true,
+		'v0.1.3': true,
+		'v0.1.2': false,
 		'v0.1.1': false,
 		'v0.1.0': false,
 		'v0.0.9': false,
@@ -99,6 +100,34 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.3 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.3']}
+					aria-expanded={openVersions['v0.1.3']}
+					onclick={() => toggleVersion('v0.1.3')}
+				>
+					<span class="v-tag current">v0.1.3</span>
+					<span class="v-title">Similar Species Links</span>
+					<span class="v-date">August 2026</span>
+					<span class="chev">{openVersions['v0.1.3'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.3']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>Similar &amp; Related Species</strong> — Field guide pages now link
+								to species eBird itself treats as confusable (from its own slash-taxa
+								reporting groups) and to same-genus relatives, each with a reference photo,
+								Seen/Need badge, and an AI-written note on telling them apart.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.2 -->
 			<div class="version-entry">
 				<button
@@ -108,7 +137,7 @@
 					aria-expanded={openVersions['v0.1.2']}
 					onclick={() => toggleVersion('v0.1.2')}
 				>
-					<span class="v-tag current">v0.1.2</span>
+					<span class="v-tag">v0.1.2</span>
 					<span class="v-title">County Hotspot Sweep</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.2'] ? '▾' : '▸'}</span>

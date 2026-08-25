@@ -552,6 +552,18 @@
 						connection.
 					</li>
 					<li>
+						A species page may show a <strong>Similar &amp; related species</strong>
+						card. <strong>Similar species</strong> links come from eBird's own
+						reporting groups — the "Greater/Lesser Scaup" style entries in the
+						taxonomy — i.e. species eBird itself treats as hard to separate in the
+						field. <strong>Related species</strong> are same-genus birds, which are
+						<strong>not necessarily look-alikes</strong>, just taxonomically close.
+						Distinguishing notes are <strong>AI-generated and should be verified in
+						the field</strong>. Many species have no such eBird reporting group and
+						no small enough genus to show — for those the card simply doesn't
+						appear, which means no such grouping exists, not that data is missing.
+					</li>
+					<li>
 						<strong>Name/code search</strong> covers the complete current eBird
 						species taxonomy. Wikipedia notes fill when you load a species
 						(or when that bird is already in a loaded region, life list, or

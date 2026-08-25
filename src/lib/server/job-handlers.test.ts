@@ -114,7 +114,22 @@ vi.mock("$lib/db", () => ({
     }
     return Promise.resolve(db.handler?.(text, params) ?? { rows: [] });
   }),
-  withTransaction: vi.fn(),
+  /**
+   * Runs the callback against the SAME recorded query implementation, so
+   * transactional writes are visible to `db.calls` like every other statement.
+   * A no-op mock here silently swallowed anything written inside a transaction
+   * — exactly the class of bug the atomic note write exists to prevent
+   * (td-8f0ed8).
+   */
+  withTransaction: vi.fn(
+    async (fn: (client: { query: (t: string, p?: unknown[]) => unknown }) => unknown) =>
+      fn({
+        query: async (text: string, params?: unknown[]) => {
+          db.calls.push({ text, params: params ?? [] });
+          return db.handler?.(text, params) ?? { rows: [] };
+        },
+      }),
+  ),
 }));
 
 const syncMocks = vi.hoisted(() => {
@@ -2038,6 +2053,7 @@ describe("runJob — species enrichment (plan Phase 1)", () => {
 });
 
 const { EnrichmentAiError } = await import("./ai-enrichment");
+const { similarCandidatesHash } = await import("./species-enrichment");
 
 describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
   const TAXA_ROW = {
@@ -2050,6 +2066,8 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     tags: ["habitat:mudflat", "tide:falling"],
     fieldCraft: "Scan exposed flats on a falling tide.",
     droppedTags: [],
+    similar: [],
+    droppedSimilar: [],
   };
 
   beforeEach(() => {
@@ -2180,7 +2198,10 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     expect(aiWrite?.params?.[4]).toBe(55); // stored revision, not a refetch
   });
 
-  it("wiki-fresh unit with FRESH AI stays a plain fresh skip", async () => {
+  it("wiki-fresh unit with fresh AI but NO similar notes is due (td-8f0ed8)", async () => {
+    // Behaviour change: an already-annotated species is invisible to the
+    // revision clock, so before the substage got its own due conditions the
+    // whole existing corpus could never generate a note.
     db.handler = (text) => {
       if (text.includes("AS skip")) return { rows: [{ skip: true }] };
       if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
@@ -2195,6 +2216,44 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
               ai_status: "ok",
               ai_source_rev_id: "55",
               ai_attempted_at: null,
+              similar_status: null,
+              similar_candidates_hash: null,
+              similar_source_rev_id: null,
+              similar_attempted_at: null,
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+  });
+
+  it("wiki-fresh unit with fresh AI AND fresh notes stays a plain fresh skip", async () => {
+    // The candidate-set hash must match what similarCandidatesFor computes for
+    // an EMPTY candidate set — the mocked taxonomy returns no slash rows and no
+    // genus mates, so the species genuinely has nothing to compare against.
+    const emptyHash = similarCandidatesHash([]);
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: "ok",
+              ai_source_rev_id: "55",
+              ai_attempted_at: null,
+              similar_status: "none",
+              similar_candidates_hash: emptyHash,
+              similar_source_rev_id: "55",
+              similar_attempted_at: null,
             },
           ],
         };
@@ -2219,6 +2278,8 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     tags: ["habitat:mudflat", "tide:falling"],
     fieldCraft: "Scan exposed flats on a falling tide.",
     droppedTags: [],
+    similar: [],
+    droppedSimilar: [],
   };
   /** Routing for a wiki-FRESH row whose AI is missing. */
   const freshAiDueDb = () => {
@@ -2313,6 +2374,40 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect((oks[0][2] as { outcome: string }).outcome).toBe("ai_only");
     expect(mocks.completeJob).toHaveBeenCalledTimes(1);
     expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ aiOk: 1, aiFailed: [] });
+  });
+
+  it("aiOnly backfill runs when legacy AI is fresh but the similar substage is missing", async () => {
+    db.handler = (text) => {
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: "ok",
+              ai_source_rev_id: "55",
+              ai_attempted_at: null,
+              similar_status: null,
+              similar_candidates_hash: null,
+              similar_source_rev_id: null,
+              similar_attempted_at: null,
+            },
+          ],
+        };
+      return undefined;
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
+
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"], aiOnly: true } }),
+      ctx,
+    );
+
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok")).toHaveLength(1);
   });
 
   it("aiOnly with ERROR rows: always due (no 7d wait) — the job exists because they failed", async () => {
@@ -2428,6 +2523,8 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
     tags: ["habitat:mudflat"],
     fieldCraft: "Craft.",
     droppedTags: [],
+    similar: [],
+    droppedSimilar: [],
   };
 
   beforeEach(() => {
