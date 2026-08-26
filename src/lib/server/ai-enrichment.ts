@@ -445,19 +445,67 @@ export async function generateSpeciesAnnotation(
  *
  * IMPORTANT, so the catch rate is not misread: this does NOT detect the
  * syllable-doubling itself. "plplainer", "parparrow", "slorter", "rufer" are
- * invisible to it. Every one of the 10 corrupted prod notes was caught because
- * it ALSO carried punctuation damage. A degenerated tail with clean punctuation
- * still ships. The audit rate is a property of that corpus, not a guarantee.
+ * invisible to it. Corrupted notes are caught because they ALSO carry
+ * punctuation, guillemet or repetition damage. A degenerated tail with clean
+ * punctuation still ships. Any catch rate is a property of the corpus measured,
+ * not a guarantee.
+ *
+ * The first version of this function was too narrow in three ways that all
+ * shipped corrupted notes to prod (AGY): the glued-period rule matched only
+ * LOWERCASE after the period, so ".Pigeon"/".Pulin"/".ID" passed; the
+ * punctuation rule had no allowance for quotes between the period and the
+ * comma, so `."",` and `.",` passed; and nothing looked for guillemets or for
+ * repetition loops. Validate any future change by running this function over
+ * the whole live corpus, NOT by hand-writing an equivalent SQL regex — a
+ * separate audit predicate is how "zero malformed" was reported while eight
+ * corrupted notes were live.
  */
-export function isMalformedNote(note: string): boolean {
-	// "individual., bircapped" — sentence end followed by more punctuation.
-	if (/[.!?]\s*[,;]/.test(note)) return true;
-	// "tone.the" — sentence end glued to the next word. A token of 4+ characters
-	// before the period rules out the common abbreviations.
-	if (/[A-Za-z]{4}\.[a-z]/.test(note)) return true;
-	// Doubled sentence-enders that are not an ellipsis.
-	if (/[!?]{2,}|\.{2}(?!\.)/.test(note)) return true;
+/**
+ * Decoding loops come in two sizes: a long phrase repeated verbatim, and a
+ * single token stuttering. The window check below catches the first; this
+ * catches the second ("is is is is is is", "a much a much"). Four consecutive
+ * repeats, so ordinary emphasis ("very very") is untouched.
+ */
+function hasStutter(s: string): boolean {
+	return /\b(\w{1,12})(?:\s+\1\b){3,}/i.test(s);
+}
+
+/** A 20-char window repeated three times is a decoding loop, not prose. */
+function hasRepeatedPhrase(s: string): boolean {
+	const WINDOW = 20;
+	if (s.length < WINDOW * 3) return false;
+	const seen = new Map<string, number>();
+	for (let i = 0; i + WINDOW <= s.length; i++) {
+		const key = s.slice(i, i + WINDOW);
+		const n = (seen.get(key) ?? 0) + 1;
+		if (n >= 3) return true;
+		seen.set(key, n);
+	}
 	return false;
+}
+
+export function isMalformedNote(note: string): boolean {
+	// Mask the constructs that legitimately contain a period followed by a
+	// letter, so the glued-period rule below can be strict without rejecting
+	// correct prose.
+	const masked = note
+		.replace(/\b(?:e\.g|i\.e|cf|ssp|subsp|var|approx|etc|vs|Dr|St|Mt|Fig|No)\./gi, '§')
+		.replace(/\d+\.\d+/g, '§');
+
+	// Guillemets appear in none of this corpus's correct notes; they showed up
+	// only inside termination loops ("...settles it.», Grebe size alone...").
+	if (/[»«]/.test(masked)) return true;
+	// Sentence end then a comma or semicolon. Quotes and brackets may sit
+	// between them — the earlier rule missed `."",` and `.",` for exactly that.
+	if (/[.!?]["'”’»)\]]*\s*[,;]/.test(masked)) return true;
+	// A period glued to the next word, in EITHER case. The earlier rule only
+	// looked for lowercase and so sailed past ".Pigeon", ".Pulin" and ".ID".
+	if (/[A-Za-z]{2,}\.[A-Za-z]/.test(masked)) return true;
+	// Doubled sentence-enders, but not a three-dot ellipsis.
+	if (/[!?]{2,}|\.{2}(?!\.)/.test(masked)) return true;
+	// Doubled quotes, e.g. `dark on Marbled."",`.
+	if (/["']{2,}/.test(masked)) return true;
+	return hasStutter(masked) || hasRepeatedPhrase(masked);
 }
 
 /**

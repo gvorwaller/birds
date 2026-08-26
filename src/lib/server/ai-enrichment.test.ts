@@ -146,7 +146,25 @@ describe("parseAnnotation — similar species", () => {
   it("caps note length", () => {
     // Input is sized RELATIVE to the cap: a hardcoded length silently stops
     // testing anything the moment SIMILAR_NOTE_MAX_CHARS moves.
-    const out = ok(`[{"code": "haiwoo", "note": "${"x".repeat(SIMILAR_NOTE_MAX_CHARS + 200)}"}]`);
+    // Must be long AND non-repetitive: a repeated filler is itself flagged as
+    // a decoding loop, which is the correct behaviour but not what this tests.
+    const parts = [
+      "Larger overall with a noticeably heavier bill",
+      "the nape shows a dark spur visible head-on",
+      "outer tail feathers are clean white without bars",
+      "flanks wash buff rather than grey in autumn",
+      "voice is a sharper peek than the focal bird",
+      "wingbars average bolder and better defined",
+      "legs run pinkish instead of dull olive",
+      "crown pattern lacks any rufous tinge at rest",
+      "primary projection is longer on perched birds",
+      "eye-ring is thin and broken behind the eye",
+      "undertail coverts are plain rather than spotted",
+      "bill base shows pale pink in most individuals",
+    ];
+    const long = parts.join("; ");
+    expect(long.length).toBeGreaterThan(SIMILAR_NOTE_MAX_CHARS);
+    const out = ok(`[{"code": "haiwoo", "note": "${long}"}]`);
     expect(out.similar[0].note.length).toBeLessThanOrEqual(SIMILAR_NOTE_MAX_CHARS);
   });
 
@@ -423,12 +441,50 @@ describe("isMalformedNote — structural damage, not meaning", () => {
     expect(isMalformedNote("Larger overall… paler below.")).toBe(false);
   });
 
+  it("catches the signatures the first version missed (AGY, live in prod)", () => {
+    const cases = [
+      // Glued period before an UPPERCASE word — the old rule saw only lowercase.
+      "versus the white-crowns coo-cura-coo.Pigeon.Pigeon.Pigeon.",
+      "favors thorny desert washes rather than open bunchgrass.Broken song is a chip-chip-trill.",
+      "stay dark-bodied with a duller, deeper bill.Pulin bill is deeper and more orange.",
+      "a guttural gawking series.Cuckoo tail pattern is similar, so check face first.",
+      // Quotes sitting between the sentence end and the comma.
+      'white on Kittlitzs, dark on Marbled."",',
+      'Best mark is tail length and rufous extent.",',
+      // Guillemets — only ever seen inside termination loops.
+      "usually settles it.», Grebe size alone usually settles it.»,",
+      "is optional.», ends here.», is complete.» in short, check throat.",
+      // Doubled period.
+      "compact..a far more compact bird overall..a much smaller bird.",
+      // Stray serialisation debris.
+      'Males show more extensive white in the outer tail.""}',
+    ];
+    for (const bad of cases) expect(isMalformedNote(bad)).toBe(true);
+  });
+
+  it("catches a single-token stutter with clean punctuation", () => {
+    // From prod: "...black cap.is is is is is is grey mantle contrast." In the
+    // live note the glued period also gave it away; spaced out like this only
+    // the stutter rule sees it, which is why both rules exist.
+    const loop =
+      "Sooty, so check for the grey mantle against the black cap. is is is is is is grey mantle contrast.";
+    expect(isMalformedNote(loop)).toBe(true);
+  });
+
+  it("does not treat ordinary emphasis as a stutter", () => {
+    expect(isMalformedNote("A very very slightly paler crown, best seen head-on.")).toBe(false);
+  });
+
   it("does NOT reject common abbreviations", () => {
     // The whole risk of this check is false positives on correct notes.
     for (const ok of [
       "Larger, e.g. noticeably bulkier through the chest and neck.",
       "Paler overall, i.e. washed out rather than saturated brown.",
       "Compare ssp. alticola, which shows a broader grey crown band.",
+      "Around 2.5 times heavier, with a proportionately deeper bill.",
+      "Told from the nominate by the paler nape; cf. the Hepburn's form.",
+      "Note the buffy flanks — e.g. on worn autumn birds — and dark legs.",
+      "A long, drawn-out moan followed by three loud coos… then silence.",
       "See cf. the Hepburn's form for the full grey face.",
       "Bill is ~1.5x the head length; the nape shows a dark spur.",
       "Voice only; plumage identical.",
