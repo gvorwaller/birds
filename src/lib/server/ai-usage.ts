@@ -10,11 +10,16 @@
  * dollar computation is a chance to reintroduce the reported-vs-charged bug
  * as a SELECT). Nothing in this module multiplies a token count by a rate.
  */
-import { query } from '$lib/db';
+import { query, queryTimed } from '$lib/db';
 import { sanitizeErrorText } from './job-policy';
 import { dollarsForRow, type CallEnvelope } from './ai-models';
 
 export type AiPurpose = 'enrichment' | 'guidance' | 'compare';
+
+// Metering is best-effort and must never hold a completed provider call
+// hostage to pool exhaustion or a stuck INSERT. queryTimed bounds both client
+// acquisition and execution; on timeout recordUsage logs and returns.
+const USAGE_WRITE_TIMEOUT_MS = 5_000;
 
 export interface UsageCall {
 	provider?: string; // default 'anthropic'
@@ -74,7 +79,7 @@ export async function recordUsage(call: UsageCall): Promise<void> {
 							cacheWrite1hTokens: null
 						}
 					];
-		await query(
+		await queryTimed(
 			`INSERT INTO ai_usage (
 				call_id, attempt_index, attempt_type, is_final, provider,
 				requested_model, served_model, purpose, species_code, job_id,
@@ -126,7 +131,8 @@ export async function recordUsage(call: UsageCall): Promise<void> {
 				attempts.map((a) => a.cacheWrite1hTokens),
 				attempts.map((a) => a.stopReason),
 				attempts.map((a) => a.billed)
-			]
+			],
+			USAGE_WRITE_TIMEOUT_MS
 		);
 	} catch (err) {
 		console.error(

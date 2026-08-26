@@ -7,13 +7,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallEnvelope } from "./ai-models";
 
-const dbCalls: { text: string; params: unknown[] }[] = [];
+const dbCalls: { fn: "query" | "queryTimed"; text: string; params: unknown[] }[] = [];
 let queryHandler: (text: string, params?: unknown[]) => { rows: unknown[] } | undefined = () =>
   undefined;
 
 vi.mock("$lib/db", () => ({
   query: async (text: string, params?: unknown[]) => {
-    dbCalls.push({ text, params: params ?? [] });
+    dbCalls.push({ fn: "query", text, params: params ?? [] });
+    const r = queryHandler(text, params);
+    if (r === undefined) throw new Error("simulated db failure");
+    return r;
+  },
+  queryTimed: async (text: string, params?: unknown[]) => {
+    dbCalls.push({ fn: "queryTimed", text, params: params ?? [] });
     const r = queryHandler(text, params);
     if (r === undefined) throw new Error("simulated db failure");
     return r;
@@ -63,6 +69,13 @@ describe("recordUsage", () => {
     // arrays of length 1 for the single attempt
     expect(dbCalls[0].params[11]).toEqual([0]); // attempt_index
     expect(dbCalls[0].params[15]).toEqual([1000]); // input_tokens
+  });
+
+  it("uses a hard-deadline query so a stuck pool cannot wedge the metered call", async () => {
+    await recordUsage(baseCall());
+    expect(dbCalls).toHaveLength(1);
+    expect(dbCalls[0].fn).toBe("queryTimed");
+    expect(dbCalls[0].text).toContain("INSERT INTO ai_usage");
   });
 
   it("PINNED (GROK P1-5): a fallback chain is ONE statement — a partial chain can never exist (DELETE is revoked; repair is impossible)", async () => {

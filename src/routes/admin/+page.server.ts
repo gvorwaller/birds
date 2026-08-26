@@ -277,6 +277,18 @@ export const actions: Actions = {
     const modelIds = form.getAll("models").map(String);
     if (modelIds.length === 0)
       return fail(400, { kind: "compare" as const, error: "Pick at least one model." });
+    // The checkbox UI can submit each registry model only once, but the action
+    // is the spend boundary: a forged form can repeat the same `models` field
+    // hundreds of times. Without this guard one accepted compare fans out into
+    // hundreds of identical, billable calls while still passing the allowlist.
+    // Reject rather than silently de-duplicating so the response never claims
+    // it ran the exact selection the caller submitted.
+    const uniqueModelIds = new Set(modelIds);
+    if (uniqueModelIds.size !== modelIds.length)
+      return fail(400, {
+        kind: "compare" as const,
+        error: "Each model can be selected only once.",
+      });
     const entries = modelIds.map((id) => SELECTABLE_MODELS.find((m) => m.id === id));
     if (entries.some((e) => !e))
       return fail(400, { kind: "compare" as const, error: "Unknown model in selection." });

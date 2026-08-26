@@ -468,6 +468,35 @@
         </div>
       {/each}
     </div>
+    {#if data.ai.usage.byModelPurpose.length > 0}
+      <h3>Cost by model and purpose</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Served model</th><th>Purpose</th><th>Calls</th><th>Attempts</th><th>Tokens</th><th>Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each data.ai.usage.byModelPurpose as cell ((cell.servedModel ?? "unknown") + ":" + cell.purpose)}
+              <tr>
+                <td>{cell.servedModel ?? "Unknown"}</td>
+                <td>{cell.purpose}</td>
+                <td>{cell.calls}</td>
+                <td>{cell.attempts}</td>
+                <td class="nowrap">{fmtTok(cell.inputTokens)} / {fmtTok(cell.outputTokens)}</td>
+                <td class="nowrap">
+                  {fmtDollars(cell.dollars)}
+                  {#if cell.unpricedAttempts > 0}
+                    <span class="badge" data-color="warn">+{cell.unpricedAttempts} unpriced</span>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
   </section>
 
   <section class="card">

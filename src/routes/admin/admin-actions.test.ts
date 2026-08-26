@@ -240,6 +240,23 @@ describe("run_compare", () => {
     expect(mocks.generateSpeciesAnnotation).not.toHaveBeenCalled();
   });
 
+  it("PINNED (spend boundary): rejects duplicate model fields before any provider call", async () => {
+    routeCompareDb();
+    const r = (await actions.run_compare({
+      ...ADMIN,
+      request: req({
+        species: "dowwoo",
+        models: ["claude-haiku-4-5", "claude-haiku-4-5"],
+      }),
+    } as never)) as { status: number; data: { kind: string; error: string } };
+
+    expect(r.status).toBe(400);
+    expect(r.data.kind).toBe("compare");
+    expect(r.data.error).toMatch(/only once/);
+    expect(mocks.generateSpeciesAnnotation).not.toHaveBeenCalled();
+    expect(dbCalls.filter((c) => c.text.includes("INSERT INTO ai_usage"))).toHaveLength(0);
+  });
+
   it("runs the selected models in parallel, prices each column, and writes one ledger call per model", async () => {
     routeCompareDb();
     mocks.generateSpeciesAnnotation.mockImplementation(
