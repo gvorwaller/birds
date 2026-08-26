@@ -3,6 +3,7 @@
   import { enhance } from "$app/forms";
   import { onMount, untrack } from "svelte";
   import { nextIntervalMs } from "$lib/job-poll-core";
+  import { meterDollars } from "$lib/ai-meter";
   import type { AdminLiveStatus } from "$server/admin-status";
   import type { ActionData, PageData } from "./$types";
 
@@ -178,6 +179,9 @@
     if (d == null || !Number.isFinite(d)) return "—";
     if (d > 0 && d < 0.01) return `$${d.toPrecision(2)}`;
     return `$${d.toFixed(2)}`;
+  }
+  function fmtMeterDollars(dollars: number, unpricedAttempts: number): string {
+    return fmtDollars(meterDollars(dollars, unpricedAttempts));
   }
   function fmtTok(n: number | null): string {
     if (n == null) return "—";
@@ -459,7 +463,7 @@
               <span class="badge" data-color="warn">High burn</span>
             {/if}
           </div>
-          <div class="stat-dollar">{fmtDollars(tile.w.dollars)}</div>
+          <div class="stat-dollar">{fmtMeterDollars(tile.w.dollars, tile.w.unpricedAttempts)}</div>
           <div class="stat-sub muted">
             {tile.w.calls} call{tile.w.calls === 1 ? "" : "s"} ·
             {fmtTok(tile.w.inputTokens + tile.w.outputTokens)} tok
@@ -486,7 +490,7 @@
                 <td>{cell.attempts}</td>
                 <td class="nowrap">{fmtTok(cell.inputTokens)} / {fmtTok(cell.outputTokens)}</td>
                 <td class="nowrap">
-                  {fmtDollars(cell.dollars)}
+                  {fmtMeterDollars(cell.dollars, cell.unpricedAttempts)}
                   {#if cell.unpricedAttempts > 0}
                     <span class="badge" data-color="warn">+{cell.unpricedAttempts} unpriced</span>
                   {/if}
@@ -690,7 +694,10 @@
                          but no price = served model missing from the rate
                          table. Conflating them mislabels rate gaps as aborts. -->
                     {#if r.inputTokens == null}
-                      <span>—</span> <span class="badge" data-color="warn">cost unknown (aborted)</span>
+                      <span>—</span>
+                      <span class="badge" data-color="warn">
+                        {r.httpStatus == null ? "cost unknown (aborted)" : "cost unknown"}
+                      </span>
                     {:else}
                       <span>—</span> <span class="badge" data-color="warn">rate unavailable</span>
                     {/if}

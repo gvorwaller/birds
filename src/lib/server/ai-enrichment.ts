@@ -416,18 +416,25 @@ export async function generateSpeciesAnnotation(
 			.json()
 			.then((b: any) => (typeof b?.error?.type === 'string' ? b.error.type : null))
 			.catch(() => null);
-		if (res.status === 429) {
+		if (res.status === 401) {
+			fail(new EnrichmentAiError('AI API key missing or invalid.', 401, false));
+		}
+		// 429 is the documented throttle; 529 overloaded_error is the same
+		// operational class — without rateLimited the drain keeps calling
+		// after the provider said it cannot take more work.
+		if (
+			res.status === 429 ||
+			res.status === 529 ||
+			envelope.providerErrorType === 'overloaded_error'
+		) {
 			fail(
 				new EnrichmentAiError(
 					'AI service rate-limited.',
-					429,
+					res.status,
 					true,
 					parseRetryAfterMs(res.headers.get('retry-after'))
 				)
 			);
-		}
-		if (res.status === 401) {
-			fail(new EnrichmentAiError('AI API key missing or invalid.', 401, false));
 		}
 		fail(new EnrichmentAiError(`AI service error (${res.status}).`, res.status, false));
 	}

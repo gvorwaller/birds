@@ -674,6 +674,17 @@ describe("generateSpeciesAnnotation (fetcher seam — first tests, plan step 5)"
     expect(err.envelope.requestId).toBe("req_test_1");
   });
 
+  it("PINNED: 529 overloaded_error is rate-limited (same drain-pause as 429)", async () => {
+    const { fetcher } = fetcherReturning(
+      resp({ error: { type: "overloaded_error", message: "busy" } }, { status: 529 }),
+    );
+    const err = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher }).catch((e) => e);
+    expect(err).toBeInstanceOf(EnrichmentAiError);
+    expect(err.rateLimited).toBe(true);
+    expect(err.status).toBe(529);
+    expect(err.envelope.providerErrorType).toBe("overloaded_error");
+  });
+
   it("served model ≠ requested model propagates through the envelope (fallback provenance)", async () => {
     const { fetcher } = fetcherReturning(resp(okBody({ model: "claude-opus-4-8" })));
     const out = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher });

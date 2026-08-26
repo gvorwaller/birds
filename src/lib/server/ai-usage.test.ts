@@ -26,6 +26,7 @@ vi.mock("$lib/db", () => ({
   },
 }));
 
+import { meterDollars } from "$lib/ai-meter";
 import { recordUsage, usageAggregates, type UsageCall } from "./ai-usage";
 
 const envelope = (over: Partial<CallEnvelope> = {}): CallEnvelope => ({
@@ -317,6 +318,12 @@ describe("usageAggregates", () => {
     expect(c2.dollars).toBeNull();
     expect(c2.inputTokens).toBeNull();
     expect(c2.ok).toBe(false);
+  });
+
+  it("PINNED: a window of only unpriced spend is not a $0.00 receipt", () => {
+    expect(meterDollars(0, 2)).toBeNull();
+    expect(meterDollars(0, 0)).toBe(0); // genuine $0 (refusals only)
+    expect(meterDollars(0.01, 2)).toBe(0.01); // known spend still shown; unpriced is a badge
   });
 
   it("stop_reason and error breakdowns pass through", async () => {
