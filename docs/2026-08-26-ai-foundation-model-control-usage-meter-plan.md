@@ -154,6 +154,10 @@ ALTER TABLE ai_usage ADD CONSTRAINT ai_usage_attempt_ck CHECK (attempt_index >= 
 -- privileges — so the draft's "GRANT SELECT, INSERT" enforced nothing. The
 -- claim "append-only by role" is only true after:
 REVOKE UPDATE, DELETE ON ai_usage FROM birds_app;
+-- MEASURED on the test cluster (2026-08-26), not assumed: after this REVOKE a
+-- scratch table with an identity column accepts INSERT as birds_app (0002's
+-- default SEQUENCE privileges survive) and rejects UPDATE and DELETE with
+-- permission denied. The sequence question is settled empirically.
 -- app_config keeps the default SELECT/INSERT/UPDATE (no DELETE needed but
 -- harmless); made explicit for the reader:
 GRANT SELECT, INSERT, UPDATE ON app_config TO birds_app;
