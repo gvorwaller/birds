@@ -68,9 +68,11 @@ CREATE TABLE ai_usage (
                                           -- tokens for attempts it does not bill: a
                                           -- pre-output refusal and a declined fallback
                                           -- primary with output 0 both carry usage at
-                                          -- $0. Discriminator: an attempt is billed iff
-                                          -- it produced output (output_tokens > 0);
-                                          -- refusal-with-0-output is an event row.
+                                          -- $0. Discriminator: billed=FALSE only when
+                                          -- output is KNOWN zero (refusal / declined
+                                          -- primary event rows); missing usage stays
+                                          -- billed=TRUE with NULL tokens = unknown
+                                          -- spend, priced as null, never $0.
                                           -- Dollar aggregates sum ONLY billed rows.
     error           TEXT                  -- sanitizeErrorText() output ONLY — never a
                                           -- raw provider payload or fetch headers

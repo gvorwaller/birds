@@ -729,8 +729,9 @@
 					<li>
 						<strong>The meter stores tokens, not dollars</strong> — every AI
 						call's token counts are recorded, and dollars are computed at
-						today's rates whenever the page loads. Today / 7-day / 30-day /
-						all-time totals sit above the model controls.
+						read time using the rates in effect when each call ran, so
+						historical spend never reprices when rates change. Today /
+						7-day / 30-day / all-time totals sit above the model controls.
 					</li>
 					<li>
 						<strong>Compare Lab runs are real spend</strong> — benchmarking a

@@ -124,7 +124,13 @@ export async function generateFieldTips(
 			body: JSON.stringify(built.body),
 			signal: opts.signal ?? AbortSignal.timeout(GUIDANCE_TIMEOUT_MS)
 		});
-	} catch {
+	} catch (err) {
+		// Same mislabel enrichment already fixed (GROK P2): a timeout is not a
+		// network failure, and telling the user the service is unreachable
+		// sends them down the wrong debugging path.
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			throw new GuidanceError('The AI request timed out — try again shortly.');
+		}
 		throw new GuidanceError('Could not reach the AI service — try again shortly.');
 	}
 
@@ -149,6 +155,8 @@ export async function generateFieldTips(
 		if (res.status === 401) fail(new GuidanceError('The AI API key is missing or invalid.'));
 		if (res.status === 429)
 			fail(new GuidanceError('AI service is rate-limited — try again shortly.'));
+		if (res.status === 529 || envelope.providerErrorType === 'overloaded_error')
+			fail(new GuidanceError('AI service is overloaded — try again shortly.'));
 		fail(new GuidanceError(`AI service error (${res.status}).`));
 	}
 

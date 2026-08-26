@@ -466,6 +466,13 @@ export async function generateSpeciesAnnotation(
 		// The kitmur case: a max_tokens truncation is a 200 whose usage and
 		// stop_reason are in hand right here — the throw must not discard them.
 		if (err instanceof EnrichmentAiError) fail(err);
+		// An UNEXPECTED throw (parseAnnotation only throws EnrichmentAiError
+		// today, but that is a fact, not a guarantee) still happened with the
+		// envelope in hand — attach it so the ledger records the real tokens
+		// instead of unknown spend (GROK P2).
+		if (err instanceof Error) {
+			(err as Error & { envelope?: AiCallEnvelope }).envelope = envelope;
+		}
 		throw err;
 	}
 }

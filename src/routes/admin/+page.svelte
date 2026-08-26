@@ -617,7 +617,7 @@
                 <div class="muted">{(col.durationMs / 1000).toFixed(1)} s</div>
                 <div class="muted">
                   {fmtTok(col.inputTokens)} in · {fmtTok(col.outputTokens)} out
-                  {#if col.thinkingTokens != null}· {fmtTok(col.thinkingTokens)} think{/if}
+                  {#if col.thinkingTokens != null}({fmtTok(col.thinkingTokens)} thinking, incl. in out){/if}
                 </div>
               </div>
               {#if col.ok}
@@ -702,7 +702,13 @@
                       <span>—</span> <span class="badge" data-color="warn">rate unavailable</span>
                     {/if}
                   {:else if r.billed === false}
-                    <span class="badge" data-color="warn">$0.00 (refusal)</span>
+                    <!-- "refusal" only when the API said so — any 0-output
+                         event row used to get the refusal caption (GROK P2). -->
+                    {#if r.stopReason === "refusal"}
+                      <span class="badge" data-color="warn">$0.00 (refusal)</span>
+                    {:else}
+                      <span class="badge" data-color="warn">$0.00 (no output)</span>
+                    {/if}
                   {:else}
                     {fmtDollars(r.dollars)}
                   {/if}

@@ -175,8 +175,10 @@ function dollarsForAttempts(attempts: CallEnvelope[], at: Date): number | null {
   return total;
 }
 
-/** Sum every attempt's tokens so a fallback chain's column matches its dollars
- * (final-attempt-only under-counted the billed declined primary). */
+/** Sum the BILLED attempts' tokens so a fallback chain's column matches its
+ * dollars (final-attempt-only under-counted a billed declined primary;
+ * all-attempts over-counted unbilled event rows — GROK P2: same convention
+ * as the meter tiles). */
 function sumAttemptTokens(
   attempts: CallEnvelope[] | undefined,
   pick: (a: CallEnvelope) => number | null,
@@ -185,6 +187,7 @@ function sumAttemptTokens(
   let any = false;
   let total = 0;
   for (const a of attempts) {
+    if (!a.billed) continue;
     const n = pick(a);
     if (n != null) {
       any = true;

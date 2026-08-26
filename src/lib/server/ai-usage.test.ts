@@ -308,7 +308,10 @@ describe("usageAggregates", () => {
     expect(c1.servedModel).toBe("claude-opus-4-8");
     // $0 (unbilled primary) + 412×$5/M + 264×$25/M
     expect(c1.dollars).toBeCloseTo(412 * 5e-6 + 264 * 25e-6, 9);
-    expect(c1.inputTokens).toBe(947); // both attempts' reported tokens
+    // BILLED tokens only (convention updated with the tiles, GROK P2): the
+    // declined primary's reported-but-unbilled 535 stays out, matching the
+    // dollars beside it.
+    expect(c1.inputTokens).toBe(412);
   });
 
   it("recent: an abort renders dollars=null and null tokens — '—', never $0.00", async () => {

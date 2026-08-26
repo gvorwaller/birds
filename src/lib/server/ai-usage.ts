@@ -445,10 +445,15 @@ async function recentCalls(limit: number): Promise<RecentCall[]> {
 				break;
 			}
 			dollars += d;
-			if (a.input_tokens != null) tokensSeen = true;
+			if (a.billed && a.input_tokens != null) tokensSeen = true;
 		}
+		// BILLED tokens only — the same convention the tiles and cells use
+		// (GROK P2): folding an unbilled declined primary's reported tokens
+		// into the row makes $/tok read as under-reporting.
 		const sum = (pick: (a: AttemptRow) => number | null): number | null =>
-			tokensSeen ? attempts.reduce((acc, a) => acc + (pick(a) ?? 0), 0) : null;
+			tokensSeen
+				? attempts.reduce((acc, a) => acc + (a.billed ? (pick(a) ?? 0) : 0), 0)
+				: null;
 		calls.push({
 			callId: final.call_id,
 			at: final.at,
