@@ -16,7 +16,7 @@ import { rankedNeedPlacesNear, type PlaceRanking } from "$server/needs";
 import { tidesForStops } from "$server/tides";
 import type { TideResult } from "$lib/tide-format";
 import { weatherFor, type WeatherResult } from "$server/weather";
-import { generateFieldTips, GuidanceError } from "$server/ai-guidance";
+import { fieldTipsForTrip, GuidanceError } from "$server/ai-guidance";
 import {
   addStop,
   deleteTrip,
@@ -364,7 +364,7 @@ export const actions: Actions = {
     const tipStops = fieldTipInputsForStops(stops);
 
     try {
-      const tips = await generateFieldTips({
+      const tips = await fieldTipsForTrip({
         tripName: trip.name,
         stops: tipStops,
         weather,
