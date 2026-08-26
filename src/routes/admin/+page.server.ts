@@ -175,6 +175,25 @@ function dollarsForAttempts(attempts: CallEnvelope[], at: Date): number | null {
   return total;
 }
 
+/** Sum every attempt's tokens so a fallback chain's column matches its dollars
+ * (final-attempt-only under-counted the billed declined primary). */
+function sumAttemptTokens(
+  attempts: CallEnvelope[] | undefined,
+  pick: (a: CallEnvelope) => number | null,
+): number | null {
+  if (!attempts || attempts.length === 0) return null;
+  let any = false;
+  let total = 0;
+  for (const a of attempts) {
+    const n = pick(a);
+    if (n != null) {
+      any = true;
+      total += n;
+    }
+  }
+  return any ? total : null;
+}
+
 export interface CompareColumn {
   modelId: string;
   label: string;
@@ -351,7 +370,6 @@ export const actions: Actions = {
                 return { result: annotation, envelope };
               },
             });
-            const finalAtt = attempt.envelope.attempts.find((a) => a.isFinal);
             return {
               modelId: entry.id,
               label: entry.label,
@@ -360,9 +378,9 @@ export const actions: Actions = {
               durationMs: Date.now() - started,
               servedModel: attempt.servedModel,
               fallback: attempt.servedModel != null && attempt.servedModel !== entry.id,
-              inputTokens: finalAtt?.inputTokens ?? null,
-              outputTokens: finalAtt?.outputTokens ?? null,
-              thinkingTokens: finalAtt?.thinkingTokens ?? null,
+              inputTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.inputTokens),
+              outputTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.outputTokens),
+              thinkingTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.thinkingTokens),
               fieldCraft: attempt.result.fieldCraft,
               similar: attempt.result.similar.map((s) => ({
                 code: s.code,
@@ -385,9 +403,9 @@ export const actions: Actions = {
               durationMs: Date.now() - started,
               servedModel: envelope?.attempts.find((a) => a.isFinal)?.servedModel ?? null,
               fallback: false,
-              inputTokens: envelope?.attempts.find((a) => a.isFinal)?.inputTokens ?? null,
-              outputTokens: envelope?.attempts.find((a) => a.isFinal)?.outputTokens ?? null,
-              thinkingTokens: null,
+              inputTokens: sumAttemptTokens(envelope?.attempts, (a) => a.inputTokens),
+              outputTokens: sumAttemptTokens(envelope?.attempts, (a) => a.outputTokens),
+              thinkingTokens: sumAttemptTokens(envelope?.attempts, (a) => a.thinkingTokens),
               fieldCraft: null,
               similar: [],
               error: message,

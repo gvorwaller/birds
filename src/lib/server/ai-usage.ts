@@ -322,8 +322,13 @@ export async function usageAggregates(now: Date = new Date()): Promise<UsageAggr
 		for (const w of targets) {
 			w.dollars += dollars ?? 0;
 			w.unpricedAttempts += unpriced;
-			w.inputTokens += input;
-			w.outputTokens += output;
+			// Event rows (refusals, 0-output declined primaries) are $0 by
+			// definition; folding their tokens into the tile makes $/tok look
+			// like the meter is under-reporting.
+			if (g.billed) {
+				w.inputTokens += input;
+				w.outputTokens += output;
+			}
 		}
 
 		const cellKey = `${g.served_model ?? ''} ${g.purpose}`;
@@ -347,8 +352,10 @@ export async function usageAggregates(now: Date = new Date()): Promise<UsageAggr
 		// a cell. A fallback chain DOES appear once per served_model cell it
 		// touched — that is the honest reading at this grain.
 		cell.calls += g.calls;
-		cell.inputTokens += input;
-		cell.outputTokens += output;
+		if (g.billed) {
+			cell.inputTokens += input;
+			cell.outputTokens += output;
+		}
 		cell.dollars += dollars ?? 0;
 		cell.unpricedAttempts += unpriced;
 	}

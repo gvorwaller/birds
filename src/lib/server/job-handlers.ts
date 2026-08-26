@@ -1444,6 +1444,14 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 						similarEmpty: 'retry_failed',
 						error: sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 120)
 					});
+					// A 429 on the retry used to be swallowed here, so the drain
+					// kept hammering the API (and billing the refusals-as-unknown
+					// rows) while the outer catch's rate-limit pause never fired.
+					if (err instanceof EnrichmentAiError && err.rateLimited) {
+						aiRateLimited = true;
+						aiRetryAfterMs = err.retryAfterMs;
+						await recordEvent(job.id, 'progress', { aiRateLimited: true, from: code });
+					}
 					break;
 				}
 			}

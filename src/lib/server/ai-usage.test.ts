@@ -271,6 +271,9 @@ describe("usageAggregates", () => {
     // today = groups a–d: $0.01 + $0 (refusal) + excluded (abort, unknown model)
     expect(agg.windows.today.dollars).toBeCloseTo(0.01, 9);
     expect(agg.windows.today.unpricedAttempts).toBe(2);
+    // Refusal tokens do NOT inflate the tile: billed 1000+100 in, 200+10 out.
+    expect(agg.windows.today.inputTokens).toBe(1100);
+    expect(agg.windows.today.outputTokens).toBe(210);
     expect(agg.windows.d7.dollars).toBeCloseTo(0.01, 9);
     // d30 adds both Sonnet 5 buckets, priced per their OWN windows: $2 + $3
     expect(agg.windows.d30.dollars).toBeCloseTo(5.01, 9);

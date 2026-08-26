@@ -2529,6 +2529,22 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(failed).toHaveLength(0);
   });
 
+  it("PINNED: a 429 on the keep-best retry persists the kept attempt AND pauses the rest of the drain", async () => {
+    // First call succeeds (empty similar); retry is rate-limited. Swallowing
+    // that 429 (the previous catch) left field craft in place — good — but
+    // never set aiRateLimited, so the next species kept calling and billing.
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [] })
+      .mockRejectedValueOnce(new EnrichmentAiError("AI service rate-limited.", 429, true, 90_000));
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
+    expect(aiWrite).toBeDefined();
+    expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ aiRateLimited: true });
+    const rl = mocks.recordEvent.mock.calls.filter((c) => (c[2] as { aiRateLimited?: boolean })?.aiRateLimited);
+    expect(rl.length).toBeGreaterThan(0);
+  });
+
   it("records retry_failed so the swallowed retry error is visible", async () => {
     freshAiDueDbWithCandidates();
     enrichMocks.generateSpeciesAnnotation

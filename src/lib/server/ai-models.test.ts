@@ -191,6 +191,62 @@ describe("extractEnvelope — the discriminator (GROK P1-3 fixtures, all four)",
     expect(env[0].stopReason).toBe("refusal");
   });
 
+  it("PINNED: 200 with missing usage is unknown spend (billed=true, null tokens), never a fake $0.00", () => {
+    const env = extractEnvelope({ model: "claude-opus-5", stop_reason: "end_turn", content: [] });
+    expect(env).toHaveLength(1);
+    expect(env[0].billed).toBe(true);
+    expect(env[0].inputTokens).toBeNull();
+    expect(env[0].outputTokens).toBeNull();
+    expect(
+      dollarsForRow({
+        billed: env[0].billed,
+        served_model: env[0].servedModel,
+        at: new Date("2026-08-26T00:00:00Z"),
+        input_tokens: env[0].inputTokens,
+        output_tokens: env[0].outputTokens,
+        cache_read_tokens: env[0].cacheReadTokens,
+        cache_write_5m_tokens: env[0].cacheWrite5mTokens,
+        cache_write_1h_tokens: env[0].cacheWrite1hTokens,
+      }),
+    ).toBeNull();
+  });
+
+  it("a token-less fallback_message stub does not $0 a call whose top-level usage is real", () => {
+    const env = extractEnvelope({
+      model: "claude-opus-4-8",
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 2000,
+        output_tokens: 500,
+        iterations: [{ type: "fallback_message", usage: { input_tokens: 0, output_tokens: 0 } }],
+      },
+    });
+    expect(env).toHaveLength(1);
+    expect(env[0].inputTokens).toBe(2000);
+    expect(env[0].outputTokens).toBe(500);
+    expect(env[0].billed).toBe(true);
+  });
+
+  it("non-string model / stop_reason never leak an object into servedModel", () => {
+    const env = extractEnvelope({
+      model: { id: "claude-opus-5" },
+      stop_reason: { type: "end_turn" },
+      usage: { input_tokens: 10, output_tokens: 4 },
+    });
+    expect(env[0].servedModel).toBeNull();
+    expect(env[0].stopReason).toBeNull();
+    expect(env[0].billed).toBe(true);
+  });
+
+  it("cache_creation as a bare number is attributed to the 5m write column, not dropped", () => {
+    const env = extractEnvelope({
+      model: "claude-opus-5",
+      usage: { input_tokens: 100, output_tokens: 10, cache_creation: 40 },
+    });
+    expect(env[0].cacheWrite5mTokens).toBe(40);
+    expect(env[0].cacheWrite1hTokens).toBeNull();
+  });
+
   it("exactly one envelope per chain is final", () => {
     for (const fixture of [
       { model: "m", usage: { input_tokens: 1, output_tokens: 1 } },
@@ -294,6 +350,21 @@ describe("pricing — the formula, pinned (GROK P1-9)", () => {
     // stays on the intro rate:
     const pacificEve = rateFor("claude-sonnet-5", new Date("2026-09-01T05:00:00Z"));
     expect(pacificEve?.inPerMTok).toBe(2);
+    // Inclusive start of the standard window, and the last intro instant:
+    expect(rateFor("claude-sonnet-5", new Date("2026-09-01T07:00:00Z"))?.inPerMTok).toBe(3);
+    expect(rateFor("claude-sonnet-5", new Date("2026-09-01T06:59:59.999Z"))?.inPerMTok).toBe(2);
+  });
+
+  it("window selection is order-independent: a reversed pricing array still picks the latest applicable window", () => {
+    const sonnet = SELECTABLE_MODELS.find((m) => m.id === "claude-sonnet-5")!;
+    const original = sonnet.pricing;
+    sonnet.pricing = [...original].reverse();
+    try {
+      expect(rateFor("claude-sonnet-5", new Date("2026-08-20T00:00:00Z"))?.inPerMTok).toBe(2);
+      expect(rateFor("claude-sonnet-5", new Date("2026-09-01T08:00:00Z"))?.inPerMTok).toBe(3);
+    } finally {
+      sonnet.pricing = original;
+    }
   });
 
   it("pricing-only entries price but never resolve as selectable", () => {

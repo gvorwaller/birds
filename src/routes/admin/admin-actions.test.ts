@@ -292,6 +292,47 @@ describe("run_compare", () => {
     expect(dbCalls.some((c) => c.text.includes("species_enrichment SET"))).toBe(false);
   });
 
+  it("PINNED: compare column tokens sum the whole fallback chain, not just the final attempt", async () => {
+    routeCompareDb();
+    mocks.generateSpeciesAnnotation.mockImplementation(async (_input: unknown, model: { id: string }) => {
+      const base = annotationResult(model.id);
+      return {
+        ...base,
+        envelope: {
+          ...base.envelope,
+          attempts: [
+            {
+              ...base.envelope.attempts[0],
+              attemptIndex: 0,
+              isFinal: false,
+              billed: true,
+              servedModel: "claude-opus-5",
+              inputTokens: 535,
+              outputTokens: 90,
+            },
+            {
+              ...base.envelope.attempts[0],
+              attemptIndex: 1,
+              isFinal: true,
+              billed: true,
+              servedModel: "claude-opus-4-8",
+              inputTokens: 412,
+              outputTokens: 264,
+            },
+          ],
+        },
+      };
+    });
+    const r = (await actions.run_compare({
+      ...ADMIN,
+      request: req({ species: "dowwoo", models: ["claude-opus-5"] }),
+    } as never)) as { columns: { inputTokens: number | null; outputTokens: number | null; dollars: number | null }[] };
+    expect(r.columns[0].inputTokens).toBe(947);
+    expect(r.columns[0].outputTokens).toBe(354);
+    // Both billed attempts priced: (535+412)*$5/M + (90+264)*$25/M
+    expect(r.columns[0].dollars).toBeCloseTo((535 + 412) * 5e-6 + (90 + 264) * 25e-6, 9);
+  });
+
   it("an aborted model renders dollars=null (—), never $0.00, and does not sink the other columns", async () => {
     routeCompareDb();
     mocks.generateSpeciesAnnotation.mockImplementation(

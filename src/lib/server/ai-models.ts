@@ -271,6 +271,15 @@ export function anthropicHeaders(apiKey: string, beta: Record<string, string>): 
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+function num(v: unknown): number | null {
+	if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+	if (typeof v === 'string' && v.trim() !== '') {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : null;
+	}
+	return null;
+}
+
 function tokensOf(u: any): Pick<
 	CallEnvelope,
 	| 'inputTokens'
@@ -280,15 +289,18 @@ function tokensOf(u: any): Pick<
 	| 'cacheWrite5mTokens'
 	| 'cacheWrite1hTokens'
 > {
-	const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
-	// cache_creation may arrive as the split object or only as the flat total;
-	// when only the total exists, attribute it to the 5m column (the common
-	// TTL) rather than losing it — collapsing the split the other way is what
-	// makes history unpriceable.
+	// cache_creation may arrive as the split object, a flat total field, or
+	// (observed on some proxy/beta shapes) a bare number. When only the total
+	// exists, attribute it to the 5m column (the common TTL) rather than
+	// losing it — collapsing the split the other way is what makes history
+	// unpriceable.
 	const split = u?.cache_creation;
-	const flat = num(u?.cache_creation_input_tokens);
-	const w5 = num(split?.ephemeral_5m_input_tokens);
-	const w1 = num(split?.ephemeral_1h_input_tokens);
+	const splitObj = split != null && typeof split === 'object' ? split : null;
+	const flat =
+		num(u?.cache_creation_input_tokens) ??
+		(splitObj == null ? num(split) : null);
+	const w5 = num(splitObj?.ephemeral_5m_input_tokens);
+	const w1 = num(splitObj?.ephemeral_1h_input_tokens);
 	return {
 		inputTokens: num(u?.input_tokens),
 		outputTokens: num(u?.output_tokens),
@@ -297,6 +309,16 @@ function tokensOf(u: any): Pick<
 		cacheWrite5mTokens: w5 ?? (w1 == null ? flat : null),
 		cacheWrite1hTokens: w1
 	};
+}
+
+/** Reported != charged: billed iff output was produced. Missing output is
+ * unknown spend (prices to null / "—"), never a fake $0.00 receipt. */
+function billedFromOutput(outputTokens: number | null): boolean {
+	return outputTokens == null || outputTokens > 0;
+}
+
+function str(v: unknown): string | null {
+	return typeof v === 'string' ? v : null;
 }
 
 /**
@@ -312,29 +334,36 @@ function tokensOf(u: any): Pick<
 export function extractEnvelope(data: any): CallEnvelope[] {
 	const iterations: any[] = Array.isArray(data?.usage?.iterations) ? data.usage.iterations : [];
 	const hasTokens = (e: any) =>
-		(e?.usage?.input_tokens ?? e?.input_tokens ?? 0) > 0 ||
-		(e?.usage?.output_tokens ?? e?.output_tokens ?? 0) > 0;
+		(num(e?.usage?.input_tokens ?? e?.input_tokens) ?? 0) > 0 ||
+		(num(e?.usage?.output_tokens ?? e?.output_tokens) ?? 0) > 0;
 	const meaningful =
 		iterations.some((e) => e?.type === 'fallback_message') ||
 		(iterations.length > 1 && iterations.some(hasTokens));
 
+	const fromIteration = (e: any, i: number): CallEnvelope => {
+		const usage = e?.usage ?? e;
+		const isFinal = i === iterations.length - 1;
+		const t = tokensOf(usage);
+		return {
+			attemptIndex: i,
+			attemptType: str(e?.type),
+			isFinal,
+			servedModel: str(e?.model) ?? (isFinal ? str(data?.model) : null),
+			stopReason: isFinal ? str(data?.stop_reason) : str(e?.stop_reason),
+			billed: billedFromOutput(t.outputTokens),
+			...t
+		};
+	};
+
 	if (meaningful) {
-		return iterations.map((e, i) => {
-			const usage = e?.usage ?? e;
-			const isFinal = i === iterations.length - 1;
-			const t = tokensOf(usage);
-			return {
-				attemptIndex: i,
-				attemptType: typeof e?.type === 'string' ? e.type : null,
-				isFinal,
-				servedModel:
-					typeof e?.model === 'string' ? e.model : isFinal ? (data?.model ?? null) : null,
-				stopReason: isFinal ? (data?.stop_reason ?? null) : (e?.stop_reason ?? null),
-				// Reported != charged: only attempts that produced output are billed.
-				billed: (t.outputTokens ?? 0) > 0,
-				...t
-			};
-		});
+		const extracted = iterations.map(fromIteration);
+		const iterationsHaveTokens = extracted.some(
+			(e) => (e.inputTokens ?? 0) > 0 || (e.outputTokens ?? 0) > 0
+		);
+		// A token-less fallback_message stub beside real top-level usage must
+		// not replace the top-level with a $0 event row (the same trap as the
+		// all-zero single 'message' iteration, in fallback clothing).
+		if (iterationsHaveTokens || !hasTokens(data?.usage)) return extracted;
 	}
 
 	const t = tokensOf(data?.usage);
@@ -343,11 +372,11 @@ export function extractEnvelope(data: any): CallEnvelope[] {
 			attemptIndex: 0,
 			attemptType: null,
 			isFinal: true,
-			servedModel: data?.model ?? null,
-			stopReason: data?.stop_reason ?? null,
+			servedModel: str(data?.model),
+			stopReason: str(data?.stop_reason),
 			// A pre-output refusal is a 200 with usage and output 0 — an event
-			// row, not spend.
-			billed: (t.outputTokens ?? 0) > 0,
+			// row, not spend. Missing usage is unknown spend, not a free call.
+			billed: billedFromOutput(t.outputTokens),
 			...t
 		}
 	];
@@ -358,9 +387,18 @@ export function extractEnvelope(data: any): CallEnvelope[] {
 /* ------------------------------------------------------------------ */
 
 function windowFor(entry: ModelEntry, at: Date): PricingWindow {
+	// Latest fromUtc that is still <= `at`, independent of array order. A
+	// later edit that prepends a new window would otherwise keep the first
+	// matching (older) row and misprice every call after the boundary.
+	const t = at.getTime();
 	let chosen = entry.pricing[0];
+	let chosenFrom = Number.NEGATIVE_INFINITY;
 	for (const w of entry.pricing) {
-		if (new Date(w.fromUtc).getTime() <= at.getTime()) chosen = w;
+		const from = new Date(w.fromUtc).getTime();
+		if (Number.isFinite(from) && from <= t && from >= chosenFrom) {
+			chosen = w;
+			chosenFrom = from;
+		}
 	}
 	return chosen;
 }
