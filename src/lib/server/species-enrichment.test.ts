@@ -31,6 +31,8 @@ import {
   factsFromWikidata,
   getEnrichment,
   iucnCode,
+  getSimilarSpecies,
+  reciprocalNoteCodes,
   markAiError,
   markWikiError,
   markWikiNoArticle,
@@ -1945,6 +1947,82 @@ describe.runIf(dbUp)("AI error backoff covers the similar-note substage (td-8f0e
       expect(rows.rows).toHaveLength(1);
     } finally {
       await wipeCode();
+    }
+  });
+});
+
+
+describe.runIf(dbUp)("getSimilarSpecies — note-less genus rows are hidden (td-8f0ed8)", () => {
+  const FOCAL = "kfxfoc1";
+  const SLASHP = "kfxsla1";
+  const GENUSP = "kfxgen1";
+  const SLASH = "kfxsl9x";
+  const ALL = [FOCAL, SLASHP, GENUSP, SLASH];
+
+  async function seed(code: string, com: string, sci: string, category: string) {
+    await query(
+      `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+       VALUES ($1,$2,$3,$4,'Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET com_name=$2, sci_name=$3, category=$4`,
+      [code, com, sci, category],
+    );
+  }
+  async function scope(code: string) {
+    await query(
+      `INSERT INTO photo_links (photo_id, species_code, source_species, url, thumbnail, page_url, match_method)
+       VALUES ($1,$2,'T','https://x/p','https://x/t','https://x/pg','common_name')
+       ON CONFLICT (photo_id) DO NOTHING`,
+      [`kfxphoto-${code}`, code],
+    );
+  }
+  async function clean() {
+    await query(`DELETE FROM photo_links WHERE photo_id LIKE 'kfxphoto-%'`);
+    await query(`DELETE FROM species_similar WHERE species_code = ANY($1)`, [ALL]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [ALL]);
+  }
+
+  it("hides a genus candidate with no note, keeps a slash candidate without one", async () => {
+    await clean();
+    await seed(FOCAL, "KFX Focal", "Kfxus focalis", "species");
+    await seed(SLASHP, "KFX Slash Partner", "Kfxus partneris", "species");
+    await seed(GENUSP, "KFX Genus Mate", "Kfxus congener", "species");
+    await seed(SLASH, "KFX Focal/Partner", "Kfxus focalis/partneris", "slash");
+    await scope(SLASHP);
+    await scope(GENUSP);
+    const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
+    try {
+      const noNotes = await getSimilarSpecies(FOCAL, "Kfxus focalis", uid);
+      // The eBird grouping is itself information, so the slash row stands alone.
+      expect(noNotes.similar.map((r) => r.species_code)).toContain(SLASHP);
+      // A genus row with no note asserts nothing and must not render.
+      expect(noNotes.related).toEqual([]);
+
+      await query(
+        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
+         VALUES ($1,$2,'Bigger, with a heavier bill and a broader breast band.','test')`,
+        [FOCAL, GENUSP],
+      );
+      const withNote = await getSimilarSpecies(FOCAL, "Kfxus focalis", uid);
+      expect(withNote.related.map((r) => r.species_code)).toEqual([GENUSP]);
+    } finally {
+      await clean();
+    }
+  });
+
+  it("reciprocalNoteCodes finds species holding a note ABOUT this one", async () => {
+    await clean();
+    await seed(FOCAL, "KFX Focal", "Kfxus focalis", "species");
+    await seed(GENUSP, "KFX Genus Mate", "Kfxus congener", "species");
+    try {
+      await query(
+        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
+         VALUES ($1,$2,'Bigger, with a heavier bill and a broader breast band.','test')`,
+        [GENUSP, FOCAL],
+      );
+      expect(await reciprocalNoteCodes(FOCAL)).toContain(GENUSP);
+      expect(await reciprocalNoteCodes(GENUSP)).not.toContain(FOCAL);
+    } finally {
+      await clean();
     }
   });
 });

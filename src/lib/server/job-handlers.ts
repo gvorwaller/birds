@@ -1383,7 +1383,9 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			const owed = () => {
 				const have = new Set(ann.similar.map((s) => s.code));
 				return candidates
-					.filter((c) => c.basis === 'ebird_slash' && !have.has(c.code))
+					.filter(
+						(c) => (c.basis === 'ebird_slash' || c.reciprocal === true) && !have.has(c.code)
+					)
 					.map((c) => c.code);
 			};
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {

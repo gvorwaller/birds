@@ -1208,6 +1208,27 @@ async function candidateSet(code: string, sciName: string): Promise<CandidateSet
 }
 
 /**
+ * Species that already carry a note ABOUT `code`.
+ *
+ * Confusability is mutual even though the note is directional: if Belted
+ * Kingfisher's page explains how to separate Ringed, then Ringed's page owes
+ * the reverse. Without this the genus tier decides independently in each
+ * direction and produces exactly the asymmetry Gaylon reported — a good note
+ * one way, a bare "Same genus" row the other.
+ *
+ * Slash pairs are already symmetric by construction (both directions are
+ * required), so this only ever adds genus candidates.
+ */
+export async function reciprocalNoteCodes(code: string): Promise<string[]> {
+	const r = await query<{ species_code: string }>(
+		`SELECT species_code FROM species_similar WHERE similar_code = $1`,
+		[code]
+	);
+	return r.rows.map((x) => x.species_code);
+}
+
+/**
+ * The closed candidate list handed to the model, in display order./**
  * The closed candidate list handed to the model, in display order. Same set the
  * page shows, by construction — see candidateSet.
  */
@@ -1215,9 +1236,19 @@ export async function similarCandidatesFor(
 	code: string,
 	sciName: string
 ): Promise<
-	{ code: string; comName: string; sciName: string; basis: 'ebird_slash' | 'genus' }[]
+	{
+		code: string;
+		comName: string;
+		sciName: string;
+		basis: 'ebird_slash' | 'genus';
+		reciprocal: boolean;
+	}[]
 > {
-	const set = await candidateSet(code, sciName);
+	const [set, reciprocal] = await Promise.all([
+		candidateSet(code, sciName),
+		reciprocalNoteCodes(code)
+	]);
+	const owesBack = new Set(reciprocal);
 	// Tier is passed through, not flattened: the model needs to know which
 	// candidates carry Cornell's "these are confused in the field" judgement.
 	return [
@@ -1227,7 +1258,8 @@ export async function similarCandidatesFor(
 		code: r.species_code,
 		comName: r.com_name,
 		sciName: r.sci_name,
-		basis: r.basis
+		basis: r.basis,
+		reciprocal: owesBack.has(r.species_code)
 	}));
 }
 
@@ -1305,8 +1337,14 @@ export async function getSimilarSpecies(
 	};
 
 	return {
+		// Slash rows always render: the eBird grouping is itself the information,
+		// so the basis line carries meaning even before a note exists.
 		similar: set.slash.map((r) => toRow(r, 'ebird_slash', r.slash_com_name || null)),
-		related: set.genus.map((r) => toRow(r, 'genus', null))
+		// Genus rows only render WITH a note. Without one the row says
+		// "same genus, may or may not be a look-alike", which is close to zero
+		// information and reads as missing data — reported from the phone view of
+		// Ringed Kingfisher, where the only content was the generic basis line.
+		related: set.genus.map((r) => toRow(r, 'genus', null)).filter((r) => r.note != null)
 	};
 }
 

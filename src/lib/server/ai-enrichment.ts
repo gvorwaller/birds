@@ -101,6 +101,13 @@ export interface SimilarCandidate {
 	 * be a look-alike.
 	 */
 	basis: 'ebird_slash' | 'genus';
+	/**
+	 * This candidate already has a note about the focal species on ITS page, so
+	 * a note is owed in return. Confusability is mutual even though the note is
+	 * directional; without this the genus tier decides independently in each
+	 * direction and one page ends up with a bare "Same genus" row.
+	 */
+	reciprocal?: boolean;
 }
 
 export interface SpeciesAnnotation {
@@ -153,7 +160,9 @@ function candidateBlock(candidates: readonly SimilarCandidate[]): string {
 				`${c.code} = ${c.comName} (${c.sciName}) — ` +
 				(c.basis === 'ebird_slash'
 					? 'eBird reporting group: routinely confused in the field'
-					: 'same genus: may or may not be a look-alike')
+					: c.reciprocal === true
+						? "same genus, and this app already explains the pair on that species' page — a note is owed here too"
+						: 'same genus: may or may not be a look-alike')
 		)
 		.join('\n');
 }
@@ -283,7 +292,11 @@ export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Reco
 		properties.similar = {
 			type: 'object',
 			properties: noteProps,
-			required: candidates.filter((c) => c.basis === 'ebird_slash').map((c) => c.code),
+			// Required = Cornell says they are confused, OR we have already told the
+			// user they are confused on the other species' page.
+			required: candidates
+				.filter((c) => c.basis === 'ebird_slash' || c.reciprocal === true)
+				.map((c) => c.code),
 			additionalProperties: false
 		};
 		required.push('similar');

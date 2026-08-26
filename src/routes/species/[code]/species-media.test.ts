@@ -514,6 +514,15 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
     await seedAll();
     const uid = await noKeyUserId();
     try {
+      // A genus row only renders WITH a note — without one it asserts nothing
+      // and reads as missing data (reported from the phone view of Ringed
+      // Kingfisher). Seed the note so this case tests placement, not visibility.
+      await query(
+        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
+         VALUES ($1, $2, 'Bigger overall, with a heavier bill and broader band.', 'test')
+         ON CONFLICT (species_code, similar_code) DO NOTHING`,
+        [FOCAL, GENUS_MATE],
+      );
       const sim = await loadSimilar(uid, FOCAL);
       const related = sim.related.map((s) => s.species_code);
       const similar = sim.similar.map((s) => s.species_code);
@@ -524,6 +533,20 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
       expect(
         sim.related.find((s) => s.species_code === GENUS_MATE)!.basis,
       ).toBe("genus");
+    } finally {
+      await cleanAll();
+    }
+  });
+
+  it("HIDES a genus mate that has no note, while keeping a note-less slash row", async () => {
+    await seedAll();
+    const uid = await noKeyUserId();
+    try {
+      const sim = await loadSimilar(uid, FOCAL);
+      // eBird's grouping is itself information, so the slash row stands alone.
+      expect(sim.similar.map((s) => s.species_code)).toContain(PARTNER);
+      // "Same genus, may or may not be a look-alike" with no note says nothing.
+      expect(sim.related).toEqual([]);
     } finally {
       await cleanAll();
     }

@@ -354,6 +354,37 @@ describe("buildOutputSchema — shape is the guarantee", () => {
     expect(Object.keys(s.properties.similar.properties).sort()).toEqual(["dalpel1", "lessca"]);
   });
 
+  it("REQUIRES a note for a reciprocal genus candidate (the kingfisher case)", () => {
+    // Belted Kingfisher's page explains how to separate Ringed. Ringed's page
+    // must therefore explain Belted: confusability is mutual even though the
+    // note is directional. Without this the genus tier decided independently in
+    // each direction and one page showed a bare "Same genus" row.
+    const s2 = buildOutputSchema([{ ...genus, reciprocal: true }]) as never as {
+      properties: { similar: { required: string[] } };
+    };
+    expect(s2.properties.similar.required).toEqual([genus.code]);
+  });
+
+  it("tells the model WHY a reciprocal candidate is owed a note", () => {
+    const p = buildUserPrompt({
+      comName: "Ringed Kingfisher",
+      sciName: "Megaceryle torquata",
+      family: "Kingfishers",
+      extract: "A large kingfisher.",
+      sections: [],
+      candidates: [
+        {
+          code: "belkin1",
+          comName: "Belted Kingfisher",
+          sciName: "Megaceryle alcyon",
+          basis: "genus" as const,
+          reciprocal: true,
+        },
+      ],
+    });
+    expect(p).toContain("a note is owed here too");
+  });
+
   it("leaves same-genus candidates optional", () => {
     const s = buildOutputSchema([genus]) as never as {
       properties: { similar: { required: string[] } };
