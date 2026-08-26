@@ -89,8 +89,12 @@ import {
 import {
 	generateSpeciesAnnotation,
 	EnrichmentAiError,
-	AI_MODEL
+	AI_TIMEOUT_MS
 } from '$server/ai-enrichment';
+import { meteredAiCall, type AiAttempt } from '$server/ai-call';
+import { CONFIG_KEYS } from '$server/app-config';
+import { DEFAULT_MODEL_IDS } from '$server/ai-models';
+import type { SpeciesAnnotation } from '$server/ai-enrichment';
 
 export interface WorkerContext {
 	/** True once SIGTERM/SIGINT received — jobs wind down and requeue. */
@@ -1351,18 +1355,42 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				return 'ok';
 			}
 
-			const annotate = () =>
-				generateSpeciesAnnotation({
-					comName: t.com_name,
-					sciName: t.sci_name,
-					family: t.family,
-					extract: prose.extract,
-					sections: prose.sections,
-					candidates,
-					speciesCode: code
+			// EDIT SITE 1 of 3 (plan step 5): the closure is a meteredAiCall
+			// invocation — model resolved from config PER CALL (a dropdown change
+			// lands on the next species), timeout owned by the chokepoint, and
+			// every call — including each retry below — writes its ledger rows.
+			const annotate = (): Promise<AiAttempt<SpeciesAnnotation>> =>
+				meteredAiCall({
+					purpose: 'enrichment',
+					configKey: CONFIG_KEYS.enrichmentModel,
+					defaultModelId: DEFAULT_MODEL_IDS.enrichment,
+					speciesCode: code,
+					jobId: job.id,
+					timeoutMs: AI_TIMEOUT_MS,
+					run: async (model, signal) => {
+						const { annotation, envelope } = await generateSpeciesAnnotation(
+							{
+								comName: t.com_name,
+								sciName: t.sci_name,
+								family: t.family,
+								extract: prose.extract,
+								sections: prose.sections,
+								candidates,
+								speciesCode: code
+							},
+							model,
+							{ signal }
+						);
+						return { result: annotation, envelope };
+					}
 				});
 
-			let ann = await annotate();
+			// EDIT SITE 2 of 3: provenance travels WITH the attempt (CODEX1 P1-4).
+			// The keep-best logic below swaps WHOLE attempt objects, so the kept
+			// annotation and the model that produced it can never be separated —
+			// config can change between retries, and a fallback can serve any one
+			// attempt.
+			let kept = await annotate();
 			// An empty `similar` when candidates WERE offered is ambiguous: either
 			// the model judged none of them worth a note, or it returned nothing
 			// usable. Both were observed on identical input, so left alone they are
@@ -1381,7 +1409,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			// "some eBird-slash candidate still has no note" instead — that is the
 			// set the schema marks required and the set a birder is owed.
 			const owed = () => {
-				const have = new Set(ann.similar.map((s) => s.code));
+				const have = new Set(kept.result.similar.map((s) => s.code));
 				return candidates
 					.filter(
 						(c) => (c.basis === 'ebird_slash' || c.reciprocal === true) && !have.has(c.code)
@@ -1404,9 +1432,9 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					// (GROK — the previous >-comparison let a tie replace the result
 					// while the comment claimed it could not).
 					const before = owed().length;
-					const prev = ann;
-					ann = next;
-					if (owed().length >= before) ann = prev;
+					const prev = kept;
+					kept = next;
+					if (owed().length >= before) kept = prev;
 				} catch (err) {
 					// Keep the earlier successful annotation and stop retrying; the
 					// species still gets its field craft, and the missing notes are
@@ -1428,29 +1456,34 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				// 7-day window applies and the good notes are preserved.
 				await recordEvent(job.id, 'progress', {
 					code,
-					similarEmpty: ann.similar.length === 0 ? 'confirmed' : 'partial',
+					similarEmpty: kept.result.similar.length === 0 ? 'confirmed' : 'partial',
 					owed: stillOwed
 				});
 			}
+			// EDIT SITE 3 of 3: the provenance stamp is the KEPT attempt's SERVED
+			// model — never a constant, never "the model most recently resolved".
+			// Under Opus 5 fallbacks the server can answer with a different model
+			// than requested; the page's ai_model column must say what actually
+			// wrote the notes.
 			await upsertAiData(code, {
-				fieldCraft: ann.fieldCraft,
-				tags: ann.tags,
-				model: AI_MODEL,
+				fieldCraft: kept.result.fieldCraft,
+				tags: kept.result.tags,
+				model: kept.servedModel ?? kept.requestedModel,
 				sourceRevId: prose.revId,
-				similar: ann.similar,
+				similar: kept.result.similar,
 				similarCandidatesHash: hash,
 				candidateCount: candidates.length,
 				owedCodes: stillOwed,
 				offeredCodes: candidates.map((c) => c.code)
 			});
 			counts.aiOk++;
-			if (ann.droppedTags.length > 0) {
+			if (kept.result.droppedTags.length > 0) {
 				// Vocabulary gaps surface in events, never silently (plan rule).
-				await recordEvent(job.id, 'progress', { code, droppedTags: ann.droppedTags });
+				await recordEvent(job.id, 'progress', { code, droppedTags: kept.result.droppedTags });
 			}
-			if (ann.droppedSimilar.length > 0) {
+			if (kept.result.droppedSimilar.length > 0) {
 				// Codes outside the closed set — same "never silently" rule.
-				await recordEvent(job.id, 'progress', { code, droppedSimilar: ann.droppedSimilar });
+				await recordEvent(job.id, 'progress', { code, droppedSimilar: kept.result.droppedSimilar });
 			}
 			return 'ok';
 		} catch (err) {

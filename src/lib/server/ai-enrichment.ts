@@ -15,16 +15,30 @@ import { env } from '$env/dynamic/private';
 import { TAG_VOCABULARY, TAG_DIMENSIONS, validateTags, MAX_TAGS } from '$lib/species-tags';
 import { parseRetryAfterMs } from '$server/wikidata';
 import type { WikiSection } from '$server/wikipedia';
+import {
+	anthropicHeaders,
+	extractEnvelope,
+	type AiCallEnvelope,
+	type ModelEntry
+} from './ai-models';
 
 /**
- * Opus tier, deliberately (td-8f0ed8): this stage is a knowledge-and-judgment
- * task — "given these candidates and this article, state the mark that
- * separates them" — and the failure mode is a plausible-but-wrong field mark,
- * which nobody can cheaply audit across ~1,400 notes. The cost delta over
- * Sonnet is tens of dollars one-time; a wrong field mark is wrong forever.
+ * The model is now resolved PER CALL from app_config (td-015838) and passed in
+ * as a registry entry — this module no longer names one. The compiled default
+ * is DEFAULT_MODEL_IDS.enrichment (Opus tier, deliberately, per td-8f0ed8:
+ * the failure mode is a plausible-but-wrong field mark nobody can cheaply
+ * audit across ~1,400 notes; a wrong field mark is wrong forever).
  */
-export const AI_MODEL = 'claude-opus-5';
 export const FIELD_CRAFT_MAX_CHARS = 700;
+/**
+ * The ANSWER budget, thinking-exclusive: tags + field craft + MAX_SIMILAR
+ * notes at full SIMILAR_NOTE_MAX_CHARS. The registry adds each model's own
+ * thinking headroom on top (Opus 5: +6000 → the 8000 max_tokens that ran in
+ * prod before this refactor). A ceiling, not a reservation — billing follows
+ * tokens actually generated, and a truncated JSON response costs the whole
+ * species a 7-day retry.
+ */
+export const AI_ANSWER_BUDGET_TOKENS = 2000;
 /** Prompt input cap — extract + selected sections, roughly 10k chars. */
 const PROSE_CAP = 10_000;
 /**
@@ -76,6 +90,16 @@ export const MAX_SIMILAR = 7;
 export const SIMILAR_NOTE_MIN_CHARS = 20;
 
 export class EnrichmentAiError extends Error {
+	/**
+	 * The call envelope (CODEX1 P1-3), set on every throw once a response
+	 * exists — non-2xx AND post-200 parse failures alike. Without it, a
+	 * max_tokens truncation is a 200 whose usage and stop_reason are in hand
+	 * when parseAnnotation throws, and the meter would discard exactly the
+	 * failure row it exists to capture (plus the request-id support asks for).
+	 * Absent only when no response arrived (no key, network error, abort).
+	 */
+	envelope?: AiCallEnvelope;
+
 	constructor(
 		message: string,
 		public status: number,
@@ -308,8 +332,16 @@ export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Reco
 type Fetcher = typeof fetch;
 
 /**
- * Annotate one species. Throws EnrichmentAiError on transport/API failures;
- * returns validated, vocabulary-enforced output on success.
+ * Annotate one species with the given registry model. Throws
+ * EnrichmentAiError on transport/API failures — carrying `envelope` whenever
+ * a response existed; returns validated, vocabulary-enforced output plus the
+ * envelope on success. Request shape (thinking, effort, fallbacks, beta
+ * headers, max_tokens headroom) is the registry entry's business — every
+ * per-model difference that used to be inlined here lives in ai-models.ts.
+ *
+ * `opts.signal` is expected from the metering chokepoint (GROK P1-8: a
+ * hardcoded internal timeout would make the chokepoint's timeoutMs a no-op);
+ * the AI_TIMEOUT_MS fallback exists only for direct callers.
  */
 export async function generateSpeciesAnnotation(
 	input: {
@@ -322,92 +354,93 @@ export async function generateSpeciesAnnotation(
 		/** Excluded from its own similar list, belt-and-braces. */
 		speciesCode?: string;
 	},
-	fetcher: Fetcher = fetch
-): Promise<SpeciesAnnotation> {
+	model: ModelEntry,
+	opts: { fetcher?: Fetcher; signal?: AbortSignal } = {}
+): Promise<{ annotation: SpeciesAnnotation; envelope: AiCallEnvelope }> {
 	const apiKey = env.ANTHROPIC_API_KEY;
 	if (!apiKey) {
 		throw new EnrichmentAiError('AI enrichment is not configured (no API key set).', 0, false);
 	}
+	if (!model.buildRequest) {
+		// Unreachable via resolveModel (pricing-only entries are never selectable);
+		// guards a direct caller handing in a fallback-target entry.
+		throw new EnrichmentAiError(`Model ${model.id} cannot build requests.`, 0, false);
+	}
+	const built = model.buildRequest({
+		system: SYSTEM,
+		user: buildUserPrompt(input),
+		schema: buildOutputSchema(input.candidates ?? []),
+		maxOutputTokens: AI_ANSWER_BUDGET_TOKENS,
+		// Default is `high`; medium is the cost/quality balance for a bounded
+		// annotation task with the source text already supplied. Models that
+		// reject effort (Haiku) drop it in their builder.
+		effort: 'medium'
+	});
+	const fetcher = opts.fetcher ?? fetch;
 	let res: Response;
 	try {
 		res = await fetcher('https://api.anthropic.com/v1/messages', {
 			method: 'POST',
-			headers: {
-				'x-api-key': apiKey,
-				'anthropic-version': '2023-06-01',
-				// Gates the `fallbacks: 'default'` parameter below. The scalar
-				// 'default' form takes THIS header specifically — the array form
-				// takes -2026-06-01, and pairing either with the other returns 400.
-				'anthropic-beta': 'server-side-fallback-2026-07-01',
-				'content-type': 'application/json'
-			},
-			body: JSON.stringify({
-				model: AI_MODEL,
-				// max_tokens caps thinking AND response text together. Opus 5 thinks
-				// by default, so the 1600 that fit Sonnet 4.6's no-thinking output
-				// would now truncate mid-JSON. Sized for adaptive thinking at medium
-				// effort plus tags + field craft + MAX_SIMILAR notes at the full
-				// SIMILAR_NOTE_MAX_CHARS. This is a ceiling, not a reservation —
-				// billing follows tokens actually generated, so headroom is free and
-				// a truncated JSON response costs the whole species a 7-day retry.
-				max_tokens: 8000,
-				// Explicit rather than relying on the default: Opus 5 runs adaptive
-				// when `thinking` is omitted, but stating it keeps the intent legible
-				// and survives a future default change. Do NOT disable thinking here
-				// — on Opus 5 that is documented to occasionally leak <thinking> tags
-				// into the visible response, which would break parseAnnotation.
-				thinking: { type: 'adaptive' },
-				output_config: {
-					// Default is `high`; medium is the cost/quality balance for a
-					// bounded annotation task with the source text already supplied.
-					effort: 'medium',
-					// Constrains the response shape — see buildOutputSchema.
-					format: { type: 'json_schema', schema: buildOutputSchema(input.candidates ?? []) }
-				},
-				// Opus 5 ships elevated safety classifiers that can decline a request
-				// outright. Bird identification will not realistically trip them, but
-				// a decline is otherwise a hard stop for that species, so let the API
-				// re-run it on the recommended fallback rather than burning the
-				// substage's 7-day error window.
-				fallbacks: 'default',
-				system: SYSTEM,
-				messages: [{ role: 'user', content: buildUserPrompt(input) }]
-			}),
-			signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+			headers: anthropicHeaders(apiKey, built.headers),
+			body: JSON.stringify(built.body),
+			signal: opts.signal ?? AbortSignal.timeout(AI_TIMEOUT_MS)
 		});
 	} catch (err) {
 		// Distinguishing these is not cosmetic: two species were lost on the first
 		// Opus 5 drain to a 45s abort that was reported as a network failure, in
-		// both the job event and similar_error (GROK P1). Happy-path latency is
-		// 7-41s, so the old budget sat on the tail of the real distribution.
+		// both the job event and similar_error (GROK P1). No envelope here — no
+		// response ever arrived; the ledger records unknown spend.
 		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-			throw new EnrichmentAiError(
-				`AI request exceeded ${Math.round(AI_TIMEOUT_MS / 1000)}s.`,
-				0,
-				false
-			);
+			throw new EnrichmentAiError('AI request timed out before a response arrived.', 0, false);
 		}
 		throw new EnrichmentAiError('Could not reach the AI service.', 0, false);
 	}
-	if (res.status === 429) {
-		throw new EnrichmentAiError(
-			'AI service rate-limited.',
-			429,
-			true,
-			parseRetryAfterMs(res.headers.get('retry-after'))
-		);
-	}
-	if (res.status === 401) {
-		throw new EnrichmentAiError('AI API key missing or invalid.', 401, false);
-	}
-	if (!res.ok) {
-		throw new EnrichmentAiError(`AI service error (${res.status}).`, res.status, false);
-	}
+
+	// A response exists: from here on EVERY throw carries the envelope.
+	const envelope: AiCallEnvelope = {
+		requestId: res.headers.get('request-id'),
+		httpStatus: res.status,
+		providerErrorType: null,
+		attempts: []
+	};
+	const fail = (e: EnrichmentAiError): never => {
+		e.envelope = envelope;
+		throw e;
+	};
 
 	/* eslint-disable @typescript-eslint/no-explicit-any */
-	const data = (await res.json()) as any;
+	if (!res.ok) {
+		// Anthropic error bodies are JSON with error.type — captured for the
+		// ledger's error breakdown; tolerated when absent or unreadable.
+		envelope.providerErrorType = await res
+			.json()
+			.then((b: any) => (typeof b?.error?.type === 'string' ? b.error.type : null))
+			.catch(() => null);
+		if (res.status === 429) {
+			fail(
+				new EnrichmentAiError(
+					'AI service rate-limited.',
+					429,
+					true,
+					parseRetryAfterMs(res.headers.get('retry-after'))
+				)
+			);
+		}
+		if (res.status === 401) {
+			fail(new EnrichmentAiError('AI API key missing or invalid.', 401, false));
+		}
+		fail(new EnrichmentAiError(`AI service error (${res.status}).`, res.status, false));
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch {
+		fail(new EnrichmentAiError('AI response body was not JSON.', 0, false));
+	}
+	envelope.attempts = extractEnvelope(data);
 	if (data.stop_reason === 'refusal') {
-		throw new EnrichmentAiError('The AI declined this species.', 0, false);
+		fail(new EnrichmentAiError('The AI declined this species.', 0, false));
 	}
 	const text: string = (data.content ?? [])
 		.filter((b: any) => b.type === 'text')
@@ -416,10 +449,18 @@ export async function generateSpeciesAnnotation(
 		.trim();
 	/* eslint-enable @typescript-eslint/no-explicit-any */
 
-	return parseAnnotation(text, {
-		candidates: (input.candidates ?? []).map((c) => c.code),
-		focalCode: input.speciesCode
-	});
+	try {
+		const annotation = parseAnnotation(text, {
+			candidates: (input.candidates ?? []).map((c) => c.code),
+			focalCode: input.speciesCode
+		});
+		return { annotation, envelope };
+	} catch (err) {
+		// The kitmur case: a max_tokens truncation is a 200 whose usage and
+		// stop_reason are in hand right here — the throw must not discard them.
+		if (err instanceof EnrichmentAiError) fail(err);
+		throw err;
+	}
 }
 
 /**

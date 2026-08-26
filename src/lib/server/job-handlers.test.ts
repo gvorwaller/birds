@@ -238,7 +238,42 @@ vi.mock("$server/wikipedia", async (importOriginal) => {
 });
 vi.mock("$server/ai-enrichment", async (importOriginal) => {
   const real = await importOriginal<typeof import("./ai-enrichment")>();
-  return { ...real, generateSpeciesAnnotation: enrichMocks.generateSpeciesAnnotation };
+  return {
+    ...real,
+    // Adapter over the suite's historical (input) => annotation mock shape:
+    // the real function now takes (input, model, {signal}) and returns
+    // {annotation, envelope} (plan step 5). Wrapping HERE keeps every
+    // existing mockResolvedValue/mockRejectedValue site valid; the synthetic
+    // envelope's servedModel echoes the model the chokepoint resolved, which
+    // is exactly what the provenance tests need to observe.
+    generateSpeciesAnnotation: async (input: unknown, model: { id: string }) => {
+      const annotation = await enrichMocks.generateSpeciesAnnotation(input);
+      return {
+        annotation,
+        envelope: {
+          requestId: "req_test",
+          httpStatus: 200,
+          providerErrorType: null,
+          attempts: [
+            {
+              attemptIndex: 0,
+              attemptType: null,
+              isFinal: true,
+              servedModel: model.id,
+              stopReason: "end_turn",
+              billed: true,
+              inputTokens: 1000,
+              outputTokens: 200,
+              thinkingTokens: null,
+              cacheReadTokens: null,
+              cacheWrite5mTokens: null,
+              cacheWrite1hTokens: null,
+            },
+          ],
+        },
+      };
+    },
+  };
 });
 vi.mock("$server/wikimedia-commons", async (importOriginal) => {
   const real = await importOriginal<typeof import("./wikimedia-commons")>();
@@ -2398,6 +2433,81 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+  });
+
+  // --- metering (td-09be7a): the regressions the ledger exists to prevent ---
+
+  it("PINNED (undercount): 3 API calls write 3 ledger calls — every retry is billed and every retry is metered", async () => {
+    // The $74 surprise came from exactly this shape: outcome-level recording
+    // writes 1 row while the retry loop makes up to 3 billed calls.
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(SIMILAR_EMPTY_RETRIES + 1);
+    const ledger = db.calls.filter((c) => c.text.includes("INSERT INTO ai_usage"));
+    expect(ledger).toHaveLength(SIMILAR_EMPTY_RETRIES + 1);
+  });
+
+  it("the fresh skip writes 0 ledger rows — usage is per API CALL, never per outcome", async () => {
+    const emptyHash = similarCandidatesHash([]);
+    db.handler = (text) => {
+      if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
+        return { rows: [TAXA_ROW] };
+      if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
+        return {
+          rows: [
+            {
+              wikipedia_extract: "stored prose",
+              wikipedia_sections: [],
+              wikipedia_rev_id: "55",
+              ai_status: "ok",
+              ai_source_rev_id: "55",
+              ai_attempted_at: null,
+              similar_status: "none",
+              similar_candidates_hash: emptyHash,
+              similar_source_rev_id: "55",
+              similar_attempted_at: null,
+            },
+          ],
+        };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).not.toHaveBeenCalled();
+    expect(db.calls.filter((c) => c.text.includes("INSERT INTO ai_usage"))).toHaveLength(0);
+  });
+
+  it("PINNED (CODEX1 P1-4): the ai_model stamp is the KEPT attempt's model, never the most recently resolved config", async () => {
+    // Config changes mid-species, between retries: attempt 1 resolves Haiku,
+    // attempts 2-3 resolve Sonnet 4.6. All attempts return empty similar, so
+    // keep-best retains ATTEMPT 1 — and the stamp must say Haiku even though
+    // the last model resolved from config was Sonnet. Stamping "the current
+    // constant" (the pre-refactor code) or "the last resolved model" both
+    // fail this.
+    freshAiDueDbWithCandidates();
+    const base = db.handler!;
+    const configQueue = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-4-6"];
+    db.handler = (text, params) => {
+      if (text.includes("FROM app_config")) {
+        const model = configQueue.length > 1 ? configQueue.shift()! : configQueue[0];
+        return { rows: [{ value: { provider: "anthropic", model } }] };
+      }
+      return base(text, params);
+    };
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(SIMILAR_EMPTY_RETRIES + 1);
+    const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
+    expect(aiWrite?.params?.[3]).toBe("claude-haiku-4-5"); // ai_model = $4
+    // …and the ledger recorded what each attempt actually used.
+    const ledger = db.calls.filter((c) => c.text.includes("INSERT INTO ai_usage"));
+    expect(ledger.map((c) => c.params?.[1])).toEqual([
+      "claude-haiku-4-5",
+      "claude-sonnet-4-6",
+      "claude-sonnet-4-6",
+    ]);
   });
 
   // Regression (GROK P1): attempt 0 succeeded with empty similar, the retry

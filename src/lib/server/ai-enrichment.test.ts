@@ -536,3 +536,147 @@ describe("parseAnnotation — malformed and over-cap handling", () => {
     expect(out.similar).toEqual([{ code: "cand0", note: "Voice only; plumage identical." }]);
   });
 });
+
+const { generateSpeciesAnnotation } = await import("./ai-enrichment");
+const { SELECTABLE_MODELS } = await import("./ai-models");
+// The process.env line at the top cannot rescue a key BLANKED to "" (the
+// ~/.claude/settings.json override does exactly that in every Claude Code
+// subprocess): $env/dynamic/private bakes its snapshot before ??= can help.
+// House pattern (xeno-canto.test.ts): write onto the snapshot POJO directly.
+const { env: dynamicEnv } = await import("$env/dynamic/private");
+if (!dynamicEnv.ANTHROPIC_API_KEY) dynamicEnv.ANTHROPIC_API_KEY = "test-key";
+
+describe("generateSpeciesAnnotation (fetcher seam — first tests, plan step 5)", () => {
+  const OPUS = SELECTABLE_MODELS.find((m) => m.id === "claude-opus-5")!;
+
+  const INPUT = {
+    comName: "Downy Woodpecker",
+    sciName: "Dryobates pubescens",
+    family: "Picidae",
+    extract: "Small woodpecker of open woods.",
+    sections: [],
+    candidates: [
+      {
+        code: "haiwoo",
+        comName: "Hairy Woodpecker",
+        sciName: "Leuconotopicus villosus",
+        basis: "ebird_slash" as const,
+      },
+    ],
+    speciesCode: "dowwoo",
+  };
+  const GOOD_TEXT = JSON.stringify({
+    tags: ["habitat:mudflat"],
+    field_craft: "Scan trunks low; listen for the soft pik call.",
+    similar: [{ code: "haiwoo", note: "Hairy shows a much longer bill relative to its head." }],
+  });
+  const okBody = (over: Record<string, unknown> = {}) => ({
+    model: "claude-opus-5",
+    stop_reason: "end_turn",
+    usage: {
+      input_tokens: 1200,
+      output_tokens: 400,
+      output_tokens_details: { thinking_tokens: 60 },
+    },
+    content: [{ type: "text", text: GOOD_TEXT }],
+    ...over,
+  });
+  const resp = (
+    body: unknown,
+    init: { status?: number; headers?: Record<string, string> } = {},
+  ) =>
+    new Response(JSON.stringify(body), {
+      status: init.status ?? 200,
+      headers: { "request-id": "req_test_1", ...init.headers },
+    });
+  const fetcherReturning = (r: Response) => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetcher = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return r;
+    }) as typeof fetch;
+    return { fetcher, calls };
+  };
+
+  it("success: returns annotation + envelope, request built by the registry, auth merged at fetch time", async () => {
+    const { fetcher, calls } = fetcherReturning(resp(okBody()));
+    const out = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher });
+    expect(out.annotation.fieldCraft).toContain("Scan trunks");
+    expect(out.annotation.similar).toHaveLength(1);
+    expect(out.envelope.requestId).toBe("req_test_1");
+    expect(out.envelope.httpStatus).toBe(200);
+    expect(out.envelope.attempts).toHaveLength(1);
+    expect(out.envelope.attempts[0]).toMatchObject({
+      billed: true,
+      inputTokens: 1200,
+      outputTokens: 400,
+      thinkingTokens: 60,
+    });
+    // The registry's shape, not an inline body: Opus 5 pins.
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.max_tokens).toBe(8000); // 2000 answer + 6000 headroom
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.fallbacks).toBe("default");
+    const headers = calls[0].init.headers as Record<string, string>;
+    // Compare against whatever key the env actually holds — a real key from
+    // the user's shell must pass this too, not just the test fallback.
+    expect(headers["x-api-key"]).toBe(dynamicEnv.ANTHROPIC_API_KEY);
+    expect(headers["x-api-key"]).toBeTruthy();
+    expect(headers["anthropic-beta"]).toBe("server-side-fallback-2026-07-01");
+  });
+
+  it("PINNED (the kitmur test): a max_tokens truncation throws WITH the envelope — usage and stop_reason were in hand and must not be discarded", async () => {
+    const { fetcher } = fetcherReturning(
+      resp(
+        okBody({
+          stop_reason: "max_tokens",
+          content: [{ type: "text", text: '{"tags": ["habitat:mud' }],
+        }),
+      ),
+    );
+    const err = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher }).catch((e) => e);
+    expect(err).toBeInstanceOf(EnrichmentAiError);
+    expect(err.envelope).toBeDefined();
+    expect(err.envelope.attempts[0].stopReason).toBe("max_tokens");
+    expect(err.envelope.attempts[0].inputTokens).toBe(1200); // real spend on the failure
+    expect(err.envelope.requestId).toBe("req_test_1");
+  });
+
+  it("a refusal (200, output 0) throws with an UNBILLED event envelope", async () => {
+    const { fetcher } = fetcherReturning(
+      resp(
+        okBody({
+          stop_reason: "refusal",
+          content: [],
+          usage: { input_tokens: 900, output_tokens: 0 },
+        }),
+      ),
+    );
+    const err = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher }).catch((e) => e);
+    expect(err).toBeInstanceOf(EnrichmentAiError);
+    expect(err.message).toMatch(/declined/);
+    expect(err.envelope.attempts[0].billed).toBe(false);
+  });
+
+  it("a non-2xx throws with envelope carrying http_status, provider error.type, and the request-id support asks for", async () => {
+    const { fetcher } = fetcherReturning(
+      resp(
+        { error: { type: "rate_limit_error", message: "slow down" } },
+        { status: 429, headers: { "retry-after": "30" } },
+      ),
+    );
+    const err = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher }).catch((e) => e);
+    expect(err).toBeInstanceOf(EnrichmentAiError);
+    expect(err.rateLimited).toBe(true);
+    expect(err.retryAfterMs).toBe(30_000);
+    expect(err.envelope.httpStatus).toBe(429);
+    expect(err.envelope.providerErrorType).toBe("rate_limit_error");
+    expect(err.envelope.requestId).toBe("req_test_1");
+  });
+
+  it("served model ≠ requested model propagates through the envelope (fallback provenance)", async () => {
+    const { fetcher } = fetcherReturning(resp(okBody({ model: "claude-opus-4-8" })));
+    const out = await generateSpeciesAnnotation(INPUT, OPUS, { fetcher });
+    expect(out.envelope.attempts.find((a) => a.isFinal)?.servedModel).toBe("claude-opus-4-8");
+  });
+});
