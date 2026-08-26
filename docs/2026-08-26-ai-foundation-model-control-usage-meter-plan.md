@@ -1,7 +1,7 @@
 # AI foundation: model control + usage meter — plan (td-015838, td-09be7a)
 
 **Date:** 2026-08-26
-**Status:** Reviewed (internal critique + CODEX1 adversarial + GROK adversarial, all findings folded) — awaiting owner go to implement
+**Status:** Reviewed (internal critique + CODEX1 + GROK adversarial + AGY UI/UX, all folded) — awaiting owner go to implement
 **td:** `td-015838` (model dropdown) + `td-09be7a` (usage/cost meter) — one shared foundation
 **Reviews:** internal Plan-agent critique folded in (two real counting bugs:
 per-outcome recording undercounting the retry loop up to 3x; the failure-path
@@ -328,6 +328,21 @@ works; converting is a behavior change with its own test burden — cut).
 envelope field** (CODEX1 P1-3): today its refusal and malformed-200 throws at
 ai-guidance.ts:100-119 discard model/usage/stop_reason — the same bug already
 fixed on the enrichment side, in the module the draft left untouched.
+
+## UI/UX design (AGY, 2026-08-26)
+
+The admin tab's design is specified in
+**`docs/2026-08-26-admin-ai-tab-ui-AGY.md`** — AGY's full proposal with seven
+verified corrections applied (the notable ones: `#fff8f8` replaced with
+`var(--danger)` borders for dark-theme safety; quick-pick species come from
+loader data, not a hardcoded array — the BTC catalog-duplication lesson;
+species validation is server-side; compare grid is 2-col at 640 / 4-col at
+1024). Headlines adopted: tab is **"AI & Cost"**; meter is dollars-dominant
+stat tiles with a burn badge; model choice is **radio-cards with inline
+pricing** (a bare `<select>` conceals a 5–25x price differential at the moment
+of choice); the confirmation modal shows a **cost diff with the multiplier**;
+compare columns are structured (metrics head / Field Craft / Similar) with
+visible abort captions. The Implementation order's step 7 builds from that doc.
 
 ## The cost formula — written down so it cannot be re-derived wrong (GROK P1-9)
 
