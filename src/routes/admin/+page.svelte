@@ -19,6 +19,32 @@
   let liveAbort: AbortController | null = null;
   let mounted = false;
 
+  // AI & Cost tab (docs/2026-08-26-admin-ai-tab-ui-AGY.md). Tab choice is
+  // purely local UI state — the status poller above never reads it, so
+  // switching tabs never pauses live worker polling.
+  type Surface = "enrichment" | "guidance";
+  let activeTab = $state<"status" | "ai">("status");
+  const SURFACES: { key: Surface; title: string; blurb: string }[] = [
+    { key: "enrichment", title: "Enrichment", blurb: "worker batch jobs" },
+    { key: "guidance", title: "Guidance", blurb: "live trip requests" },
+  ];
+  let modelModal = $state<{ surface: Surface; model: string } | null>(null);
+  let setModelBusy = $state(false);
+  let compareSpecies = $state("");
+  let selectedCompareModels = $state<string[]>([]);
+  let compareBusy = $state(false);
+
+  function modelEntry(id: string) {
+    return data.ai.models.find((m) => m.id === id);
+  }
+  function surfaceTitle(surface: Surface): string {
+    return SURFACES.find((s) => s.key === surface)?.title ?? surface;
+  }
+  function openModelModal(surface: Surface, model: string) {
+    if (model === data.ai.current[surface]) return;
+    modelModal = { surface, model };
+  }
+
   function stopLiveRefresh() {
     if (liveTimer) clearTimeout(liveTimer);
     liveTimer = null;
@@ -123,7 +149,7 @@
     if (s < 129600) return `${Math.round(s / 3600)} h ago`;
     return `${Math.round(s / 86400)} d ago`;
   }
-  function fmt(iso: string | null): string {
+  function fmt(iso: string | Date | null): string {
     return iso
       ? new Date(iso).toLocaleString(undefined, {
           month: "short",
@@ -143,6 +169,37 @@
     if (v == null) return "";
     const s = JSON.stringify(v);
     return s.length > 300 ? `${s.slice(0, 300)}…` : s;
+  }
+
+  // AI & Cost formatting helpers ----------------------------------------
+  /** Dollars dominant, never $0.00 for a real nonzero spend (compare calls
+   * run $0.002-$0.01) and never NaN. */
+  function fmtDollars(d: number | null): string {
+    if (d == null || !Number.isFinite(d)) return "—";
+    if (d > 0 && d < 0.01) return `$${d.toPrecision(2)}`;
+    return `$${d.toFixed(2)}`;
+  }
+  function fmtTok(n: number | null): string {
+    if (n == null) return "—";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return `${n}`;
+  }
+  function fmtRatePair(m: { inPerMTok: number | null; outPerMTok: number | null }): string {
+    if (m.inPerMTok == null || m.outPerMTok == null) return "Rate unavailable";
+    return `${fmtDollars(m.inPerMTok)} / ${fmtDollars(m.outPerMTok)} per MTok`;
+  }
+  function costMultiplierText(
+    curr: { inPerMTok: number | null } | undefined,
+    next: { inPerMTok: number | null } | undefined,
+  ): string {
+    if (!curr?.inPerMTok || !next?.inPerMTok) return "Cost comparison unavailable for this pair.";
+    const ratio = next.inPerMTok / curr.inPerMTok;
+    if (!Number.isFinite(ratio) || ratio <= 0) return "Cost comparison unavailable for this pair.";
+    if (Math.abs(ratio - 1) < 0.05) return "About the same input cost per token.";
+    const magnitude = ratio >= 1 ? ratio : 1 / ratio;
+    const shown = magnitude >= 10 ? Math.round(magnitude) : Math.round(magnitude * 10) / 10;
+    return ratio > 1 ? `~${shown}× input cost increase.` : `~${shown}× input cost decrease.`;
   }
 </script>
 
@@ -173,6 +230,28 @@
     <p class="error" role="alert">{liveRefreshError}</p>
   {/if}
 
+  <div class="seg" role="tablist" aria-label="Admin section">
+    <button
+      type="button"
+      role="tab"
+      aria-selected={activeTab === "status"}
+      class:active={activeTab === "status"}
+      onclick={() => (activeTab = "status")}
+    >
+      Status
+    </button>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={activeTab === "ai"}
+      class:active={activeTab === "ai"}
+      onclick={() => (activeTab = "ai")}
+    >
+      AI &amp; Cost
+    </button>
+  </div>
+
+  {#if activeTab === "status"}
   <section class="card">
     <h2>Worker</h2>
     {#if data.startupsLastHour > 3}
@@ -223,10 +302,10 @@
         failed sample media now.
       </span>
     </form>
-    {#if form && "message" in form && form.message}
+    {#if form?.kind === "nudge" && "message" in form && form.message}
       <p class="ok">{form.message}</p>
     {/if}
-    {#if form && "error" in form && form.error}
+    {#if form?.kind === "nudge" && "error" in form && form.error}
       <p class="error" role="alert">{form.error}</p>
     {/if}
     <details>
@@ -359,7 +438,296 @@
       </table>
     </div>
   </section>
+  {:else}
+  <section class="card">
+    <h2>Usage meter</h2>
+    <p class="muted">
+      The live status above updates worker state only — Refresh reloads this
+      meter.
+    </p>
+    <div class="stat-grid">
+      {#each [
+        { key: "today", label: "Today", w: data.ai.usage.windows.today },
+        { key: "d7", label: "7 days", w: data.ai.usage.windows.d7 },
+        { key: "d30", label: "30 days", w: data.ai.usage.windows.d30 },
+        { key: "all", label: "All-time", w: data.ai.usage.windows.all },
+      ] as tile (tile.key)}
+        <div class="stat-tile">
+          <div class="stat-head">
+            <span class="stat-label">{tile.label}</span>
+            {#if tile.key === "today" && tile.w.dollars > data.ai.highBurnPerDayUsd}
+              <span class="badge" data-color="warn">High burn</span>
+            {/if}
+          </div>
+          <div class="stat-dollar">{fmtDollars(tile.w.dollars)}</div>
+          <div class="stat-sub muted">
+            {tile.w.calls} call{tile.w.calls === 1 ? "" : "s"} ·
+            {fmtTok(tile.w.inputTokens + tile.w.outputTokens)} tok
+            {#if tile.w.unpricedAttempts > 0}· +{tile.w.unpricedAttempts} unpriced{/if}
+          </div>
+        </div>
+      {/each}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Model choice</h2>
+    <p class="muted">
+      Applies to future calls only — nothing already generated is
+      regenerated.
+    </p>
+    {#if form?.kind === "set_model"}
+      {#if "message" in form && form.message}
+        <p class="ok">{form.message}</p>
+      {/if}
+      {#if "error" in form && form.error}
+        <p class="error" role="alert">{form.error}</p>
+      {/if}
+    {/if}
+    {#each SURFACES as surface (surface.key)}
+      <div class="surface-section">
+        <h3>{surface.title} <span class="muted">— {surface.blurb}</span></h3>
+        <div class="model-options">
+          {#each data.ai.models as m (m.id)}
+            {@const isActive = m.id === data.ai.current[surface.key]}
+            <button
+              type="button"
+              class="model-option"
+              class:active={isActive}
+              aria-pressed={isActive}
+              onclick={() => openModelModal(surface.key, m.id)}
+            >
+              <div class="model-option-head">
+                <span class="model-label">{m.label}</span>
+                {#if isActive}<span class="badge" data-color="ok">Active</span>{/if}
+              </div>
+              <div class="model-rate muted">{fmtRatePair(m)}</div>
+              <div class="model-desc muted">{m.description}</div>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  </section>
+
+  <section class="card">
+    <h2>Compare Lab</h2>
+    <p class="muted">
+      Task-level apples-to-apples (same prompt, schema, answer budget;
+      request params differ per model). Real spend — included in the meter
+      above.
+    </p>
+    <form
+      method="POST"
+      action="?/run_compare"
+      use:enhance={() => {
+        compareBusy = true;
+        return async ({ update }) => {
+          await update();
+          compareBusy = false;
+        };
+      }}
+    >
+      <label class="field">
+        <span>Species code</span>
+        <input
+          type="text"
+          name="species"
+          bind:value={compareSpecies}
+          placeholder="e.g. dowwoo"
+          required
+        />
+      </label>
+      {#if data.ai.quickPick.length > 0}
+        <div class="quickpills">
+          {#each data.ai.quickPick as q (q.code)}
+            <button
+              type="button"
+              class="pill"
+              class:active={compareSpecies === q.code}
+              onclick={() => (compareSpecies = q.code)}
+            >
+              {q.comName}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      <div class="model-checks">
+        {#each data.ai.models as m (m.id)}
+          <label class="check">
+            <input type="checkbox" name="models" value={m.id} bind:group={selectedCompareModels} />
+            {m.label}
+          </label>
+        {/each}
+      </div>
+      <button type="submit" disabled={compareBusy || selectedCompareModels.length === 0}>
+        {compareBusy
+          ? `Benchmarking ${selectedCompareModels.length} model${selectedCompareModels.length === 1 ? "" : "s"} (~45s max)…`
+          : "Run comparison"}
+      </button>
+    </form>
+
+    {#if form?.kind === "compare"}
+      {#if "ok" in form && form.ok}
+        <h3 class="compare-result-title">Results for {form.speciesName} ({form.species})</h3>
+        <div class="compare-grid">
+          {#each form.columns as col (col.modelId)}
+            <div class="compare-col" class:iserror={!col.ok}>
+              <div class="compare-col-head">
+                <strong>{col.label}</strong>
+                {#if col.fallback}
+                  <span class="badge" data-color="warn">Fallback: {col.servedModel}</span>
+                {/if}
+              </div>
+              <div class="compare-metrics">
+                <div class="metric-dollar">{fmtDollars(col.dollars)}</div>
+                <div class="muted">{(col.durationMs / 1000).toFixed(1)} s</div>
+                <div class="muted">
+                  {fmtTok(col.inputTokens)} in · {fmtTok(col.outputTokens)} out
+                  {#if col.thinkingTokens != null}· {fmtTok(col.thinkingTokens)} think{/if}
+                </div>
+              </div>
+              {#if col.ok}
+                {#if col.fieldCraft}
+                  <div class="compare-section">
+                    <h4>Field Craft</h4>
+                    <p>{col.fieldCraft}</p>
+                  </div>
+                {/if}
+                {#if col.similar.length > 0}
+                  <div class="compare-section">
+                    <h4>Similar Species</h4>
+                    <ul>
+                      {#each col.similar as s (s.code)}
+                        <li><strong>{s.comName}</strong> — {s.note}</li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+              {:else}
+                <p class="error">{col.error}</p>
+                {#if col.aborted}
+                  <p class="abort-caption">Aborted calls may still incur provider cost.</p>
+                {/if}
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {:else if "error" in form && form.error}
+        <p class="error" role="alert">{form.error}</p>
+      {/if}
+    {/if}
+  </section>
+
+  <section class="card">
+    <h2>Recent calls</h2>
+    {#if data.ai.usage.stopReasons.length > 0 || data.ai.usage.errors.length > 0}
+      <div class="chipsrow">
+        {#each data.ai.usage.stopReasons as sr (sr.key ?? "null")}
+          <span class="badge">{sr.key ?? "unknown"}: {sr.n}</span>
+        {/each}
+        {#each data.ai.usage.errors as er (er.key ?? "null")}
+          <span class="badge" data-color="error">{er.key ?? "unknown error"}: {er.n}</span>
+        {/each}
+      </div>
+    {/if}
+    {#if data.ai.usage.recent.length === 0}
+      <p class="muted">No AI calls recorded yet. Ledger begins on first API call.</p>
+    {:else}
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th><th>Purpose</th><th>Species</th><th>Model</th><th>Tokens</th><th>Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each data.ai.usage.recent as r (r.callId)}
+              <tr>
+                <td class="nowrap">{fmt(r.at)}</td>
+                <td>{r.purpose}</td>
+                <td>{r.speciesCode ?? "—"}</td>
+                <td>
+                  {r.requestedModel}
+                  {#if r.servedModel && r.servedModel !== r.requestedModel}
+                    → {r.servedModel}
+                  {/if}
+                </td>
+                <td class="nowrap">{fmtTok(r.inputTokens)} / {fmtTok(r.outputTokens)}</td>
+                <td class="nowrap">
+                  {#if r.dollars == null}
+                    <!-- Two distinct null-dollar states (AGY): no tokens =
+                         call died before a response (spend unknown); tokens
+                         but no price = served model missing from the rate
+                         table. Conflating them mislabels rate gaps as aborts. -->
+                    {#if r.inputTokens == null}
+                      <span>—</span> <span class="badge" data-color="warn">cost unknown (aborted)</span>
+                    {:else}
+                      <span>—</span> <span class="badge" data-color="warn">rate unavailable</span>
+                    {/if}
+                  {:else if r.billed === false}
+                    <span class="badge" data-color="warn">$0.00 (refusal)</span>
+                  {:else}
+                    {fmtDollars(r.dollars)}
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
+  {/if}
 </div>
+
+{#if modelModal}
+  {@const curr = modelEntry(data.ai.current[modelModal.surface])}
+  {@const next = modelEntry(modelModal.model)}
+  <!-- Reuses the house modal pattern (trips/[id]/+page.svelte) rather than a
+       second dialog implementation (AGY correction 6). -->
+  <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
+    <div class="modal">
+      <h3 id="model-modal-title">Change {surfaceTitle(modelModal.surface)} model?</h3>
+      <div class="diff-box">
+        <div class="diff-col">
+          <span class="diff-label">Current</span>
+          <strong>{curr?.label ?? data.ai.current[modelModal.surface]}</strong>
+          <span class="muted">{curr ? fmtRatePair(curr) : "Rate unavailable"}</span>
+        </div>
+        <span class="diff-arrow">→</span>
+        <div class="diff-col">
+          <span class="diff-label">New</span>
+          <strong>{next?.label ?? modelModal.model}</strong>
+          <span class="muted">{next ? fmtRatePair(next) : "Rate unavailable"}</span>
+        </div>
+      </div>
+      <p class="multiplier">{costMultiplierText(curr, next)}</p>
+      <p class="scope-note">Applies to future calls only — nothing is regenerated.</p>
+      <div class="actions">
+        <button type="button" class="btn" onclick={() => (modelModal = null)}>Cancel</button>
+        <form
+          method="POST"
+          action="?/set_ai_model"
+          use:enhance={() => {
+            setModelBusy = true;
+            return async ({ result, update }) => {
+              await update();
+              setModelBusy = false;
+              if (result.type === "success") modelModal = null;
+            };
+          }}
+        >
+          <input type="hidden" name="surface" value={modelModal.surface} />
+          <input type="hidden" name="model" value={modelModal.model} />
+          <button type="submit" class="btn accent-solid" disabled={setModelBusy}>
+            {setModelBusy ? "Saving…" : "Confirm"}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .page {
@@ -545,5 +913,313 @@
     display: flex;
     align-items: center;
     color: var(--muted);
+  }
+
+  /* Tab bar (house .seg pattern, life/+page.svelte) */
+  .seg {
+    display: flex;
+    gap: 0;
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    width: fit-content;
+  }
+  .seg button {
+    border: 0;
+    background: var(--card);
+    padding: 0.4rem 1.1rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+    min-height: 48px;
+    color: var(--text);
+  }
+  .seg button.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* Usage meter */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .stat-tile {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .stat-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .stat-label {
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .stat-dollar {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 4px 0 2px;
+  }
+  .stat-sub {
+    font-size: 0.78rem;
+  }
+
+  /* Model choice */
+  .surface-section {
+    margin-top: 14px;
+  }
+  .surface-section h3 {
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+  }
+  .model-options {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .model-option {
+    text-align: left;
+    min-height: 48px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .model-option.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .model-option-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .model-label {
+    font-weight: 700;
+  }
+  .model-rate {
+    font-size: 0.82rem;
+    margin-top: 2px;
+  }
+  .model-desc {
+    font-size: 0.82rem;
+    margin-top: 2px;
+  }
+
+  /* Confirmation modal (house pattern, trips/[id]/+page.svelte) */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(33, 37, 41, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 460px;
+    width: 100%;
+  }
+  .modal h3 {
+    margin-bottom: 12px;
+  }
+  .diff-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .diff-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .diff-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  .diff-arrow {
+    font-size: 1.2rem;
+    color: var(--muted);
+  }
+  .multiplier {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .scope-note {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+  .modal .actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn {
+    min-height: 48px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .btn.accent-solid {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  /* Compare Lab */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .field input {
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-weight: 400;
+  }
+  .quickpills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .pill {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 999px;
+    padding: 0.25rem 0.9rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    min-height: 48px;
+  }
+  .pill.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .model-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    font-size: 0.88rem;
+  }
+
+  .compare-result-title {
+    margin: 16px 0 8px;
+    font-size: 0.95rem;
+  }
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .compare-col {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .compare-col.iserror {
+    /* AGY correction 1: border-only signal on --bg, no hardcoded tint. */
+    border-color: var(--danger);
+  }
+  .compare-col-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .compare-metrics {
+    margin-bottom: 8px;
+  }
+  .metric-dollar {
+    font-size: 1.25rem;
+    font-weight: 700;
+  }
+  .compare-section {
+    margin-top: 8px;
+    font-size: 0.85rem;
+  }
+  .compare-section h4 {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .compare-section ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .compare-section li {
+    padding: 2px 0;
+  }
+  .abort-caption {
+    /* AGY correction 5: always a visible caption, never hover-only. */
+    color: var(--danger);
+    font-size: 0.8rem;
+    margin-top: 4px;
+  }
+
+  /* Recent calls */
+  .chipsrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  @media (min-width: 640px) {
+    .stat-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+    .compare-grid {
+      /* AGY correction 4: 2 cols at 640, not repeat(var(--cols)) from 640. */
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  @media (min-width: 1024px) {
+    .compare-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
   }
 </style>

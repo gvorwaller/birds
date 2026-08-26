@@ -698,6 +698,57 @@
 				</ul>
 			</div>
 		{/if}
+
+		<!-- Admin: AI & Cost -->
+		<button
+			class="toggle"
+			class:open={open === 'ai-cost'}
+			aria-expanded={open === 'ai-cost'}
+			onclick={() => toggle('ai-cost')}
+		>
+			<span class="ico">🤖</span>
+			<span class="title">Admin: AI &amp; Cost</span>
+			<span class="chev">{open === 'ai-cost' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'ai-cost'}
+			<div class="body">
+				<p class="lead">
+					Admins only — the <strong>AI &amp; Cost</strong> tab on the Admin page
+					controls which Claude model powers each AI surface and shows what
+					it's costing.
+				</p>
+				<ul>
+					<li>
+						<strong>Model choice is per surface</strong> — Enrichment (worker
+						batch jobs) and Guidance (live trip requests) are chosen
+						independently. Picking a different model opens a confirmation
+						showing the current and new rates and the cost multiplier; the
+						change <strong>applies to future calls only</strong> — nothing
+						already generated is regenerated.
+					</li>
+					<li>
+						<strong>The meter stores tokens, not dollars</strong> — every AI
+						call's token counts are recorded, and dollars are computed at
+						today's rates whenever the page loads. Today / 7-day / 30-day /
+						all-time totals sit above the model controls.
+					</li>
+					<li>
+						<strong>Compare Lab runs are real spend</strong> — benchmarking a
+						species across several models calls each one for real and is
+						included in the totals above, same as any other AI call.
+					</li>
+					<li>
+						A call can be <strong>served by a different model than
+						requested</strong> when the provider falls back — those rows show
+						"requested → served" so the discrepancy is never hidden.
+					</li>
+					<li>
+						The <strong>ledger starts at deploy</strong> — recent calls before
+						this feature shipped were not recorded and are not shown.
+					</li>
+				</ul>
+			</div>
+		{/if}
 	</div>
 
 	<p class="foot">

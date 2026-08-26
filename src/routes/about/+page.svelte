@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.3': true,
+		'v0.1.4': true,
+		'v0.1.3': false,
 		'v0.1.2': false,
 		'v0.1.1': false,
 		'v0.1.0': false,
@@ -100,6 +101,35 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.4 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.4']}
+					aria-expanded={openVersions['v0.1.4']}
+					onclick={() => toggleVersion('v0.1.4')}
+				>
+					<span class="v-tag current">v0.1.4</span>
+					<span class="v-title">AI Model Control &amp; Cost Meter</span>
+					<span class="v-date">August 2026</span>
+					<span class="chev">{openVersions['v0.1.4'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.4']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>AI &amp; Cost admin tab</strong> — Admins can now choose
+								which Claude model powers enrichment (batch jobs) and guidance
+								(live trip requests) independently, see a live dollars-and-tokens
+								usage meter (today / 7-day / 30-day / all-time), and run a
+								Compare Lab that benchmarks a species across models side by side.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.3 -->
 			<div class="version-entry">
 				<button
@@ -109,7 +139,7 @@
 					aria-expanded={openVersions['v0.1.3']}
 					onclick={() => toggleVersion('v0.1.3')}
 				>
-					<span class="v-tag current">v0.1.3</span>
+					<span class="v-tag">v0.1.3</span>
 					<span class="v-title">Similar Species Links</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.3'] ? '▾' : '▸'}</span>

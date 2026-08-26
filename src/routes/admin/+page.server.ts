@@ -24,7 +24,7 @@ import { aiStageInputFor, similarCandidatesFor } from "$server/species-enrichmen
  * constant, not a magic number). Context: steady state is ~$50/YEAR; a $15
  * day means a drain or a runaway is in progress and deserves a visible flag.
  */
-export const HIGH_BURN_PER_DAY_USD = 15;
+const HIGH_BURN_PER_DAY_USD = 15; // not exported: SvelteKit rejects extra runtime exports here; it reaches the UI via the loader payload
 
 /**
  * Per-model cap for the compare runner. Compare calls run in PARALLEL
