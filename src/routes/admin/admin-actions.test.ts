@@ -333,6 +333,32 @@ describe("run_compare", () => {
     expect(r.columns[0].dollars).toBeCloseTo((535 + 412) * 5e-6 + (90 + 264) * 25e-6, 9);
   });
 
+  it("a dated variant of the requested model is NOT flagged as fallback; a different model IS", async () => {
+    routeCompareDb();
+    mocks.generateSpeciesAnnotation.mockImplementation(
+      async (_input: unknown, model: { id: string }) => {
+        const r = annotationResult(model.id);
+        // Anthropic serves dated ids (observed live: claude-haiku-4-5-20251001);
+        // Opus 5's real fallback serves a genuinely different model.
+        r.envelope.attempts[0].servedModel =
+          model.id === "claude-haiku-4-5" ? "claude-haiku-4-5-20251001" : "claude-opus-4-8";
+        return r;
+      },
+    );
+    const r = (await actions.run_compare({
+      ...ADMIN,
+      request: req({ species: "dowwoo", models: ["claude-haiku-4-5", "claude-opus-5"] }),
+    } as never)) as {
+      columns: { modelId: string; fallback: boolean; servedModel: string | null; dollars: number | null }[];
+    };
+    const haiku = r.columns.find((c) => c.modelId === "claude-haiku-4-5")!;
+    expect(haiku.servedModel).toBe("claude-haiku-4-5-20251001");
+    expect(haiku.fallback).toBe(false); // same model, dated — not a fallback
+    expect(haiku.dollars).not.toBeNull(); // family-prefix rate matching held
+    const opus = r.columns.find((c) => c.modelId === "claude-opus-5")!;
+    expect(opus.fallback).toBe(true); // opus-4-8 IS a different model
+  });
+
   it("an aborted model renders dollars=null (—), never $0.00, and does not sink the other columns", async () => {
     routeCompareDb();
     mocks.generateSpeciesAnnotation.mockImplementation(

@@ -593,7 +593,11 @@
           </label>
         {/each}
       </div>
-      <button type="submit" disabled={compareBusy || selectedCompareModels.length === 0}>
+      <button
+        type="submit"
+        class="btn accent-solid"
+        disabled={compareBusy || selectedCompareModels.length === 0}
+      >
         {compareBusy
           ? `Benchmarking ${selectedCompareModels.length} model${selectedCompareModels.length === 1 ? "" : "s"} (~45s max)…`
           : "Run comparison"}

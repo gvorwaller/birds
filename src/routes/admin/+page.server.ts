@@ -380,7 +380,13 @@ export const actions: Actions = {
               dollars: dollarsForAttempts(attempt.envelope.attempts, at),
               durationMs: Date.now() - started,
               servedModel: attempt.servedModel,
-              fallback: attempt.servedModel != null && attempt.servedModel !== entry.id,
+              // A dated variant of the SAME model (claude-haiku-4-5-20251001)
+              // is not a fallback — same family-prefix rule the rate table
+              // uses. Flag only a genuinely different model (GROK prod smoke).
+              fallback:
+                attempt.servedModel != null &&
+                attempt.servedModel !== entry.id &&
+                !attempt.servedModel.startsWith(`${entry.id}-`),
               inputTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.inputTokens),
               outputTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.outputTokens),
               thinkingTokens: sumAttemptTokens(attempt.envelope.attempts, (a) => a.thinkingTokens),
