@@ -1,7 +1,7 @@
 # AI foundation: model control + usage meter — plan (td-015838, td-09be7a)
 
 **Date:** 2026-08-26
-**Status:** Reviewed (internal critique + CODEX1 adversarial, all findings folded) — awaiting owner go to implement
+**Status:** Reviewed (internal critique + CODEX1 adversarial + GROK adversarial, all findings folded) — awaiting owner go to implement
 **td:** `td-015838` (model dropdown) + `td-09be7a` (usage/cost meter) — one shared foundation
 **Reviews:** internal Plan-agent critique folded in (two real counting bugs:
 per-outcome recording undercounting the retry loop up to 3x; the failure-path
@@ -12,7 +12,10 @@ independently confirmed: the per-model shape claims, structured-outputs support
 on all four dropdown models, the per-annotate metering seam, migration safety
 while the worker drains, and that the COMPARE RUNNER STAYS IN V1 — the td's
 acceptance criterion is sample output, and dropdowns+meter alone do not satisfy
-it.
+it. GROK then went BLOCKED with two further P0s no prior review touched — the
+config fallback inverting the dropdown's cost-safety, and the meter pricing
+Anthropic-REPORTED tokens that are not CHARGED — plus eight implementation
+traps; all folded below, marked (GROK).
 
 
 ## Context
@@ -139,6 +142,20 @@ CREATE TABLE ai_usage (
                                         -- day 1h caching appears (CODEX1 P1-6)
   stop_reason     TEXT, duration_ms INT,
   ok              BOOLEAN NOT NULL,
+  billed          BOOLEAN NOT NULL DEFAULT TRUE,
+                                        -- REPORTED != CHARGED (GROK P0-2).
+                                        -- Anthropic reports tokens for attempts it
+                                        -- does not bill: a pre-output refusal, and a
+                                        -- declined fallback primary with output 0,
+                                        -- both carry usage but cost $0. Discriminator
+                                        -- per the official billing contract: an
+                                        -- iterations entry is billed iff it produced
+                                        -- output (output_tokens > 0); a no-fallback
+                                        -- refusal with output 0 is an event row,
+                                        -- billed=false. Dollar aggregates sum ONLY
+                                        -- billed rows; without this flag the meter
+                                        -- overcounts on every classifier decline —
+                                        -- the very path fallbacks:'default' exists for.
   error           TEXT                  -- sanitizeErrorText() output ONLY
 );
 CREATE INDEX ai_usage_at_idx ON ai_usage (at DESC);
@@ -186,11 +203,18 @@ interface ModelEntry {
   buildRequest(parts: AiCallParts): BuiltRequest;
 }
 resolveModel(configValue): ModelEntry  // unknown/removed id → compiled default + warn
-extractEnvelope(data): CallEnvelope[]  // ONE PER ATTEMPT: reads usage.iterations
-                                       // when present (fallbacks), else one entry
-                                       // from top-level usage; each carries model,
-                                       // stopReason, all token fields incl. the
-                                       // 5m/1h cache-write split
+extractEnvelope(data): CallEnvelope[]  // ONE PER BILLED-OR-EVENT ATTEMPT.
+   // Discriminator is NOT "iterations present" (GROK P1-3): the API can attach
+   // usage.iterations to ordinary non-fallback responses (observed: a single
+   // 0/0 'message' entry beside nonzero top-level usage — naive iteration
+   // pricing records $0 for a real call). Use iterations only when it carries
+   // a fallback_message OR >1 entries with nonzero tokens; otherwise the
+   // top-level usage is the single attempt. Each envelope carries model,
+   // stopReason, billed (per the P0-2 discriminator), and all token fields
+   // incl. the 5m/1h cache-write split. Fixtures pinned in Verification:
+   // (a) no iterations; (b) all-zero iterations + nonzero top-level;
+   // (c) fallback with billed partial primary; (d) fallback with unbilled
+   // 0-output primary.
 ```
 
 Entries: `claude-opus-5` (adaptive thinking, effort through, `fallbacks:
@@ -210,10 +234,24 @@ against `ai_usage.at` at render. Cost math uses **served_model** and
 never sees the API key; the chokepoint merges `x-api-key`/`anthropic-version`
 at fetch time. Registry output is snapshot-testable and cannot leak the key.
 
-**`src/lib/server/app-config.ts`** — `getConfig(key, fallback)` catches DB
-errors → returns fallback + `console.error` (a config blip must leave the AI
-stage no worse off than today, never burning a species' 7-day window).
-`setConfig` validates model ids against the registry, rejects unknowns.
+**`src/lib/server/app-config.ts`** — the draft's "DB error → compiled default"
+INVERTED the dropdown's purpose (GROK P0-1): once Gaylon selects Haiku, the
+compiled default IS Opus 5, so a mid-drain DB blip would silently re-price the
+rest of the chunk at 5x while the dropdown still shows Haiku — and because the
+worker re-reads per call, one blip taints every subsequent species, with
+provenance stamping Opus and the UI lying about why. Correct semantics:
+- **Process-local last-known-good**, seeded from the compiled default and
+  overwritten only on a successful read. On error, fall back to
+  last-known-good — the compiled default applies only when the process has
+  NEVER successfully read the key.
+- **Reads go through `queryTimed`** (src/lib/db.ts — it exists precisely
+  because `pool.query` can wait forever on checkout): a hung config read would
+  otherwise wedge the worker without ever throwing, so the catch never fires
+  and no fallback happens at all.
+- `setConfig` validates model ids against the registry, rejects unknowns.
+- Note (GROK 10): app_config's GRANT does not REMOVE the DELETE that 0002's
+  defaults grant — harmless for a 2-key table, but the migration comment must
+  not claim the grant restricts anything.
 
 **`src/lib/server/ai-usage.ts`** — `recordUsage(row)` never throws (metering
 failure must not fail the metered call — exercised in tests by a rejecting
@@ -235,6 +273,17 @@ consumers go through it.
   stamps the KEPT attempt's `servedModel` — never "the model most recently
   resolved", which can differ when config changes between retries or a
   fallback serves the response.
+- **The attempt chain is inserted in ONE statement** (multi-row VALUES/unnest,
+  `call_id` generated at insert time, no retry on unique violation) — GROK
+  P1-5: a row-at-a-time insert that fails after the declined-primary row and
+  "retries" would unique-violate, get swallowed by never-throws, and leave the
+  fallback spend permanently unrecorded with DELETE revoked. Atomicity beats
+  repair on an append-only table.
+- **`timeoutMs` must actually replace the internal signals** (GROK P1-8):
+  `generateSpeciesAnnotation` hardcodes `AbortSignal.timeout(120s)` and
+  guidance 30s internally, so a chokepoint parameter does nothing by itself —
+  the signature becomes `generateSpeciesAnnotation(input, model, {fetcher,
+  signal})` (guidance likewise) with the chokepoint owning the signal.
 - **One error contract for every consumer (CODEX1 P1-3).** A shared
   `AiCallEnvelope` is populated the moment headers/body are available —
   request-id, http_status, provider `error.type`, tokens, stop_reason — and
@@ -252,13 +301,24 @@ user: buildUserPrompt(input), schema: buildOutputSchema(...), maxOutputTokens:
 ~2000, effort: 'medium'})`; returns `{annotation, envelope}`;
 `EnrichmentAiError` gains optional `envelope`, populated on every post-200
 throw (refusal, unreadable JSON, tide contradiction, empty field craft).
-Prompt/schema/validators untouched; module stays DB-free; existing
-mocked-fetcher tests stay green. `AI_MODEL` becomes the compiled default.
+Prompt/schema/validators untouched; module stays DB-free. (The draft claimed
+"existing mocked-fetcher tests stay green" — false: ai-enrichment.test.ts's 51
+tests never call generateSpeciesAnnotation at all; they cover only the pure
+functions. Verified by grep. The fetcher seam gets its FIRST tests in this
+work.) `AI_MODEL` becomes the compiled default.
 
-**`job-handlers.ts`** — only the `annotate()` closure changes: it becomes a
-`meteredAiCall` invocation (`purpose:'enrichment'`, `speciesCode`, `jobId`).
-`upsertAiData`'s `model:` stamp uses the model actually resolved, not the
-constant. Retry loop and all three `runAiStage` sites untouched.
+**`job-handlers.ts`** — the draft claimed "only annotate() changes; retry loop
+untouched" while ALSO requiring attempt-object provenance — a self-
+contradiction an implementer following the "untouched" sentence would resolve
+by shipping constant-model stamps again, the exact bug P1-4 kills (GROK P1-4).
+The truth is THREE edit sites, named:
+1. the `annotate()` closure becomes a `meteredAiCall` invocation
+   (`purpose:'enrichment'`, `speciesCode`, `jobId`) returning an attempt
+   object `{annotation, requestedModel, servedModel, envelope}`;
+2. the keep-best retry loop compares and swaps WHOLE attempt objects
+   (reading `.annotation.similar` etc. through the wrapper object);
+3. `upsertAiData`'s `model:` stamp reads the KEPT attempt's `servedModel`.
+The three `runAiStage` call sites above the closure are unchanged.
 
 **`ai-guidance.ts`** — model from config (`ai.model.guidance`, default
 `claude-sonnet-4-6`) via registry; call through `meteredAiCall`
@@ -268,6 +328,43 @@ works; converting is a behavior change with its own test burden — cut).
 envelope field** (CODEX1 P1-3): today its refusal and malformed-200 throws at
 ai-guidance.ts:100-119 discard model/usage/stop_reason — the same bug already
 fixed on the enrichment side, in the module the draft left untouched.
+
+## The cost formula — written down so it cannot be re-derived wrong (GROK P1-9)
+
+```
+dollars(row) = row.billed ? (
+    input_tokens          * inRate
+  + cache_read_tokens     * inRate * 0.10
+  + cache_write_5m_tokens * inRate * 1.25
+  + cache_write_1h_tokens * inRate * 2.00
+  + output_tokens         * outRate
+) : 0
+```
+
+- `input_tokens` is the UNCACHED remainder only (total prompt = input +
+  cache_read + cache_creation) — never add cache fields on top of a "total".
+- The 5m/1h fields SUM to `cache_creation_input_tokens` — price the split,
+  never both the split and the sum.
+- **Never add `thinking_tokens`** — it is a breakdown of `output_tokens`.
+  Pinned: `price({output:100, thinking:40}) === price({output:100, thinking:0})`.
+- **Rate lookup is by `served_model` with FAMILY-PREFIX matching**, not exact
+  string: if the API ever returns a dated variant (`claude-opus-4-8-YYYYMMDD`)
+  an exact match turns every fallback row into "rate unavailable" and the
+  meter reads $0 on real spend.
+- Rate table (from td-09be7a, so the implementer does not invent it):
+  Opus 5 $5/$25 · Opus 4.8 $5/$25 (pricing-only fallback entry) ·
+  Sonnet 4.6 $3/$15 · Haiku 4.5 $1/$5 · Sonnet 5 $2/$10 through
+  **2026-08-31 US/Pacific**, then $3/$15 — the window boundary needs the
+  timezone stated because it is five days out; match windows on `at`.
+
+**ONE aggregate function** (GROK P1-6) feeds totals (today/7d/30d/all) AND the
+by-model breakdown: SUM of `dollars(row)` over **every billed attempt row** —
+including `ok=false` rows that carry tokens (kitmur's 200-then-parse-fail is
+real spend), excluding `billed=false` event rows, and excluding NULL-token rows
+from dollar sums entirely (rendered as "—", never $0.00). The natural
+implementations — `WHERE is_final`, `WHERE ok`, `SUM DISTINCT call_id` — each
+silently reintroduce P0-2 as a SELECT; that is why the function is specified
+here rather than left to the implementer.
 
 ## Admin UI
 
@@ -285,14 +382,31 @@ unchanged into the Status panel; nudge feedback re-keyed on
 (worker state is why the admin is on this page). Tab choice is local `$state`.
 
 AI tab: two dropdowns with **modal confirmation** on change (cs.md: no
-toasts); the meter (totals, $ by served_model × purpose, recent calls,
-error/stop_reason breakdown, and an explicit "ledger starts <date>" note so
-yesterday's $74 not appearing is understood); the compare runner.
+toasts); the meter; the compare runner.
+
+**Meter rendering is specified PER ROW SHAPE the schema permits** (GROK P1-7 —
+"never NaN" was the wrong completeness claim; JS `null * rate = 0`, so the
+abort path would render **$0.00, which reads as a receipt for a free call**
+and contradicts the Help disclosure that aborts may still cost money):
+- empty table → "Ledger starts at the first recorded call" (MIN(at) is NULL —
+  do not invent a date);
+- NULL-token rows (abort, 429-before-body, hung fetch) → "—", never $0.00,
+  excluded from dollar sums;
+- unknown `served_model` → "rate unavailable";
+- `billed=false` event rows → shown in counts, $0 by definition, labelled;
+- mid-compare → the last loader snapshot (the poller refreshes
+  /api/admin/status, NOT the meter — the AI tab says so);
+- after a 504 → nginx HTML, but the server may still finish and write rows;
+  the **single-flight guard clears in a `finally`** or one 504/kill sticks it
+  until process restart.
 
 **Compare runner** (STAYS IN V1 — CODEX1 adjudicated: td-015838's acceptance
 criterion is "show sample output", and dropdowns+meter alone do not satisfy
-it): dry-runs the real annotation for dowwoo (via `aiStageInputFor` +
-`similarCandidatesFor` — plain DB reads, already importable web-side) across
+it): dry-runs the real annotation for a species WITH wiki prose (default dowwoo, but
+`aiStageInputFor` returns null when wiki_status != 'ok' — guard it and fall
+back to any in-scope wiki-ok species, else four failed cells fail the td's
+sample-output acceptance on a fresh DB; GROK nit) via `aiStageInputFor` +
+`similarCandidatesFor` — plain DB reads, already importable web-side — across
 selected models, `purpose:'compare'`, never persisted to species tables.
 
 Timeout must be REAL, not a race (CODEX1 P1-5): a `Promise.race` returns while
@@ -362,15 +476,32 @@ show a different model than requested; ledger starts at deploy).
   ai_usage succeeds and UPDATE/DELETE **fail** — the append-only claim is
   tested, not asserted. (The draft's GRANT enforced nothing: 0002's default
   privileges already include UPDATE/DELETE and GRANT never removes.)
-- **Fallback attempt test (CODEX1 P0-2)**: a mocked two-attempt fallback
-  response (declining primary WITH nonzero billed output in
-  `usage.iterations`, fallback serving) writes two rows sharing `call_id`,
-  prices each attempt by its own served model, the meter's total includes the
-  declined attempt's spend, and **exactly one row has `is_final=true`** (the
-  cross-row invariant a CHECK cannot express — tested insertion discipline).
-- **Retry provenance tests (CODEX1 P1-4)**: attempt A kept after a worse B →
-  stamped model is A's; better B replaces A → B's; fallback-served attempt →
-  stamp is the served model, not the requested one.
+- **Fallback attempt tests — BOTH billing cases (CODEX1 P0-2 + GROK P0-2)**:
+  (a) declining primary WITH nonzero billed partial output → two rows sharing
+  `call_id`, both billed, each priced by its own served model, total includes
+  the declined spend, exactly one `is_final=true`; (b) declining primary with
+  **output 0 → its row is `billed=false` and contributes $0** even though
+  Anthropic reported its input tokens — reported ≠ charged. Plus: a
+  no-fallback refusal (200, usage present, output 0) records an event row at
+  $0, not spend.
+- **Envelope discriminator fixtures (GROK P1-3)**: no iterations; all-zero
+  iterations beside nonzero top-level (must price the top-level, not $0);
+  the two fallback shapes above.
+- **Config fallback tests (GROK P0-1)**: after one successful read of Haiku, a
+  failing read returns HAIKU (last-known-good), not the compiled Opus default;
+  the compiled default applies only before any successful read; config reads
+  use queryTimed.
+- **Partial-write atomicity (GROK P1-5)**: the attempt-chain insert is one
+  statement; a failure writes zero rows, never a declined-primary orphan.
+- **Retry provenance (CODEX1 P1-4)**: attempt A kept after a worse B → stamped
+  model is A's; better B replaces A → B's; fallback-served → served, not
+  requested.
+- **Pricing pins (GROK P1-9)**: thinking-invariance; family-prefix
+  served_model matching (a dated variant still prices); Sonnet 5 window
+  boundary in US/Pacific.
+- **Sequence privilege (GROK 10)**: alongside the INSERT-succeeds/UPDATE-
+  DELETE-fail grants test, assert
+  `has_sequence_privilege('birds_app','ai_usage_id_seq','USAGE')`.
 - **Guidance integration tests (CODEX1 P1-7 — no guidance test file exists
   today, so generic ai-call tests can pass while guidance bypasses metering)**:
   success, malformed-200, refusal, and non-2xx each write exactly one ledger
