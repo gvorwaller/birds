@@ -20,11 +20,12 @@ import { recordUsage, type AiPurpose } from './ai-usage';
 
 export interface MeteredAiCallOpts<T> {
 	purpose: AiPurpose;
-	/** app_config key holding the model choice (CONFIG_KEYS.*). Ignored when
+	/** app_config key holding the model choice (CONFIG_KEYS.*). Required
+	 * unless modelOverride is set. */
+	configKey?: string;
+	/** Compiled default id (DEFAULT_MODEL_IDS.*). Required unless
 	 * modelOverride is set. */
-	configKey: string;
-	/** Compiled default id (DEFAULT_MODEL_IDS.*). */
-	defaultModelId: string;
+	defaultModelId?: string;
 	/** Explicit model — the compare runner's isolation from the dropdowns:
 	 * comparing must never read or disturb the configured choice. */
 	modelOverride?: ModelEntry;
@@ -62,6 +63,9 @@ export async function meteredAiCall<T>(opts: MeteredAiCallOpts<T>): Promise<AiAt
 	let model: ModelEntry;
 	if (opts.modelOverride) {
 		model = opts.modelOverride;
+	} else if (!opts.configKey || !opts.defaultModelId) {
+		// Programmer error, not a runtime condition — thrown before any spend.
+		throw new Error('meteredAiCall: configKey + defaultModelId required without modelOverride');
 	} else {
 		// getConfig never throws by contract; the catch is belt-and-braces so a
 		// contract regression still cannot take the AI stage down with it.
