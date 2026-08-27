@@ -22,6 +22,42 @@ export function isIosStandalone(): boolean {
 	);
 }
 
+/** Any iOS device — where downloads are awkward even in Safari, and the
+ * share sheet (Save to Files / AirDrop / Messages) is the native path. */
+export function isIosDevice(): boolean {
+	if (!browser) return false;
+	return (
+		/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+		(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+	);
+}
+
+/** Whether the system share sheet can take a FILE here. */
+export function canShareFile(file: File): boolean {
+	if (!browser) return false;
+	const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+	return (
+		typeof nav.share === 'function' &&
+		typeof nav.canShare === 'function' &&
+		nav.canShare({ files: [file] })
+	);
+}
+
+/** Offer a file to the system share sheet. Same outcome contract as shareText. */
+export async function shareFile(
+	file: File,
+	title?: string
+): Promise<'shared' | 'cancelled' | 'unavailable' | 'failed'> {
+	if (!canShareFile(file)) return 'unavailable';
+	try {
+		await navigator.share({ files: [file], title });
+		return 'shared';
+	} catch (err) {
+		if (err instanceof DOMException && err.name === 'AbortError') return 'cancelled';
+		return 'failed';
+	}
+}
+
 /** Whether the system share sheet can take plain text here. */
 export function canShareText(): boolean {
 	if (!browser) return false;

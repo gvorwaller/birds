@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const envMock = vi.hoisted(() => ({ browser: false }));
 vi.mock("$app/environment", () => envMock);
 
-import { canShareText, isIosStandalone, shareText } from "./share";
+import { canShareFile, canShareText, isIosDevice, isIosStandalone, shareFile, shareText } from "./share";
 
 const g = globalThis as { navigator?: unknown };
 
@@ -50,5 +50,34 @@ describe("shareText outcome mapping", () => {
     envMock.browser = true;
     g.navigator = { share: vi.fn().mockRejectedValue(new Error("denied")) };
     await expect(shareText("x")).resolves.toBe("failed");
+  });
+});
+
+describe("file sharing helpers", () => {
+  it("inert outside the browser", async () => {
+    expect(isIosDevice()).toBe(false);
+    const f = new File(["x"], "t.md", { type: "text/markdown" });
+    expect(canShareFile(f)).toBe(false);
+    await expect(shareFile(f)).resolves.toBe("unavailable");
+  });
+
+  it("canShareFile requires BOTH share and canShare accepting the file", async () => {
+    envMock.browser = true;
+    const f = new File(["x"], "t.md", { type: "text/markdown" });
+    g.navigator = { share: vi.fn() }; // no canShare
+    expect(canShareFile(f)).toBe(false);
+    g.navigator = { share: vi.fn().mockResolvedValue(undefined), canShare: () => true };
+    expect(canShareFile(f)).toBe(true);
+    await expect(shareFile(f, "Trip")).resolves.toBe("shared");
+  });
+
+  it("PINNED: closing the file share sheet is 'cancelled', not an error", async () => {
+    envMock.browser = true;
+    const f = new File(["x"], "t.md", { type: "text/markdown" });
+    g.navigator = {
+      canShare: () => true,
+      share: vi.fn().mockRejectedValue(new DOMException("cancel", "AbortError")),
+    };
+    await expect(shareFile(f)).resolves.toBe("cancelled");
   });
 });

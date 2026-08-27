@@ -8,7 +8,7 @@
   import MapLink from "$components/MapLink.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
   import { normalizeTripStopNote, plannerTargetNote } from "$lib/planner-note";
-  import { canShareText, shareText } from "$lib/share";
+  import { canShareText, isIosDevice, isIosStandalone, shareFile, shareText } from "$lib/share";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import { calendarMonth } from "$lib/forecast-calendar";
@@ -117,6 +117,54 @@
       setTimeout(() => (shareCopied = false), 1600);
     } catch {
       shareSheetError = "Copy failed — select the text and copy manually.";
+    }
+  }
+
+  let mdBusy = $state(false);
+
+  /**
+   * ⬇ .md without the standalone trap: never a page navigation. iOS gets
+   * the system share sheet with the FILE (Save to Files / AirDrop /
+   * Messages — proper Done button); the installed app without file-share
+   * falls back to the in-app text modal; desktop gets a plain blob
+   * download. The server endpoint is untouched — the filename comes from
+   * its own Content-Disposition, so there is exactly one slugifier.
+   */
+  async function downloadMarkdown() {
+    if (mdBusy) return;
+    mdBusy = true;
+    try {
+      const res = await fetch(`/trips/${data.trip.id}/export?format=md`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const text = await res.text();
+      const filename =
+        res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ??
+        "trip.md";
+      if (isIosDevice()) {
+        const file = new File([text], filename, { type: "text/markdown" });
+        const outcome = await shareFile(file, data.trip.name);
+        if (outcome !== "unavailable") return; // shared/cancelled/failed all stay in-app
+        if (isIosStandalone()) {
+          // No file share and no safe navigation: the text modal is the exit.
+          openShareValue(text, `${data.trip.name} — markdown`);
+          return;
+        }
+      }
+      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      openShareValue(
+        "Could not load the markdown. Check your connection and try again.",
+        "Export failed",
+      );
+    } finally {
+      mdBusy = false;
     }
   }
 
@@ -282,10 +330,8 @@
             `${data.trip.name} — field sheet`,
           )}>Share text</button
       >
-      <a
-        class="link"
-        href={`/trips/${data.trip.id}/export?format=md`}
-        data-sveltekit-reload>⬇ .md</a
+      <button class="link" disabled={mdBusy} onclick={downloadMarkdown}
+        >⬇ .md</button
       >
     </div>
     <p class="sub">
