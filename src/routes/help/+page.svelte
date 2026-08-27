@@ -407,8 +407,21 @@
 						Maps for turn-by-turn navigation.
 					</li>
 					<li>
-						<strong>Export</strong> — download the trip as a Markdown file to keep
-						or share.
+						<strong>Export</strong> — 🔗 Export opens a self-contained field
+						sheet in a browser tab (savable, printable, dark-mode aware) with
+						your per-stop needs and field tips; ⬇ .md downloads Markdown.
+					</li>
+					<li>
+						<strong>Share text</strong> — opens the trip text in an in-app panel
+						with system Share and Copy buttons. Use this on the home-screen app:
+						it never navigates away, so you can't get stuck outside the app.
+					</li>
+					<li>
+						<strong>Share link</strong> — creates a private URL anyone can open
+						without logging in. They see the full field sheet with your target
+						species and tips, but none of the links into your account. Revoke or
+						regenerate it anytime from the trip page — the old URL stops working
+						immediately.
 					</li>
 				</ul>
 			</div>

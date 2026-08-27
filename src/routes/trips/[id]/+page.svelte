@@ -8,6 +8,7 @@
   import MapLink from "$components/MapLink.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
   import { normalizeTripStopNote, plannerTargetNote } from "$lib/planner-note";
+  import { canShareText, shareText } from "$lib/share";
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import { calendarMonth } from "$lib/forecast-calendar";
@@ -24,6 +25,100 @@
   let editing = $state(false);
   let deleteOpen = $state(false);
   let distanceUnit = $state<DistanceUnit>("mi");
+
+  // Share modal (trips-app pattern, td-8b959f follow-up). In the installed
+  // PWA a navigation to a download strands the user — no back control — so
+  // export text and the share URL surface IN-APP: modal + system share
+  // sheet + copy. The export endpoints stay untouched.
+  let shareModal = $state<{ title: string; text: string; error: boolean } | null>(null);
+  let shareBusy = $state(false);
+  let shareCopied = $state(false);
+  let shareSheetError = $state("");
+  let shareReturnFocus: HTMLElement | null = null;
+  let shareCloseBtn = $state<HTMLButtonElement | null>(null);
+
+  $effect(() => {
+    if (shareModal && shareCloseBtn) shareCloseBtn.focus();
+  });
+
+  async function openShareText(url: string, title: string) {
+    if (shareBusy) return;
+    shareBusy = true;
+    shareCopied = false;
+    shareSheetError = "";
+    shareReturnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    try {
+      const res = await fetch(url, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      shareModal = { title, text: await res.text(), error: false };
+    } catch {
+      shareModal = {
+        title,
+        text: "Could not load the text. Check your connection and try again.",
+        error: true,
+      };
+    } finally {
+      shareBusy = false;
+    }
+  }
+
+  /** Same modal, no fetch — used to show/copy/share the share-link URL. */
+  function openShareValue(text: string, title: string) {
+    shareCopied = false;
+    shareSheetError = "";
+    shareReturnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    shareModal = { title, text, error: false };
+  }
+
+  function closeShareModal() {
+    shareModal = null;
+    shareCopied = false;
+    shareSheetError = "";
+    shareReturnFocus?.focus();
+    shareReturnFocus = null;
+  }
+
+  /** Keep Tab inside the dialog while it is open. */
+  function trapShareFocus(e: KeyboardEvent) {
+    if (e.key !== "Tab") return;
+    const dialog = (e.currentTarget as HTMLElement) ?? null;
+    if (!dialog) return;
+    const focusables = dialog.querySelectorAll<HTMLElement>(
+      'button, [href], textarea, input, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  async function runShareSheet() {
+    if (!shareModal) return;
+    const outcome = await shareText(shareModal.text, shareModal.title);
+    // 'cancelled' is the user closing the sheet — quiet, not an error.
+    if (outcome === "failed" || outcome === "unavailable") {
+      shareSheetError = "Sharing failed here — use Copy instead.";
+    }
+  }
+
+  async function copyShareText() {
+    if (!shareModal) return;
+    try {
+      await navigator.clipboard.writeText(shareModal.text);
+      shareCopied = true;
+      setTimeout(() => (shareCopied = false), 1600);
+    } catch {
+      shareSheetError = "Copy failed — select the text and copy manually.";
+    }
+  }
 
   const MONTH_ABBR = [
     "Jan",
@@ -178,6 +273,15 @@
         target="_blank"
         rel="noopener">🔗 Export</a
       >
+      <button
+        class="link"
+        disabled={shareBusy}
+        onclick={() =>
+          openShareText(
+            `/trips/${data.trip.id}/export?format=md`,
+            `${data.trip.name} — field sheet`,
+          )}>Share text</button
+      >
       <a
         class="link"
         href={`/trips/${data.trip.id}/export?format=md`}
@@ -200,6 +304,43 @@
   {/if}
   {#if form && "error" in form && form.error}
     <section class="card"><p class="err" role="alert">{form.error}</p></section>
+  {/if}
+
+  {#if data.canEdit}
+    <section class="card sharecard">
+      {#if data.share}
+        <div class="sharebar">
+          <span class="muted"
+            >Share link active since {new Date(data.share.created_at).toLocaleDateString(
+              "en-US",
+            )} — anyone with the link can view this trip's field sheet.</span
+          >
+          <div class="share-actions">
+            <button
+              class="btn"
+              onclick={() =>
+                openShareValue(
+                  `${location.origin}/share/trip/${data.share!.token}`,
+                  `${data.trip.name} — share link`,
+                )}>Show link</button
+            >
+            <form method="POST" action="?/revoke_share" use:enhance>
+              <button type="submit" class="btn">Revoke</button>
+            </form>
+          </div>
+        </div>
+      {:else}
+        <div class="sharebar">
+          <span class="muted"
+            >Share this trip's field sheet with a friend — no login needed on their
+            end, and you can revoke the link anytime.</span
+          >
+          <form method="POST" action="?/create_share" use:enhance>
+            <button type="submit" class="btn">Create share link</button>
+          </form>
+        </div>
+      {/if}
+    </section>
   {/if}
 
   {#if editing}
@@ -688,6 +829,53 @@
     >
   </p>
 </div>
+
+<!-- Share modal (trips-app pattern): unlike the confirm modals this one
+     closes on backdrop tap — the ticket is precisely that iOS users had no
+     way out, and Escape does not exist on a phone. -->
+{#if shareModal}
+  <div
+    class="modal-overlay"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeShareModal();
+    }}
+  >
+    <div
+      class="modal share-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="share-title"
+      tabindex="-1"
+      onkeydown={trapShareFocus}
+    >
+      <h3 id="share-title">{shareModal.title}</h3>
+      <textarea class="share-text-body" readonly value={shareModal.text}></textarea>
+      {#if shareSheetError}
+        <p class="err" role="alert">{shareSheetError}</p>
+      {/if}
+      <div class="actions">
+        {#if !shareModal.error && canShareText()}
+          <button class="btn" onclick={runShareSheet}>Share…</button>
+        {/if}
+        {#if !shareModal.error}
+          <button class="btn" onclick={copyShareText}
+            >{shareCopied ? "Copied ✓" : "Copy"}</button
+          >
+        {/if}
+        <button class="btn" bind:this={shareCloseBtn} onclick={closeShareModal}
+          >Close</button
+        >
+      </div>
+    </div>
+  </div>
+{/if}
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && shareModal) closeShareModal();
+  }}
+/>
 
 <!-- Destructive action → modal confirmation (cs.md) -->
 {#if deleteOpen}
@@ -1219,6 +1407,37 @@
     background: var(--danger);
     border-color: var(--danger);
     color: #fff;
+  }
+  .share-modal {
+    max-width: 560px;
+  }
+  .share-text-body {
+    width: 100%;
+    height: 40vh;
+    min-height: 160px;
+    font-size: 16px; /* prevents iOS zoom-on-focus */
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--bg);
+    color: var(--text);
+    resize: none;
+    margin-bottom: 12px;
+  }
+  .sharecard {
+    padding: 12px 16px;
+  }
+  .sharebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .share-actions {
+    display: flex;
+    gap: 8px;
   }
 
   @media (min-width: 640px) {

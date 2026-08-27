@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.4': true,
+		'v0.1.5': true,
+		'v0.1.4': false,
 		'v0.1.3': false,
 		'v0.1.2': false,
 		'v0.1.1': false,
@@ -101,6 +102,35 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.5 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.5']}
+					aria-expanded={openVersions['v0.1.5']}
+					onclick={() => toggleVersion('v0.1.5')}
+				>
+					<span class="v-tag current">v0.1.5</span>
+					<span class="v-title">Trip Field Sheets &amp; Sharing</span>
+					<span class="v-date">August 2026</span>
+					<span class="chev">{openVersions['v0.1.5'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.5']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>Trip export &amp; sharing</strong> — trips export as a
+								self-contained HTML field sheet (needs lists, field tips, map
+								links) or Markdown; a new in-app Share panel works safely from
+								the home-screen app; and revocable share links let friends view
+								a trip's field sheet without an account.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.4 -->
 			<div class="version-entry">
 				<button
@@ -110,7 +140,7 @@
 					aria-expanded={openVersions['v0.1.4']}
 					onclick={() => toggleVersion('v0.1.4')}
 				>
-					<span class="v-tag current">v0.1.4</span>
+					<span class="v-tag">v0.1.4</span>
 					<span class="v-title">AI Model Control &amp; Cost Meter</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.4'] ? '▾' : '▸'}</span>

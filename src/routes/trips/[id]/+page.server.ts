@@ -17,6 +17,7 @@ import { tidesForStops } from "$server/tides";
 import type { TideResult } from "$lib/tide-format";
 import { weatherFor, type WeatherResult } from "$server/weather";
 import { fieldTipsForTrip, GuidanceError } from "$server/ai-guidance";
+import { createShare, getActiveShare, revokeShare } from "$server/trip-shares";
 import {
   addStop,
   deleteTrip,
@@ -194,6 +195,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     stops,
     home,
     canEdit: locals.user!.role !== "viewer",
+    // Owners only: viewers neither see nor manage share links (and hooks
+    // block them from the non-GET actions regardless).
+    share:
+      locals.user!.role !== "viewer" ? await getActiveShare(locals.user!.id, tripId) : null,
     needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
     needsSpecies: Object.fromEntries(needs.species) as Record<
       string,
@@ -400,5 +405,27 @@ export const actions: Actions = {
     if (!Number.isInteger(stopId)) return fail(400, { error: "Bad stop id." });
     await updateStopNotes(locals.user!.id, tripId, stopId, notes);
     return { ok: true as const, message: "Note saved." };
+  },
+
+  /** Create (or regenerate) the public share link. Ownership is re-checked
+   * inside createShare; viewers never reach non-GET actions (hooks). */
+  create_share: async ({ locals, params }) => {
+    const tripId = tripIdFrom(params);
+    const token = await createShare(locals.user!.id, tripId);
+    if (!token) return fail(404, { error: "Trip not found." });
+    return {
+      ok: true as const,
+      message: "Share link created — anyone with the link can view this trip's field sheet.",
+    };
+  },
+
+  revoke_share: async ({ locals, params }) => {
+    const tripId = tripIdFrom(params);
+    const revoked = await revokeShare(locals.user!.id, tripId);
+    if (!revoked) return fail(400, { error: "No active share link." });
+    return {
+      ok: true as const,
+      message: "Share link revoked — the old URL no longer works.",
+    };
   },
 };

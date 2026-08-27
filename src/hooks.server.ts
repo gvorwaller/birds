@@ -13,9 +13,16 @@ export const SESSION_COOKIE_OPTS = {
 };
 
 const PUBLIC_PATHS = ['/login', '/api/health', '/api/internal/trip-places'];
+// Token-authenticated public pages: the URL token IS the credential (trip
+// share links, td-8b959f follow-up). Prefix-matched; bare '/share' stays
+// private (nothing lives there).
+const PUBLIC_PREFIXES = ['/share/'];
 
-function isPublic(path: string): boolean {
-	return PUBLIC_PATHS.some((p) => path === p);
+/** Exported for unit tests — the public surface is worth pinning. */
+export function isPublicPath(path: string): boolean {
+	return (
+		PUBLIC_PATHS.some((p) => path === p) || PUBLIC_PREFIXES.some((p) => path.startsWith(p))
+	);
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -33,7 +40,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	const path = event.url.pathname;
 
-	if (!isPublic(path) && !event.locals.user) {
+	if (!isPublicPath(path) && !event.locals.user) {
 		// /api/* consumers are programmatic (the jobs poller) — an expired
 		// session must be a machine-readable 401, never the login-page 303
 		// whose HTML would masquerade as a network failure (GROK #1).
