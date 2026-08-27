@@ -170,10 +170,18 @@
           >{editing ? "Close" : "Edit"}</button
         >
       {/if}
+      <!-- Export opens the self-contained HTML field sheet in a tab
+           (savable/printable); .md keeps the original download (td-8b959f). -->
       <a
         class="link"
         href={`/trips/${data.trip.id}/export`}
-        data-sveltekit-reload>⬇ Export</a
+        target="_blank"
+        rel="noopener">🔗 Export</a
+      >
+      <a
+        class="link"
+        href={`/trips/${data.trip.id}/export?format=md`}
+        data-sveltekit-reload>⬇ .md</a
       >
     </div>
     <p class="sub">
