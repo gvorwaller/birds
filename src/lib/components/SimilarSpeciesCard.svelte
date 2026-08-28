@@ -128,7 +128,8 @@
 					{@render row(item)}
 				{/each}
 			</div>
-		{:else if inatStatus === 'no_mapping'}
+		{/if}
+		{#if inatStatus === 'no_mapping'}
 			<p class="state-note muted">
 				This species couldn’t be matched to iNaturalist’s taxonomy, so no
 				misidentification data is available for it.

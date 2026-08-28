@@ -118,30 +118,42 @@ export function factsFromWikidata(row: WikidataSpeciesRow): EnrichmentFacts {
 export async function upsertResolution(
 	code: string,
 	row: WikidataSpeciesRow | null,
-	exec: Exec = query
+	exec?: Exec
 ): Promise<void> {
-	if (row == null) {
-		await exec(
-			`INSERT INTO species_enrichment (species_code, resolution)
-			 VALUES ($1, 'no_mapping')
-			 ON CONFLICT (species_code) DO UPDATE SET resolution = 'no_mapping', updated_at = NOW()`,
-			[code]
-		);
-		return;
-	}
-	const resolution = row.enwikiTitle ? 'mapped' : 'no_sitelink';
-	const crossIds: EnrichmentCrossIds = {};
-	if (row.inatTaxonId) crossIds.inat_taxon_id = row.inatTaxonId;
-	if (row.xenoCantoId) crossIds.xeno_canto_id = row.xenoCantoId;
-	// Pre-read the OLD iNat mapping (self-review R5: this function was a blind
-	// upsert; the targeted invalidation below needs old_id, and the caller
-	// must run pre-read + write + invalidation in ONE transaction).
+	if (exec) return upsertResolutionWithExec(code, row, exec);
+	await withTransaction(async (client) =>
+		upsertResolutionWithExec(code, row, clientExec(client))
+	);
+}
+
+async function upsertResolutionWithExec(
+	code: string,
+	row: WikidataSpeciesRow | null,
+	exec: Exec
+): Promise<void> {
 	const prev = await exec<{ inat_id: string | null; inat_sci_name: string | null }>(
 		`SELECT cross_ids->>'inat_taxon_id' AS inat_id, inat_sci_name
 		   FROM species_enrichment WHERE species_code = $1`,
 		[code]
 	);
 	const oldId = prev.rows[0]?.inat_id ?? null;
+	if (row == null) {
+		await exec(
+			`INSERT INTO species_enrichment
+			   (species_code, resolution, wikidata_qid, iucn_status, facts, cross_ids)
+			 VALUES ($1, 'no_mapping', NULL, NULL, '{}'::jsonb, '{}'::jsonb)
+			 ON CONFLICT (species_code) DO UPDATE SET
+			   resolution = 'no_mapping', wikidata_qid = NULL, iucn_status = NULL,
+			   facts = '{}'::jsonb, cross_ids = '{}'::jsonb, updated_at = NOW()`,
+			[code]
+		);
+		await invalidateInatMappingChange(exec, code, oldId, null, prev.rows[0]?.inat_sci_name ?? null);
+		return;
+	}
+	const resolution = row.enwikiTitle ? 'mapped' : 'no_sitelink';
+	const crossIds: EnrichmentCrossIds = {};
+	if (row.inatTaxonId) crossIds.inat_taxon_id = row.inatTaxonId;
+	if (row.xenoCantoId) crossIds.xeno_canto_id = row.xenoCantoId;
 	await exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids)
@@ -163,20 +175,34 @@ export async function upsertResolution(
 	// actually affected — self, plus species whose raw edges reference either
 	// id (indexed) or the focal's iNat binomial (namespace-correct; never the
 	// eBird sci name). NEVER a global clock: that was the full-corpus storm.
-	const newId = row.inatTaxonId ?? null;
-	if (oldId !== newId) {
-		const ids = [oldId, newId].filter((x): x is string => x !== null);
-		const nameArm = prev.rows[0]?.inat_sci_name?.toLowerCase() ?? null;
-		await exec(
-			`UPDATE species_enrichment SET similar_candidates_hash = NULL, updated_at = NOW()
-			  WHERE species_code = $1
-			     OR species_code IN (
-			       SELECT sis.species_code FROM species_inat_similar sis
-			        WHERE (cardinality($2::text[]) > 0 AND sis.inat_taxon_id::text = ANY($2::text[]))
-			           OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
-			[code, ids, nameArm]
-		);
-	}
+	await invalidateInatMappingChange(
+		exec,
+		code,
+		oldId,
+		row.inatTaxonId ?? null,
+		prev.rows[0]?.inat_sci_name ?? null
+	);
+}
+
+async function invalidateInatMappingChange(
+	exec: Exec,
+	code: string,
+	oldId: string | null,
+	newId: string | null,
+	inatSciName: string | null
+): Promise<void> {
+	if (oldId === newId) return;
+	const ids = [oldId, newId].filter((x): x is string => x !== null);
+	const nameArm = inatSciName?.toLowerCase() ?? null;
+	await exec(
+		`UPDATE species_enrichment SET similar_candidates_hash = NULL, updated_at = NOW()
+		  WHERE species_code = $1
+		     OR species_code IN (
+		       SELECT sis.species_code FROM species_inat_similar sis
+		        WHERE (cardinality($2::text[]) > 0 AND sis.inat_taxon_id::text = ANY($2::text[]))
+		           OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
+		[code, ids, nameArm]
+	);
 }
 
 /** Store fetched article prose; stamps the wiki freshness clock. */
@@ -914,6 +940,7 @@ export interface AiStageInput {
 	 * this is terminal ('ok'/'none'/'no_mapping'). */
 	inatSimilarStatus: string | null;
 	inatSimilarFetchedAt: string | null;
+	taxonomyFetchedAt: string | null;
 }
 
 /**
@@ -935,12 +962,14 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		similar_generated_at: string | null;
 		inat_similar_status: string | null;
 		inat_similar_fetched_at: string | null;
+		taxonomy_fetched_at: string | null;
 	}>(
 		`SELECT wikipedia_extract, wikipedia_sections, wikipedia_rev_id::text,
 		        ai_status, ai_source_rev_id::text, ai_attempted_at::text,
 		        similar_status, similar_candidates_hash,
 		        similar_source_rev_id::text, similar_attempted_at::text,
-		        similar_generated_at::text, inat_similar_status, inat_similar_fetched_at::text
+		        similar_generated_at::text, inat_similar_status, inat_similar_fetched_at::text,
+		        (SELECT MAX(fetched_at)::text FROM taxonomy_cache) AS taxonomy_fetched_at
 		   FROM species_enrichment
 		  WHERE species_code = $1 AND wiki_status = 'ok' AND wikipedia_extract IS NOT NULL`,
 		[code]
@@ -961,7 +990,8 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		similarAttemptedAt: row.similar_attempted_at,
 		similarGeneratedAt: row.similar_generated_at,
 		inatSimilarStatus: row.inat_similar_status,
-		inatSimilarFetchedAt: row.inat_similar_fetched_at
+		inatSimilarFetchedAt: row.inat_similar_fetched_at,
+		taxonomyFetchedAt: row.taxonomy_fetched_at
 	};
 }
 
@@ -1519,13 +1549,14 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 			         OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
 			[code, st.inatTaxonId, nameArm]
 		);
-		const reverse: SimilarCandidateRow[] = [];
+		const reverse: (SimilarCandidateRow & { sourceEdgeTaxonId: string })[] = [];
 		const forwardCodes = new Set(forward.selected.map((s) => s.speciesCode));
 		for (const p of partnersRes.rows) {
 			if (forwardCodes.has(p.species_code)) continue;
 			const pState = await focalInatState(p.species_code, exec);
 			const pSel = selectInatCandidates(await loadResolvedEdges(p.species_code, exec), pState.family);
-			if (pSel.selected.some((s) => s.speciesCode === code)) {
+			const support = pSel.selected.find((s) => s.speciesCode === code);
+			if (support) {
 				const names = await candidateNames([p.species_code], exec);
 				const n = names.get(p.species_code);
 				if (n) {
@@ -1533,7 +1564,8 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 						code: p.species_code,
 						comName: n.com_name,
 						sciName: n.sci_name,
-						misidCount: null
+						misidCount: null,
+						sourceEdgeTaxonId: support.inatTaxonId
 					});
 				}
 			}
@@ -1559,8 +1591,8 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 				`INSERT INTO species_similar_display
 				   (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
 				    inat_com_name, misid_count, origin, unresolved)
-				 VALUES ($1, $2, $3, NULL, $4, NULL, NULL, 'reverse', FALSE)`,
-				[code, pos, rrow.code, rrow.sciName]
+				 VALUES ($1, $2, $3, $4, $5, NULL, NULL, 'reverse', FALSE)`,
+				[code, pos, rrow.code, rrow.sourceEdgeTaxonId, rrow.sciName]
 			);
 		}
 		for (const u of forward.unresolved) {
@@ -1573,22 +1605,27 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 				[code, pos, u.inat_sci_name, u.inat_com_name, u.misid_count]
 			);
 		}
-		await exec(
-			`UPDATE species_enrichment
-			    SET inat_resolution_fingerprint = $2, updated_at = NOW()
-			  WHERE species_code = $1`,
-			[code, fp]
-		);
-
-		return [
+		const offered: SimilarCandidateRow[] = [
 			...forward.selected.map((s) => ({
 				code: s.speciesCode,
 				comName: s.comName,
 				sciName: s.sciName,
 				misidCount: s.misidCount as number | null
 			})),
-			...reverse
+			...reverse.map(({ sourceEdgeTaxonId: _sourceEdgeTaxonId, ...candidate }) => candidate)
 		];
+		const offeredHash = similarCandidatesHash(offered.map((c) => c.code));
+		await exec(
+			`UPDATE species_enrichment
+			    SET inat_resolution_fingerprint = $2,
+			        similar_candidates_hash = $3,
+			        similar_status = NULL,
+			        updated_at = NOW()
+			  WHERE species_code = $1`,
+			[code, fp, offeredHash]
+		);
+
+		return offered;
 	});
 }
 
@@ -1612,15 +1649,47 @@ async function candidateNames(
  */
 export async function markSimilarDeclined(code: string, declinedCodes: readonly string[]): Promise<void> {
 	if (declinedCodes.length === 0) return;
-	await query(
-		`UPDATE species_inat_similar sis SET declined_at = NOW()
-		  WHERE sis.species_code = $1
-		    AND sis.inat_taxon_id IN (
-		      SELECT d.inat_taxon_id FROM species_similar_display d
-		       WHERE d.species_code = $1 AND d.resolved_code = ANY($2::text[])
-		         AND d.inat_taxon_id IS NOT NULL)`,
-		[code, declinedCodes]
-	);
+	await withTransaction(async (client) => {
+		const exec = clientExec(client);
+		const display = await exec<{ resolved_code: string; origin: 'forward' | 'reverse' }>(
+			`SELECT resolved_code, origin FROM species_similar_display
+			  WHERE species_code = $1 AND resolved_code = ANY($2::text[])`,
+			[code, declinedCodes]
+		);
+		const ownerTargets = new Map<string, Set<string>>();
+		for (const row of display.rows) {
+			const owner = row.origin === 'forward' ? code : row.resolved_code;
+			const target = row.origin === 'forward' ? row.resolved_code : code;
+			const targets = ownerTargets.get(owner) ?? new Set<string>();
+			targets.add(target);
+			ownerTargets.set(owner, targets);
+		}
+		for (const [owner, targets] of ownerTargets) {
+			const taxonIds = (await loadResolvedEdges(owner, exec))
+				.filter(
+					(e) =>
+						typeof e.resolution === 'object' &&
+						e.resolution !== null &&
+						targets.has(e.resolution.speciesCode)
+				)
+				.map((e) => e.inatTaxonId);
+			if (taxonIds.length > 0) {
+				await exec(
+					`UPDATE species_inat_similar SET declined_at = NOW()
+					  WHERE species_code = $1 AND inat_taxon_id::text = ANY($2::text[])`,
+					[owner, taxonIds]
+				);
+			}
+		}
+		const owners = [...ownerTargets.keys()];
+		await exec(
+			`UPDATE species_enrichment SET similar_candidates_hash = NULL, updated_at = NOW()
+			  WHERE species_code = $1
+			     OR species_code = ANY($2::text[])
+			     OR species_code = ANY($3::text[])`,
+			[code, declinedCodes, owners]
+		);
+	});
 }
 
 /**
@@ -1891,6 +1960,28 @@ export async function inatFresh(code: string): Promise<boolean> {
 	return r.rows[0]?.fresh === true;
 }
 
+/** True only when the AI similar-note stage may safely consume the current
+ * iNat rows. Unlike inatFresh(), a backed-off error is fetch-fresh but is NOT
+ * a usable source. Kept as one SQL snapshot so a status/freshness race cannot
+ * launch a stale, duplicate-billed note pass. */
+export async function inatReadyForAi(code: string): Promise<boolean> {
+	const r = await query<{ ready: boolean }>(
+		`SELECT (
+		      se.inat_similar_status IN ('ok','none','no_mapping')
+		      AND se.inat_similar_fetched_at >= NOW() - INTERVAL '${INAT_REFRESH_DAYS} days'
+		      AND NOT (se.cross_ids ? 'inat_taxon_id'
+		               AND (se.inat_taxon_id IS NULL
+		                    OR se.inat_taxon_id::text IS DISTINCT FROM se.cross_ids->>'inat_taxon_id'))
+		      AND NOT (se.inat_similar_status IN ('ok','none')
+		               AND NOT se.cross_ids ? 'inat_taxon_id'
+		               AND se.inat_taxon_source = 'cross')
+		 ) AS ready
+		   FROM species_enrichment se WHERE se.species_code = $1`,
+		[code]
+	);
+	return r.rows[0]?.ready === true;
+}
+
 /** How the focal's iNat taxon id was established. */
 export interface InatResolution {
 	taxonId: number;
@@ -1955,17 +2046,38 @@ export async function upsertInatSimilar(
 ): Promise<void> {
 	await withTransaction(async (client) => {
 		const exec = clientExec(client);
-		const before = await exec<{ inat_taxon_id: string; inat_sci_name: string }>(
-			`SELECT inat_taxon_id, inat_sci_name FROM species_inat_similar
+		const before = await exec<{
+			inat_taxon_id: string;
+			misid_count: number;
+			inat_sci_name: string;
+			inat_com_name: string | null;
+		}>(
+			`SELECT inat_taxon_id, misid_count, inat_sci_name, inat_com_name
+			   FROM species_inat_similar
 			  WHERE species_code = $1`,
 			[code]
 		);
-		const beforeIds = new Set(before.rows.map((r) => String(r.inat_taxon_id)));
-		const afterIds = new Set(rows.map((r) => String(r.taxonId)));
-		const added = rows.filter((r) => !beforeIds.has(String(r.taxonId)));
-		const removed = before.rows
-			.filter((r) => !afterIds.has(String(r.inat_taxon_id)))
-			.map((r) => ({ taxonId: Number(r.inat_taxon_id), sciName: r.inat_sci_name }));
+		const beforeById = new Map(before.rows.map((r) => [String(r.inat_taxon_id), r]));
+		const contentChanged =
+			before.rows.length !== rows.length ||
+			rows.some((r) => {
+				const old = beforeById.get(String(r.taxonId));
+				return (
+					old === undefined ||
+					old.misid_count !== r.misidCount ||
+					old.inat_sci_name !== r.sciName ||
+					old.inat_com_name !== r.comName
+				);
+			});
+		const affectedEdges = contentChanged
+			? [
+					...before.rows.map((r) => ({
+						taxonId: Number(r.inat_taxon_id),
+						sciName: r.inat_sci_name
+					})),
+					...rows
+				]
+			: [];
 
 		await exec(
 			`DELETE FROM species_inat_similar
@@ -1998,7 +2110,21 @@ export async function upsertInatSimilar(
 			   updated_at = NOW()`,
 			[code, resolution.taxonId, resolution.source, resolution.sciName, rows.length > 0 ? 'ok' : 'none']
 		);
-		await stampPartnersStale(exec, code, [...added, ...removed]);
+		if (rows.length === 0) {
+			// A terminal empty source set cannot keep serving the old display while
+			// it waits for the cheap no-call prune. Clear the materialization and
+			// leave an explicit due marker in the same transaction.
+			await exec(`DELETE FROM species_similar_display WHERE species_code = $1`, [code]);
+			await exec(
+				`UPDATE species_enrichment
+				    SET inat_resolution_fingerprint = NULL,
+				        similar_candidates_hash = NULL,
+				        updated_at = NOW()
+				  WHERE species_code = $1`,
+				[code]
+			);
+		}
+		await stampPartnersStale(exec, code, affectedEdges);
 	});
 }
 
@@ -2027,6 +2153,15 @@ export async function markInatNoMapping(code: string): Promise<void> {
 			   inat_similar_attempted_at = NOW(), inat_similar_error = NULL,
 			   inat_taxon_id = NULL, inat_taxon_source = NULL,
 			   updated_at = NOW()`,
+			[code]
+		);
+		await exec(`DELETE FROM species_similar_display WHERE species_code = $1`, [code]);
+		await exec(
+			`UPDATE species_enrichment
+			    SET inat_resolution_fingerprint = NULL,
+			        similar_candidates_hash = NULL,
+			        updated_at = NOW()
+			  WHERE species_code = $1`,
 			[code]
 		);
 		await stampPartnersStale(

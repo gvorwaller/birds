@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS species_similar_display (
     species_code   TEXT   NOT NULL,   -- focal eBird species
     position       INT    NOT NULL,   -- render order (forward by count, then reverse)
     resolved_code  TEXT,              -- eBird code; NULL for unresolved entries
-    inat_taxon_id  BIGINT,            -- source edge taxon (partner's own id for reverse rows)
+    inat_taxon_id  BIGINT,            -- raw source-edge taxon id (also populated for reverse rows)
     inat_sci_name  TEXT   NOT NULL,   -- iNat binomial (unresolved display + provenance)
     inat_com_name  TEXT,
     misid_count    INT,               -- NULL for reverse extras (count lives on the partner's edge)

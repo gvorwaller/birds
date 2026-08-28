@@ -9,6 +9,8 @@ import {
 	selectInatCandidates,
 	similarCandidatesFor,
 	similarCandidatesHash,
+	markSimilarDeclined,
+	upsertResolution,
 	type ResolvedEdgeInput
 } from './species-enrichment';
 
@@ -53,6 +55,7 @@ async function seed() {
 }
 
 async function cleanup() {
+	await query(`DELETE FROM species_similar_display WHERE species_code = ANY($1)`, [CODES]);
 	await query(`DELETE FROM species_inat_similar WHERE species_code = ANY($1)`, [CODES]);
 	await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [CODES]);
 	await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [CODES]);
@@ -80,6 +83,25 @@ const EDGE_A = { taxonId: 777, misidCount: 40, sciName: 'Testus partneris', comN
 const EDGE_B = { taxonId: 888, misidCount: 10, sciName: 'Testus tertius', comName: null };
 
 describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', () => {
+	it('Wikidata no_mapping clears a removed P3151 and invalidates affected partners', { timeout: T }, async () => {
+		await seed();
+		try {
+			await query(
+				`UPDATE species_enrichment SET cross_ids = jsonb_build_object('inat_taxon_id', '4368'),
+				        inat_sci_name = 'Testus focalis' WHERE species_code = $1`, [FOCAL]);
+			await query(
+				`INSERT INTO species_inat_similar
+				   (species_code, inat_taxon_id, rank, misid_count, inat_sci_name)
+				 VALUES ($1, 4368, 1, 20, 'Testus focalis')`, [PARTNER]);
+			await query(`UPDATE species_enrichment SET similar_candidates_hash = 'stable' WHERE species_code = $1`, [PARTNER]);
+			await upsertResolution(FOCAL, null);
+			const focal = await query<{ cross_ids: Record<string, string>; resolution: string }>(
+				`SELECT cross_ids, resolution FROM species_enrichment WHERE species_code = $1`, [FOCAL]);
+			expect(focal.rows[0]).toEqual({ cross_ids: {}, resolution: 'no_mapping' });
+			expect((await enrichmentRow(PARTNER)).similar_candidates_hash).toBeNull();
+		} finally { await cleanup(); }
+	});
+
 	it(
 		'upsertInatSimilar stores ranked edges, stamps ok, and preserves declined_at across refetches',
 		{ timeout: T },
@@ -150,6 +172,11 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 				);
 				await upsertInatSimilar(FOCAL, { taxonId: 4368, source: 'search', sciName: null }, [EDGE_A]);
 				expect((await enrichmentRow(PARTNER)).similar_candidates_hash).toBeNull(); // ADD stamped
+				await query(`UPDATE species_enrichment SET similar_candidates_hash = 'h-count' WHERE species_code = $1`, [PARTNER]);
+				await upsertInatSimilar(FOCAL, { taxonId: 4368, source: 'search', sciName: null }, [
+					{ ...EDGE_A, misidCount: 41 }
+				]);
+				expect((await enrichmentRow(PARTNER)).similar_candidates_hash).toBeNull();
 
 				await query(
 					`UPDATE species_enrichment SET similar_candidates_hash = 'h-drop'
@@ -167,6 +194,12 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 				);
 				await upsertInatSimilar(FOCAL, { taxonId: 4368, source: 'search', sciName: null }, [EDGE_A]);
 				await query(
+					`INSERT INTO species_similar_display
+					   (species_code, position, resolved_code, inat_taxon_id, inat_sci_name, origin, unresolved)
+					 VALUES ($1, 1, $2, 777, 'Testus partneris', 'forward', FALSE)`,
+					[FOCAL, PARTNER]
+				);
+				await query(
 					`UPDATE species_enrichment SET similar_candidates_hash = 'h-nomap2'
 					  WHERE species_code = $1`,
 					[PARTNER]
@@ -181,6 +214,8 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 				expect(focal.inat_similar_status).toBe('no_mapping');
 				expect(focal.inat_taxon_id).toBeNull();
 				expect(focal.inat_taxon_source).toBeNull();
+				const display = await query(`SELECT 1 FROM species_similar_display WHERE species_code = $1`, [FOCAL]);
+				expect(display.rows).toHaveLength(0);
 				expect((await enrichmentRow(PARTNER)).similar_candidates_hash).toBeNull();
 			} finally {
 				await cleanup();
@@ -499,30 +534,44 @@ describe.runIf(dbUp)('similarCandidatesFor — reconcile persists display + reve
 				await query(
 					`INSERT INTO species_inat_similar
 					   (species_code, inat_taxon_id, rank, misid_count, inat_sci_name, inat_com_name)
-					 VALUES ($1, 9101, 1, 25, 'Testus recfocal', 'Rec Test Bird')
+					 VALUES ($1, 9101, 1, 25, 'Testus recfocal', 'Rec Test Bird'),
+					        ($1, 9991, 2, 10, 'Testus recfocal', 'Rec Test Bird')
 					 ON CONFLICT DO NOTHING`,
 					[P]
 				);
 				const offered = await similarCandidatesFor(F);
 				expect(offered.map((c) => c.code)).toEqual([P]);
 				expect(offered[0].misidCount).toBeNull(); // reverse extra
-				const disp = await query<{ resolved_code: string; origin: string }>(
-					`SELECT resolved_code, origin FROM species_similar_display
+				const disp = await query<{ resolved_code: string; origin: string; inat_taxon_id: string }>(
+					`SELECT resolved_code, origin, inat_taxon_id::text FROM species_similar_display
 					  WHERE species_code = $1 ORDER BY position`,
 					[F]
 				);
-				expect(disp.rows).toEqual([{ resolved_code: P, origin: 'reverse' }]);
+				expect(disp.rows).toEqual([{ resolved_code: P, origin: 'reverse', inat_taxon_id: '9101' }]);
+				const state = await query<{ similar_candidates_hash: string | null; similar_status: string | null }>(
+					`SELECT similar_candidates_hash, similar_status FROM species_enrichment WHERE species_code = $1`, [F]);
+				expect(state.rows[0]).toEqual({ similar_candidates_hash: similarCandidatesHash([P]), similar_status: null });
 
 				// Second call with unchanged data returns the same offered set
 				// (fingerprint short-circuit needs a stored hash — simulate the
 				// AI stage having written it).
 				await query(
-					`UPDATE species_enrichment SET similar_candidates_hash = $2, similar_status = 'ok'
+					`UPDATE species_enrichment SET similar_status = 'ok'
 					  WHERE species_code = $1`,
-					[F, similarCandidatesHash([P])]
+					[F]
 				);
 				const again = await similarCandidatesFor(F);
 				expect(again.map((c) => c.code)).toEqual([P]);
+				await query(`UPDATE species_enrichment SET similar_candidates_hash = 'partner-ok' WHERE species_code = $1`, [P]);
+				await markSimilarDeclined(F, [P]);
+				const declined = await query<{ count: string }>(
+					`SELECT COUNT(*)::text AS count FROM species_inat_similar
+					  WHERE species_code = $1 AND declined_at IS NOT NULL`, [P]);
+				expect(Number(declined.rows[0]?.count)).toBe(2);
+				expect((await enrichmentRow(P)).similar_candidates_hash).toBeNull();
+				expect(await similarCandidatesFor(F)).toEqual([]);
+				const afterDecline = await query(`SELECT 1 FROM species_similar_display WHERE species_code = $1`, [F]);
+				expect(afterDecline.rows).toHaveLength(0);
 			} finally {
 				await cleanPair();
 			}

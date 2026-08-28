@@ -88,6 +88,7 @@ import {
 	wikiStaleCodes,
 	inatDueCodes,
 	inatFresh,
+	inatReadyForAi,
 	upsertInatSimilar,
 	markInatNoMapping,
 	markInatError,
@@ -1405,6 +1406,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			similarStatus?: string | null;
 			similarCandidatesHash?: string | null;
 			similarSourceRevId?: number | null;
+			taxonomyFetchedAt?: string | null;
 		}
 	): Promise<AiOutcome> => {
 		if (!AI_STAGE_ENABLED) return 'disabled';
@@ -1418,13 +1420,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 		// Similar-substage participation is an EXPLICIT flag captured BEFORE the
 		// try body (CODEX1 F4 / self-review R-F4b): a throw during candidate
 		// reconciliation must not be mistaken for a deliberate inat-pending run.
-		const inatStatusRes = await query<{ inat_similar_status: string | null }>(
-			`SELECT inat_similar_status FROM species_enrichment WHERE species_code = $1`,
-			[code]
-		);
-		const inatStatus = inatStatusRes.rows[0]?.inat_similar_status ?? null;
-		const similarParticipating =
-			inatStatus === 'ok' || inatStatus === 'none' || inatStatus === 'no_mapping';
+		const similarParticipating = await inatReadyForAi(code);
 		try {
 			// Offered candidate set (td-460b1c Phase B): the reconcile resolves,
 			// selects, and persists the display set, so the page and the model
@@ -1550,12 +1546,34 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			let effectiveHash = hash;
 			if (declined.size > 0) {
 				await markSimilarDeclined(code, [...declined]);
-				effectiveOffered = offered.filter((c) => !declined.has(c.code));
+				effectiveOffered = await similarCandidatesFor(code);
 				effectiveHash = similarCandidatesHash(effectiveOffered.map((c) => c.code));
 				await recordEvent(job.id, 'progress', { code, similarDeclined: [...declined] });
 			}
 
-			const stillOwed = owed();
+			const effectiveCodes = new Set(effectiveOffered.map((c) => c.code));
+			const usableSimilar = kept.result.similar.filter(
+				(s) => effectiveCodes.has(s.code) && !declined.has(s.code)
+			);
+			const storedAfter =
+				effectiveOffered.length === 0
+					? []
+					: (
+							await query<{ similar_code: string }>(
+						`SELECT similar_code FROM species_similar
+						  WHERE species_code = $1 AND similar_code = ANY($2::text[])`,
+						[code, effectiveOffered.map((c) => c.code)]
+						)
+					).rows;
+			const coveredAfter = new Set([
+				...storedAfter.map((r) => r.similar_code),
+				...usableSimilar.map((s) => s.code)
+			]);
+			const stillOwed = effectiveOffered
+				.filter((c) => !coveredAfter.has(c.code))
+				.map((c) => c.code);
+			const originalAskedCodes = new Set(askFor.map((c) => c.code));
+			const newlyExposed = stillOwed.filter((c) => !originalAskedCodes.has(c));
 			if (askFor.length > 0 && stillOwed.length > 0) {
 				await recordEvent(job.id, 'progress', {
 					code,
@@ -1573,12 +1591,21 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				tags: kept.result.tags,
 				model: kept.servedModel ?? kept.requestedModel,
 				sourceRevId: prose.revId,
-				similar: kept.result.similar,
+				similar: usableSimilar,
 				similarCandidatesHash: similarParticipating ? effectiveHash : null,
 				candidateCount: effectiveOffered.length,
 				owedCodes: stillOwed,
 				offeredCodes: effectiveOffered.map((c) => c.code)
 			});
+			if (newlyExposed.length > 0) {
+				await query(
+						`UPDATE species_enrichment
+						    SET similar_status = NULL, similar_error = NULL, updated_at = NOW()
+						  WHERE species_code = $1`,
+					[code]
+				);
+				await recordEvent(job.id, 'progress', { code, similarNewlyExposed: newlyExposed });
+			}
 			counts.aiOk++;
 			if (kept.result.droppedTags.length > 0) {
 				// Vocabulary gaps surface in events, never silently (plan rule).
@@ -1749,7 +1776,11 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 						(ai.similarGeneratedAt != null &&
 							ai.inatSimilarFetchedAt != null &&
 							new Date(ai.similarGeneratedAt).getTime() <
-								new Date(ai.inatSimilarFetchedAt).getTime()));
+								new Date(ai.inatSimilarFetchedAt).getTime()) ||
+						(ai.similarGeneratedAt != null &&
+							ai.taxonomyFetchedAt != null &&
+							new Date(ai.similarGeneratedAt).getTime() <
+								new Date(ai.taxonomyFetchedAt).getTime()));
 				const aiDue =
 					ai != null &&
 					(force ||

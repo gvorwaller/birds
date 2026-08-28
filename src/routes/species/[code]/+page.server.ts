@@ -6,6 +6,7 @@ import {
   getEnrichment,
   getSimilarSpecies,
   getSpeciesMedia,
+  inatReadyForAi,
 } from "$server/species-enrichment";
 import { validSpeciesCode } from "$server/wikidata";
 import { isTideTagged } from "$lib/species-tags";
@@ -300,15 +301,6 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
  * statuses participate; everything else defers to the scan, which picks the
  * species up via aiDueCodes the moment inat lands.
  */
-async function inatTerminalFor(code: string): Promise<boolean> {
-  const r = await query<{ inat_similar_status: string | null }>(
-    `SELECT inat_similar_status FROM species_enrichment WHERE species_code = $1`,
-    [code],
-  );
-  const st = r.rows[0]?.inat_similar_status ?? null;
-  return st === "ok" || st === "none" || st === "no_mapping";
-}
-
 export const actions: Actions = {
   /**
    * First-time enrichment: any authenticated role (td-0753d0). Uses promise
@@ -379,7 +371,7 @@ export const actions: Actions = {
       } catch {
         // Non-fatal: the recurring scan covers it.
       }
-      if (now.aiDue && AI_STAGE_ENABLED && (await inatTerminalFor(code))) {
+      if (now.aiDue && AI_STAGE_ENABLED && (await inatReadyForAi(code))) {
         try {
           const ai = await enqueueJob({
             type: "enrich_species",
@@ -502,7 +494,7 @@ export const actions: Actions = {
       : null;
 
     if (now.outcome === "ok") {
-      if (now.aiDue && AI_STAGE_ENABLED && (await inatTerminalFor(code))) {
+      if (now.aiDue && AI_STAGE_ENABLED && (await inatReadyForAi(code))) {
         const ai = await enqueueJob({
           type: "enrich_species",
           payload: { codes: [code], aiOnly: true },

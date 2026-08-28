@@ -2252,8 +2252,7 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     // spends a model call: the no-call fast path writes 'none' bookkeeping.
     db.handler = (text) => {
       if (text.includes("AS skip")) return { rows: [{ skip: true }] };
-      if (text.includes("SELECT inat_similar_status FROM species_enrichment"))
-        return { rows: [{ inat_similar_status: "ok" }] };
+      if (text.includes("AS ready")) return { rows: [{ ready: true }] };
       if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
         return { rows: [TAXA_ROW] };
       if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
@@ -2346,6 +2345,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
   const freshAiDueDb = () => {
     db.handler = (text) => {
       if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("AS ready")) return { rows: [{ ready: true }] };
       if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
         return { rows: [TAXA_ROW] };
       if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
@@ -2388,9 +2388,9 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
   }[]) => {
     freshAiDueDb();
     const base = db.handler!;
+    const declinedCodes = new Set<string>();
     db.handler = (text, params) => {
-      if (text.includes("SELECT inat_similar_status FROM species_enrichment"))
-        return { rows: [{ inat_similar_status: "ok" }] };
+      if (text.includes("AS ready")) return { rows: [{ ready: true }] };
       if (text.includes("inat_resolution_fingerprint"))
         return {
           rows: [
@@ -2406,6 +2406,21 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
             },
           ],
         };
+      if (text.includes("SELECT resolved_code, origin FROM species_similar_display")) {
+        return {
+          rows: ((params?.[1] as string[] | undefined) ?? []).map((resolved_code) => ({
+            resolved_code,
+            origin: "forward",
+          })),
+        };
+      }
+      if (text.includes("UPDATE species_inat_similar SET declined_at")) {
+        for (const id of (params?.[1] as string[] | undefined) ?? []) {
+          const matched = edges.find((e) => e.id === id);
+          if (matched) declinedCodes.add(matched.code);
+        }
+        return { rows: [] };
+      }
       if (text.includes("cross_matches"))
         return {
           rows: edges.map((e) => ({
@@ -2413,7 +2428,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
             misid_count: e.count,
             inat_sci_name: e.sci,
             inat_com_name: e.com,
-            declined: false,
+            declined: declinedCodes.has(e.code),
             cross_matches: null,
             name_matches: [e.code],
           })),
@@ -2509,6 +2524,31 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+  });
+
+  it("iNat not ready: tags may run, but similar reconciliation stays untouched", async () => {
+    freshAiDueDb();
+    const base = db.handler!;
+    db.handler = (text, params) =>
+      text.includes("AS ready") ? { rows: [{ ready: false }] } : base(text, params);
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(db.calls.some((c) => c.text.includes("FROM species_similar_display"))).toBe(false);
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    expect(aiWrite?.params?.[5]).toBeNull();
+  });
+
+  it("iNat not ready: an AI failure marks only the AI stage", async () => {
+    freshAiDueDb();
+    const base = db.handler!;
+    db.handler = (text, params) =>
+      text.includes("AS ready") ? { rows: [{ ready: false }] } : base(text, params);
+    enrichMocks.generateSpeciesAnnotation.mockRejectedValue(new Error("AI unavailable"));
+    await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
+    const errorWrite = db.calls.find((c) => c.text.includes("ai_status = 'error'"));
+    expect(errorWrite).toBeDefined();
+    expect(errorWrite?.text).not.toContain("similar_status = 'error'");
   });
 
   // --- metering (td-09be7a): the regressions the ledger exists to prevent ---
@@ -2706,7 +2746,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
     expect(aiWrite?.params?.[5]).toBe("none"); // offered shrank to zero after the decline
     const stamp = db.calls.find((c) => c.text.includes("SET declined_at = NOW()"));
-    expect(stamp?.params?.[1]).toEqual(["hudgod"]);
+    expect(stamp?.params?.[1]).toEqual(["200"]);
   });
 
   it("retries when a slash candidate is owed a note, even if others got one", async () => {
@@ -2738,14 +2778,14 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     // an equal-count retry could swap which candidate was filled or drop genus
     // notes while the comment claimed it "can only improve". This test actually
     // enters that branch — the previous one never did.
-    freshAiDueDbWithCandidates();
+    freshAiDueDbTwoSlash();
     const first = "FIRST: longer, straighter bill and a bolder wingbar overall.";
     const second = "SECOND: longer, straighter bill and a bolder wingbar overall.";
     enrichMocks.generateSpeciesAnnotation
-      // Attempt 0 owes hudgod (note is for an unrelated code).
-      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "other1", note: first }] })
-      // Attempt 1 also owes hudgod — same count, different content.
-      .mockResolvedValue({ ...ANNOTATION, similar: [{ code: "other2", note: second }] });
+      // Attempt 0 fills hudgod and still owes biltai.
+      .mockResolvedValueOnce({ ...ANNOTATION, similar: [{ code: "hudgod", note: first }] })
+      // Attempt 1 fills biltai and still owes hudgod — same count.
+      .mockResolvedValue({ ...ANNOTATION, similar: [{ code: "biltai", note: second }] });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     const write = db.calls.filter((c) => c.text.includes("INSERT INTO species_similar"));
     // The earlier attempt's note survives the tie.
