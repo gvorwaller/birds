@@ -1,0 +1,7377 @@
+{
+  "generatedAt": "run-2026-08-28",
+  "corpus": 3550,
+  "statusResidueErrors": [
+    {
+      "species_code": "souboo8",
+      "err": null
+    }
+  ],
+  "builderErrors": [],
+  "species": {
+    "noCallFullyCovered": 304,
+    "needingAiCall": 2748,
+    "zeroCandidates": 498
+  },
+  "pairs": {
+    "preserved": 2024,
+    "newNotesNeeded": 12451
+  },
+  "unresolvedDisplayRows": 69,
+  "offeredSizeHistogram": [
+    [
+      0,
+      498
+    ],
+    [
+      1,
+      633
+    ],
+    [
+      2,
+      586
+    ],
+    [
+      3,
+      444
+    ],
+    [
+      4,
+      250
+    ],
+    [
+      5,
+      168
+    ],
+    [
+      6,
+      148
+    ],
+    [
+      7,
+      230
+    ],
+    [
+      8,
+      158
+    ],
+    [
+      9,
+      102
+    ],
+    [
+      10,
+      69
+    ],
+    [
+      11,
+      57
+    ],
+    [
+      12,
+      48
+    ],
+    [
+      13,
+      32
+    ],
+    [
+      14,
+      18
+    ],
+    [
+      15,
+      24
+    ],
+    [
+      16,
+      16
+    ],
+    [
+      17,
+      17
+    ],
+    [
+      18,
+      4
+    ],
+    [
+      19,
+      7
+    ],
+    [
+      20,
+      6
+    ],
+    [
+      21,
+      7
+    ],
+    [
+      22,
+      3
+    ],
+    [
+      23,
+      3
+    ],
+    [
+      24,
+      3
+    ],
+    [
+      25,
+      4
+    ],
+    [
+      26,
+      2
+    ],
+    [
+      27,
+      1
+    ],
+    [
+      28,
+      1
+    ],
+    [
+      29,
+      1
+    ],
+    [
+      30,
+      1
+    ],
+    [
+      31,
+      2
+    ],
+    [
+      32,
+      1
+    ],
+    [
+      34,
+      1
+    ],
+    [
+      36,
+      1
+    ],
+    [
+      37,
+      1
+    ],
+    [
+      42,
+      1
+    ],
+    [
+      64,
+      1
+    ],
+    [
+      100,
+      1
+    ]
+  ],
+  "crossFamilyPairs": [
+    {
+      "focal": "houfin",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 924
+    },
+    {
+      "focal": "houspa",
+      "partner": "houfin",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 924
+    },
+    {
+      "focal": "chispa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 807
+    },
+    {
+      "focal": "houspa",
+      "partner": "chispa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": 807
+    },
+    {
+      "focal": "houspa",
+      "partner": "sonspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": 718
+    },
+    {
+      "focal": "sonspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 718
+    },
+    {
+      "focal": "amecro",
+      "partner": "grtgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 654
+    },
+    {
+      "focal": "grtgra",
+      "partner": "amecro",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 654
+    },
+    {
+      "focal": "eurbla",
+      "partner": "eursta",
+      "ff": "Thrushes and Allies",
+      "pf": "Starlings",
+      "n": 642
+    },
+    {
+      "focal": "eursta",
+      "partner": "eurbla",
+      "ff": "Starlings",
+      "pf": "Thrushes and Allies",
+      "n": 642
+    },
+    {
+      "focal": "doccor",
+      "partner": "anhing",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": 522
+    },
+    {
+      "focal": "neocor",
+      "partner": "anhing",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": 522
+    },
+    {
+      "focal": "comgra",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 437
+    },
+    {
+      "focal": "eursta",
+      "partner": "comgra",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": 437
+    },
+    {
+      "focal": "hutvir",
+      "partner": "ruckin",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "Kinglets",
+      "n": 417
+    },
+    {
+      "focal": "houspa",
+      "partner": "whtspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": 386
+    },
+    {
+      "focal": "whtspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 386
+    },
+    {
+      "focal": "osprey",
+      "partner": "rethaw",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 362
+    },
+    {
+      "focal": "rethaw",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": 362
+    },
+    {
+      "focal": "houspa",
+      "partner": "whcspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": 359
+    },
+    {
+      "focal": "whcspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 359
+    },
+    {
+      "focal": "turvul",
+      "partner": "rethaw",
+      "ff": "New World Vultures",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 330
+    },
+    {
+      "focal": "bnhcow",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 327
+    },
+    {
+      "focal": "eursta",
+      "partner": "bnhcow",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": 327
+    },
+    {
+      "focal": "amerob",
+      "partner": "eursta",
+      "ff": "Thrushes and Allies",
+      "pf": "Starlings",
+      "n": 320
+    },
+    {
+      "focal": "eursta",
+      "partner": "amerob",
+      "ff": "Starlings",
+      "pf": "Thrushes and Allies",
+      "n": 320
+    },
+    {
+      "focal": "amecro",
+      "partner": "comgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 318
+    },
+    {
+      "focal": "comgra",
+      "partner": "amecro",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 318
+    },
+    {
+      "focal": "eursta",
+      "partner": "rewbla",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": 317
+    },
+    {
+      "focal": "rewbla",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 317
+    },
+    {
+      "focal": "baleag",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": 312
+    },
+    {
+      "focal": "osprey",
+      "partner": "baleag",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 311
+    },
+    {
+      "focal": "merlin",
+      "partner": "coohaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 303
+    },
+    {
+      "focal": "perfal",
+      "partner": "coohaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 288
+    },
+    {
+      "focal": "comrav",
+      "partner": "grtgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 285
+    },
+    {
+      "focal": "grtgra",
+      "partner": "comrav",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 285
+    },
+    {
+      "focal": "turvul",
+      "partner": "wiltur",
+      "ff": "New World Vultures",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 283
+    },
+    {
+      "focal": "wiltur",
+      "partner": "turvul",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "New World Vultures",
+      "n": 283
+    },
+    {
+      "focal": "perfal",
+      "partner": "rethaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 282
+    },
+    {
+      "focal": "baleag",
+      "partner": "turvul",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "New World Vultures",
+      "n": 268
+    },
+    {
+      "focal": "turvul",
+      "partner": "baleag",
+      "ff": "New World Vultures",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 268
+    },
+    {
+      "focal": "rewbla",
+      "partner": "sonspa",
+      "ff": "Troupials and Allies",
+      "pf": "New World Sparrows",
+      "n": 264
+    },
+    {
+      "focal": "normoc",
+      "partner": "houspa",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Old World Sparrows",
+      "n": 252
+    },
+    {
+      "focal": "daejun",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 247
+    },
+    {
+      "focal": "bkcchi",
+      "partner": "houspa",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Old World Sparrows",
+      "n": 242
+    },
+    {
+      "focal": "houfin",
+      "partner": "sonspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Sparrows",
+      "n": 236
+    },
+    {
+      "focal": "brdowl",
+      "partner": "reshaw",
+      "ff": "Owls",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 235
+    },
+    {
+      "focal": "grhowl",
+      "partner": "rethaw",
+      "ff": "Owls",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 235
+    },
+    {
+      "focal": "blujay",
+      "partner": "easblu",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 234
+    },
+    {
+      "focal": "easblu",
+      "partner": "blujay",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 234
+    },
+    {
+      "focal": "amerob",
+      "partner": "eurrob1",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Flycatchers",
+      "n": 229
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "amerob",
+      "ff": "Old World Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 229
+    },
+    {
+      "focal": "grbher3",
+      "partner": "sancra",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Cranes",
+      "n": 229
+    },
+    {
+      "focal": "blkpho",
+      "partner": "daejun",
+      "ff": "Tyrant Flycatchers",
+      "pf": "New World Sparrows",
+      "n": 225
+    },
+    {
+      "focal": "daejun",
+      "partner": "blkpho",
+      "ff": "New World Sparrows",
+      "pf": "Tyrant Flycatchers",
+      "n": 225
+    },
+    {
+      "focal": "zothaw",
+      "partner": "turvul",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "New World Vultures",
+      "n": 224
+    },
+    {
+      "focal": "brebla",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 223
+    },
+    {
+      "focal": "eursta",
+      "partner": "brebla",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": 223
+    },
+    {
+      "focal": "bnhcow",
+      "partner": "houfin",
+      "ff": "Troupials and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 208
+    },
+    {
+      "focal": "houfin",
+      "partner": "bnhcow",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Troupials and Allies",
+      "n": 208
+    },
+    {
+      "focal": "eursta",
+      "partner": "houspa",
+      "ff": "Starlings",
+      "pf": "Old World Sparrows",
+      "n": 207
+    },
+    {
+      "focal": "cangoo",
+      "partner": "turvul",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "New World Vultures",
+      "n": 206
+    },
+    {
+      "focal": "amerob",
+      "partner": "moudov",
+      "ff": "Thrushes and Allies",
+      "pf": "Pigeons and Doves",
+      "n": 204
+    },
+    {
+      "focal": "moudov",
+      "partner": "amerob",
+      "ff": "Pigeons and Doves",
+      "pf": "Thrushes and Allies",
+      "n": 204
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "houspa",
+      "ff": "Accentors",
+      "pf": "Old World Sparrows",
+      "n": 202
+    },
+    {
+      "focal": "anhing",
+      "partner": "neocor",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 201
+    },
+    {
+      "focal": "houfin",
+      "partner": "norcar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 195
+    },
+    {
+      "focal": "norcar",
+      "partner": "houfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 195
+    },
+    {
+      "focal": "magrob",
+      "partner": "orimag1",
+      "ff": "Old World Flycatchers",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 194
+    },
+    {
+      "focal": "orimag1",
+      "partner": "magrob",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Old World Flycatchers",
+      "n": 194
+    },
+    {
+      "focal": "whiibi",
+      "partner": "greegr",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 193
+    },
+    {
+      "focal": "fiespa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 188
+    },
+    {
+      "focal": "merlin",
+      "partner": "shshaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 186
+    },
+    {
+      "focal": "y00475",
+      "partner": "mallar3",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 176
+    },
+    {
+      "focal": "amegfi",
+      "partner": "pinwar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": 175
+    },
+    {
+      "focal": "carchi",
+      "partner": "houspa",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Old World Sparrows",
+      "n": 175
+    },
+    {
+      "focal": "pinwar",
+      "partner": "amegfi",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 175
+    },
+    {
+      "focal": "monpar",
+      "partner": "rorpar",
+      "ff": "New World and African Parrots",
+      "pf": "Old World Parrots",
+      "n": 174
+    },
+    {
+      "focal": "rorpar",
+      "partner": "monpar",
+      "ff": "Old World Parrots",
+      "pf": "New World and African Parrots",
+      "n": 174
+    },
+    {
+      "focal": "amerob",
+      "partner": "norcar",
+      "ff": "Thrushes and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 173
+    },
+    {
+      "focal": "eurkes",
+      "partner": "eurspa1",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 173
+    },
+    {
+      "focal": "eurspa1",
+      "partner": "eurkes",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": 173
+    },
+    {
+      "focal": "norcar",
+      "partner": "amerob",
+      "ff": "Cardinals and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 173
+    },
+    {
+      "focal": "amerob",
+      "partner": "houfin",
+      "ff": "Thrushes and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 163
+    },
+    {
+      "focal": "comcha",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 163
+    },
+    {
+      "focal": "amerob",
+      "partner": "houspa",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Sparrows",
+      "n": 161
+    },
+    {
+      "focal": "comcan",
+      "partner": "saffin",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tanagers and Allies",
+      "n": 161
+    },
+    {
+      "focal": "saffin",
+      "partner": "comcan",
+      "ff": "Tanagers and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 161
+    },
+    {
+      "focal": "carwre",
+      "partner": "houspa",
+      "ff": "Wrens",
+      "pf": "Old World Sparrows",
+      "n": 158
+    },
+    {
+      "focal": "sander",
+      "partner": "snoplo5",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 158
+    },
+    {
+      "focal": "amtspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 156
+    },
+    {
+      "focal": "carwre",
+      "partner": "norcar",
+      "ff": "Wrens",
+      "pf": "Cardinals and Allies",
+      "n": 153
+    },
+    {
+      "focal": "norcar",
+      "partner": "carwre",
+      "ff": "Cardinals and Allies",
+      "pf": "Wrens",
+      "n": 153
+    },
+    {
+      "focal": "grhowl",
+      "partner": "brnowl",
+      "ff": "Owls",
+      "pf": "Barn-Owls",
+      "n": 152
+    },
+    {
+      "focal": "wiltur",
+      "partner": "reshaw",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 152
+    },
+    {
+      "focal": "rucspa1",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 151
+    },
+    {
+      "focal": "bkbplo",
+      "partner": "sander",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 150
+    },
+    {
+      "focal": "sander",
+      "partner": "bkbplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 150
+    },
+    {
+      "focal": "bushti",
+      "partner": "wrenti",
+      "ff": "Long-tailed Tits",
+      "pf": "Parrotbills",
+      "n": 148
+    },
+    {
+      "focal": "combuz1",
+      "partner": "eurkes",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": 148
+    },
+    {
+      "focal": "eurkes",
+      "partner": "combuz1",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 148
+    },
+    {
+      "focal": "wrenti",
+      "partner": "bushti",
+      "ff": "Parrotbills",
+      "pf": "Long-tailed Tits",
+      "n": 148
+    },
+    {
+      "focal": "goleag",
+      "partner": "turvul",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "New World Vultures",
+      "n": 142
+    },
+    {
+      "focal": "grycat",
+      "partner": "amerob",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Thrushes and Allies",
+      "n": 142
+    },
+    {
+      "focal": "blujay",
+      "partner": "moudov",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Pigeons and Doves",
+      "n": 137
+    },
+    {
+      "focal": "normoc",
+      "partner": "amerob",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Thrushes and Allies",
+      "n": 135
+    },
+    {
+      "focal": "eastow",
+      "partner": "amerob",
+      "ff": "New World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": 134
+    },
+    {
+      "focal": "eurser1",
+      "partner": "yellow2",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 126
+    },
+    {
+      "focal": "lesgol",
+      "partner": "orcwar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": 126
+    },
+    {
+      "focal": "yellow2",
+      "partner": "eurser1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 126
+    },
+    {
+      "focal": "ausmag2",
+      "partner": "maglar1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "Monarch Flycatchers",
+      "n": 125
+    },
+    {
+      "focal": "daejun",
+      "partner": "amerob",
+      "ff": "New World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": 125
+    },
+    {
+      "focal": "maglar1",
+      "partner": "ausmag2",
+      "ff": "Monarch Flycatchers",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": 125
+    },
+    {
+      "focal": "blujay",
+      "partner": "normoc",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 124
+    },
+    {
+      "focal": "normoc",
+      "partner": "blujay",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 124
+    },
+    {
+      "focal": "whbnut",
+      "partner": "bkcchi",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 124
+    },
+    {
+      "focal": "normoc",
+      "partner": "moudov",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Pigeons and Doves",
+      "n": 122
+    },
+    {
+      "focal": "daejun",
+      "partner": "bkcchi",
+      "ff": "New World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 121
+    },
+    {
+      "focal": "larspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 119
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "winwre4",
+      "ff": "Old World Flycatchers",
+      "pf": "Wrens",
+      "n": 118
+    },
+    {
+      "focal": "winwre4",
+      "partner": "eurrob1",
+      "ff": "Wrens",
+      "pf": "Old World Flycatchers",
+      "n": 118
+    },
+    {
+      "focal": "easkin",
+      "partner": "treswa",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Swallows",
+      "n": 116
+    },
+    {
+      "focal": "fiscro",
+      "partner": "botgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 116
+    },
+    {
+      "focal": "treswa",
+      "partner": "easkin",
+      "ff": "Swallows",
+      "pf": "Tyrant Flycatchers",
+      "n": 116
+    },
+    {
+      "focal": "spotow",
+      "partner": "amerob",
+      "ff": "New World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": 115
+    },
+    {
+      "focal": "cowscj1",
+      "partner": "wesblu",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 114
+    },
+    {
+      "focal": "limpki",
+      "partner": "whiibi",
+      "ff": "Limpkin",
+      "pf": "Ibises and Spoonbills",
+      "n": 114
+    },
+    {
+      "focal": "tawowl1",
+      "partner": "combuz1",
+      "ff": "Owls",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 114
+    },
+    {
+      "focal": "wesblu",
+      "partner": "cowscj1",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 114
+    },
+    {
+      "focal": "whiibi",
+      "partner": "limpki",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Limpkin",
+      "n": 114
+    },
+    {
+      "focal": "logshr",
+      "partner": "normoc",
+      "ff": "Shrikes",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 110
+    },
+    {
+      "focal": "normoc",
+      "partner": "logshr",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Shrikes",
+      "n": 110
+    },
+    {
+      "focal": "wiltur",
+      "partner": "cangoo",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 109
+    },
+    {
+      "focal": "comswi",
+      "partner": "barswa",
+      "ff": "Swifts",
+      "pf": "Swallows",
+      "n": 108
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "sonthr1",
+      "ff": "Old World Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 108
+    },
+    {
+      "focal": "grycat",
+      "partner": "bnhcow",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Troupials and Allies",
+      "n": 108
+    },
+    {
+      "focal": "sonthr1",
+      "partner": "eurrob1",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Flycatchers",
+      "n": 108
+    },
+    {
+      "focal": "helgui",
+      "partner": "wiltur",
+      "ff": "Guineafowl",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 107
+    },
+    {
+      "focal": "wiltur",
+      "partner": "helgui",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Guineafowl",
+      "n": 107
+    },
+    {
+      "focal": "amekes",
+      "partner": "coohaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 106
+    },
+    {
+      "focal": "prafal",
+      "partner": "rethaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 104
+    },
+    {
+      "focal": "caltow",
+      "partner": "houfin",
+      "ff": "New World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 103
+    },
+    {
+      "focal": "westan",
+      "partner": "lesgol",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 102
+    },
+    {
+      "focal": "whiibi",
+      "partner": "categr1",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 102
+    },
+    {
+      "focal": "brebla",
+      "partner": "amecro",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 101
+    },
+    {
+      "focal": "eurbla",
+      "partner": "eurrob1",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Flycatchers",
+      "n": 98
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "eurbla",
+      "ff": "Old World Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 98
+    },
+    {
+      "focal": "rewbla",
+      "partner": "amecro",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 96
+    },
+    {
+      "focal": "tenwar",
+      "partner": "reevir1",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 96
+    },
+    {
+      "focal": "clcspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 95
+    },
+    {
+      "focal": "pinsis",
+      "partner": "yerwar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": 95
+    },
+    {
+      "focal": "yerwar",
+      "partner": "pinsis",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 95
+    },
+    {
+      "focal": "darter4",
+      "partner": "lipcor1",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 93
+    },
+    {
+      "focal": "gocspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 93
+    },
+    {
+      "focal": "lipcor1",
+      "partner": "darter4",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": 93
+    },
+    {
+      "focal": "ausmag2",
+      "partner": "eurmag1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 92
+    },
+    {
+      "focal": "eurmag1",
+      "partner": "ausmag2",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": 92
+    },
+    {
+      "focal": "houwre",
+      "partner": "houspa",
+      "ff": "Wrens",
+      "pf": "Old World Sparrows",
+      "n": 92
+    },
+    {
+      "focal": "brdowl",
+      "partner": "brnowl",
+      "ff": "Owls",
+      "pf": "Barn-Owls",
+      "n": 91
+    },
+    {
+      "focal": "sonthr1",
+      "partner": "eursta",
+      "ff": "Thrushes and Allies",
+      "pf": "Starlings",
+      "n": 91
+    },
+    {
+      "focal": "comloo",
+      "partner": "commer",
+      "ff": "Loons",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 90
+    },
+    {
+      "focal": "scatan",
+      "partner": "verfly",
+      "ff": "Cardinals and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 90
+    },
+    {
+      "focal": "verfly",
+      "partner": "houfin",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 90
+    },
+    {
+      "focal": "verfly",
+      "partner": "scatan",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Cardinals and Allies",
+      "n": 90
+    },
+    {
+      "focal": "eurbla",
+      "partner": "rewbla",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": 89
+    },
+    {
+      "focal": "grycat",
+      "partner": "eursta",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Starlings",
+      "n": 89
+    },
+    {
+      "focal": "osprey",
+      "partner": "wbseag1",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 89
+    },
+    {
+      "focal": "norfli",
+      "partner": "amerob",
+      "ff": "Woodpeckers",
+      "pf": "Thrushes and Allies",
+      "n": 88
+    },
+    {
+      "focal": "tuftit",
+      "partner": "normoc",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 88
+    },
+    {
+      "focal": "amekes",
+      "partner": "rethaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 87
+    },
+    {
+      "focal": "easpho",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 87
+    },
+    {
+      "focal": "pibgre",
+      "partner": "y00475",
+      "ff": "Grebes",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": 86
+    },
+    {
+      "focal": "y00475",
+      "partner": "pibgre",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Grebes",
+      "n": 86
+    },
+    {
+      "focal": "chbchi",
+      "partner": "houspa",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Old World Sparrows",
+      "n": 85
+    },
+    {
+      "focal": "easpho",
+      "partner": "barswa",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Swallows",
+      "n": 85
+    },
+    {
+      "focal": "herthr",
+      "partner": "ovenbi1",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Warblers",
+      "n": 85
+    },
+    {
+      "focal": "ovenbi1",
+      "partner": "herthr",
+      "ff": "New World Warblers",
+      "pf": "Thrushes and Allies",
+      "n": 85
+    },
+    {
+      "focal": "whiibi",
+      "partner": "woosto",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Storks",
+      "n": 85
+    },
+    {
+      "focal": "woosto",
+      "partner": "whiibi",
+      "ff": "Storks",
+      "pf": "Ibises and Spoonbills",
+      "n": 85
+    },
+    {
+      "focal": "eurbla",
+      "partner": "eurjac",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 84
+    },
+    {
+      "focal": "neocor",
+      "partner": "grbher3",
+      "ff": "Cormorants and Shags",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 84
+    },
+    {
+      "focal": "bkhgro",
+      "partner": "spotow",
+      "ff": "Cardinals and Allies",
+      "pf": "New World Sparrows",
+      "n": 83
+    },
+    {
+      "focal": "caltow",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 83
+    },
+    {
+      "focal": "chbchi",
+      "partner": "daejun",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "New World Sparrows",
+      "n": 83
+    },
+    {
+      "focal": "daejun",
+      "partner": "chbchi",
+      "ff": "New World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 83
+    },
+    {
+      "focal": "eurjay1",
+      "partner": "cowpig1",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Pigeons and Doves",
+      "n": 83
+    },
+    {
+      "focal": "brdowl",
+      "partner": "rethaw",
+      "ff": "Owls",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 82
+    },
+    {
+      "focal": "grycat",
+      "partner": "daejun",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "New World Sparrows",
+      "n": 82
+    },
+    {
+      "focal": "spotow",
+      "partner": "bkhgro",
+      "ff": "New World Sparrows",
+      "pf": "Cardinals and Allies",
+      "n": 82
+    },
+    {
+      "focal": "tuftit",
+      "partner": "whbnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": 82
+    },
+    {
+      "focal": "whbnut",
+      "partner": "tuftit",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 82
+    },
+    {
+      "focal": "comcha",
+      "partner": "gretit1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 79
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "eurrob1",
+      "ff": "Accentors",
+      "pf": "Old World Flycatchers",
+      "n": 79
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "dunnoc1",
+      "ff": "Old World Flycatchers",
+      "pf": "Accentors",
+      "n": 79
+    },
+    {
+      "focal": "grerhe1",
+      "partner": "ostric2",
+      "ff": "Rheas",
+      "pf": "Ostriches",
+      "n": 79
+    },
+    {
+      "focal": "ostric2",
+      "partner": "grerhe1",
+      "ff": "Ostriches",
+      "pf": "Rheas",
+      "n": 79
+    },
+    {
+      "focal": "ovenbi1",
+      "partner": "woothr",
+      "ff": "New World Warblers",
+      "pf": "Thrushes and Allies",
+      "n": 79
+    },
+    {
+      "focal": "woothr",
+      "partner": "ovenbi1",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Warblers",
+      "n": 79
+    },
+    {
+      "focal": "comcha",
+      "partner": "comchi1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Leaf Warblers",
+      "n": 78
+    },
+    {
+      "focal": "neocor",
+      "partner": "comloo",
+      "ff": "Cormorants and Shags",
+      "pf": "Loons",
+      "n": 78
+    },
+    {
+      "focal": "yelwar1",
+      "partner": "amegfi",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 78
+    },
+    {
+      "focal": "amekes",
+      "partner": "reshaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 77
+    },
+    {
+      "focal": "redjun",
+      "partner": "musduc",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 76
+    },
+    {
+      "focal": "commyn",
+      "partner": "noimin1",
+      "ff": "Starlings",
+      "pf": "Honeyeaters",
+      "n": 75
+    },
+    {
+      "focal": "noimin1",
+      "partner": "commyn",
+      "ff": "Honeyeaters",
+      "pf": "Starlings",
+      "n": 75
+    },
+    {
+      "focal": "brnpel",
+      "partner": "grbher3",
+      "ff": "Pelicans",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 74
+    },
+    {
+      "focal": "norfli",
+      "partner": "eursta",
+      "ff": "Woodpeckers",
+      "pf": "Starlings",
+      "n": 74
+    },
+    {
+      "focal": "whbnut",
+      "partner": "dowwoo",
+      "ff": "Nuthatches",
+      "pf": "Woodpeckers",
+      "n": 74
+    },
+    {
+      "focal": "cowscj1",
+      "partner": "normoc",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 73
+    },
+    {
+      "focal": "merlin",
+      "partner": "reshaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 73
+    },
+    {
+      "focal": "blujay",
+      "partner": "amerob",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 72
+    },
+    {
+      "focal": "brnthr",
+      "partner": "houspa",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Old World Sparrows",
+      "n": 72
+    },
+    {
+      "focal": "carwre",
+      "partner": "tuftit",
+      "ff": "Wrens",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 72
+    },
+    {
+      "focal": "comcra",
+      "partner": "graher1",
+      "ff": "Cranes",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 72
+    },
+    {
+      "focal": "tuftit",
+      "partner": "carwre",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Wrens",
+      "n": 72
+    },
+    {
+      "focal": "brnthr",
+      "partner": "woothr",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Thrushes and Allies",
+      "n": 71
+    },
+    {
+      "focal": "norcar",
+      "partner": "verfly",
+      "ff": "Cardinals and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 71
+    },
+    {
+      "focal": "osprey",
+      "partner": "turvul",
+      "ff": "Osprey",
+      "pf": "New World Vultures",
+      "n": 71
+    },
+    {
+      "focal": "redjun",
+      "partner": "rocpig",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Pigeons and Doves",
+      "n": 71
+    },
+    {
+      "focal": "verfly",
+      "partner": "norcar",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Cardinals and Allies",
+      "n": 71
+    },
+    {
+      "focal": "woothr",
+      "partner": "brnthr",
+      "ff": "Thrushes and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 71
+    },
+    {
+      "focal": "carwre",
+      "partner": "normoc",
+      "ff": "Wrens",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 70
+    },
+    {
+      "focal": "eurgre1",
+      "partner": "yellow2",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 70
+    },
+    {
+      "focal": "grhowl",
+      "partner": "wiltur",
+      "ff": "Owls",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 70
+    },
+    {
+      "focal": "yellow2",
+      "partner": "eurgre1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 70
+    },
+    {
+      "focal": "brdowl",
+      "partner": "wiltur",
+      "ff": "Owls",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 69
+    },
+    {
+      "focal": "grbani",
+      "partner": "grtgra",
+      "ff": "Cuckoos",
+      "pf": "Troupials and Allies",
+      "n": 69
+    },
+    {
+      "focal": "pinwar",
+      "partner": "yetvir",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 69
+    },
+    {
+      "focal": "yetvir",
+      "partner": "pinwar",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": 69
+    },
+    {
+      "focal": "comloo",
+      "partner": "mallar3",
+      "ff": "Loons",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 68
+    },
+    {
+      "focal": "eurcoo",
+      "partner": "litgre1",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Grebes",
+      "n": 68
+    },
+    {
+      "focal": "litgre1",
+      "partner": "eurcoo",
+      "ff": "Grebes",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": 68
+    },
+    {
+      "focal": "meapip1",
+      "partner": "skylar",
+      "ff": "Wagtails and Pipits",
+      "pf": "Larks",
+      "n": 68
+    },
+    {
+      "focal": "saffin",
+      "partner": "yelwar1",
+      "ff": "Tanagers and Allies",
+      "pf": "New World Warblers",
+      "n": 68
+    },
+    {
+      "focal": "skylar",
+      "partner": "meapip1",
+      "ff": "Larks",
+      "pf": "Wagtails and Pipits",
+      "n": 68
+    },
+    {
+      "focal": "carwre",
+      "partner": "amerob",
+      "ff": "Wrens",
+      "pf": "Thrushes and Allies",
+      "n": 67
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "comcha",
+      "ff": "Old World Flycatchers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 67
+    },
+    {
+      "focal": "garwar1",
+      "partner": "comchi1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 67
+    },
+    {
+      "focal": "budger",
+      "partner": "comcan",
+      "ff": "Old World Parrots",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 66
+    },
+    {
+      "focal": "comcan",
+      "partner": "budger",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Parrots",
+      "n": 66
+    },
+    {
+      "focal": "swaspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 66
+    },
+    {
+      "focal": "blkpho",
+      "partner": "houspa",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Old World Sparrows",
+      "n": 65
+    },
+    {
+      "focal": "pacwre1",
+      "partner": "sonspa",
+      "ff": "Wrens",
+      "pf": "New World Sparrows",
+      "n": 65
+    },
+    {
+      "focal": "blrwar1",
+      "partner": "grewhi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 63
+    },
+    {
+      "focal": "budger",
+      "partner": "monpar",
+      "ff": "Old World Parrots",
+      "pf": "New World and African Parrots",
+      "n": 63
+    },
+    {
+      "focal": "eupfly1",
+      "partner": "comcha",
+      "ff": "Old World Flycatchers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 63
+    },
+    {
+      "focal": "grewhi1",
+      "partner": "blrwar1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Reed Warblers and Allies",
+      "n": 63
+    },
+    {
+      "focal": "litgre1",
+      "partner": "commoo3",
+      "ff": "Grebes",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": 63
+    },
+    {
+      "focal": "monpar",
+      "partner": "budger",
+      "ff": "New World and African Parrots",
+      "pf": "Old World Parrots",
+      "n": 63
+    },
+    {
+      "focal": "blugrb1",
+      "partner": "houfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 62
+    },
+    {
+      "focal": "graspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 62
+    },
+    {
+      "focal": "bushti",
+      "partner": "houspa",
+      "ff": "Long-tailed Tits",
+      "pf": "Old World Sparrows",
+      "n": 61
+    },
+    {
+      "focal": "easblu",
+      "partner": "indbun",
+      "ff": "Thrushes and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 61
+    },
+    {
+      "focal": "indbun",
+      "partner": "easblu",
+      "ff": "Cardinals and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 61
+    },
+    {
+      "focal": "osprey",
+      "partner": "reshaw",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 61
+    },
+    {
+      "focal": "balori",
+      "partner": "amerob",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 60
+    },
+    {
+      "focal": "banana",
+      "partner": "grekis",
+      "ff": "Tanagers and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 60
+    },
+    {
+      "focal": "bktspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 60
+    },
+    {
+      "focal": "eurspo1",
+      "partner": "litegr",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 60
+    },
+    {
+      "focal": "grycat",
+      "partner": "comgra",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Troupials and Allies",
+      "n": 60
+    },
+    {
+      "focal": "grykin",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 60
+    },
+    {
+      "focal": "pipplo",
+      "partner": "sander",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 60
+    },
+    {
+      "focal": "tuftit",
+      "partner": "norcar",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Cardinals and Allies",
+      "n": 60
+    },
+    {
+      "focal": "cubthr",
+      "partner": "grtgra",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Troupials and Allies",
+      "n": 59
+    },
+    {
+      "focal": "killde",
+      "partner": "sposan",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 59
+    },
+    {
+      "focal": "sposan",
+      "partner": "killde",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 59
+    },
+    {
+      "focal": "blackc1",
+      "partner": "eurrob1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Old World Flycatchers",
+      "n": 58
+    },
+    {
+      "focal": "eurcoo",
+      "partner": "mallar3",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 58
+    },
+    {
+      "focal": "eurrob1",
+      "partner": "blackc1",
+      "ff": "Old World Flycatchers",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 58
+    },
+    {
+      "focal": "foxspa",
+      "partner": "herthr",
+      "ff": "New World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": 58
+    },
+    {
+      "focal": "grcgre1",
+      "partner": "commer",
+      "ff": "Grebes",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 58
+    },
+    {
+      "focal": "hoocro1",
+      "partner": "rocpig",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Pigeons and Doves",
+      "n": 58
+    },
+    {
+      "focal": "sctfly",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 58
+    },
+    {
+      "focal": "whisto1",
+      "partner": "graher1",
+      "ff": "Storks",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 58
+    },
+    {
+      "focal": "woosto",
+      "partner": "greegr",
+      "ff": "Storks",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 58
+    },
+    {
+      "focal": "chirav",
+      "partner": "grtgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 57
+    },
+    {
+      "focal": "fieldf",
+      "partner": "eursta",
+      "ff": "Thrushes and Allies",
+      "pf": "Starlings",
+      "n": 57
+    },
+    {
+      "focal": "whiibi",
+      "partner": "snoegr",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 57
+    },
+    {
+      "focal": "blackc1",
+      "partner": "eurbla",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 56
+    },
+    {
+      "focal": "brnthr",
+      "partner": "carwre",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Wrens",
+      "n": 56
+    },
+    {
+      "focal": "darter4",
+      "partner": "grecor",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 56
+    },
+    {
+      "focal": "pibgre",
+      "partner": "mallar3",
+      "ff": "Grebes",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 56
+    },
+    {
+      "focal": "anhing",
+      "partner": "grbher3",
+      "ff": "Anhingas",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 55
+    },
+    {
+      "focal": "asgsta1",
+      "partner": "asikoe2",
+      "ff": "Starlings",
+      "pf": "Cuckoos",
+      "n": 55
+    },
+    {
+      "focal": "asikoe2",
+      "partner": "asgsta1",
+      "ff": "Cuckoos",
+      "pf": "Starlings",
+      "n": 55
+    },
+    {
+      "focal": "brnthr",
+      "partner": "amerob",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Thrushes and Allies",
+      "n": 55
+    },
+    {
+      "focal": "buggna",
+      "partner": "normoc",
+      "ff": "Gnatcatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 55
+    },
+    {
+      "focal": "corbun1",
+      "partner": "eurlin1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 55
+    },
+    {
+      "focal": "eurlin1",
+      "partner": "corbun1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 55
+    },
+    {
+      "focal": "indbun",
+      "partner": "houfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 55
+    },
+    {
+      "focal": "norfli",
+      "partner": "norcar",
+      "ff": "Woodpeckers",
+      "pf": "Cardinals and Allies",
+      "n": 55
+    },
+    {
+      "focal": "roahaw",
+      "partner": "yehcar1",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": 55
+    },
+    {
+      "focal": "bewwre",
+      "partner": "sonspa",
+      "ff": "Wrens",
+      "pf": "New World Sparrows",
+      "n": 54
+    },
+    {
+      "focal": "blackc1",
+      "partner": "martit2",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 54
+    },
+    {
+      "focal": "blujay",
+      "partner": "tuftit",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 54
+    },
+    {
+      "focal": "brnthr",
+      "partner": "norcar",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Cardinals and Allies",
+      "n": 54
+    },
+    {
+      "focal": "merlin",
+      "partner": "brwhaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 54
+    },
+    {
+      "focal": "phivir",
+      "partner": "tenwar",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": 54
+    },
+    {
+      "focal": "pinsis",
+      "partner": "rewbla",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Troupials and Allies",
+      "n": 54
+    },
+    {
+      "focal": "tenwar",
+      "partner": "phivir",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 54
+    },
+    {
+      "focal": "tuftit",
+      "partner": "blujay",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 54
+    },
+    {
+      "focal": "clcrob",
+      "partner": "grtgra",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": 53
+    },
+    {
+      "focal": "eurcoo",
+      "partner": "tufduc",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 53
+    },
+    {
+      "focal": "pinsis",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 53
+    },
+    {
+      "focal": "bkhgro",
+      "partner": "amerob",
+      "ff": "Cardinals and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 52
+    },
+    {
+      "focal": "cantow",
+      "partner": "houfin",
+      "ff": "New World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 52
+    },
+    {
+      "focal": "cedwax",
+      "partner": "amerob",
+      "ff": "Waxwings",
+      "pf": "Thrushes and Allies",
+      "n": 52
+    },
+    {
+      "focal": "eurmag1",
+      "partner": "cowpig1",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Pigeons and Doves",
+      "n": 52
+    },
+    {
+      "focal": "amepip",
+      "partner": "yerwar",
+      "ff": "Wagtails and Pipits",
+      "pf": "New World Warblers",
+      "n": 51
+    },
+    {
+      "focal": "bkwsti",
+      "partner": "comgre",
+      "ff": "Stilts and Avocets",
+      "pf": "Sandpipers and Allies",
+      "n": 51
+    },
+    {
+      "focal": "comgre",
+      "partner": "bkwsti",
+      "ff": "Sandpipers and Allies",
+      "pf": "Stilts and Avocets",
+      "n": 51
+    },
+    {
+      "focal": "easblu",
+      "partner": "houfin",
+      "ff": "Thrushes and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 51
+    },
+    {
+      "focal": "fislov1",
+      "partner": "sunpar1",
+      "ff": "Old World Parrots",
+      "pf": "New World and African Parrots",
+      "n": 51
+    },
+    {
+      "focal": "robgro",
+      "partner": "purfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 51
+    },
+    {
+      "focal": "sunpar1",
+      "partner": "fislov1",
+      "ff": "New World and African Parrots",
+      "pf": "Old World Parrots",
+      "n": 51
+    },
+    {
+      "focal": "emu1",
+      "partner": "ostric2",
+      "ff": "Cassowaries and Emu",
+      "pf": "Ostriches",
+      "n": 50
+    },
+    {
+      "focal": "eursis",
+      "partner": "yellow2",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 50
+    },
+    {
+      "focal": "grycat",
+      "partner": "houspa",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Old World Sparrows",
+      "n": 50
+    },
+    {
+      "focal": "hooori",
+      "partner": "westan",
+      "ff": "Troupials and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 50
+    },
+    {
+      "focal": "ostric2",
+      "partner": "emu1",
+      "ff": "Ostriches",
+      "pf": "Cassowaries and Emu",
+      "n": 50
+    },
+    {
+      "focal": "westan",
+      "partner": "amegfi",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 50
+    },
+    {
+      "focal": "westan",
+      "partner": "hooori",
+      "ff": "Cardinals and Allies",
+      "pf": "Troupials and Allies",
+      "n": 50
+    },
+    {
+      "focal": "yellow2",
+      "partner": "eursis",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 50
+    },
+    {
+      "focal": "amwpel",
+      "partner": "greegr",
+      "ff": "Pelicans",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 49
+    },
+    {
+      "focal": "eurgre1",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 49
+    },
+    {
+      "focal": "houcro1",
+      "partner": "grtgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 49
+    },
+    {
+      "focal": "blkpho",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 48
+    },
+    {
+      "focal": "darter4",
+      "partner": "libcor1",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 48
+    },
+    {
+      "focal": "libcor1",
+      "partner": "darter4",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": 48
+    },
+    {
+      "focal": "norfli",
+      "partner": "moudov",
+      "ff": "Woodpeckers",
+      "pf": "Pigeons and Doves",
+      "n": 48
+    },
+    {
+      "focal": "orcori",
+      "partner": "amerob",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 48
+    },
+    {
+      "focal": "grcgre1",
+      "partner": "eurcoo",
+      "ff": "Grebes",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": 47
+    },
+    {
+      "focal": "brespa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 46
+    },
+    {
+      "focal": "budger",
+      "partner": "cockat",
+      "ff": "Old World Parrots",
+      "pf": "Cockatoos",
+      "n": 46
+    },
+    {
+      "focal": "buhvir",
+      "partner": "ruckin",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "Kinglets",
+      "n": 46
+    },
+    {
+      "focal": "cockat",
+      "partner": "budger",
+      "ff": "Cockatoos",
+      "pf": "Old World Parrots",
+      "n": 46
+    },
+    {
+      "focal": "eurjay1",
+      "partner": "comcha",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 46
+    },
+    {
+      "focal": "osprey",
+      "partner": "coohaw",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 46
+    },
+    {
+      "focal": "comyel",
+      "partner": "amegfi",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 45
+    },
+    {
+      "focal": "doveki",
+      "partner": "moudov",
+      "ff": "Auks, Murres, and Puffins",
+      "pf": "Pigeons and Doves",
+      "n": 45
+    },
+    {
+      "focal": "eurgol",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 45
+    },
+    {
+      "focal": "grewhi1",
+      "partner": "marwar3",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Reed Warblers and Allies",
+      "n": 45
+    },
+    {
+      "focal": "lazbun",
+      "partner": "wesblu",
+      "ff": "Cardinals and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 45
+    },
+    {
+      "focal": "marwar3",
+      "partner": "grewhi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 45
+    },
+    {
+      "focal": "ovenbi1",
+      "partner": "swathr",
+      "ff": "New World Warblers",
+      "pf": "Thrushes and Allies",
+      "n": 45
+    },
+    {
+      "focal": "saypho",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 45
+    },
+    {
+      "focal": "wesblu",
+      "partner": "lazbun",
+      "ff": "Thrushes and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 45
+    },
+    {
+      "focal": "wesblu",
+      "partner": "houfin",
+      "ff": "Thrushes and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 45
+    },
+    {
+      "focal": "bkbplo",
+      "partner": "semsan",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 44
+    },
+    {
+      "focal": "bushti",
+      "partner": "oaktit",
+      "ff": "Long-tailed Tits",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 44
+    },
+    {
+      "focal": "killde",
+      "partner": "houspa",
+      "ff": "Plovers and Lapwings",
+      "pf": "Old World Sparrows",
+      "n": 44
+    },
+    {
+      "focal": "oaktit",
+      "partner": "bushti",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Long-tailed Tits",
+      "n": 44
+    },
+    {
+      "focal": "osprey",
+      "partner": "combuz1",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 44
+    },
+    {
+      "focal": "purmar",
+      "partner": "eursta",
+      "ff": "Swallows",
+      "pf": "Starlings",
+      "n": 44
+    },
+    {
+      "focal": "semsan",
+      "partner": "bkbplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 44
+    },
+    {
+      "focal": "ausbrt1",
+      "partner": "wiltur",
+      "ff": "Megapodes",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 43
+    },
+    {
+      "focal": "buggna",
+      "partner": "tuftit",
+      "ff": "Gnatcatchers",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 43
+    },
+    {
+      "focal": "chibla1",
+      "partner": "cremyn",
+      "ff": "Thrushes and Allies",
+      "pf": "Starlings",
+      "n": 43
+    },
+    {
+      "focal": "comyel",
+      "partner": "yebcha",
+      "ff": "New World Warblers",
+      "pf": "Yellow-breasted Chat",
+      "n": 43
+    },
+    {
+      "focal": "cremyn",
+      "partner": "chibla1",
+      "ff": "Starlings",
+      "pf": "Thrushes and Allies",
+      "n": 43
+    },
+    {
+      "focal": "emu1",
+      "partner": "grerhe1",
+      "ff": "Cassowaries and Emu",
+      "pf": "Rheas",
+      "n": 43
+    },
+    {
+      "focal": "grerhe1",
+      "partner": "emu1",
+      "ff": "Rheas",
+      "pf": "Cassowaries and Emu",
+      "n": 43
+    },
+    {
+      "focal": "ictwar1",
+      "partner": "wlwwar",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 43
+    },
+    {
+      "focal": "rebnut",
+      "partner": "amerob",
+      "ff": "Nuthatches",
+      "pf": "Thrushes and Allies",
+      "n": 43
+    },
+    {
+      "focal": "whbnut",
+      "partner": "carchi",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 43
+    },
+    {
+      "focal": "yebcha",
+      "partner": "comyel",
+      "ff": "Yellow-breasted Chat",
+      "pf": "New World Warblers",
+      "n": 43
+    },
+    {
+      "focal": "bushti",
+      "partner": "daejun",
+      "ff": "Long-tailed Tits",
+      "pf": "New World Sparrows",
+      "n": 42
+    },
+    {
+      "focal": "chiswi",
+      "partner": "barswa",
+      "ff": "Swifts",
+      "pf": "Swallows",
+      "n": 42
+    },
+    {
+      "focal": "banana",
+      "partner": "socfly1",
+      "ff": "Tanagers and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 41
+    },
+    {
+      "focal": "corbun1",
+      "partner": "houspa",
+      "ff": "Old World Buntings",
+      "pf": "Old World Sparrows",
+      "n": 41
+    },
+    {
+      "focal": "corplo",
+      "partner": "rudtur",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 41
+    },
+    {
+      "focal": "eurwar1",
+      "partner": "comchi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 41
+    },
+    {
+      "focal": "rebnut",
+      "partner": "bkcchi",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 41
+    },
+    {
+      "focal": "reebun",
+      "partner": "stonec4",
+      "ff": "Old World Buntings",
+      "pf": "Old World Flycatchers",
+      "n": 41
+    },
+    {
+      "focal": "rinphe1",
+      "partner": "tawowl1",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Owls",
+      "n": 41
+    },
+    {
+      "focal": "rudtur",
+      "partner": "corplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 41
+    },
+    {
+      "focal": "scatan",
+      "partner": "amegfi",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 41
+    },
+    {
+      "focal": "tawowl1",
+      "partner": "rinphe1",
+      "ff": "Owls",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 41
+    },
+    {
+      "focal": "bklkit",
+      "partner": "norful",
+      "ff": "Gulls, Terns, and Skimmers",
+      "pf": "Shearwaters and Petrels",
+      "n": 40
+    },
+    {
+      "focal": "bulori",
+      "partner": "westan",
+      "ff": "Troupials and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 40
+    },
+    {
+      "focal": "casvir",
+      "partner": "ruckin",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "Kinglets",
+      "n": 40
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "winwre4",
+      "ff": "Accentors",
+      "pf": "Wrens",
+      "n": 40
+    },
+    {
+      "focal": "litgre1",
+      "partner": "mallar3",
+      "ff": "Grebes",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 40
+    },
+    {
+      "focal": "marwre",
+      "partner": "sonspa",
+      "ff": "Wrens",
+      "pf": "New World Sparrows",
+      "n": 40
+    },
+    {
+      "focal": "norful",
+      "partner": "bklkit",
+      "ff": "Shearwaters and Petrels",
+      "pf": "Gulls, Terns, and Skimmers",
+      "n": 40
+    },
+    {
+      "focal": "norwhe",
+      "partner": "watpip1",
+      "ff": "Old World Flycatchers",
+      "pf": "Wagtails and Pipits",
+      "n": 40
+    },
+    {
+      "focal": "swtkit",
+      "partner": "magfri",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Frigatebirds",
+      "n": 40
+    },
+    {
+      "focal": "watpip1",
+      "partner": "norwhe",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Flycatchers",
+      "n": 40
+    },
+    {
+      "focal": "westan",
+      "partner": "bulori",
+      "ff": "Cardinals and Allies",
+      "pf": "Troupials and Allies",
+      "n": 40
+    },
+    {
+      "focal": "winwre4",
+      "partner": "dunnoc1",
+      "ff": "Wrens",
+      "pf": "Accentors",
+      "n": 40
+    },
+    {
+      "focal": "balori",
+      "partner": "amegfi",
+      "ff": "Troupials and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 39
+    },
+    {
+      "focal": "bkbplo",
+      "partner": "willet1",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 39
+    },
+    {
+      "focal": "buggna",
+      "partner": "bushti",
+      "ff": "Gnatcatchers",
+      "pf": "Long-tailed Tits",
+      "n": 39
+    },
+    {
+      "focal": "bushti",
+      "partner": "buggna",
+      "ff": "Long-tailed Tits",
+      "pf": "Gnatcatchers",
+      "n": 39
+    },
+    {
+      "focal": "cacwre",
+      "partner": "cubthr",
+      "ff": "Wrens",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 39
+    },
+    {
+      "focal": "cubthr",
+      "partner": "cacwre",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Wrens",
+      "n": 39
+    },
+    {
+      "focal": "redjun",
+      "partner": "turvul",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "New World Vultures",
+      "n": 39
+    },
+    {
+      "focal": "sumtan",
+      "partner": "yelwar1",
+      "ff": "Cardinals and Allies",
+      "pf": "New World Warblers",
+      "n": 39
+    },
+    {
+      "focal": "corbun1",
+      "partner": "meapip1",
+      "ff": "Old World Buntings",
+      "pf": "Wagtails and Pipits",
+      "n": 38
+    },
+    {
+      "focal": "easkin",
+      "partner": "normoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 38
+    },
+    {
+      "focal": "houcro1",
+      "partner": "rocpig",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Pigeons and Doves",
+      "n": 38
+    },
+    {
+      "focal": "japqua",
+      "partner": "norbob",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "New World Quail",
+      "n": 38
+    },
+    {
+      "focal": "manwar1",
+      "partner": "saffin",
+      "ff": "New World Warblers",
+      "pf": "Tanagers and Allies",
+      "n": 38
+    },
+    {
+      "focal": "norbob",
+      "partner": "japqua",
+      "ff": "New World Quail",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 38
+    },
+    {
+      "focal": "prafal",
+      "partner": "coohaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 38
+    },
+    {
+      "focal": "redjun",
+      "partner": "brnowl",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Barn-Owls",
+      "n": 38
+    },
+    {
+      "focal": "saffin",
+      "partner": "manwar1",
+      "ff": "Tanagers and Allies",
+      "pf": "New World Warblers",
+      "n": 38
+    },
+    {
+      "focal": "whocra",
+      "partner": "greegr",
+      "ff": "Cranes",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 38
+    },
+    {
+      "focal": "winwre4",
+      "partner": "eurbla",
+      "ff": "Wrens",
+      "pf": "Thrushes and Allies",
+      "n": 38
+    },
+    {
+      "focal": "cantow",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 37
+    },
+    {
+      "focal": "comswi",
+      "partner": "comhom1",
+      "ff": "Swifts",
+      "pf": "Swallows",
+      "n": 37
+    },
+    {
+      "focal": "darter4",
+      "partner": "piecor1",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 37
+    },
+    {
+      "focal": "rorpar",
+      "partner": "grnpar",
+      "ff": "Old World Parrots",
+      "pf": "New World and African Parrots",
+      "n": 37
+    },
+    {
+      "focal": "spofly1",
+      "partner": "verfly",
+      "ff": "Old World Flycatchers",
+      "pf": "Tyrant Flycatchers",
+      "n": 37
+    },
+    {
+      "focal": "towsol",
+      "partner": "normoc",
+      "ff": "Thrushes and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 37
+    },
+    {
+      "focal": "verfly",
+      "partner": "spofly1",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Old World Flycatchers",
+      "n": 37
+    },
+    {
+      "focal": "whevir",
+      "partner": "ruckin",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "Kinglets",
+      "n": 37
+    },
+    {
+      "focal": "woolar1",
+      "partner": "trepip",
+      "ff": "Larks",
+      "pf": "Wagtails and Pipits",
+      "n": 37
+    },
+    {
+      "focal": "bawwar",
+      "partner": "dowwoo",
+      "ff": "New World Warblers",
+      "pf": "Woodpeckers",
+      "n": 36
+    },
+    {
+      "focal": "boowar1",
+      "partner": "grewhi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 36
+    },
+    {
+      "focal": "brnowl",
+      "partner": "loeowl",
+      "ff": "Barn-Owls",
+      "pf": "Owls",
+      "n": 36
+    },
+    {
+      "focal": "cedwax",
+      "partner": "norcar",
+      "ff": "Waxwings",
+      "pf": "Cardinals and Allies",
+      "n": 36
+    },
+    {
+      "focal": "chiswi",
+      "partner": "turvul",
+      "ff": "Swifts",
+      "pf": "New World Vultures",
+      "n": 36
+    },
+    {
+      "focal": "grewhi1",
+      "partner": "boowar1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Reed Warblers and Allies",
+      "n": 36
+    },
+    {
+      "focal": "tenwar",
+      "partner": "eawvir1",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 36
+    },
+    {
+      "focal": "whebul1",
+      "partner": "houspa",
+      "ff": "Bulbuls",
+      "pf": "Old World Sparrows",
+      "n": 36
+    },
+    {
+      "focal": "calthr",
+      "partner": "caltow",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "New World Sparrows",
+      "n": 35
+    },
+    {
+      "focal": "caltow",
+      "partner": "amerob",
+      "ff": "New World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": 35
+    },
+    {
+      "focal": "cantow",
+      "partner": "cubthr",
+      "ff": "New World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 35
+    },
+    {
+      "focal": "cedwax",
+      "partner": "houspa",
+      "ff": "Waxwings",
+      "pf": "Old World Sparrows",
+      "n": 35
+    },
+    {
+      "focal": "cubthr",
+      "partner": "cantow",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "New World Sparrows",
+      "n": 35
+    },
+    {
+      "focal": "grcgre1",
+      "partner": "grecor",
+      "ff": "Grebes",
+      "pf": "Cormorants and Shags",
+      "n": 35
+    },
+    {
+      "focal": "harspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 35
+    },
+    {
+      "focal": "indsil",
+      "partner": "houspa",
+      "ff": "Waxbills and Allies",
+      "pf": "Old World Sparrows",
+      "n": 35
+    },
+    {
+      "focal": "killde",
+      "partner": "normoc",
+      "ff": "Plovers and Lapwings",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 35
+    },
+    {
+      "focal": "westan",
+      "partner": "yelwar1",
+      "ff": "Cardinals and Allies",
+      "pf": "New World Warblers",
+      "n": 35
+    },
+    {
+      "focal": "amedip",
+      "partner": "brebla",
+      "ff": "Dippers",
+      "pf": "Troupials and Allies",
+      "n": 34
+    },
+    {
+      "focal": "bkwsti",
+      "partner": "marsan",
+      "ff": "Stilts and Avocets",
+      "pf": "Sandpipers and Allies",
+      "n": 34
+    },
+    {
+      "focal": "burowl",
+      "partner": "brnowl",
+      "ff": "Owls",
+      "pf": "Barn-Owls",
+      "n": 34
+    },
+    {
+      "focal": "limpki",
+      "partner": "ycnher",
+      "ff": "Limpkin",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 34
+    },
+    {
+      "focal": "yellow2",
+      "partner": "trepip",
+      "ff": "Old World Buntings",
+      "pf": "Wagtails and Pipits",
+      "n": 34
+    },
+    {
+      "focal": "brnpel",
+      "partner": "turvul",
+      "ff": "Pelicans",
+      "pf": "New World Vultures",
+      "n": 33
+    },
+    {
+      "focal": "eurlin1",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 33
+    },
+    {
+      "focal": "melwar1",
+      "partner": "wlwwar",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 33
+    },
+    {
+      "focal": "nutman",
+      "partner": "houspa",
+      "ff": "Waxbills and Allies",
+      "pf": "Old World Sparrows",
+      "n": 33
+    },
+    {
+      "focal": "nutman",
+      "partner": "houfin",
+      "ff": "Waxbills and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 33
+    },
+    {
+      "focal": "redwin",
+      "partner": "rewbla",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": 33
+    },
+    {
+      "focal": "reebun",
+      "partner": "houspa",
+      "ff": "Old World Buntings",
+      "pf": "Old World Sparrows",
+      "n": 33
+    },
+    {
+      "focal": "torcro2",
+      "partner": "grtgra",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": 33
+    },
+    {
+      "focal": "vesspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 33
+    },
+    {
+      "focal": "bewwre",
+      "partner": "houspa",
+      "ff": "Wrens",
+      "pf": "Old World Sparrows",
+      "n": 32
+    },
+    {
+      "focal": "bkbplo",
+      "partner": "dunlin",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 32
+    },
+    {
+      "focal": "brnpel",
+      "partner": "magfri",
+      "ff": "Pelicans",
+      "pf": "Frigatebirds",
+      "n": 32
+    },
+    {
+      "focal": "comcra",
+      "partner": "whisto1",
+      "ff": "Cranes",
+      "pf": "Storks",
+      "n": 32
+    },
+    {
+      "focal": "mouchi",
+      "partner": "houspa",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Old World Sparrows",
+      "n": 32
+    },
+    {
+      "focal": "whisto1",
+      "partner": "comcra",
+      "ff": "Storks",
+      "pf": "Cranes",
+      "n": 32
+    },
+    {
+      "focal": "whiwag",
+      "partner": "houspa",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Sparrows",
+      "n": 32
+    },
+    {
+      "focal": "blbgra1",
+      "partner": "shicow",
+      "ff": "Tanagers and Allies",
+      "pf": "Troupials and Allies",
+      "n": 31
+    },
+    {
+      "focal": "burthr",
+      "partner": "eurbla",
+      "ff": "Old World Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 31
+    },
+    {
+      "focal": "cirbun1",
+      "partner": "eurser1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 31
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "eurbla",
+      "ff": "Accentors",
+      "pf": "Thrushes and Allies",
+      "n": 31
+    },
+    {
+      "focal": "eurser1",
+      "partner": "cirbun1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 31
+    },
+    {
+      "focal": "killde",
+      "partner": "rudtur",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 31
+    },
+    {
+      "focal": "ovenbi1",
+      "partner": "houspa",
+      "ff": "New World Warblers",
+      "pf": "Old World Sparrows",
+      "n": 31
+    },
+    {
+      "focal": "robgro",
+      "partner": "rewbla",
+      "ff": "Cardinals and Allies",
+      "pf": "Troupials and Allies",
+      "n": 31
+    },
+    {
+      "focal": "rudtur",
+      "partner": "killde",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": 31
+    },
+    {
+      "focal": "shicow",
+      "partner": "blbgra1",
+      "ff": "Troupials and Allies",
+      "pf": "Tanagers and Allies",
+      "n": 31
+    },
+    {
+      "focal": "ausbrt1",
+      "partner": "redjun",
+      "ff": "Megapodes",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 30
+    },
+    {
+      "focal": "blkpho",
+      "partner": "amerob",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 30
+    },
+    {
+      "focal": "brnowl",
+      "partner": "tawowl1",
+      "ff": "Barn-Owls",
+      "pf": "Owls",
+      "n": 30
+    },
+    {
+      "focal": "gockin",
+      "partner": "yerwar",
+      "ff": "Kinglets",
+      "pf": "New World Warblers",
+      "n": 30
+    },
+    {
+      "focal": "lottit1",
+      "partner": "blutit",
+      "ff": "Long-tailed Tits",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 30
+    },
+    {
+      "focal": "paibun",
+      "partner": "orcwar",
+      "ff": "Cardinals and Allies",
+      "pf": "New World Warblers",
+      "n": 30
+    },
+    {
+      "focal": "rebnut",
+      "partner": "carwre",
+      "ff": "Nuthatches",
+      "pf": "Wrens",
+      "n": 30
+    },
+    {
+      "focal": "euroys1",
+      "partner": "rudtur",
+      "ff": "Oystercatchers",
+      "pf": "Sandpipers and Allies",
+      "n": 29
+    },
+    {
+      "focal": "leafly",
+      "partner": "ruckin",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Kinglets",
+      "n": 29
+    },
+    {
+      "focal": "whiwag",
+      "partner": "gretit1",
+      "ff": "Wagtails and Pipits",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 29
+    },
+    {
+      "focal": "woosto",
+      "partner": "grbher3",
+      "ff": "Storks",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 29
+    },
+    {
+      "focal": "yebcha",
+      "partner": "yelcha1",
+      "ff": "Yellow-breasted Chat",
+      "pf": "Honeyeaters",
+      "n": 29
+    },
+    {
+      "focal": "yelcha1",
+      "partner": "yebcha",
+      "ff": "Honeyeaters",
+      "pf": "Yellow-breasted Chat",
+      "n": 29
+    },
+    {
+      "focal": "amepip",
+      "partner": "bnhcow",
+      "ff": "Wagtails and Pipits",
+      "pf": "Troupials and Allies",
+      "n": 28
+    },
+    {
+      "focal": "blbgra1",
+      "partner": "indbun",
+      "ff": "Tanagers and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 28
+    },
+    {
+      "focal": "brnboo",
+      "partner": "mallar3",
+      "ff": "Boobies and Gannets",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 28
+    },
+    {
+      "focal": "cedwax",
+      "partner": "eursta",
+      "ff": "Waxwings",
+      "pf": "Starlings",
+      "n": 28
+    },
+    {
+      "focal": "cetwar1",
+      "partner": "comnig1",
+      "ff": "Bush Warblers and Allies",
+      "pf": "Old World Flycatchers",
+      "n": 28
+    },
+    {
+      "focal": "comcuc",
+      "partner": "eurkes",
+      "ff": "Cuckoos",
+      "pf": "Falcons and Caracaras",
+      "n": 28
+    },
+    {
+      "focal": "comnig1",
+      "partner": "cetwar1",
+      "ff": "Old World Flycatchers",
+      "pf": "Bush Warblers and Allies",
+      "n": 28
+    },
+    {
+      "focal": "darter2",
+      "partner": "litcor1",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": 28
+    },
+    {
+      "focal": "eurnut2",
+      "partner": "sonthr1",
+      "ff": "Nuthatches",
+      "pf": "Thrushes and Allies",
+      "n": 28
+    },
+    {
+      "focal": "limpki",
+      "partner": "whfibi",
+      "ff": "Limpkin",
+      "pf": "Ibises and Spoonbills",
+      "n": 28
+    },
+    {
+      "focal": "magrob",
+      "partner": "rbbmag",
+      "ff": "Old World Flycatchers",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 28
+    },
+    {
+      "focal": "moublu",
+      "partner": "pinjay",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 28
+    },
+    {
+      "focal": "pinjay",
+      "partner": "moublu",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 28
+    },
+    {
+      "focal": "rbbmag",
+      "partner": "magrob",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Old World Flycatchers",
+      "n": 28
+    },
+    {
+      "focal": "robgro",
+      "partner": "houspa",
+      "ff": "Cardinals and Allies",
+      "pf": "Old World Sparrows",
+      "n": 28
+    },
+    {
+      "focal": "skylar",
+      "partner": "trepip",
+      "ff": "Larks",
+      "pf": "Wagtails and Pipits",
+      "n": 28
+    },
+    {
+      "focal": "surfbi",
+      "partner": "wesgul",
+      "ff": "Sandpipers and Allies",
+      "pf": "Gulls, Terns, and Skimmers",
+      "n": 28
+    },
+    {
+      "focal": "watjac1",
+      "partner": "comgal1",
+      "ff": "Jacanas",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": 28
+    },
+    {
+      "focal": "ausmag2",
+      "partner": "bkbmag1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 27
+    },
+    {
+      "focal": "bafibi1",
+      "partner": "limpki",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Limpkin",
+      "n": 27
+    },
+    {
+      "focal": "bknsti",
+      "partner": "greyel",
+      "ff": "Stilts and Avocets",
+      "pf": "Sandpipers and Allies",
+      "n": 27
+    },
+    {
+      "focal": "brakit1",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": 27
+    },
+    {
+      "focal": "buggna",
+      "partner": "ruckin",
+      "ff": "Gnatcatchers",
+      "pf": "Kinglets",
+      "n": 27
+    },
+    {
+      "focal": "buggna",
+      "partner": "grycat",
+      "ff": "Gnatcatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 27
+    },
+    {
+      "focal": "chiswi",
+      "partner": "nrwswa",
+      "ff": "Swifts",
+      "pf": "Swallows",
+      "n": 27
+    },
+    {
+      "focal": "eurjay1",
+      "partner": "eurbla",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 27
+    },
+    {
+      "focal": "limpki",
+      "partner": "bafibi1",
+      "ff": "Limpkin",
+      "pf": "Ibises and Spoonbills",
+      "n": 27
+    },
+    {
+      "focal": "logshr",
+      "partner": "cowscj1",
+      "ff": "Shrikes",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 27
+    },
+    {
+      "focal": "melwar1",
+      "partner": "comchi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 27
+    },
+    {
+      "focal": "mouchi",
+      "partner": "rebnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": 27
+    },
+    {
+      "focal": "rebnut",
+      "partner": "mouchi",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 27
+    },
+    {
+      "focal": "saffin",
+      "partner": "yefcan",
+      "ff": "Tanagers and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 27
+    },
+    {
+      "focal": "shicow",
+      "partner": "whltan1",
+      "ff": "Troupials and Allies",
+      "pf": "Tanagers and Allies",
+      "n": 27
+    },
+    {
+      "focal": "shicow",
+      "partner": "eurbla",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 27
+    },
+    {
+      "focal": "towsol",
+      "partner": "yerwar",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Warblers",
+      "n": 27
+    },
+    {
+      "focal": "whltan1",
+      "partner": "shicow",
+      "ff": "Tanagers and Allies",
+      "pf": "Troupials and Allies",
+      "n": 27
+    },
+    {
+      "focal": "yebcuc",
+      "partner": "moudov",
+      "ff": "Cuckoos",
+      "pf": "Pigeons and Doves",
+      "n": 27
+    },
+    {
+      "focal": "yefcan",
+      "partner": "saffin",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tanagers and Allies",
+      "n": 27
+    },
+    {
+      "focal": "asiope1",
+      "partner": "graher1",
+      "ff": "Storks",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 26
+    },
+    {
+      "focal": "cetwar1",
+      "partner": "winwre4",
+      "ff": "Bush Warblers and Allies",
+      "pf": "Wrens",
+      "n": 26
+    },
+    {
+      "focal": "corbun1",
+      "partner": "eurser1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 26
+    },
+    {
+      "focal": "criros2",
+      "partner": "gagcoc1",
+      "ff": "Old World Parrots",
+      "pf": "Cockatoos",
+      "n": 26
+    },
+    {
+      "focal": "eurser1",
+      "partner": "corbun1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": 26
+    },
+    {
+      "focal": "flsjay",
+      "partner": "normoc",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 26
+    },
+    {
+      "focal": "gagcoc1",
+      "partner": "criros2",
+      "ff": "Cockatoos",
+      "pf": "Old World Parrots",
+      "n": 26
+    },
+    {
+      "focal": "garwar1",
+      "partner": "blrwar1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Reed Warblers and Allies",
+      "n": 26
+    },
+    {
+      "focal": "helgui",
+      "partner": "redjun",
+      "ff": "Guineafowl",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 26
+    },
+    {
+      "focal": "incdov",
+      "partner": "houspa",
+      "ff": "Pigeons and Doves",
+      "pf": "Old World Sparrows",
+      "n": 26
+    },
+    {
+      "focal": "norpar",
+      "partner": "yetvir",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 26
+    },
+    {
+      "focal": "scatan",
+      "partner": "yelwar1",
+      "ff": "Cardinals and Allies",
+      "pf": "New World Warblers",
+      "n": 26
+    },
+    {
+      "focal": "semplo",
+      "partner": "semsan",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": 26
+    },
+    {
+      "focal": "shicow",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 26
+    },
+    {
+      "focal": "varbun",
+      "partner": "houfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 26
+    },
+    {
+      "focal": "winwre4",
+      "partner": "cetwar1",
+      "ff": "Wrens",
+      "pf": "Bush Warblers and Allies",
+      "n": 26
+    },
+    {
+      "focal": "winwre4",
+      "partner": "wrenti",
+      "ff": "Wrens",
+      "pf": "Parrotbills",
+      "n": 26
+    },
+    {
+      "focal": "wrenti",
+      "partner": "winwre4",
+      "ff": "Parrotbills",
+      "pf": "Wrens",
+      "n": 26
+    },
+    {
+      "focal": "yetvir",
+      "partner": "norpar",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": 26
+    },
+    {
+      "focal": "bewwre",
+      "partner": "daejun",
+      "ff": "Wrens",
+      "pf": "New World Sparrows",
+      "n": 25
+    },
+    {
+      "focal": "bushti",
+      "partner": "houfin",
+      "ff": "Long-tailed Tits",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 25
+    },
+    {
+      "focal": "cedwax",
+      "partner": "normoc",
+      "ff": "Waxwings",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 25
+    },
+    {
+      "focal": "cedwax",
+      "partner": "houfin",
+      "ff": "Waxwings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 25
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "eurlin1",
+      "ff": "Accentors",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 25
+    },
+    {
+      "focal": "lottit1",
+      "partner": "gretit1",
+      "ff": "Long-tailed Tits",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 25
+    },
+    {
+      "focal": "magrob",
+      "partner": "whiwag",
+      "ff": "Old World Flycatchers",
+      "pf": "Wagtails and Pipits",
+      "n": 25
+    },
+    {
+      "focal": "mouchi",
+      "partner": "daejun",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "New World Sparrows",
+      "n": 25
+    },
+    {
+      "focal": "prowar",
+      "partner": "amegfi",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 25
+    },
+    {
+      "focal": "sagthr",
+      "partner": "houfin",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 25
+    },
+    {
+      "focal": "whisto1",
+      "partner": "greegr",
+      "ff": "Storks",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 25
+    },
+    {
+      "focal": "amewoo",
+      "partner": "amerob",
+      "ff": "Sandpipers and Allies",
+      "pf": "Thrushes and Allies",
+      "n": 24
+    },
+    {
+      "focal": "bruwat1",
+      "partner": "eursta",
+      "ff": "Honeyeaters",
+      "pf": "Starlings",
+      "n": 24
+    },
+    {
+      "focal": "bushti",
+      "partner": "yerwar",
+      "ff": "Long-tailed Tits",
+      "pf": "New World Warblers",
+      "n": 24
+    },
+    {
+      "focal": "cacwre",
+      "partner": "houspa",
+      "ff": "Wrens",
+      "pf": "Old World Sparrows",
+      "n": 24
+    },
+    {
+      "focal": "calgna",
+      "partner": "bushti",
+      "ff": "Gnatcatchers",
+      "pf": "Long-tailed Tits",
+      "n": 24
+    },
+    {
+      "focal": "clcrob",
+      "partner": "houwre4",
+      "ff": "Thrushes and Allies",
+      "pf": "Wrens",
+      "n": 24
+    },
+    {
+      "focal": "comnig1",
+      "partner": "sonthr1",
+      "ff": "Old World Flycatchers",
+      "pf": "Thrushes and Allies",
+      "n": 24
+    },
+    {
+      "focal": "eurwoo",
+      "partner": "rinphe1",
+      "ff": "Sandpipers and Allies",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 24
+    },
+    {
+      "focal": "magrob",
+      "partner": "whbwag1",
+      "ff": "Old World Flycatchers",
+      "pf": "Wagtails and Pipits",
+      "n": 24
+    },
+    {
+      "focal": "reebun",
+      "partner": "eutspa",
+      "ff": "Old World Buntings",
+      "pf": "Old World Sparrows",
+      "n": 24
+    },
+    {
+      "focal": "rusbla",
+      "partner": "eursta",
+      "ff": "Troupials and Allies",
+      "pf": "Starlings",
+      "n": 24
+    },
+    {
+      "focal": "skylar",
+      "partner": "corbun1",
+      "ff": "Larks",
+      "pf": "Old World Buntings",
+      "n": 24
+    },
+    {
+      "focal": "snakit",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": 24
+    },
+    {
+      "focal": "spofly1",
+      "partner": "houspa",
+      "ff": "Old World Flycatchers",
+      "pf": "Old World Sparrows",
+      "n": 24
+    },
+    {
+      "focal": "stejay",
+      "partner": "wesblu",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 24
+    },
+    {
+      "focal": "wesfly",
+      "partner": "lesgol",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 24
+    },
+    {
+      "focal": "wesfly",
+      "partner": "hutvir",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 24
+    },
+    {
+      "focal": "whbwag1",
+      "partner": "magrob",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Flycatchers",
+      "n": 24
+    },
+    {
+      "focal": "amewoo",
+      "partner": "moudov",
+      "ff": "Sandpipers and Allies",
+      "pf": "Pigeons and Doves",
+      "n": 23
+    },
+    {
+      "focal": "brncre",
+      "partner": "houspa",
+      "ff": "Treecreepers",
+      "pf": "Old World Sparrows",
+      "n": 23
+    },
+    {
+      "focal": "cetwar1",
+      "partner": "eurwar1",
+      "ff": "Bush Warblers and Allies",
+      "pf": "Reed Warblers and Allies",
+      "n": 23
+    },
+    {
+      "focal": "commur",
+      "partner": "comloo",
+      "ff": "Auks, Murres, and Puffins",
+      "pf": "Loons",
+      "n": 23
+    },
+    {
+      "focal": "dunnoc1",
+      "partner": "sonspa",
+      "ff": "Accentors",
+      "pf": "New World Sparrows",
+      "n": 23
+    },
+    {
+      "focal": "eurnut2",
+      "partner": "gretit1",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 23
+    },
+    {
+      "focal": "eurwar1",
+      "partner": "cetwar1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Bush Warblers and Allies",
+      "n": 23
+    },
+    {
+      "focal": "fislov1",
+      "partner": "janpar1",
+      "ff": "Old World Parrots",
+      "pf": "New World and African Parrots",
+      "n": 23
+    },
+    {
+      "focal": "janpar1",
+      "partner": "fislov1",
+      "ff": "New World and African Parrots",
+      "pf": "Old World Parrots",
+      "n": 23
+    },
+    {
+      "focal": "maglar1",
+      "partner": "piebut1",
+      "ff": "Monarch Flycatchers",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": 23
+    },
+    {
+      "focal": "rocpet1",
+      "partner": "corbun1",
+      "ff": "Old World Sparrows",
+      "pf": "Old World Buntings",
+      "n": 23
+    },
+    {
+      "focal": "wesfly",
+      "partner": "ruckin",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Kinglets",
+      "n": 23
+    },
+    {
+      "focal": "woolar1",
+      "partner": "meapip1",
+      "ff": "Larks",
+      "pf": "Wagtails and Pipits",
+      "n": 23
+    },
+    {
+      "focal": "amepip",
+      "partner": "horlar",
+      "ff": "Wagtails and Pipits",
+      "pf": "Larks",
+      "n": 22
+    },
+    {
+      "focal": "amewoo",
+      "partner": "houspa",
+      "ff": "Sandpipers and Allies",
+      "pf": "Old World Sparrows",
+      "n": 22
+    },
+    {
+      "focal": "asikoe2",
+      "partner": "houcro1",
+      "ff": "Cuckoos",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 22
+    },
+    {
+      "focal": "bkhgro",
+      "partner": "balori",
+      "ff": "Cardinals and Allies",
+      "pf": "Troupials and Allies",
+      "n": 22
+    },
+    {
+      "focal": "blumoc",
+      "partner": "grtgra",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Troupials and Allies",
+      "n": 22
+    },
+    {
+      "focal": "cacwre",
+      "partner": "normoc",
+      "ff": "Wrens",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 22
+    },
+    {
+      "focal": "calqua",
+      "partner": "moudov",
+      "ff": "New World Quail",
+      "pf": "Pigeons and Doves",
+      "n": 22
+    },
+    {
+      "focal": "comnig1",
+      "partner": "blackc1",
+      "ff": "Old World Flycatchers",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 22
+    },
+    {
+      "focal": "darter2",
+      "partner": "purher1",
+      "ff": "Anhingas",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": 22
+    },
+    {
+      "focal": "eurnut2",
+      "partner": "blutit",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": 22
+    },
+    {
+      "focal": "garwar1",
+      "partner": "wlwwar",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 22
+    },
+    {
+      "focal": "gohcis1",
+      "partner": "tawgra3",
+      "ff": "Cisticolas and Allies",
+      "pf": "Grassbirds and Allies",
+      "n": 22
+    },
+    {
+      "focal": "grykin",
+      "partner": "tromoc",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 22
+    },
+    {
+      "focal": "horlar",
+      "partner": "amepip",
+      "ff": "Larks",
+      "pf": "Wagtails and Pipits",
+      "n": 22
+    },
+    {
+      "focal": "limpki",
+      "partner": "gloibi",
+      "ff": "Limpkin",
+      "pf": "Ibises and Spoonbills",
+      "n": 22
+    },
+    {
+      "focal": "lottit1",
+      "partner": "whiwag",
+      "ff": "Long-tailed Tits",
+      "pf": "Wagtails and Pipits",
+      "n": 22
+    },
+    {
+      "focal": "marwre",
+      "partner": "rewbla",
+      "ff": "Wrens",
+      "pf": "Troupials and Allies",
+      "n": 22
+    },
+    {
+      "focal": "redpol1",
+      "partner": "houspa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Sparrows",
+      "n": 22
+    },
+    {
+      "focal": "revbul",
+      "partner": "commyn",
+      "ff": "Bulbuls",
+      "pf": "Starlings",
+      "n": 22
+    },
+    {
+      "focal": "rufgro",
+      "partner": "brdowl",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Owls",
+      "n": 22
+    },
+    {
+      "focal": "tawgra3",
+      "partner": "gohcis1",
+      "ff": "Grassbirds and Allies",
+      "pf": "Cisticolas and Allies",
+      "n": 22
+    },
+    {
+      "focal": "verdin",
+      "partner": "bushti",
+      "ff": "Penduline-Tits",
+      "pf": "Long-tailed Tits",
+      "n": 22
+    },
+    {
+      "focal": "y00678",
+      "partner": "osprey",
+      "ff": "Falcons and Caracaras",
+      "pf": "Osprey",
+      "n": 22
+    },
+    {
+      "focal": "yebcuc",
+      "partner": "normoc",
+      "ff": "Cuckoos",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 22
+    },
+    {
+      "focal": "amered",
+      "partner": "buhvir",
+      "ff": "New World Warblers",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": 21
+    },
+    {
+      "focal": "asgsta1",
+      "partner": "houcro1",
+      "ff": "Starlings",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 21
+    },
+    {
+      "focal": "babwar",
+      "partner": "amegfi",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 21
+    },
+    {
+      "focal": "brncre",
+      "partner": "whbnut",
+      "ff": "Treecreepers",
+      "pf": "Nuthatches",
+      "n": 21
+    },
+    {
+      "focal": "buhvir",
+      "partner": "amered",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": 21
+    },
+    {
+      "focal": "cacwre",
+      "partner": "houfin",
+      "ff": "Wrens",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 21
+    },
+    {
+      "focal": "calthr",
+      "partner": "grtgra",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Troupials and Allies",
+      "n": 21
+    },
+    {
+      "focal": "casspa",
+      "partner": "houspa",
+      "ff": "New World Sparrows",
+      "pf": "Old World Sparrows",
+      "n": 21
+    },
+    {
+      "focal": "cirbun1",
+      "partner": "eurlin1",
+      "ff": "Old World Buntings",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 21
+    },
+    {
+      "focal": "eurjay1",
+      "partner": "fieldf",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": 21
+    },
+    {
+      "focal": "eurnut3",
+      "partner": "eursta",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Starlings",
+      "n": 21
+    },
+    {
+      "focal": "mouchi",
+      "partner": "whbnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": 21
+    },
+    {
+      "focal": "norshr4",
+      "partner": "normoc",
+      "ff": "Shrikes",
+      "pf": "Mockingbirds and Thrashers",
+      "n": 21
+    },
+    {
+      "focal": "prafal",
+      "partner": "swahaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": 21
+    },
+    {
+      "focal": "prowar",
+      "partner": "saffin",
+      "ff": "New World Warblers",
+      "pf": "Tanagers and Allies",
+      "n": 21
+    },
+    {
+      "focal": "rengre",
+      "partner": "commer",
+      "ff": "Grebes",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": 21
+    },
+    {
+      "focal": "robgro",
+      "partner": "houfin",
+      "ff": "Cardinals and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 21
+    },
+    {
+      "focal": "saffin",
+      "partner": "prowar",
+      "ff": "Tanagers and Allies",
+      "pf": "New World Warblers",
+      "n": 21
+    },
+    {
+      "focal": "sedwar1",
+      "partner": "comchi1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Leaf Warblers",
+      "n": 21
+    },
+    {
+      "focal": "verdin",
+      "partner": "yerwar",
+      "ff": "Penduline-Tits",
+      "pf": "New World Warblers",
+      "n": 21
+    },
+    {
+      "focal": "banana",
+      "partner": "trokin",
+      "ff": "Tanagers and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 20
+    },
+    {
+      "focal": "banana",
+      "partner": "cotfly1",
+      "ff": "Tanagers and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": 20
+    },
+    {
+      "focal": "bkhgro",
+      "partner": "bulori",
+      "ff": "Cardinals and Allies",
+      "pf": "Troupials and Allies",
+      "n": 20
+    },
+    {
+      "focal": "bladro1",
+      "partner": "grytre1",
+      "ff": "Drongos",
+      "pf": "Crows, Jays, and Magpies",
+      "n": 20
+    },
+    {
+      "focal": "brespa",
+      "partner": "houfin",
+      "ff": "New World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "broqua1",
+      "partner": "paibut",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Buttonquail",
+      "n": 20
+    },
+    {
+      "focal": "bulori",
+      "partner": "bkhgro",
+      "ff": "Troupials and Allies",
+      "pf": "Cardinals and Allies",
+      "n": 20
+    },
+    {
+      "focal": "chiswi",
+      "partner": "purmar",
+      "ff": "Swifts",
+      "pf": "Swallows",
+      "n": 20
+    },
+    {
+      "focal": "comnig1",
+      "partner": "grewhi1",
+      "ff": "Old World Flycatchers",
+      "pf": "Sylviid Warblers and Allies",
+      "n": 20
+    },
+    {
+      "focal": "cotfly1",
+      "partner": "banana",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Tanagers and Allies",
+      "n": 20
+    },
+    {
+      "focal": "gryfan1",
+      "partner": "whbscr1",
+      "ff": "Fantails",
+      "pf": "Thornbills and Allies",
+      "n": 20
+    },
+    {
+      "focal": "gryfin1",
+      "partner": "lesgol",
+      "ff": "Tanagers and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "grysht1",
+      "partner": "grybut1",
+      "ff": "Whistlers and Allies",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "grytre1",
+      "partner": "bladro1",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Drongos",
+      "n": 20
+    },
+    {
+      "focal": "helgui",
+      "partner": "compea",
+      "ff": "Guineafowl",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "logshr",
+      "partner": "houspa",
+      "ff": "Shrikes",
+      "pf": "Old World Sparrows",
+      "n": 20
+    },
+    {
+      "focal": "nutman",
+      "partner": "eutspa",
+      "ff": "Waxbills and Allies",
+      "pf": "Old World Sparrows",
+      "n": 20
+    },
+    {
+      "focal": "paibut",
+      "partner": "broqua1",
+      "ff": "Buttonquail",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "paltan1",
+      "partner": "shicow",
+      "ff": "Tanagers and Allies",
+      "pf": "Troupials and Allies",
+      "n": 20
+    },
+    {
+      "focal": "rebshr1",
+      "partner": "spofly1",
+      "ff": "Shrikes",
+      "pf": "Old World Flycatchers",
+      "n": 20
+    },
+    {
+      "focal": "whbscr1",
+      "partner": "gryfan1",
+      "ff": "Thornbills and Allies",
+      "pf": "Fantails",
+      "n": 20
+    },
+    {
+      "focal": "whwcho1",
+      "partner": "piecur1",
+      "ff": "White-winged Chough and Apostlebird",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": 20
+    },
+    {
+      "focal": "wilwag1",
+      "partner": "blkpho",
+      "ff": "Fantails",
+      "pf": "Tyrant Flycatchers",
+      "n": 20
+    },
+    {
+      "focal": "y00678",
+      "partner": "blkvul",
+      "ff": "Falcons and Caracaras",
+      "pf": "New World Vultures",
+      "n": 20
+    },
+    {
+      "focal": "amecro",
+      "partner": "brebla",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "amecro",
+      "partner": "rewbla",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "babwar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "balori",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "comyel",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "prowar",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "scatan",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "westan",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "amegfi",
+      "partner": "yelwar1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "amewoo",
+      "ff": "Thrushes and Allies",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "balori",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "bkhgro",
+      "ff": "Thrushes and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "blkpho",
+      "ff": "Thrushes and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "blujay",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "brnthr",
+      "ff": "Thrushes and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "caltow",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "carwre",
+      "ff": "Thrushes and Allies",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "cedwax",
+      "ff": "Thrushes and Allies",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "daejun",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "eastow",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "grycat",
+      "ff": "Thrushes and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "norfli",
+      "ff": "Thrushes and Allies",
+      "pf": "Woodpeckers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "normoc",
+      "ff": "Thrushes and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "orcori",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "rebnut",
+      "ff": "Thrushes and Allies",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "amerob",
+      "partner": "spotow",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "anhing",
+      "partner": "doccor",
+      "ff": "Anhingas",
+      "pf": "Cormorants and Shags",
+      "n": null
+    },
+    {
+      "focal": "balori",
+      "partner": "bkhgro",
+      "ff": "Troupials and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "barswa",
+      "partner": "chiswi",
+      "ff": "Swallows",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "barswa",
+      "partner": "comswi",
+      "ff": "Swallows",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "barswa",
+      "partner": "easpho",
+      "ff": "Swallows",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "bkbmag1",
+      "partner": "ausmag2",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Woodswallows, Bellmagpies, and Allies",
+      "n": null
+    },
+    {
+      "focal": "bkcchi",
+      "partner": "daejun",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "bkcchi",
+      "partner": "rebnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "bkcchi",
+      "partner": "whbnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "blackc1",
+      "partner": "comnig1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "blkpho",
+      "partner": "wilwag1",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Fantails",
+      "n": null
+    },
+    {
+      "focal": "blkvul",
+      "partner": "y00678",
+      "ff": "New World Vultures",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "blrwar1",
+      "partner": "garwar1",
+      "ff": "Reed Warblers and Allies",
+      "pf": "Sylviid Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "blutit",
+      "partner": "eurnut2",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "blutit",
+      "partner": "lottit1",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "bnhcow",
+      "partner": "amepip",
+      "ff": "Troupials and Allies",
+      "pf": "Wagtails and Pipits",
+      "n": null
+    },
+    {
+      "focal": "bnhcow",
+      "partner": "grycat",
+      "ff": "Troupials and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "botgra",
+      "partner": "fiscro",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "brdowl",
+      "partner": "rufgro",
+      "ff": "Owls",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "brebla",
+      "partner": "amedip",
+      "ff": "Troupials and Allies",
+      "pf": "Dippers",
+      "n": null
+    },
+    {
+      "focal": "brnowl",
+      "partner": "brdowl",
+      "ff": "Barn-Owls",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "brnowl",
+      "partner": "burowl",
+      "ff": "Barn-Owls",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "brnowl",
+      "partner": "grhowl",
+      "ff": "Barn-Owls",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "brnowl",
+      "partner": "redjun",
+      "ff": "Barn-Owls",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "brwhaw",
+      "partner": "merlin",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "bushti",
+      "partner": "calgna",
+      "ff": "Long-tailed Tits",
+      "pf": "Gnatcatchers",
+      "n": null
+    },
+    {
+      "focal": "bushti",
+      "partner": "verdin",
+      "ff": "Long-tailed Tits",
+      "pf": "Penduline-Tits",
+      "n": null
+    },
+    {
+      "focal": "caltow",
+      "partner": "calthr",
+      "ff": "New World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "cangoo",
+      "partner": "wiltur",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "carchi",
+      "partner": "whbnut",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "carwre",
+      "partner": "brnthr",
+      "ff": "Wrens",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "carwre",
+      "partner": "rebnut",
+      "ff": "Wrens",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "categr1",
+      "partner": "whiibi",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Ibises and Spoonbills",
+      "n": null
+    },
+    {
+      "focal": "combuz1",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": null
+    },
+    {
+      "focal": "combuz1",
+      "partner": "tawowl1",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "comcha",
+      "partner": "eupfly1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "comcha",
+      "partner": "eurjay1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "comcha",
+      "partner": "eurrob1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "comchi1",
+      "partner": "comcha",
+      "ff": "Leaf Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "comchi1",
+      "partner": "eurwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Reed Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "comchi1",
+      "partner": "garwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Sylviid Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "comchi1",
+      "partner": "melwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Reed Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "comchi1",
+      "partner": "sedwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Reed Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "comgal1",
+      "partner": "watjac1",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Jacanas",
+      "n": null
+    },
+    {
+      "focal": "comgra",
+      "partner": "grycat",
+      "ff": "Troupials and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "comhom1",
+      "partner": "comswi",
+      "ff": "Swallows",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "comloo",
+      "partner": "commur",
+      "ff": "Loons",
+      "pf": "Auks, Murres, and Puffins",
+      "n": null
+    },
+    {
+      "focal": "comloo",
+      "partner": "neocor",
+      "ff": "Loons",
+      "pf": "Cormorants and Shags",
+      "n": null
+    },
+    {
+      "focal": "commer",
+      "partner": "comloo",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Loons",
+      "n": null
+    },
+    {
+      "focal": "commer",
+      "partner": "grcgre1",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "commer",
+      "partner": "rengre",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "commoo3",
+      "partner": "litgre1",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "commyn",
+      "partner": "revbul",
+      "ff": "Starlings",
+      "pf": "Bulbuls",
+      "n": null
+    },
+    {
+      "focal": "compea",
+      "partner": "helgui",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Guineafowl",
+      "n": null
+    },
+    {
+      "focal": "coohaw",
+      "partner": "amekes",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "coohaw",
+      "partner": "merlin",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "coohaw",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": null
+    },
+    {
+      "focal": "coohaw",
+      "partner": "perfal",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "coohaw",
+      "partner": "prafal",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "corbun1",
+      "partner": "rocpet1",
+      "ff": "Old World Buntings",
+      "pf": "Old World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "corbun1",
+      "partner": "skylar",
+      "ff": "Old World Buntings",
+      "pf": "Larks",
+      "n": null
+    },
+    {
+      "focal": "cowpig1",
+      "partner": "eurjay1",
+      "ff": "Pigeons and Doves",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "cowpig1",
+      "partner": "eurmag1",
+      "ff": "Pigeons and Doves",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "cowscj1",
+      "partner": "logshr",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Shrikes",
+      "n": null
+    },
+    {
+      "focal": "daejun",
+      "partner": "bewwre",
+      "ff": "New World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "daejun",
+      "partner": "bushti",
+      "ff": "New World Sparrows",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "daejun",
+      "partner": "grycat",
+      "ff": "New World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "daejun",
+      "partner": "mouchi",
+      "ff": "New World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "dowwoo",
+      "partner": "bawwar",
+      "ff": "Woodpeckers",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "dowwoo",
+      "partner": "whbnut",
+      "ff": "Woodpeckers",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "dunlin",
+      "partner": "bkbplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "eawvir1",
+      "partner": "tenwar",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "blackc1",
+      "ff": "Thrushes and Allies",
+      "pf": "Sylviid Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "burthr",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "dunnoc1",
+      "ff": "Thrushes and Allies",
+      "pf": "Accentors",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "eurjay1",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "shicow",
+      "ff": "Thrushes and Allies",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "eurbla",
+      "partner": "winwre4",
+      "ff": "Thrushes and Allies",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "eurcoo",
+      "partner": "grcgre1",
+      "ff": "Rails, Gallinules, and Coots",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "eurjac",
+      "partner": "eurbla",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "eurkes",
+      "partner": "comcuc",
+      "ff": "Falcons and Caracaras",
+      "pf": "Cuckoos",
+      "n": null
+    },
+    {
+      "focal": "eurlin1",
+      "partner": "cirbun1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "eurlin1",
+      "partner": "dunnoc1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Accentors",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "bruwat1",
+      "ff": "Starlings",
+      "pf": "Honeyeaters",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "cedwax",
+      "ff": "Starlings",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "eurnut3",
+      "ff": "Starlings",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "fieldf",
+      "ff": "Starlings",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "grycat",
+      "ff": "Starlings",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "norfli",
+      "ff": "Starlings",
+      "pf": "Woodpeckers",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "purmar",
+      "ff": "Starlings",
+      "pf": "Swallows",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "rusbla",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "shicow",
+      "ff": "Starlings",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "eursta",
+      "partner": "sonthr1",
+      "ff": "Starlings",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "eutspa",
+      "partner": "nutman",
+      "ff": "Old World Sparrows",
+      "pf": "Waxbills and Allies",
+      "n": null
+    },
+    {
+      "focal": "eutspa",
+      "partner": "reebun",
+      "ff": "Old World Sparrows",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "fieldf",
+      "partner": "eurjay1",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "gloibi",
+      "partner": "limpki",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Limpkin",
+      "n": null
+    },
+    {
+      "focal": "graher1",
+      "partner": "asiope1",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Storks",
+      "n": null
+    },
+    {
+      "focal": "graher1",
+      "partner": "comcra",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Cranes",
+      "n": null
+    },
+    {
+      "focal": "graher1",
+      "partner": "whisto1",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Storks",
+      "n": null
+    },
+    {
+      "focal": "grbher3",
+      "partner": "anhing",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Anhingas",
+      "n": null
+    },
+    {
+      "focal": "grbher3",
+      "partner": "brnpel",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Pelicans",
+      "n": null
+    },
+    {
+      "focal": "grbher3",
+      "partner": "neocor",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Cormorants and Shags",
+      "n": null
+    },
+    {
+      "focal": "grbher3",
+      "partner": "woosto",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Storks",
+      "n": null
+    },
+    {
+      "focal": "grecor",
+      "partner": "darter4",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": null
+    },
+    {
+      "focal": "grecor",
+      "partner": "grcgre1",
+      "ff": "Cormorants and Shags",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "greegr",
+      "partner": "amwpel",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Pelicans",
+      "n": null
+    },
+    {
+      "focal": "greegr",
+      "partner": "whiibi",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Ibises and Spoonbills",
+      "n": null
+    },
+    {
+      "focal": "greegr",
+      "partner": "whisto1",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Storks",
+      "n": null
+    },
+    {
+      "focal": "greegr",
+      "partner": "whocra",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Cranes",
+      "n": null
+    },
+    {
+      "focal": "greegr",
+      "partner": "woosto",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Storks",
+      "n": null
+    },
+    {
+      "focal": "grekis",
+      "partner": "banana",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "gretit1",
+      "partner": "comcha",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "gretit1",
+      "partner": "eurnut2",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "gretit1",
+      "partner": "lottit1",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "gretit1",
+      "partner": "whiwag",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Wagtails and Pipits",
+      "n": null
+    },
+    {
+      "focal": "grewhi1",
+      "partner": "comnig1",
+      "ff": "Sylviid Warblers and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "greyel",
+      "partner": "bknsti",
+      "ff": "Sandpipers and Allies",
+      "pf": "Stilts and Avocets",
+      "n": null
+    },
+    {
+      "focal": "grnpar",
+      "partner": "rorpar",
+      "ff": "New World and African Parrots",
+      "pf": "Old World Parrots",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "blumoc",
+      "ff": "Troupials and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "calthr",
+      "ff": "Troupials and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "chirav",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "clcrob",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "cubthr",
+      "ff": "Troupials and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "grbani",
+      "ff": "Troupials and Allies",
+      "pf": "Cuckoos",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "houcro1",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "grtgra",
+      "partner": "torcro2",
+      "ff": "Troupials and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "grybut1",
+      "partner": "grysht1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "Whistlers and Allies",
+      "n": null
+    },
+    {
+      "focal": "grycat",
+      "partner": "buggna",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Gnatcatchers",
+      "n": null
+    },
+    {
+      "focal": "herthr",
+      "partner": "foxspa",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houcro1",
+      "partner": "asgsta1",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Starlings",
+      "n": null
+    },
+    {
+      "focal": "houcro1",
+      "partner": "asikoe2",
+      "ff": "Crows, Jays, and Magpies",
+      "pf": "Cuckoos",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "amerob",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "blugrb1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "brespa",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "bushti",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "cacwre",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "caltow",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "cantow",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "cedwax",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "easblu",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "indbun",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "nutman",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Waxbills and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "robgro",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "sagthr",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "varbun",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "verfly",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "houfin",
+      "partner": "wesblu",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "amerob",
+      "ff": "Old World Sparrows",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "amewoo",
+      "ff": "Old World Sparrows",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "amtspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "bewwre",
+      "ff": "Old World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "bkcchi",
+      "ff": "Old World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "bktspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "blkpho",
+      "ff": "Old World Sparrows",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "brespa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "brncre",
+      "ff": "Old World Sparrows",
+      "pf": "Treecreepers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "brnthr",
+      "ff": "Old World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "bushti",
+      "ff": "Old World Sparrows",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "cacwre",
+      "ff": "Old World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "caltow",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "cantow",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "carchi",
+      "ff": "Old World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "carwre",
+      "ff": "Old World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "casspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "cedwax",
+      "ff": "Old World Sparrows",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "chbchi",
+      "ff": "Old World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "clcspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "comcha",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "corbun1",
+      "ff": "Old World Sparrows",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "daejun",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "dunnoc1",
+      "ff": "Old World Sparrows",
+      "pf": "Accentors",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "eurgol",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "eurgre1",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "eurlin1",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "eursta",
+      "ff": "Old World Sparrows",
+      "pf": "Starlings",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "fiespa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "gocspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "graspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "grycat",
+      "ff": "Old World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "harspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "houwre",
+      "ff": "Old World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "incdov",
+      "ff": "Old World Sparrows",
+      "pf": "Pigeons and Doves",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "indsil",
+      "ff": "Old World Sparrows",
+      "pf": "Waxbills and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "killde",
+      "ff": "Old World Sparrows",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "larspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "logshr",
+      "ff": "Old World Sparrows",
+      "pf": "Shrikes",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "mouchi",
+      "ff": "Old World Sparrows",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "normoc",
+      "ff": "Old World Sparrows",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "nutman",
+      "ff": "Old World Sparrows",
+      "pf": "Waxbills and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "ovenbi1",
+      "ff": "Old World Sparrows",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "pinsis",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "redpol1",
+      "ff": "Old World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "reebun",
+      "ff": "Old World Sparrows",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "robgro",
+      "ff": "Old World Sparrows",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "rucspa1",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "spofly1",
+      "ff": "Old World Sparrows",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "swaspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "vesspa",
+      "ff": "Old World Sparrows",
+      "pf": "New World Sparrows",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "whebul1",
+      "ff": "Old World Sparrows",
+      "pf": "Bulbuls",
+      "n": null
+    },
+    {
+      "focal": "houspa",
+      "partner": "whiwag",
+      "ff": "Old World Sparrows",
+      "pf": "Wagtails and Pipits",
+      "n": null
+    },
+    {
+      "focal": "houwre4",
+      "partner": "clcrob",
+      "ff": "Wrens",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "hutvir",
+      "partner": "wesfly",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "indbun",
+      "partner": "blbgra1",
+      "ff": "Cardinals and Allies",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "lesgol",
+      "partner": "gryfin1",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "lesgol",
+      "partner": "wesfly",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "lesgol",
+      "partner": "westan",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "litcor1",
+      "partner": "darter2",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": null
+    },
+    {
+      "focal": "litegr",
+      "partner": "eurspo1",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Ibises and Spoonbills",
+      "n": null
+    },
+    {
+      "focal": "loeowl",
+      "partner": "brnowl",
+      "ff": "Owls",
+      "pf": "Barn-Owls",
+      "n": null
+    },
+    {
+      "focal": "magfri",
+      "partner": "brnpel",
+      "ff": "Frigatebirds",
+      "pf": "Pelicans",
+      "n": null
+    },
+    {
+      "focal": "magfri",
+      "partner": "swtkit",
+      "ff": "Frigatebirds",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "brnboo",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Boobies and Gannets",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "comloo",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Loons",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "eurcoo",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "litgre1",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "pibgre",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Grebes",
+      "n": null
+    },
+    {
+      "focal": "mallar3",
+      "partner": "y00475",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": null
+    },
+    {
+      "focal": "marsan",
+      "partner": "bkwsti",
+      "ff": "Sandpipers and Allies",
+      "pf": "Stilts and Avocets",
+      "n": null
+    },
+    {
+      "focal": "martit2",
+      "partner": "blackc1",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Sylviid Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "meapip1",
+      "partner": "corbun1",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "meapip1",
+      "partner": "woolar1",
+      "ff": "Wagtails and Pipits",
+      "pf": "Larks",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "amewoo",
+      "ff": "Pigeons and Doves",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "blujay",
+      "ff": "Pigeons and Doves",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "calqua",
+      "ff": "Pigeons and Doves",
+      "pf": "New World Quail",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "doveki",
+      "ff": "Pigeons and Doves",
+      "pf": "Auks, Murres, and Puffins",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "norfli",
+      "ff": "Pigeons and Doves",
+      "pf": "Woodpeckers",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "normoc",
+      "ff": "Pigeons and Doves",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "moudov",
+      "partner": "yebcuc",
+      "ff": "Pigeons and Doves",
+      "pf": "Cuckoos",
+      "n": null
+    },
+    {
+      "focal": "musduc",
+      "partner": "redjun",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "norcar",
+      "partner": "brnthr",
+      "ff": "Cardinals and Allies",
+      "pf": "Mockingbirds and Thrashers",
+      "n": null
+    },
+    {
+      "focal": "norcar",
+      "partner": "cedwax",
+      "ff": "Cardinals and Allies",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "norcar",
+      "partner": "norfli",
+      "ff": "Cardinals and Allies",
+      "pf": "Woodpeckers",
+      "n": null
+    },
+    {
+      "focal": "norcar",
+      "partner": "tuftit",
+      "ff": "Cardinals and Allies",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "blkpho",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "buggna",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Gnatcatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "cacwre",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "carwre",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "cedwax",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Waxwings",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "cowscj1",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "easkin",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "easpho",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "flsjay",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "grykin",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "killde",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "norshr4",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Shrikes",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "saypho",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "sctfly",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "towsol",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "tuftit",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "normoc",
+      "partner": "yebcuc",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Cuckoos",
+      "n": null
+    },
+    {
+      "focal": "nrwswa",
+      "partner": "chiswi",
+      "ff": "Swallows",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "orcwar",
+      "partner": "lesgol",
+      "ff": "New World Warblers",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "orcwar",
+      "partner": "paibun",
+      "ff": "New World Warblers",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "osprey",
+      "partner": "brakit1",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "osprey",
+      "partner": "snakit",
+      "ff": "Osprey",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "osprey",
+      "partner": "y00678",
+      "ff": "Osprey",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "piebut1",
+      "partner": "maglar1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "Monarch Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "piecor1",
+      "partner": "darter4",
+      "ff": "Cormorants and Shags",
+      "pf": "Anhingas",
+      "n": null
+    },
+    {
+      "focal": "piecur1",
+      "partner": "whwcho1",
+      "ff": "Woodswallows, Bellmagpies, and Allies",
+      "pf": "White-winged Chough and Apostlebird",
+      "n": null
+    },
+    {
+      "focal": "purfin",
+      "partner": "robgro",
+      "ff": "Finches, Euphonias, and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "purher1",
+      "partner": "darter2",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Anhingas",
+      "n": null
+    },
+    {
+      "focal": "purmar",
+      "partner": "chiswi",
+      "ff": "Swallows",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "redjun",
+      "partner": "ausbrt1",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Megapodes",
+      "n": null
+    },
+    {
+      "focal": "redjun",
+      "partner": "helgui",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Guineafowl",
+      "n": null
+    },
+    {
+      "focal": "reevir1",
+      "partner": "tenwar",
+      "ff": "Vireos, Shrike-Babblers, and Erpornis",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "reshaw",
+      "partner": "amekes",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "reshaw",
+      "partner": "brdowl",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "reshaw",
+      "partner": "merlin",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "reshaw",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": null
+    },
+    {
+      "focal": "reshaw",
+      "partner": "wiltur",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "amekes",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "brdowl",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "grhowl",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "perfal",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "prafal",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "rethaw",
+      "partner": "turvul",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "New World Vultures",
+      "n": null
+    },
+    {
+      "focal": "rewbla",
+      "partner": "eurbla",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "rewbla",
+      "partner": "marwre",
+      "ff": "Troupials and Allies",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "rewbla",
+      "partner": "pinsis",
+      "ff": "Troupials and Allies",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "rewbla",
+      "partner": "redwin",
+      "ff": "Troupials and Allies",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "rewbla",
+      "partner": "robgro",
+      "ff": "Troupials and Allies",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "rinphe1",
+      "partner": "eurwoo",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "rocpig",
+      "partner": "hoocro1",
+      "ff": "Pigeons and Doves",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "rocpig",
+      "partner": "houcro1",
+      "ff": "Pigeons and Doves",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "rocpig",
+      "partner": "redjun",
+      "ff": "Pigeons and Doves",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "buggna",
+      "ff": "Kinglets",
+      "pf": "Gnatcatchers",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "buhvir",
+      "ff": "Kinglets",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "casvir",
+      "ff": "Kinglets",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "hutvir",
+      "ff": "Kinglets",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "leafly",
+      "ff": "Kinglets",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "wesfly",
+      "ff": "Kinglets",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "ruckin",
+      "partner": "whevir",
+      "ff": "Kinglets",
+      "pf": "Vireos, Shrike-Babblers, and Erpornis",
+      "n": null
+    },
+    {
+      "focal": "rudtur",
+      "partner": "euroys1",
+      "ff": "Sandpipers and Allies",
+      "pf": "Oystercatchers",
+      "n": null
+    },
+    {
+      "focal": "sancra",
+      "partner": "grbher3",
+      "ff": "Cranes",
+      "pf": "Herons, Egrets, and Bitterns",
+      "n": null
+    },
+    {
+      "focal": "sander",
+      "partner": "pipplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "semsan",
+      "partner": "semplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "shicow",
+      "partner": "paltan1",
+      "ff": "Troupials and Allies",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "shshaw",
+      "partner": "merlin",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "snoegr",
+      "partner": "whiibi",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Ibises and Spoonbills",
+      "n": null
+    },
+    {
+      "focal": "snoplo5",
+      "partner": "sander",
+      "ff": "Plovers and Lapwings",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "socfly1",
+      "partner": "banana",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "bewwre",
+      "ff": "New World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "dunnoc1",
+      "ff": "New World Sparrows",
+      "pf": "Accentors",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "houfin",
+      "ff": "New World Sparrows",
+      "pf": "Finches, Euphonias, and Allies",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "marwre",
+      "ff": "New World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "pacwre1",
+      "ff": "New World Sparrows",
+      "pf": "Wrens",
+      "n": null
+    },
+    {
+      "focal": "sonspa",
+      "partner": "rewbla",
+      "ff": "New World Sparrows",
+      "pf": "Troupials and Allies",
+      "n": null
+    },
+    {
+      "focal": "sonthr1",
+      "partner": "comnig1",
+      "ff": "Thrushes and Allies",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "sonthr1",
+      "partner": "eurnut2",
+      "ff": "Thrushes and Allies",
+      "pf": "Nuthatches",
+      "n": null
+    },
+    {
+      "focal": "spofly1",
+      "partner": "rebshr1",
+      "ff": "Old World Flycatchers",
+      "pf": "Shrikes",
+      "n": null
+    },
+    {
+      "focal": "stonec4",
+      "partner": "reebun",
+      "ff": "Old World Flycatchers",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "swahaw",
+      "partner": "prafal",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Falcons and Caracaras",
+      "n": null
+    },
+    {
+      "focal": "swathr",
+      "partner": "ovenbi1",
+      "ff": "Thrushes and Allies",
+      "pf": "New World Warblers",
+      "n": null
+    },
+    {
+      "focal": "tawowl1",
+      "partner": "brnowl",
+      "ff": "Owls",
+      "pf": "Barn-Owls",
+      "n": null
+    },
+    {
+      "focal": "trepip",
+      "partner": "skylar",
+      "ff": "Wagtails and Pipits",
+      "pf": "Larks",
+      "n": null
+    },
+    {
+      "focal": "trepip",
+      "partner": "woolar1",
+      "ff": "Wagtails and Pipits",
+      "pf": "Larks",
+      "n": null
+    },
+    {
+      "focal": "trepip",
+      "partner": "yellow2",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Buntings",
+      "n": null
+    },
+    {
+      "focal": "trokin",
+      "partner": "banana",
+      "ff": "Tyrant Flycatchers",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "tromoc",
+      "partner": "grykin",
+      "ff": "Mockingbirds and Thrashers",
+      "pf": "Tyrant Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "tufduc",
+      "partner": "eurcoo",
+      "ff": "Ducks, Geese, and Waterfowl",
+      "pf": "Rails, Gallinules, and Coots",
+      "n": null
+    },
+    {
+      "focal": "tuftit",
+      "partner": "buggna",
+      "ff": "Tits, Chickadees, and Titmice",
+      "pf": "Gnatcatchers",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "brnpel",
+      "ff": "New World Vultures",
+      "pf": "Pelicans",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "cangoo",
+      "ff": "New World Vultures",
+      "pf": "Ducks, Geese, and Waterfowl",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "chiswi",
+      "ff": "New World Vultures",
+      "pf": "Swifts",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "goleag",
+      "ff": "New World Vultures",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "osprey",
+      "ff": "New World Vultures",
+      "pf": "Osprey",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "redjun",
+      "ff": "New World Vultures",
+      "pf": "Pheasants, Grouse, and Allies",
+      "n": null
+    },
+    {
+      "focal": "turvul",
+      "partner": "zothaw",
+      "ff": "New World Vultures",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "wbseag1",
+      "partner": "osprey",
+      "ff": "Hawks, Eagles, and Kites",
+      "pf": "Osprey",
+      "n": null
+    },
+    {
+      "focal": "wesblu",
+      "partner": "stejay",
+      "ff": "Thrushes and Allies",
+      "pf": "Crows, Jays, and Magpies",
+      "n": null
+    },
+    {
+      "focal": "wesgul",
+      "partner": "surfbi",
+      "ff": "Gulls, Terns, and Skimmers",
+      "pf": "Sandpipers and Allies",
+      "n": null
+    },
+    {
+      "focal": "whbnut",
+      "partner": "brncre",
+      "ff": "Nuthatches",
+      "pf": "Treecreepers",
+      "n": null
+    },
+    {
+      "focal": "whbnut",
+      "partner": "mouchi",
+      "ff": "Nuthatches",
+      "pf": "Tits, Chickadees, and Titmice",
+      "n": null
+    },
+    {
+      "focal": "whfibi",
+      "partner": "limpki",
+      "ff": "Ibises and Spoonbills",
+      "pf": "Limpkin",
+      "n": null
+    },
+    {
+      "focal": "whiwag",
+      "partner": "lottit1",
+      "ff": "Wagtails and Pipits",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "whiwag",
+      "partner": "magrob",
+      "ff": "Wagtails and Pipits",
+      "pf": "Old World Flycatchers",
+      "n": null
+    },
+    {
+      "focal": "willet1",
+      "partner": "bkbplo",
+      "ff": "Sandpipers and Allies",
+      "pf": "Plovers and Lapwings",
+      "n": null
+    },
+    {
+      "focal": "wiltur",
+      "partner": "ausbrt1",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Megapodes",
+      "n": null
+    },
+    {
+      "focal": "wiltur",
+      "partner": "brdowl",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "wiltur",
+      "partner": "grhowl",
+      "ff": "Pheasants, Grouse, and Allies",
+      "pf": "Owls",
+      "n": null
+    },
+    {
+      "focal": "wlwwar",
+      "partner": "garwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Sylviid Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "wlwwar",
+      "partner": "ictwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Reed Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "wlwwar",
+      "partner": "melwar1",
+      "ff": "Leaf Warblers",
+      "pf": "Reed Warblers and Allies",
+      "n": null
+    },
+    {
+      "focal": "ycnher",
+      "partner": "limpki",
+      "ff": "Herons, Egrets, and Bitterns",
+      "pf": "Limpkin",
+      "n": null
+    },
+    {
+      "focal": "yehcar1",
+      "partner": "roahaw",
+      "ff": "Falcons and Caracaras",
+      "pf": "Hawks, Eagles, and Kites",
+      "n": null
+    },
+    {
+      "focal": "yelwar1",
+      "partner": "saffin",
+      "ff": "New World Warblers",
+      "pf": "Tanagers and Allies",
+      "n": null
+    },
+    {
+      "focal": "yelwar1",
+      "partner": "scatan",
+      "ff": "New World Warblers",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "yelwar1",
+      "partner": "sumtan",
+      "ff": "New World Warblers",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "yelwar1",
+      "partner": "westan",
+      "ff": "New World Warblers",
+      "pf": "Cardinals and Allies",
+      "n": null
+    },
+    {
+      "focal": "yerwar",
+      "partner": "amepip",
+      "ff": "New World Warblers",
+      "pf": "Wagtails and Pipits",
+      "n": null
+    },
+    {
+      "focal": "yerwar",
+      "partner": "bushti",
+      "ff": "New World Warblers",
+      "pf": "Long-tailed Tits",
+      "n": null
+    },
+    {
+      "focal": "yerwar",
+      "partner": "gockin",
+      "ff": "New World Warblers",
+      "pf": "Kinglets",
+      "n": null
+    },
+    {
+      "focal": "yerwar",
+      "partner": "towsol",
+      "ff": "New World Warblers",
+      "pf": "Thrushes and Allies",
+      "n": null
+    },
+    {
+      "focal": "yerwar",
+      "partner": "verdin",
+      "ff": "New World Warblers",
+      "pf": "Penduline-Tits",
+      "n": null
+    }
+  ]
+}
