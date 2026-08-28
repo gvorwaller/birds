@@ -27,7 +27,8 @@ export type JobType =
 	| 'scan_need_alerts'
 	| 'enrich_species'
 	| 'scan_enrichment'
-	| 'enrich_species_media';
+	| 'enrich_species_media'
+	| 'enrich_species_inat';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id

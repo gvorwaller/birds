@@ -1404,6 +1404,245 @@ export async function mediaFresh(code: string): Promise<boolean> {
 	return r.rows[0]?.fresh === true;
 }
 
+// ---------------------------------------------------------------------------
+// iNaturalist similar-species sourcing (td-460b1c Phase A,
+// plan: docs/2026-08-27-similar-species-inat-plan.md §Phase 3).
+// Fetch-and-store only: raw confused-with edges land in species_inat_similar;
+// selection/resolution/display reconciliation is Phase B.
+// ---------------------------------------------------------------------------
+
+export const INAT_REFRESH_DAYS = 180;
+
+/**
+ * In-scope codes due for an iNat similar-species fetch. Requires an existing
+ * species_enrichment row (wiki stage first, so Wikidata P3151 had its chance
+ * to land in cross_ids) AND one of:
+ *  - never attempted;
+ *  - 'error' past ERROR_RETRY_DAYS;
+ *  - 'ok'/'none' past INAT_REFRESH_DAYS;
+ *  - 'no_mapping' past INAT_REFRESH_DAYS (restamped clocks — retry precedent);
+ *  - mapping mismatch: cross_ids carries an id that is missing from or
+ *    different to the stored one — immediate, but ONLY on terminal non-error
+ *    statuses (self-review R3: after a failed fetch inat_taxon_id is still
+ *    NULL, so an ungated clause would bypass the 7-day error backoff for 98%
+ *    of the corpus during any iNat outage);
+ *  - P3151 removal: cross_ids lost the id a 'cross'-sourced mapping was built
+ *    on — re-verify by name search exactly once (the refetch rewrites
+ *    inat_taxon_source to 'search', self-clearing the clause).
+ *
+ * inatFresh() below MUST stay the exact negation of this predicate.
+ */
+export async function inatDueCodes(): Promise<string[]> {
+	const r = await query<{ species_code: string }>(
+		`${SCOPE_SQL}
+		 AND EXISTS (
+		   SELECT 1 FROM species_enrichment se
+		    WHERE se.species_code = tc.species_code
+		      AND (
+		            se.inat_similar_status IS NULL
+		         OR (se.inat_similar_status = 'error'
+		             AND se.inat_similar_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		         OR (se.inat_similar_status IN ('ok','none','no_mapping')
+		             AND se.inat_similar_fetched_at < NOW() - INTERVAL '${INAT_REFRESH_DAYS} days')
+		         OR (se.inat_similar_status IN ('ok','none','no_mapping')
+		             AND se.cross_ids ? 'inat_taxon_id'
+		             AND (se.inat_taxon_id IS NULL
+		                  OR se.inat_taxon_id::text IS DISTINCT FROM se.cross_ids->>'inat_taxon_id'))
+		         OR (se.inat_similar_status IN ('ok','none')
+		             AND NOT se.cross_ids ? 'inat_taxon_id'
+		             AND se.inat_taxon_source = 'cross')
+		      )
+		 )
+		 ORDER BY 1`
+	);
+	return r.rows.map((x) => x.species_code);
+}
+
+/** Per-species freshness for idempotent chunk overlap — exact negation of
+ * inatDueCodes' per-row predicate (minus scope, which the chunk already has). */
+export async function inatFresh(code: string): Promise<boolean> {
+	const r = await query<{ fresh: boolean }>(
+		`SELECT (
+		      (se.inat_similar_status = 'error'
+		       AND se.inat_similar_attempted_at >= NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		   OR (se.inat_similar_status IN ('ok','none','no_mapping')
+		       AND se.inat_similar_fetched_at >= NOW() - INTERVAL '${INAT_REFRESH_DAYS} days'
+		       AND NOT (se.cross_ids ? 'inat_taxon_id'
+		                AND (se.inat_taxon_id IS NULL
+		                     OR se.inat_taxon_id::text IS DISTINCT FROM se.cross_ids->>'inat_taxon_id'))
+		       AND NOT (se.inat_similar_status IN ('ok','none')
+		                AND NOT se.cross_ids ? 'inat_taxon_id'
+		                AND se.inat_taxon_source = 'cross'))
+		 ) AS fresh
+		   FROM species_enrichment se WHERE se.species_code = $1`,
+		[code]
+	);
+	return r.rows[0]?.fresh === true;
+}
+
+/** How the focal's iNat taxon id was established. */
+export interface InatResolution {
+	taxonId: number;
+	source: 'cross' | 'search';
+	/** iNat canonical binomial when known (search result / taxa lookup). */
+	sciName: string | null;
+}
+
+/** Edge rows as stored (subset of the gateway's normalized shape). */
+export interface InatEdgeInput {
+	taxonId: number;
+	misidCount: number;
+	sciName: string;
+	comName: string | null;
+}
+
+/**
+ * Null the similar-stage candidate hash of every species that one of `edges`
+ * resolves to — the targeted-invalidation marker (AGY A3 / self-review R6).
+ * Resolution here is the cheap indexed two-arm form; over-inclusive matches
+ * (sci-name collisions) only cause an extra no-op reconcile, never staleness.
+ * No-consumer in Phase A (aiDueCodes learns the marker clause in Phase B);
+ * stamping now keeps every write forward-correct.
+ */
+async function stampPartnersStale(
+	exec: Exec,
+	focalCode: string,
+	edges: readonly Pick<InatEdgeInput, 'taxonId' | 'sciName'>[]
+): Promise<void> {
+	if (edges.length === 0) return;
+	const ids = edges.map((e) => String(e.taxonId));
+	const names = edges.map((e) => e.sciName.toLowerCase());
+	await exec(
+		`UPDATE species_enrichment SET similar_candidates_hash = NULL, updated_at = NOW()
+		  WHERE species_code <> $1
+		    AND species_code IN (
+		      SELECT tc.species_code
+		        FROM taxonomy_cache tc
+		        LEFT JOIN species_enrichment se ON se.species_code = tc.species_code
+		       WHERE tc.category = 'species'
+		         AND (se.cross_ids->>'inat_taxon_id' = ANY($2::text[])
+		              OR lower(tc.sci_name) = ANY($3::text[]))
+		    )`,
+		[focalCode, ids, names]
+	);
+}
+
+/**
+ * Successful fetch: replace the focal's raw edge set and stamp the sourcing
+ * state, in ONE transaction.
+ *  - `declined_at` SURVIVES refetches (self-review R2: a decline is terminal
+ *    per-pair) — hence upsert + prune, never DELETE-all + INSERT.
+ *  - Partners on BOTH sides of the edge diff (added AND removed) get their
+ *    candidate hash nulled (self-review R6: dropped edges must propagate the
+ *    pair's retirement, or preserved reverse notes live forever).
+ *  - status: 'ok' when any edge remains, 'none' when iNat returned nothing.
+ */
+export async function upsertInatSimilar(
+	code: string,
+	resolution: InatResolution,
+	rows: readonly InatEdgeInput[]
+): Promise<void> {
+	await withTransaction(async (client) => {
+		const exec = clientExec(client);
+		const before = await exec<{ inat_taxon_id: string; inat_sci_name: string }>(
+			`SELECT inat_taxon_id, inat_sci_name FROM species_inat_similar
+			  WHERE species_code = $1`,
+			[code]
+		);
+		const beforeIds = new Set(before.rows.map((r) => String(r.inat_taxon_id)));
+		const afterIds = new Set(rows.map((r) => String(r.taxonId)));
+		const added = rows.filter((r) => !beforeIds.has(String(r.taxonId)));
+		const removed = before.rows
+			.filter((r) => !afterIds.has(String(r.inat_taxon_id)))
+			.map((r) => ({ taxonId: Number(r.inat_taxon_id), sciName: r.inat_sci_name }));
+
+		await exec(
+			`DELETE FROM species_inat_similar
+			  WHERE species_code = $1 AND inat_taxon_id <> ALL($2::bigint[])`,
+			[code, rows.map((r) => r.taxonId)]
+		);
+		for (let i = 0; i < rows.length; i++) {
+			const e = rows[i];
+			await exec(
+				`INSERT INTO species_inat_similar
+				   (species_code, inat_taxon_id, rank, misid_count, inat_sci_name, inat_com_name, fetched_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+				 ON CONFLICT (species_code, inat_taxon_id) DO UPDATE SET
+				   rank = $3, misid_count = $4, inat_sci_name = $5, inat_com_name = $6,
+				   fetched_at = NOW()`,
+				[code, e.taxonId, i + 1, e.misidCount, e.sciName, e.comName]
+			);
+		}
+		await exec(
+			`INSERT INTO species_enrichment
+			   (species_code, inat_taxon_id, inat_taxon_source, inat_sci_name,
+			    inat_similar_status, inat_similar_fetched_at, inat_similar_attempted_at,
+			    inat_similar_error)
+			 VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NULL)
+			 ON CONFLICT (species_code) DO UPDATE SET
+			   inat_taxon_id = $2, inat_taxon_source = $3,
+			   inat_sci_name = COALESCE($4, species_enrichment.inat_sci_name),
+			   inat_similar_status = $5, inat_similar_fetched_at = NOW(),
+			   inat_similar_attempted_at = NOW(), inat_similar_error = NULL,
+			   updated_at = NOW()`,
+			[code, resolution.taxonId, resolution.source, resolution.sciName, rows.length > 0 ? 'ok' : 'none']
+		);
+		await stampPartnersStale(exec, code, [...added, ...removed]);
+	});
+}
+
+/**
+ * Focal unmappable to iNat's taxonomy. One transaction: terminal status with
+ * BOTH clocks restamped (retry-forever precedent — job-handlers wiki
+ * no_mapping), stale edges deleted, and their former partners stamped
+ * (self-review R6). inat_taxon_source is cleared so the P3151-removal clause
+ * cannot re-fire against a mapping that no longer exists.
+ */
+export async function markInatNoMapping(code: string): Promise<void> {
+	await withTransaction(async (client) => {
+		const exec = clientExec(client);
+		const stale = await exec<{ inat_taxon_id: string; inat_sci_name: string }>(
+			`DELETE FROM species_inat_similar WHERE species_code = $1
+			 RETURNING inat_taxon_id, inat_sci_name`,
+			[code]
+		);
+		await exec(
+			`INSERT INTO species_enrichment
+			   (species_code, inat_similar_status, inat_similar_fetched_at,
+			    inat_similar_attempted_at, inat_similar_error)
+			 VALUES ($1, 'no_mapping', NOW(), NOW(), NULL)
+			 ON CONFLICT (species_code) DO UPDATE SET
+			   inat_similar_status = 'no_mapping', inat_similar_fetched_at = NOW(),
+			   inat_similar_attempted_at = NOW(), inat_similar_error = NULL,
+			   inat_taxon_id = NULL, inat_taxon_source = NULL,
+			   updated_at = NOW()`,
+			[code]
+		);
+		await stampPartnersStale(
+			exec,
+			code,
+			stale.rows.map((r) => ({ taxonId: Number(r.inat_taxon_id), sciName: r.inat_sci_name }))
+		);
+	});
+}
+
+/**
+ * Transient sourcing failure: status/error/attempted_at ONLY. Existing edges
+ * are PRESERVED (last-good, matching markMediaError) and fetched_at does not
+ * move — the 7-day error lane owns the retry.
+ */
+export async function markInatError(code: string, message: string): Promise<void> {
+	await query(
+		`INSERT INTO species_enrichment
+		   (species_code, inat_similar_status, inat_similar_error, inat_similar_attempted_at)
+		 VALUES ($1, 'error', $2, NOW())
+		 ON CONFLICT (species_code) DO UPDATE SET
+		   inat_similar_status = 'error', inat_similar_error = $2,
+		   inat_similar_attempted_at = NOW(), updated_at = NOW()`,
+		[code, sanitizeErrorText(message).slice(0, 500)]
+	);
+}
+
 function commonsPhotoCandidate(filename: string, info: CommonsFileInfo): MediaCandidate | null {
 	if (!isDisplayableImage(info.mimeType) || !info.licenseCode) return null;
 	return {

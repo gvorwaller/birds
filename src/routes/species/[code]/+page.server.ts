@@ -348,6 +348,20 @@ export const actions: Actions = {
       }
     }
     if (now.outcome === "ok") {
+      // iNat confusion-data sourcing (td-460b1c Phase A, GROK G2): after wiki
+      // lands (cross_ids had its chance), fill species_inat_similar in the
+      // background. Best-effort — never gates the wiki result.
+      try {
+        await enqueueJob({
+          type: "enrich_species_inat",
+          payload: { codes: [code] },
+          dedupKey: dedupKeys.enrichInatOne(code),
+          requestedBy: locals.user!.id,
+          label: comName,
+        });
+      } catch {
+        // Non-fatal: the recurring scan covers it.
+      }
       if (now.aiDue && AI_STAGE_ENABLED) {
         try {
           const ai = await enqueueJob({
@@ -442,6 +456,20 @@ export const actions: Actions = {
       });
     } catch {
       // Enqueue failure is non-fatal: media is a bonus, not gating.
+    }
+
+    // iNat confusion-data refresh (td-460b1c Phase A): background alongside
+    // media, after enrichOneNow so the row (and possibly cross_ids) exists.
+    try {
+      await enqueueJob({
+        type: "enrich_species_inat",
+        payload: { codes: [code] },
+        dedupKey: dedupKeys.enrichInatOne(code),
+        requestedBy: locals.user!.id,
+        label: comName,
+      });
+    } catch {
+      // Non-fatal: the recurring scan covers it.
     }
 
     // One shared chip payload — the return shape carries a single queued

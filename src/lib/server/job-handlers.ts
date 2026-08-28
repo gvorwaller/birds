@@ -84,8 +84,21 @@ import {
 	upsertResolution,
 	upsertWikiOk,
 	wikiFetchTitleFor,
-	wikiStaleCodes
+	wikiStaleCodes,
+	inatDueCodes,
+	inatFresh,
+	upsertInatSimilar,
+	markInatNoMapping,
+	markInatError,
+	type InatResolution
 } from '$server/species-enrichment';
+import {
+	fetchInatSimilarSpecies,
+	fetchInatTaxonName,
+	searchInatTaxonBySciName,
+	normalizeSimilarResults,
+	INAT_POLITENESS_MS
+} from '$server/inaturalist';
 import {
 	generateSpeciesAnnotation,
 	EnrichmentAiError,
@@ -827,6 +840,16 @@ export const MEDIA_WALL_BUDGET_MS = 8 * 60_000;
 /** Politeness between species (serial; two external APIs per unit). */
 const MEDIA_POLITENESS_MS = 500;
 
+/**
+ * iNaturalist similar-species sourcing (td-460b1c Phase A). Chunk sized like
+ * media (1-2 requests per unit); wall budget matches wiki. The politeness
+ * limiter is per outbound REQUEST, not per unit (CODEX1 F8 / plan §Phase 2 —
+ * a fallback unit fires taxa-search + similar back-to-back and would
+ * otherwise double the effective rate).
+ */
+export const INAT_CHUNK_SIZE = 20;
+export const INAT_WALL_BUDGET_MS = 10 * 60_000;
+
 interface EnrichPayload {
 	codes: string[];
 	force?: boolean;
@@ -842,6 +865,10 @@ interface EnrichPayload {
 interface MediaEnrichPayload {
 	codes: string[];
 	force?: boolean;
+}
+
+interface InatEnrichPayload {
+	codes: string[];
 }
 
 function enrichScanParams(adminId: number, runAfterMs: number) {
@@ -875,6 +902,7 @@ export interface EnrichmentWorkSummary {
 	wikiCandidates: number;
 	aiCandidates: number;
 	mediaCandidates: number;
+	inatCandidates: number;
 	chunksEnqueued: number;
 	deduped: number;
 	remaining: number;
@@ -903,40 +931,12 @@ async function enqueueEnrichmentChunks(
 	const aiWork = AI_STAGE_ENABLED
 		? (await aiDueCodes()).filter((c) => !wikiSet.has(c)).sort()
 		: [];
-	let enqueued = 0;
-	let deduped = 0;
-	// Represented CODES, not chunk-count × max-size — partial chunks made
-	// the old arithmetic lie across mixed partitions (CODEX1).
-	let covered = 0;
-	for (let i = 0; i < wikiWork.length && enqueued < maxChunks; i += ENRICH_CHUNK_SIZE) {
-		const codes = wikiWork.slice(i, i + ENRICH_CHUNK_SIZE);
-		const r = await enqueueJob({
-			type: 'enrich_species',
-			payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
-			dedupKey: dedupKeys.enrichChunk(codes),
-			requestedBy: adminId,
-			label: `${codes.length} species`
-		});
-		if (r.deduped) deduped++;
-		else enqueued++;
-		covered += codes.length;
-	}
-	for (let i = 0; i < aiWork.length && enqueued < maxChunks; i += ENRICH_CHUNK_SIZE) {
-		const codes = aiWork.slice(i, i + ENRICH_CHUNK_SIZE);
-		const r = await enqueueJob({
-			type: 'enrich_species',
-			payload: { codes, aiOnly: true } satisfies EnrichPayload as unknown as Record<
-				string,
-				unknown
-			>,
-			dedupKey: dedupKeys.enrichAiChunk(codes),
-			requestedBy: adminId,
-			label: `${codes.length} species (AI)`
-		});
-		if (r.deduped) deduped++;
-		else enqueued++;
-		covered += codes.length;
-	}
+	// iNat sourcing (td-460b1c): a mid-wiki species has no cross_ids yet and
+	// would waste its name-search fallback — wiki lands first. NOTE Phase A
+	// deliberately does NOT subtract inatWork from aiWork (that gating ships
+	// with the Phase-B AI-layer changes; doing it now would stall the AI lane
+	// for the whole backfill with zero anti-double-bill benefit).
+	const inatWork = (await inatDueCodes()).filter((c) => !wikiSet.has(c)).sort();
 	// Media partition (td-86a2b6): separate from wiki/AI — a media failure
 	// never blocks or is blocked by prose/annotation work. Do not subtract
 	// wikiWork here: enrich_species does not repair media, and a species can
@@ -945,30 +945,99 @@ async function enqueueEnrichmentChunks(
 		await mediaDueCodes({ includeRecentFailures: opts.retryRecentMediaFailures === true })
 	)
 		.sort();
-	for (let i = 0; i < mediaWork.length && enqueued < maxChunks; i += MEDIA_CHUNK_SIZE) {
-		const codes = mediaWork.slice(i, i + MEDIA_CHUNK_SIZE);
-		const r = await enqueueJob({
-			type: 'enrich_species_media',
-			payload: {
-				codes,
-				...(opts.retryRecentMediaFailures ? { force: true } : {})
-			} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
-			dedupKey: opts.retryRecentMediaFailures
-				? dedupKeys.enrichMediaForceChunk(codes)
-				: dedupKeys.enrichMediaChunk(codes),
-			requestedBy: adminId,
-			label: `${codes.length} species media`
-		});
-		if (r.deduped) deduped++;
-		else enqueued++;
-		covered += codes.length;
+
+	let enqueued = 0;
+	let deduped = 0;
+	// Represented CODES, not chunk-count × max-size — partial chunks made
+	// the old arithmetic lie across mixed partitions (CODEX1).
+	let covered = 0;
+
+	const chunksOf = (codes: string[], size: number): string[][] => {
+		const out: string[][] = [];
+		for (let i = 0; i < codes.length; i += size) out.push(codes.slice(i, i + size));
+		return out;
+	};
+	// Round-robin lane quotas (CODEX1 F6): each pass hands ONE chunk to every
+	// lane that still has work, so a ~3.5k-species inat backfill can never
+	// starve the AI/media lanes out of the per-pass budget — and because the
+	// worker claims FIFO by enqueue time, interleaved ENQUEUE ORDER is what
+	// interleaves EXECUTION for the uncapped nudge too.
+	const lanes: { queue: string[][]; send: (codes: string[]) => Promise<{ deduped: boolean }> }[] =
+		[
+			{
+				queue: chunksOf(wikiWork, ENRICH_CHUNK_SIZE),
+				send: (codes) =>
+					enqueueJob({
+						type: 'enrich_species',
+						payload: { codes } satisfies EnrichPayload as unknown as Record<string, unknown>,
+						dedupKey: dedupKeys.enrichChunk(codes),
+						requestedBy: adminId,
+						label: `${codes.length} species`
+					})
+			},
+			{
+				queue: chunksOf(inatWork, INAT_CHUNK_SIZE),
+				send: (codes) =>
+					enqueueJob({
+						type: 'enrich_species_inat',
+						payload: { codes } satisfies InatEnrichPayload as unknown as Record<string, unknown>,
+						dedupKey: dedupKeys.enrichInatChunk(codes),
+						requestedBy: adminId,
+						label: `${codes.length} species confusion data`
+					})
+			},
+			{
+				queue: chunksOf(aiWork, ENRICH_CHUNK_SIZE),
+				send: (codes) =>
+					enqueueJob({
+						type: 'enrich_species',
+						payload: { codes, aiOnly: true } satisfies EnrichPayload as unknown as Record<
+							string,
+							unknown
+						>,
+						dedupKey: dedupKeys.enrichAiChunk(codes),
+						requestedBy: adminId,
+						label: `${codes.length} species (AI)`
+					})
+			},
+			{
+				queue: chunksOf(mediaWork, MEDIA_CHUNK_SIZE),
+				send: (codes) =>
+					enqueueJob({
+						type: 'enrich_species_media',
+						payload: {
+							codes,
+							...(opts.retryRecentMediaFailures ? { force: true } : {})
+						} satisfies MediaEnrichPayload as unknown as Record<string, unknown>,
+						dedupKey: opts.retryRecentMediaFailures
+							? dedupKeys.enrichMediaForceChunk(codes)
+							: dedupKeys.enrichMediaChunk(codes),
+						requestedBy: adminId,
+						label: `${codes.length} species media`
+					})
+			}
+		];
+	let progressed = true;
+	while (enqueued < maxChunks && progressed) {
+		progressed = false;
+		for (const lane of lanes) {
+			if (enqueued >= maxChunks) break;
+			const codes = lane.queue.shift();
+			if (!codes) continue;
+			progressed = true;
+			const r = await lane.send(codes);
+			if (r.deduped) deduped++;
+			else enqueued++;
+			covered += codes.length;
+		}
 	}
-	const total = wikiWork.length + aiWork.length + mediaWork.length;
+	const total = wikiWork.length + aiWork.length + inatWork.length + mediaWork.length;
 	return {
 		candidates: total,
 		wikiCandidates: wikiWork.length,
 		aiCandidates: aiWork.length,
 		mediaCandidates: mediaWork.length,
+		inatCandidates: inatWork.length,
 		chunksEnqueued: enqueued,
 		deduped,
 		remaining: Math.max(0, total - covered)
@@ -1995,6 +2064,198 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 	});
 }
 
+// ---------------------------------------------------------------------------
+// iNaturalist similar-species sourcing (td-460b1c Phase A,
+// plan: docs/2026-08-27-similar-species-inat-plan.md §Phase 3). Fetches and
+// stores raw misidentification edges; the AI/read side is untouched until
+// Phase B. Uses the shared chunk-lifecycle harness.
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE limiter for every outbound iNat request (CODEX1 F8): a unit that falls
+ * back to name search fires two requests back-to-back, so pacing per UNIT
+ * would double the effective rate. Module-level is safe — the worker is a
+ * single process running units serially.
+ */
+let lastInatRequestAt = 0;
+const politeInatFetcher: typeof fetch = async (input, init) => {
+	const wait = lastInatRequestAt + INAT_POLITENESS_MS - Date.now();
+	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+	lastInatRequestAt = Date.now();
+	return fetch(input, init);
+};
+
+/**
+ * One bounded chunk (≤20 species): resolve each code's iNat taxon id
+ * (cross_ids P3151 is AUTHORITATIVE whenever present — GROK G6/CODEX1 F7; a
+ * stored name-search id is reused only when cross_ids is silent; otherwise
+ * name search), fetch similar_species, normalize, store. Per-species
+ * freshness makes overlapping chunks idempotent.
+ */
+async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<void> {
+	const attempts = job.attempts;
+	const payload = job.payload as unknown as InatEnrichPayload;
+	const codes = [...new Set(payload.codes ?? [])];
+	if (codes.length === 0 || codes.length > INAT_CHUNK_SIZE || !codes.every(validSpeciesCode)) {
+		await failJob(job.id, attempts, 'invalid enrich_species_inat payload');
+		return;
+	}
+	const progress = await claimChunk(job, attempts, codes.length);
+
+	// Pre-load resolution state + sci names for the chunk (two batch SELECTs).
+	const state = new Map<
+		string,
+		{ crossId: string | null; storedId: string | null; storedSource: string | null; inatSciName: string | null }
+	>();
+	{
+		const r = await query<{
+			species_code: string;
+			cross_id: string | null;
+			inat_taxon_id: string | null;
+			inat_taxon_source: string | null;
+			inat_sci_name: string | null;
+		}>(
+			`SELECT species_code, cross_ids->>'inat_taxon_id' AS cross_id,
+			        inat_taxon_id, inat_taxon_source, inat_sci_name
+			   FROM species_enrichment WHERE species_code = ANY($1)`,
+			[codes]
+		);
+		for (const row of r.rows) {
+			state.set(row.species_code, {
+				crossId: row.cross_id,
+				storedId: row.inat_taxon_id,
+				storedSource: row.inat_taxon_source,
+				inatSciName: row.inat_sci_name
+			});
+		}
+	}
+	const sciNames = new Map<string, string>();
+	{
+		const r = await query<{ species_code: string; sci_name: string }>(
+			`SELECT species_code, sci_name FROM taxonomy_cache
+			  WHERE species_code = ANY($1) AND category = 'species'`,
+			[codes]
+		);
+		for (const row of r.rows) sciNames.set(row.species_code, row.sci_name);
+	}
+
+	const counts = { ok: 0, none: 0, noMapping: 0, fresh: 0 };
+	const failed: string[] = [];
+	const gw = { fetcher: politeInatFetcher };
+
+	const skipUnit = async (code: string, reason: string) => {
+		progress.unitsSkipped++;
+		await recordEvent(job.id, 'unit_skipped', { code, reason });
+	};
+
+	const runUnit = async (code: string): Promise<{ retryAfterMs: number } | void> => {
+		const st = state.get(code);
+		const ebirdSciName = sciNames.get(code);
+		try {
+			if (!st) {
+				// Wiki stage hasn't created the enrichment row yet — the scan's
+				// wiki-first partitioning normally prevents this; skip, next scan
+				// picks it up.
+				await skipUnit(code, 'no-enrichment-row');
+				return;
+			}
+			if (!ebirdSciName) {
+				await skipUnit(code, 'no-sci-name');
+				return;
+			}
+			if (await inatFresh(code)) {
+				counts.fresh++;
+				await skipUnit(code, 'fresh');
+				return;
+			}
+			// Resolve the focal id. cross_ids wins whenever present; a stored
+			// 'search' mapping is reused only when cross_ids is silent; a stored
+			// 'cross' mapping whose cross_ids key vanished (P3151 removal) is NOT
+			// trusted — it re-verifies via name search (self-review R3).
+			let resolution: InatResolution | null = null;
+			const crossNum = st.crossId !== null ? Number(st.crossId) : NaN;
+			if (Number.isInteger(crossNum) && crossNum > 0) {
+				let inatName = st.storedId === st.crossId ? st.inatSciName : null;
+				if (!inatName) {
+					inatName = (await fetchInatTaxonName(crossNum, gw))?.sciName ?? null;
+				}
+				resolution = { taxonId: crossNum, source: 'cross', sciName: inatName };
+			} else if (st.storedId !== null && st.storedSource === 'search') {
+				resolution = {
+					taxonId: Number(st.storedId),
+					source: 'search',
+					sciName: st.inatSciName
+				};
+			} else {
+				const hit = await searchInatTaxonBySciName(ebirdSciName, gw);
+				if (hit) resolution = { taxonId: hit.taxonId, source: 'search', sciName: hit.sciName };
+			}
+			if (!resolution) {
+				await markInatNoMapping(code);
+				counts.noMapping++;
+				progress.unitsDone++;
+				await recordEvent(job.id, 'unit_ok', { code, outcome: 'no_mapping' });
+				return;
+			}
+			const raw = await fetchInatSimilarSpecies(resolution.taxonId, gw);
+			const rows = normalizeSimilarResults(
+				{ taxonId: resolution.taxonId, sciName: resolution.sciName ?? ebirdSciName },
+				raw
+			);
+			await upsertInatSimilar(code, resolution, rows);
+			if (rows.length > 0) counts.ok++;
+			else counts.none++;
+			progress.unitsDone++;
+			await recordEvent(job.id, 'unit_ok', {
+				code,
+				outcome: rows.length > 0 ? 'ok' : 'none',
+				edges: rows.length
+			});
+		} catch (err) {
+			if (isRateLimitedError(err)) {
+				return { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
+			}
+			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
+				0,
+				200
+			);
+			await markInatError(code, message).catch(() => {});
+			failed.push(code);
+			progress.unitsFailed++;
+			progress.lastError = message;
+			await recordEvent(job.id, 'unit_failed', { code, error: message });
+		}
+	};
+
+	await runChunkLifecycle({
+		job,
+		ctx,
+		attempts,
+		codes,
+		wallBudgetMs: INAT_WALL_BUDGET_MS,
+		progress,
+		runUnit,
+		buildSummary: (budgetRemainder) => ({ ...counts, failed, remainder: budgetRemainder.length }),
+		rateLimitReason: 'iNaturalist rate limit',
+		rateLimitExhaustedReason: 'iNaturalist rate limit — retries exhausted',
+		spillover: async (remainder) => {
+			await enqueueJob({
+				type: 'enrich_species_inat',
+				payload: { codes: remainder } satisfies InatEnrichPayload as unknown as Record<
+					string,
+					unknown
+				>,
+				dedupKey: dedupKeys.enrichInatChunk(remainder),
+				requestedBy: job.requested_by,
+				label: `${remainder.length} species confusion data (spillover)`
+			});
+			await recordEvent(job.id, 'progress', { spillover: remainder.length });
+		},
+		finalize: (summary) =>
+			completeChunk(job, attempts, failed.length, 'species confusion data', summary)
+	});
+}
+
 /** Dispatch a claimed job. Never throws — failures become failJob. */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
@@ -2086,6 +2347,10 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'enrich_species_media': {
 				await runEnrichSpeciesMedia(job, ctx);
+				return;
+			}
+			case 'enrich_species_inat': {
+				await runEnrichSpeciesInat(job, ctx);
 				return;
 			}
 			case 'sync_taxonomy': {

@@ -268,7 +268,7 @@ export const actions: Actions = {
         s.candidates === 0
           ? "Nothing is due to enrich right now."
           : `Scan pass complete: ${s.chunksEnqueued} chunk${s.chunksEnqueued === 1 ? "" : "s"} queued` +
-            ` for ${s.candidates} work item${s.candidates === 1 ? "" : "s"} (${s.wikiCandidates} wiki, ${s.aiCandidates} AI, ${s.mediaCandidates} media` +
+            ` for ${s.candidates} work item${s.candidates === 1 ? "" : "s"} (${s.wikiCandidates} wiki, ${s.inatCandidates} confusion, ${s.aiCandidates} AI, ${s.mediaCandidates} media` +
             `${s.deduped > 0 ? `; ${s.deduped} already queued` : ""}` +
             `${s.remaining > 0 ? `; ${s.remaining} follow on the 15-min cadence` : ""}).`,
     };

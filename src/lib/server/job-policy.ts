@@ -174,7 +174,9 @@ export const dedupKeys = {
 	scanEnrichment: () => 'scan_enrichment:global',
 	enrichMediaChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media', codes),
 	enrichMediaForceChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media_force', codes),
-	enrichMediaOne: (code: string) => `enrich_media:one:${code}`
+	enrichMediaOne: (code: string) => `enrich_media:one:${code}`,
+	enrichInatChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_inat', codes),
+	enrichInatOne: (code: string) => `enrich_inat:one:${code}`
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -353,7 +355,8 @@ const TYPE_NAMES: Record<string, string> = {
 	scan_need_alerts: 'Need-alert scan (system)',
 	enrich_species: 'Species data',
 	scan_enrichment: 'Enrichment scan (system)',
-	enrich_species_media: 'Species media'
+	enrich_species_media: 'Species media',
+	enrich_species_inat: 'Species confusion data'
 };
 
 export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {
