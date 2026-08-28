@@ -120,6 +120,14 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Similar species, rebuilt on real misidentifications</strong>
+								— confusion pairs now come from iNaturalist observer
+								misidentification data instead of eBird reporting groups, so
+								obvious look-alike pairs (Great vs. Lesser Black-backed Gull)
+								finally appear. Existing distinguishing notes are preserved;
+								unmappable partners are listed rather than dropped.
+							</li>
+							<li>
 								<strong>Worker pause control</strong> — Admins can pause long-running
 								background loads or enrichment at a safe unit boundary, then resume
 								the preserved queue without consuming a retry.

@@ -168,14 +168,17 @@ describe("parseAnnotation — similar species", () => {
     expect(out.similar[0].note.length).toBeLessThanOrEqual(SIMILAR_NOTE_MAX_CHARS);
   });
 
-  it("caps the number of entries at MAX_SIMILAR", () => {
+  it("caps entries at the OFFERED-set size, not MAX_SIMILAR (GROK G4)", () => {
+    // The offered set is selection's top-7 PLUS reverse-support extras, so a
+    // fixed MAX_SIMILAR cap would drop every extra as over-cap and wedge the
+    // substage. 12 offered -> 12 accepted.
     const many = Array.from({ length: 12 }, (_, i) => `c${i}`);
     const body = many.map((c) => `{"code": "${c}", "note": "Larger overall, with a bill roughly as long as the head is wide."}`).join(",");
     const out = parseAnnotation(
       `{"tags": [], "field_craft": "x", "similar": [${body}]}`,
       { candidates: many, focalCode: "dowwoo" },
     );
-    expect(out.similar).toHaveLength(MAX_SIMILAR);
+    expect(out.similar).toHaveLength(12);
   });
 
   it("RECORDS an empty note rather than skipping it silently", () => {
@@ -250,7 +253,7 @@ describe("buildUserPrompt — candidate block", () => {
     const p = buildUserPrompt({
       ...base,
       candidates: [
-        { code: "brnpel", comName: "Brown Pelican", sciName: "Pelecanus occidentalis", basis: "ebird_slash" as const },
+        { code: "brnpel", comName: "Brown Pelican", sciName: "Pelecanus occidentalis", misidCount: 42 },
       ],
     });
     expect(p).toContain("Copy each code EXACTLY as written above");
@@ -264,7 +267,7 @@ describe("buildUserPrompt — candidate block", () => {
         {
           code: "haiwoo",
           comName: "Hairy Woodpecker",
-          sciName: "Dryobates villosus", basis: "ebird_slash" as const,
+          sciName: "Dryobates villosus", misidCount: 4693,
         },
       ],
     });
@@ -343,17 +346,17 @@ describe("clampNote — graceful length capping (Opus 5 writes long)", () => {
 });
 
 describe("buildOutputSchema — shape is the guarantee", () => {
-  const slash = {
+  const forward = {
     code: "lessca",
     comName: "Lesser Scaup",
     sciName: "Aythya affinis",
-    basis: "ebird_slash" as const,
+    misidCount: 812,
   };
-  const genus = {
+  const reverse = {
     code: "dalpel1",
     comName: "Dalmatian Pelican",
     sciName: "Pelecanus crispus",
-    basis: "genus" as const,
+    misidCount: null,
   };
 
   it("omits `similar` entirely when there are no candidates", () => {
@@ -362,28 +365,24 @@ describe("buildOutputSchema — shape is the guarantee", () => {
     expect(s.required).not.toContain("similar");
   });
 
-  it("REQUIRES a note for every eBird-slash candidate", () => {
-    // This is the whole point: an eBird reporting group is the assertion that
-    // birders confuse the pair, so silence is the one answer that can't be right.
-    const s = buildOutputSchema([slash, genus]) as never as {
+  it("REQUIRES an answer for EVERY candidate — forward and reverse alike", () => {
+    // Every offered pair carries a real-observer confusion claim (td-460b1c),
+    // so the model must answer for each: a note, or an explicit null decline.
+    const s = buildOutputSchema([forward, reverse]) as never as {
       properties: { similar: { required: string[]; properties: Record<string, unknown> } };
     };
-    expect(s.properties.similar.required).toEqual(["lessca"]);
+    expect(s.properties.similar.required.sort()).toEqual(["dalpel1", "lessca"]);
     expect(Object.keys(s.properties.similar.properties).sort()).toEqual(["dalpel1", "lessca"]);
   });
 
-  it("REQUIRES a note for a reciprocal genus candidate (the kingfisher case)", () => {
-    // Belted Kingfisher's page explains how to separate Ringed. Ringed's page
-    // must therefore explain Belted: confusability is mutual even though the
-    // note is directional. Without this the genus tier decided independently in
-    // each direction and one page showed a bare "Same genus" row.
-    const s2 = buildOutputSchema([{ ...genus, reciprocal: true }]) as never as {
-      properties: { similar: { required: string[] } };
+  it("gives every candidate the null DECLINE channel (self-review R2)", () => {
+    const s = buildOutputSchema([forward]) as never as {
+      properties: { similar: { properties: Record<string, { type: unknown }> } };
     };
-    expect(s2.properties.similar.required).toEqual([genus.code]);
+    expect(s.properties.similar.properties.lessca.type).toEqual(["string", "null"]);
   });
 
-  it("tells the model WHY a reciprocal candidate is owed a note", () => {
+  it("tells the model a reverse-support candidate is owed for symmetry", () => {
     const p = buildUserPrompt({
       comName: "Ringed Kingfisher",
       sciName: "Megaceryle torquata",
@@ -395,23 +394,29 @@ describe("buildOutputSchema — shape is the guarantee", () => {
           code: "belkin1",
           comName: "Belted Kingfisher",
           sciName: "Megaceryle alcyon",
-          basis: "genus" as const,
-          reciprocal: true,
+          misidCount: null,
         },
       ],
     });
-    expect(p).toContain("a note is owed here too");
+    expect(p).toContain("flagged confusable from the other species");
   });
 
-  it("leaves same-genus candidates optional", () => {
-    const s = buildOutputSchema([genus]) as never as {
-      properties: { similar: { required: string[] } };
-    };
-    expect(s.properties.similar.required).toEqual([]);
+  it("surfaces the misidentification count as the confusability evidence", () => {
+    const p = buildUserPrompt({
+      comName: "Greater Scaup",
+      sciName: "Aythya marila",
+      family: "Ducks",
+      extract: "A diving duck.",
+      sections: [],
+      candidates: [forward],
+    });
+    expect(p).toContain("misidentified this pair 812 times");
+    // Machinery must never leak into prose (AGY A7).
+    expect(p).toContain("Never mention iNaturalist");
   });
 
   it("makes an invented code unrepresentable", () => {
-    const s = buildOutputSchema([slash]) as never as {
+    const s = buildOutputSchema([forward]) as never as {
       properties: { similar: { additionalProperties: boolean; properties: Record<string, unknown> } };
     };
     expect(s.properties.similar.additionalProperties).toBe(false);
@@ -523,12 +528,15 @@ describe("parseAnnotation — malformed and over-cap handling", () => {
     expect(out.droppedSimilar).toEqual(["cand0:malformed"]);
   });
 
-  it("records over-cap candidates instead of silently truncating", () => {
+  it("records over-cap entries instead of silently truncating (cap = offered size)", () => {
+    // The closed set makes exceeding the cap with VALID codes impossible, so
+    // over-cap only fires on surplus junk entries once every offered slot is
+    // filled — and those are recorded, never dropped silently.
     const note = "Larger overall, with a bill roughly as long as the head is wide.";
     const body = CANDS.map((c) => `"${c}": "${note}"`).join(",");
-    const out = p(`{${body}}`);
-    expect(out.similar).toHaveLength(MAX_SIMILAR);
-    expect(out.droppedSimilar).toEqual([`${CANDS[MAX_SIMILAR]}:over-cap`]);
+    const out = p(`{${body}, "junk1": "${note}"}`);
+    expect(out.similar).toHaveLength(CANDS.length);
+    expect(out.droppedSimilar).toEqual(["junk1:over-cap"]);
   });
 
   it("accepts a terse voice-only answer that the old 40-char floor rejected", () => {
@@ -560,7 +568,7 @@ describe("generateSpeciesAnnotation (fetcher seam — first tests, plan step 5)"
         code: "haiwoo",
         comName: "Hairy Woodpecker",
         sciName: "Leuconotopicus villosus",
-        basis: "ebird_slash" as const,
+        misidCount: 4693,
       },
     ],
     speciesCode: "dowwoo",

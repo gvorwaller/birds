@@ -334,51 +334,42 @@ describe.runIf(dbUp)(
  * contract (case normalisation, category filter, scope gate, dedupe), which a
  * mocked gateway would not exercise at all.
  */
-describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", () => {
+describe.runIf(dbUp)("species/[code] loader — similar species display set (td-460b1c)", () => {
   const FOCAL = "simfoc1";
   const PARTNER = "simpar1";
   const THIRD = "simthr1";
-  const GENUS_MATE = "simgen1";
-  const OUT_OF_SCOPE = "simoos1";
-  const FOURTH = "simfou1";
-  const SLASH2 = "simsl2x";
-  const SLASH3 = "simsl3x";
-  const ALL = [
-    FOCAL,
-    PARTNER,
-    THIRD,
-    GENUS_MATE,
-    OUT_OF_SCOPE,
-    FOURTH,
-    SLASH2,
-    SLASH3,
-  ];
+  const ALL = [FOCAL, PARTNER, THIRD];
 
   type SimRow = {
     species_code: string;
     com_name: string;
     sci_name: string;
-    basis: string;
-    slash_com_name: string | null;
+    misid_count: number | null;
     note: string | null;
     seen: boolean;
   };
+  type UnresolvedRow = { inat_sci_name: string; inat_com_name: string | null };
 
   /** The loader's typed return is the SvelteKit union; cast like the cases above. */
   async function loadSimilar(uid: number, code: string) {
     const data = (await load(loadEvent(uid, "admin", code))) as unknown as {
-      similar: { similar: SimRow[]; related: SimRow[] };
+      similar: { similar: SimRow[]; unresolved: UnresolvedRow[]; inatStatus: string };
     };
     return data.similar;
   }
 
-  async function seed(code: string, com: string, sci: string, category: string) {
+  async function seed(code: string, com: string, sci: string) {
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
-       VALUES ($1, $2, $3, $4, 'Testidae')
+       VALUES ($1, $2, $3, 'species', 'Testidae')
        ON CONFLICT (species_code) DO UPDATE
-         SET com_name = $2, sci_name = $3, category = $4`,
-      [code, com, sci, category],
+         SET com_name = $2, sci_name = $3, category = 'species'`,
+      [code, com, sci],
+    );
+    await query(
+      `INSERT INTO species_enrichment (species_code) VALUES ($1)
+       ON CONFLICT (species_code) DO NOTHING`,
+      [code],
     );
   }
 
@@ -393,31 +384,34 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
     );
   }
 
-  async function seedAll() {
-    await seed(FOCAL, "Test Focal Bird", "Simfocus focalis", "species");
-    await seed(PARTNER, "Test Partner Bird", "Simfocus partneris", "species");
-    await seed(THIRD, "Test Third Bird", "Simother tertius", "species");
-    await seed(GENUS_MATE, "Test Genus Mate", "Simfocus congener", "species");
-    await seed(OUT_OF_SCOPE, "Test Out Of Scope", "Simfocus absentis", "species");
-    // Deliberately in Othergenus, NOT Testus: it is only reachable if the bare
-    // epithet "quartus" inherits the genus of the PRECEDING part.
-    await seed(FOURTH, "Test Fourth Bird", "Simother quartus", "species");
-    // Two-part slash, shared genus.
-    await seed(SLASH2, "Test Focal/Partner Bird", "Simfocus focalis/partneris", "slash");
-    // Three-part slash whose LAST member is a bare epithet after a genus
-    // change — the carry-forward case.
-    await seed(
-      SLASH3,
-      "Test Focal/Third/Fourth Bird",
-      "Simfocus focalis/Simother tertius/quartus",
-      "slash",
+  async function display(pos: number, resolved: string | null, sci: string, misid: number | null) {
+    await query(
+      `INSERT INTO species_similar_display
+         (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
+          inat_com_name, misid_count, origin, unresolved)
+       VALUES ($1, $2, $3, NULL, $4, NULL, $5, 'forward', $6)`,
+      [FOCAL, pos, resolved, sci, misid, resolved === null],
     );
-    await putInScope(GENUS_MATE);
+  }
+
+  async function seedAll() {
+    await seed(FOCAL, "Test Focal Bird", "Simfocus focalis");
+    await seed(PARTNER, "Test Partner Bird", "Simfocus partneris");
+    await seed(THIRD, "Test Third Bird", "Simother tertius");
     await putInScope(PARTNER);
+    await putInScope(THIRD);
+    await query(
+      `UPDATE species_enrichment SET inat_similar_status = 'ok' WHERE species_code = $1`,
+      [FOCAL],
+    );
+    await display(1, PARTNER, "Simfocus partneris", 33);
+    await display(2, THIRD, "Simother tertius", 12);
+    await display(3, null, "Simignotus mysterius", 5);
   }
 
   async function cleanAll() {
     await query(`DELETE FROM photo_links WHERE photo_id LIKE 'simphoto-%'`);
+    await query(`DELETE FROM species_similar_display WHERE species_code = ANY($1)`, [ALL]);
     await query(`DELETE FROM species_similar WHERE species_code = ANY($1)`, [ALL]);
     await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [ALL]);
     await query(`DELETE FROM species_media WHERE species_code = ANY($1)`, [ALL]);
@@ -425,140 +419,32 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
     await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [ALL]);
   }
 
-  it("returns slash partners as `similar`, never the focal species itself", async () => {
+  it("renders the persisted display set in order with counts, unresolved passthrough, never the focal", async () => {
     await seedAll();
     const uid = await noKeyUserId();
     try {
       const sim = await loadSimilar(uid, FOCAL);
-      const codes = sim.similar.map((s) => s.species_code);
-      expect(codes).toContain(PARTNER);
-      expect(codes).not.toContain(FOCAL);
-      const partner = sim.similar.find((s) => s.species_code === PARTNER)!;
-      expect(partner.basis).toBe("ebird_slash");
-      expect(partner.slash_com_name).toBe("Test Focal/Partner Bird");
+      expect(sim.inatStatus).toBe("ok");
+      expect(sim.similar.map((s) => s.species_code)).toEqual([PARTNER, THIRD]);
+      expect(sim.similar[0].misid_count).toBe(33);
+      expect(sim.unresolved.map((u) => u.inat_sci_name)).toEqual(["Simignotus mysterius"]);
     } finally {
       await cleanAll();
     }
   });
 
-  it("REGRESSION: a bare epithet inherits the NEAREST preceding genus", async () => {
-    // "Simfocus focalis/Simother tertius/quartus" must resolve its third member
-    // to "Simother quartus" (seeded, code FOURTH). Inheriting from the FIRST
-    // part instead would produce "Simfocus quartus", which does not exist — the
-    // member would vanish silently and this assertion is the only thing that
-    // would notice.
+  it("attaches the stored AI note to the matching ordered pair only, never mirrored", async () => {
     await seedAll();
     const uid = await noKeyUserId();
     try {
-      const sim = await loadSimilar(uid, FOCAL);
-      const codes = sim.similar.map((s) => s.species_code);
-      expect(codes).toContain(THIRD);
-      expect(codes).toContain(FOURTH);
-      expect(
-        sim.similar.find((s) => s.species_code === FOURTH)!.sci_name,
-      ).toBe("Simother quartus");
-    } finally {
-      await cleanAll();
-    }
-  });
-
-  it("drops a slash member that resolves to no species row", async () => {
-    // Same three-part slash, but with the carry-forward target absent: the
-    // member must disappear rather than surface as a bare code or a
-    // synthesised name (cs.md forbids placeholder data).
-    await seedAll();
-    await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [FOURTH]);
-    const uid = await noKeyUserId();
-    try {
-      const sim = await loadSimilar(uid, FOCAL);
-      const codes = sim.similar.map((s) => s.species_code);
-      expect(codes).not.toContain(FOURTH);
-      expect(codes).toContain(THIRD);
-      expect(sim.similar.every((s) => s.com_name && s.sci_name)).toBe(true);
-    } finally {
-      await cleanAll();
-    }
-  });
-
-  it("matches case-insensitively — the stored sci_name is capitalised too", async () => {
-    // Regression guard for the defect where the expanded name was compared raw
-    // against lower(sci_name), matching nothing and shipping an empty feature.
-    await seedAll();
-    const uid = await noKeyUserId();
-    try {
-      const sim = await loadSimilar(uid, FOCAL);
-      expect(sim.similar.length).toBeGreaterThan(0);
-    } finally {
-      await cleanAll();
-    }
-  });
-
-  it("ignores non-species rows that collide on sci_name", async () => {
-    await seedAll();
-    // An issf row sharing the partner's binomial must not be returned in its
-    // place — taxonomy_sci_idx is not unique.
-    await seed("simiss1", "Test Partner Bird (form)", "Simfocus partneris", "issf");
-    const uid = await noKeyUserId();
-    try {
-      const sim = await loadSimilar(uid, FOCAL);
-      const codes = sim.similar.map((s) => s.species_code);
-      expect(codes).toContain(PARTNER);
-      expect(codes).not.toContain("simiss1");
-    } finally {
-      await query(`DELETE FROM taxonomy_cache WHERE species_code = 'simiss1'`);
-      await cleanAll();
-    }
-  });
-
-  it("puts in-scope genus mates in `related`, and never repeats a `similar` row", async () => {
-    await seedAll();
-    const uid = await noKeyUserId();
-    try {
-      // A genus row only renders WITH a note — without one it asserts nothing
-      // and reads as missing data (reported from the phone view of Ringed
-      // Kingfisher). Seed the note so this case tests placement, not visibility.
       await query(
         `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
-         VALUES ($1, $2, 'Bigger overall, with a heavier bill and broader band.', 'test')
-         ON CONFLICT (species_code, similar_code) DO NOTHING`,
-        [FOCAL, GENUS_MATE],
+         VALUES ($1, $2, 'Slimmer, with a finer bill and paler flanks.', 'test')`,
+        [FOCAL, PARTNER],
       );
       const sim = await loadSimilar(uid, FOCAL);
-      const related = sim.related.map((s) => s.species_code);
-      const similar = sim.similar.map((s) => s.species_code);
-      expect(related).toContain(GENUS_MATE);
-      // PARTNER is a genus mate too, but tier 1 already claimed it.
-      expect(related).not.toContain(PARTNER);
-      expect(related.some((c) => similar.includes(c))).toBe(false);
-      expect(
-        sim.related.find((s) => s.species_code === GENUS_MATE)!.basis,
-      ).toBe("genus");
-    } finally {
-      await cleanAll();
-    }
-  });
-
-  it("HIDES a genus mate that has no note, while keeping a note-less slash row", async () => {
-    await seedAll();
-    const uid = await noKeyUserId();
-    try {
-      const sim = await loadSimilar(uid, FOCAL);
-      // eBird's grouping is itself information, so the slash row stands alone.
-      expect(sim.similar.map((s) => s.species_code)).toContain(PARTNER);
-      // "Same genus, may or may not be a look-alike" with no note says nothing.
-      expect(sim.related).toEqual([]);
-    } finally {
-      await cleanAll();
-    }
-  });
-
-  it("excludes genus mates that are out of enrichment scope", async () => {
-    await seedAll();
-    const uid = await noKeyUserId();
-    try {
-      const sim = await loadSimilar(uid, FOCAL);
-      const related = sim.related.map((s) => s.species_code);
-      expect(related).not.toContain(OUT_OF_SCOPE);
+      expect(sim.similar.find((s) => s.species_code === PARTNER)?.note).toContain("finer bill");
+      expect(sim.similar.find((s) => s.species_code === THIRD)?.note).toBeNull();
     } finally {
       await cleanAll();
     }
@@ -567,13 +453,6 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
   it("`seen` is scope-personal, not global", async () => {
     await seedAll();
     const uid = await noKeyUserId();
-    const other = await query<{ id: number }>(
-      `SELECT u.id FROM users u
-        WHERE u.id <> $1
-          AND NOT EXISTS (SELECT 1 FROM user_ebird ue WHERE ue.user_id = u.id)
-        ORDER BY u.id LIMIT 1`,
-      [uid],
-    );
     try {
       await query(
         `INSERT INTO seen_species (user_id, species_code, source) VALUES ($1, $2, 'manual')
@@ -581,51 +460,25 @@ describe.runIf(dbUp)("species/[code] loader — similar species (td-8f0ed8)", ()
         [uid, PARTNER],
       );
       const mine = await loadSimilar(uid, FOCAL);
-      expect(mine.similar.find((s) => s.species_code === PARTNER)!.seen).toBe(
-        true,
-      );
-      if (other.rows[0]) {
-        const theirs = await loadSimilar(other.rows[0].id, FOCAL);
-        expect(
-          theirs.similar.find((s) => s.species_code === PARTNER)!.seen,
-        ).toBe(false);
-      }
+      expect(mine.similar.find((s) => s.species_code === PARTNER)?.seen).toBe(true);
+      expect(mine.similar.find((s) => s.species_code === THIRD)?.seen).toBe(false);
     } finally {
       await cleanAll();
     }
   });
 
-  it("returns empty arrays for a species in no slash taxon and no small genus", async () => {
-    const LONE = "simlone1";
-    await seed(LONE, "Test Lone Bird", "Solitarius unicus", "species");
+  it("an empty display set with status 'none' yields empty arrays (honest hidden card)", async () => {
+    await seed(FOCAL, "Test Focal Bird", "Simfocus focalis");
+    await query(
+      `UPDATE species_enrichment SET inat_similar_status = 'none' WHERE species_code = $1`,
+      [FOCAL],
+    );
     const uid = await noKeyUserId();
     try {
-      const sim = await loadSimilar(uid, LONE);
+      const sim = await loadSimilar(uid, FOCAL);
+      expect(sim.inatStatus).toBe("none");
       expect(sim.similar).toEqual([]);
-      expect(sim.related).toEqual([]);
-    } finally {
-      await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [LONE]);
-    }
-  });
-
-  it("attaches the stored AI note to the matching ordered pair only", async () => {
-    await seedAll();
-    const uid = await noKeyUserId();
-    try {
-      await query(
-        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
-         VALUES ($1, $2, 'Partner shows a longer bill.', 'test-model')`,
-        [FOCAL, PARTNER],
-      );
-      const mine = await loadSimilar(uid, FOCAL);
-      expect(
-        mine.similar.find((s) => s.species_code === PARTNER)!.note,
-      ).toBe("Partner shows a longer bill.");
-      // Directional: the note must NOT be mirrored onto the partner's page.
-      const theirs = await loadSimilar(uid, PARTNER);
-      expect(
-        theirs.similar.find((s) => s.species_code === FOCAL)?.note ?? null,
-      ).toBeNull();
+      expect(sim.unresolved).toEqual([]);
     } finally {
       await cleanAll();
     }

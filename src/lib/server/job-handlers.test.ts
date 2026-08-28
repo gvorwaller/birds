@@ -2115,6 +2115,7 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     droppedTags: [],
     similar: [],
     droppedSimilar: [],
+    declinedSimilar: [],
   };
 
   beforeEach(() => {
@@ -2245,12 +2246,14 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     expect(aiWrite?.params?.[4]).toBe(55); // stored revision, not a refetch
   });
 
-  it("wiki-fresh unit with fresh AI but NO similar notes is due (td-8f0ed8)", async () => {
-    // Behaviour change: an already-annotated species is invisible to the
-    // revision clock, so before the substage got its own due conditions the
-    // whole existing corpus could never generate a note.
+  it("wiki-fresh unit with fresh AI but NO similar notes is due — reconciles WITHOUT a model call (td-460b1c)", async () => {
+    // The substage's own due conditions still select an already-annotated
+    // species with no notes — but under Phase B an EMPTY candidate set never
+    // spends a model call: the no-call fast path writes 'none' bookkeeping.
     db.handler = (text) => {
       if (text.includes("AS skip")) return { rows: [{ skip: true }] };
+      if (text.includes("SELECT inat_similar_status FROM species_enrichment"))
+        return { rows: [{ inat_similar_status: "ok" }] };
       if (text.includes("FROM taxonomy_cache WHERE species_code = ANY"))
         return { rows: [TAXA_ROW] };
       if (text.includes("wiki_status = 'ok' AND wikipedia_extract IS NOT NULL"))
@@ -2267,6 +2270,9 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
               similar_candidates_hash: null,
               similar_source_rev_id: null,
               similar_attempted_at: null,
+              similar_generated_at: null,
+              inat_similar_status: "ok",
+              inat_similar_fetched_at: null,
             },
           ],
         };
@@ -2275,7 +2281,11 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     };
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue(ANNOTATION);
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(enrichMocks.generateSpeciesAnnotation).not.toHaveBeenCalled();
+    // The fast path still books the substage: status 'none', hash written back.
+    const write = db.calls.find((c) => c.text.includes("similar_status = $2"));
+    expect(write?.params?.[1]).toBe("none");
+    expect(write?.params?.[2]).toBeTruthy();
   });
 
   it("wiki-fresh unit with fresh AI AND fresh notes stays a plain fresh skip", async () => {
@@ -2301,6 +2311,9 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
               similar_candidates_hash: emptyHash,
               similar_source_rev_id: "55",
               similar_attempted_at: null,
+              similar_generated_at: null,
+              inat_similar_status: "ok",
+              inat_similar_fetched_at: null,
             },
           ],
         };
@@ -2327,6 +2340,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     droppedTags: [],
     similar: [],
     droppedSimilar: [],
+    declinedSimilar: [],
   };
   /** Routing for a wiki-FRESH row whose AI is missing. */
   const freshAiDueDb = () => {
@@ -2363,39 +2377,66 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
   });
 
   /**
-   * freshAiDueDb + a slash taxon that actually resolves, so the AI stage is
-   * handed a non-empty candidate set. Without candidates the empty-similar
-   * retry correctly does not fire and these cases prove nothing.
+   * freshAiDueDb + iNat edge rows that actually resolve (td-460b1c Phase B),
+   * so the AI stage is handed a non-empty candidate set. Without candidates
+   * the empty-similar retry correctly does not fire and these cases prove
+   * nothing. Keys mirror the reconcile's real SQL (loadResolvedEdges,
+   * candidate meta, reverse partners) — NOT the retired slash queries.
    */
-  const freshAiDueDbWithCandidates = () => {
+  const inatCandidateFixture = (edges: {
+    id: string; count: number; sci: string; com: string; code: string;
+  }[]) => {
     freshAiDueDb();
     const base = db.handler!;
     db.handler = (text, params) => {
-      if (text.includes("category = 'slash'")) {
+      if (text.includes("SELECT inat_similar_status FROM species_enrichment"))
+        return { rows: [{ inat_similar_status: "ok" }] };
+      if (text.includes("inat_resolution_fingerprint"))
         return {
           rows: [
             {
-              species_code: "y00001",
-              com_name: "Marbled/Hudsonian Godwit",
-              sci_name: "Limosa fedoa/haemastica",
+              inat_taxon_id: "100",
+              inat_sci_name: "Limosa fedoa",
+              ebird_sci_name: "Limosa fedoa",
+              family: "Scolopacidae",
+              inat_similar_status: "ok",
+              inat_resolution_fingerprint: null,
+              similar_status: null,
+              similar_candidates_hash: null,
             },
           ],
         };
-      }
-      if (text.includes("lower(sci_name) = ANY")) {
+      if (text.includes("cross_matches"))
         return {
-          rows: [
-            {
-              species_code: "hudgod",
-              com_name: "Hudsonian Godwit",
-              sci_name: "Limosa haemastica",
-            },
-          ],
+          rows: edges.map((e) => ({
+            inat_taxon_id: e.id,
+            misid_count: e.count,
+            inat_sci_name: e.sci,
+            inat_com_name: e.com,
+            declined: false,
+            cross_matches: null,
+            name_matches: [e.code],
+          })),
         };
-      }
+      if (text.includes("AS in_scope"))
+        return {
+          rows: edges.map((e) => ({
+            species_code: e.code,
+            com_name: e.com,
+            sci_name: e.sci,
+            family: "Scolopacidae",
+            in_scope: true,
+          })),
+        };
+      if (text.includes("SELECT DISTINCT sis.species_code")) return { rows: [] };
+      if (text.includes("SELECT similar_code FROM species_similar")) return { rows: [] };
       return base(text, params);
     };
   };
+  const freshAiDueDbWithCandidates = () =>
+    inatCandidateFixture([
+      { id: "200", count: 50, sci: "Limosa haemastica", com: "Hudsonian Godwit", code: "hudgod" },
+    ]);
 
   it("retries ONCE when similar comes back empty despite candidates (td-8f0ed8)", async () => {
     // Observed during bring-up: the model returned notes on one call and
@@ -2503,6 +2544,9 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
               similar_candidates_hash: emptyHash,
               similar_source_rev_id: "55",
               similar_attempted_at: null,
+              similar_generated_at: null,
+              inat_similar_status: "ok",
+              inat_similar_fetched_at: null,
             },
           ],
         };
@@ -2602,48 +2646,16 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
   });
 
   /**
-   * Two slash candidates plus a genus one. freshAiDueDbWithCandidates offers a
-   * single slash code, which makes a same-count SWAP between slash candidates
-   * untestable (GROK).
+   * Three resolved candidates. A single-candidate fixture makes a same-count
+   * SWAP between candidates untestable (GROK), and the keep-list test needs a
+   * candidate the run omits.
    */
-  const freshAiDueDbTwoSlash = () => {
-    freshAiDueDb();
-    const base = db.handler!;
-    db.handler = (text, params) => {
-      if (text.includes("category = 'slash'")) {
-        return {
-          rows: [
-            {
-              species_code: "y00001",
-              com_name: "Marbled/Hudsonian Godwit",
-              sci_name: "Limosa fedoa/haemastica",
-            },
-            {
-              species_code: "y00002",
-              com_name: "Marbled/Black-tailed Godwit",
-              sci_name: "Limosa fedoa/limosa",
-            },
-          ],
-        };
-      }
-      // The GENUS tier: previously unmocked, so no genus candidate was ever
-      // offered and any test claiming to cover genus behaviour was really just
-      // inspecting the slash keep-list.
-      if (text.includes("split_part(tc.sci_name, ' ', 1)")) {
-        return { rows: [{ species_code: "batgod", com_name: "Bar-tailed Godwit" }] };
-      }
-      if (text.includes("lower(sci_name) = ANY")) {
-        return {
-          rows: [
-            { species_code: "hudgod", com_name: "Hudsonian Godwit", sci_name: "Limosa haemastica" },
-            { species_code: "biltai", com_name: "Black-tailed Godwit", sci_name: "Limosa limosa" },
-            { species_code: "batgod", com_name: "Bar-tailed Godwit", sci_name: "Limosa lapponica" },
-          ],
-        };
-      }
-      return base(text, params);
-    };
-  };
+  const freshAiDueDbTwoSlash = () =>
+    inatCandidateFixture([
+      { id: "200", count: 50, sci: "Limosa haemastica", com: "Hudsonian Godwit", code: "hudgod" },
+      { id: "201", count: 50, sci: "Limosa limosa", com: "Black-tailed Godwit", code: "biltai" },
+      { id: "202", count: 10, sci: "Limosa lapponica", com: "Bar-tailed Godwit", code: "batgod" },
+    ]);
 
   it("SWAP: a same-count retry filling a DIFFERENT slash candidate keeps the first", async () => {
     freshAiDueDbTwoSlash();
@@ -2658,12 +2670,11 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(ins.some((c) => String(c.params?.[2]).startsWith("SECOND"))).toBe(false);
   });
 
-  it("keeps a still-offered GENUS candidate this run omitted", async () => {
-    // Genus notes are optional, so a run can complete both slash notes and
-    // legitimately return nothing for the genus candidate. Its previous note
-    // must survive. batgod is the genus candidate and is NOT in this run's
-    // output — the keep-list must still contain it, which is the whole point
-    // of keying the delete on the OFFERED set rather than the written one.
+  it("keeps a still-offered candidate this run omitted (keep-list = OFFERED set)", async () => {
+    // batgod is offered but absent from this run's output. Its previous note
+    // must survive — the delete keys on the OFFERED set, never the written
+    // one. (The omission also leaves batgod owed, so the run lands in the
+    // 7-day error lane; preservation and completeness are separate concerns.)
     freshAiDueDbTwoSlash();
     const note = "Longer, straighter bill and a bolder wingbar than the focal bird.";
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
@@ -2674,38 +2685,28 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
       ],
     });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    const del = db.calls.find((c) => c.text.includes("DELETE FROM species_similar"));
+    const del = db.calls.find((c) => c.text.includes("similar_code <> ALL"));
     const keep = del?.params?.[1] as string[];
     expect(keep).toContain("batgod");
     expect(keep).toEqual(expect.arrayContaining(["hudgod", "biltai"]));
   });
 
-  it("a genus-only set the model skips entirely is 'ok', not a perpetual error", async () => {
-    // Nothing was OWED, so nothing was incomplete. Requiring similar.length > 0
-    // left these species in 'error' forever: the retry could never succeed, and
-    // they re-entered the 7-day lane on every pass (GROK).
-    freshAiDueDb();
-    const base = db.handler!;
-    db.handler = (text, params) => {
-      if (text.includes("category = 'slash'")) return { rows: [] };
-      if (text.includes("split_part(tc.sci_name, ' ', 1)")) {
-        return { rows: [{ species_code: "batgod" }] };
-      }
-      if (text.includes("lower(sci_name) = ANY")) {
-        return {
-          rows: [
-            { species_code: "batgod", com_name: "Bar-tailed Godwit", sci_name: "Limosa lapponica" },
-          ],
-        };
-      }
-      return base(text, params);
-    };
-    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+  it("a DECLINED candidate reaches 'ok' with no retry and no error lane (self-review R2)", async () => {
+    // The model's null verdict is terminal: the pair is not genuinely
+    // confusable, so nothing is owed, nothing retries, and the decline is
+    // stamped on the raw edge so the next selection excludes it.
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({
+      ...ANNOTATION,
+      similar: [],
+      declinedSimilar: ["hudgod"],
+    });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
-    expect(aiWrite?.params?.[5]).toBe("ok");
-    // No slash candidate was owed, so no retry should have fired either.
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    expect(aiWrite?.params?.[5]).toBe("none"); // offered shrank to zero after the decline
+    const stamp = db.calls.find((c) => c.text.includes("SET declined_at = NOW()"));
+    expect(stamp?.params?.[1]).toEqual(["hudgod"]);
   });
 
   it("retries when a slash candidate is owed a note, even if others got one", async () => {
@@ -2765,9 +2766,10 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
     expect(aiWrite?.params?.[5]).toBe("error");
-    // Targeted delete, never a blanket one.
-    const del = db.calls.find((c) => c.text.includes("DELETE FROM species_similar"));
-    expect(del?.text).toContain("similar_code <> ALL");
+    // Targeted delete, never a blanket one (the display-set DELETE inside the
+    // reconcile is a different table and does not count).
+    const del = db.calls.find((c) => c.text.includes("similar_code <> ALL"));
+    expect(del).toBeDefined();
     expect(del?.params?.[1]).toContain("hudgod");
   });
 
@@ -2995,6 +2997,7 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
     droppedTags: [],
     similar: [],
     droppedSimilar: [],
+    declinedSimilar: [],
   };
 
   beforeEach(() => {

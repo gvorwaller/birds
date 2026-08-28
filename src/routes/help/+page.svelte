@@ -565,16 +565,20 @@
 						connection.
 					</li>
 					<li>
-						A species page may show a <strong>Similar &amp; related species</strong>
-						card. <strong>Similar species</strong> links come from eBird's own
-						reporting groups — the "Greater/Lesser Scaup" style entries in the
-						taxonomy — i.e. species eBird itself treats as hard to separate in the
-						field. <strong>Related species</strong> are same-genus birds, which are
-						<strong>not necessarily look-alikes</strong>, just taxonomically close.
-						Distinguishing notes are <strong>AI-generated and should be verified in
-						the field</strong>. Many species have no such eBird reporting group and
-						no small enough genus to show — for those the card simply doesn't
-						appear, which means no such grouping exists, not that data is missing.
+						A species page may show a <strong>Similar species</strong> card.
+						Its pairs come from
+						<a href="https://www.inaturalist.org" target="_blank" rel="noopener">iNaturalist</a>
+						misidentification data — species that real observers demonstrably
+						confused with this one, ranked by how often it happened. A pair with
+						no matching eBird species is still listed in a footnote rather than
+						silently dropped. Distinguishing notes are <strong>AI-generated and
+						should be verified in the field</strong>. Four states can make the
+						card absent or explanatory: <em>no confusions recorded</em> on
+						iNaturalist (card hidden — honest empty, not missing data);
+						<em>no iNaturalist match</em> for this species (the card says so);
+						<em>data fetch failed</em> (the card says so and retries
+						automatically); and <em>data still loading</em> for a newly added
+						species (card absent until the background fetch lands).
 					</li>
 					<li>
 						<strong>Name/code search</strong> covers the complete current eBird

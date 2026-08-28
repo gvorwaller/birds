@@ -32,7 +32,6 @@ import {
   getEnrichment,
   iucnCode,
   getSimilarSpecies,
-  reciprocalNoteCodes,
   markAiError,
   markWikiError,
   markWikiNoArticle,
@@ -1952,19 +1951,23 @@ describe.runIf(dbUp)("AI error backoff covers the similar-note substage (td-8f0e
 });
 
 
-describe.runIf(dbUp)("getSimilarSpecies — note-less genus rows are hidden (td-8f0ed8)", () => {
+describe.runIf(dbUp)("getSimilarSpecies — persisted display set (td-460b1c Phase B)", () => {
   const FOCAL = "kfxfoc1";
-  const SLASHP = "kfxsla1";
-  const GENUSP = "kfxgen1";
-  const SLASH = "kfxsl9x";
-  const ALL = [FOCAL, SLASHP, GENUSP, SLASH];
+  const PARTNER = "kfxsla1";
+  const OUTSCOPE = "kfxgen1";
+  const ALL = [FOCAL, PARTNER, OUTSCOPE];
 
-  async function seed(code: string, com: string, sci: string, category: string) {
+  async function seed(code: string, com: string, sci: string) {
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
-       VALUES ($1,$2,$3,$4,'Testidae')
-       ON CONFLICT (species_code) DO UPDATE SET com_name=$2, sci_name=$3, category=$4`,
-      [code, com, sci, category],
+       VALUES ($1,$2,$3,'species','Testidae')
+       ON CONFLICT (species_code) DO UPDATE SET com_name=$2, sci_name=$3, category='species'`,
+      [code, com, sci],
+    );
+    await query(
+      `INSERT INTO species_enrichment (species_code) VALUES ($1)
+       ON CONFLICT (species_code) DO NOTHING`,
+      [code],
     );
   }
   async function scope(code: string) {
@@ -1975,52 +1978,85 @@ describe.runIf(dbUp)("getSimilarSpecies — note-less genus rows are hidden (td-
       [`kfxphoto-${code}`, code],
     );
   }
+  async function display(
+    code: string,
+    pos: number,
+    resolved: string | null,
+    sci: string,
+    misid: number | null,
+  ) {
+    await query(
+      `INSERT INTO species_similar_display
+         (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
+          inat_com_name, misid_count, origin, unresolved)
+       VALUES ($1,$2,$3,NULL,$4,NULL,$5,'forward',$6)`,
+      [code, pos, resolved, sci, misid, resolved === null],
+    );
+  }
   async function clean() {
     await query(`DELETE FROM photo_links WHERE photo_id LIKE 'kfxphoto-%'`);
+    await query(`DELETE FROM species_similar_display WHERE species_code = ANY($1)`, [ALL]);
     await query(`DELETE FROM species_similar WHERE species_code = ANY($1)`, [ALL]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [ALL]);
     await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [ALL]);
   }
 
-  it("hides a genus candidate with no note, keeps a slash candidate without one", async () => {
+  it("renders persisted rows with notes; unresolved surfaces; scope filters at read time", async () => {
     await clean();
-    await seed(FOCAL, "KFX Focal", "Kfxus focalis", "species");
-    await seed(SLASHP, "KFX Slash Partner", "Kfxus partneris", "species");
-    await seed(GENUSP, "KFX Genus Mate", "Kfxus congener", "species");
-    await seed(SLASH, "KFX Focal/Partner", "Kfxus focalis/partneris", "slash");
-    await scope(SLASHP);
-    await scope(GENUSP);
+    await seed(FOCAL, "KFX Focal", "Kfxus focalis");
+    await seed(PARTNER, "KFX Partner", "Kfxus partneris");
+    await seed(OUTSCOPE, "KFX Faraway", "Kfxus peregrinus");
+    await scope(PARTNER); // OUTSCOPE deliberately NOT in scope (self-review R7)
+    await query(
+      `UPDATE species_enrichment SET inat_similar_status='ok' WHERE species_code=$1`,
+      [FOCAL],
+    );
+    await display(FOCAL, 1, PARTNER, "Kfxus partneris", 41);
+    await display(FOCAL, 2, OUTSCOPE, "Kfxus peregrinus", 17);
+    await display(FOCAL, 3, null, "Kfxus mysterius", 9); // unmappable partner
+    await query(
+      `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
+       VALUES ($1,$2,'Bigger, with a heavier bill and a broader breast band.','test')`,
+      [FOCAL, PARTNER],
+    );
     const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
     try {
-      const noNotes = await getSimilarSpecies(FOCAL, "Kfxus focalis", uid);
-      // The eBird grouping is itself information, so the slash row stands alone.
-      expect(noNotes.similar.map((r) => r.species_code)).toContain(SLASHP);
-      // A genus row with no note asserts nothing and must not render.
-      expect(noNotes.related).toEqual([]);
-
-      await query(
-        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
-         VALUES ($1,$2,'Bigger, with a heavier bill and a broader breast band.','test')`,
-        [FOCAL, GENUSP],
-      );
-      const withNote = await getSimilarSpecies(FOCAL, "Kfxus focalis", uid);
-      expect(withNote.related.map((r) => r.species_code)).toEqual([GENUSP]);
+      const r = await getSimilarSpecies(FOCAL, uid);
+      expect(r.inatStatus).toBe("ok");
+      // Resolved + in-scope renders with its note and count; out-of-scope is
+      // filtered at read time; unmappable is surfaced, never dropped.
+      expect(r.similar.map((x) => x.species_code)).toEqual([PARTNER]);
+      expect(r.similar[0].note).toContain("heavier bill");
+      expect(r.similar[0].misid_count).toBe(41);
+      expect(r.unresolved.map((x) => x.inat_sci_name)).toEqual(["Kfxus mysterius"]);
     } finally {
       await clean();
     }
   });
 
-  it("reciprocalNoteCodes finds species holding a note ABOUT this one", async () => {
+  it("maps a missing enrichment row and a missing display set to 'pending'", async () => {
     await clean();
-    await seed(FOCAL, "KFX Focal", "Kfxus focalis", "species");
-    await seed(GENUSP, "KFX Genus Mate", "Kfxus congener", "species");
     try {
-      await query(
-        `INSERT INTO species_similar (species_code, similar_code, note, ai_model)
-         VALUES ($1,$2,'Bigger, with a heavier bill and a broader breast band.','test')`,
-        [GENUSP, FOCAL],
-      );
-      expect(await reciprocalNoteCodes(FOCAL)).toContain(GENUSP);
-      expect(await reciprocalNoteCodes(GENUSP)).not.toContain(FOCAL);
+      const r = await getSimilarSpecies(FOCAL, 1);
+      expect(r.inatStatus).toBe("pending");
+      expect(r.similar).toEqual([]);
+      expect(r.unresolved).toEqual([]);
+    } finally {
+      await clean();
+    }
+  });
+
+  it("returns no_mapping with empty rows so the card can explain the state", async () => {
+    await clean();
+    await seed(FOCAL, "KFX Focal", "Kfxus focalis");
+    await query(
+      `UPDATE species_enrichment SET inat_similar_status='no_mapping' WHERE species_code=$1`,
+      [FOCAL],
+    );
+    try {
+      const r = await getSimilarSpecies(FOCAL, 1);
+      expect(r.inatStatus).toBe("no_mapping");
+      expect(r.similar).toEqual([]);
     } finally {
       await clean();
     }

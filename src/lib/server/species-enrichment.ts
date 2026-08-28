@@ -12,7 +12,6 @@
  */
 import { createHash } from 'node:crypto';
 import { query, withTransaction } from '$lib/db';
-import { slashPartnersFor } from '$lib/similar-species';
 import type pg from 'pg';
 
 /**
@@ -27,6 +26,7 @@ type Exec = <T extends pg.QueryResultRow = pg.QueryResultRow>(
 const clientExec = (client: pg.PoolClient): Exec =>
 	((text, params) => client.query(text, params as never[])) as Exec;
 import { sanitizeErrorText } from '$server/job-policy';
+import { MAX_SIMILAR } from '$server/ai-enrichment';
 import type { WikidataSpeciesRow } from '$server/wikidata';
 import {
 	fetchWikidataBatch,
@@ -133,6 +133,15 @@ export async function upsertResolution(
 	const crossIds: EnrichmentCrossIds = {};
 	if (row.inatTaxonId) crossIds.inat_taxon_id = row.inatTaxonId;
 	if (row.xenoCantoId) crossIds.xeno_canto_id = row.xenoCantoId;
+	// Pre-read the OLD iNat mapping (self-review R5: this function was a blind
+	// upsert; the targeted invalidation below needs old_id, and the caller
+	// must run pre-read + write + invalidation in ONE transaction).
+	const prev = await exec<{ inat_id: string | null; inat_sci_name: string | null }>(
+		`SELECT cross_ids->>'inat_taxon_id' AS inat_id, inat_sci_name
+		   FROM species_enrichment WHERE species_code = $1`,
+		[code]
+	);
+	const oldId = prev.rows[0]?.inat_id ?? null;
 	await exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids)
@@ -149,6 +158,25 @@ export async function upsertResolution(
 			JSON.stringify(crossIds)
 		]
 	);
+	// Targeted invalidation (AGY A3, mechanics per self-review R4/R5): when
+	// the P3151 mapping CHANGES, null the candidate hash of only the species
+	// actually affected — self, plus species whose raw edges reference either
+	// id (indexed) or the focal's iNat binomial (namespace-correct; never the
+	// eBird sci name). NEVER a global clock: that was the full-corpus storm.
+	const newId = row.inatTaxonId ?? null;
+	if (oldId !== newId) {
+		const ids = [oldId, newId].filter((x): x is string => x !== null);
+		const nameArm = prev.rows[0]?.inat_sci_name?.toLowerCase() ?? null;
+		await exec(
+			`UPDATE species_enrichment SET similar_candidates_hash = NULL, updated_at = NOW()
+			  WHERE species_code = $1
+			     OR species_code IN (
+			       SELECT sis.species_code FROM species_inat_similar sis
+			        WHERE (cardinality($2::text[]) > 0 AND sis.inat_taxon_id::text = ANY($2::text[]))
+			           OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
+			[code, ids, nameArm]
+		);
+	}
 }
 
 /** Store fetched article prose; stamps the wiki freshness clock. */
@@ -358,7 +386,7 @@ export async function upsertAiData(
 			   similar_status = COALESCE($6, similar_status),
 			   similar_candidates_hash = COALESCE($7, similar_candidates_hash),
 			   similar_source_rev_id = CASE WHEN $6 IS NULL THEN similar_source_rev_id ELSE $5 END,
-			   similar_model = CASE WHEN $6 IS NULL THEN similar_model ELSE $4 END,
+			   similar_model = CASE WHEN $6 IS NULL OR $9::int = 0 THEN similar_model ELSE $4 END,
 			   similar_generated_at = CASE WHEN $6 IS NULL THEN similar_generated_at ELSE NOW() END,
 			   similar_attempted_at = CASE WHEN $6 IS NULL THEN similar_attempted_at ELSE NOW() END,
 			   similar_error = CASE WHEN $6 IS NULL THEN similar_error ELSE $8 END
@@ -371,7 +399,11 @@ export async function upsertAiData(
 				data.sourceRevId,
 				similarStatus,
 				hash,
-				similarError
+				similarError,
+				// $9 (AGY A5): similar_model advances ONLY when this run actually
+				// wrote notes — a Sonnet tags-only call on a fully-preserved set
+				// must not restamp the substage's provenance.
+				similar.length
 			]
 		);
 		// Only touch the notes when this run produced a verdict on them.
@@ -391,6 +423,12 @@ export async function upsertAiData(
 				  WHERE species_code = $1 AND similar_code <> ALL($2::text[])`,
 				[code, keep]
 			);
+		} else {
+			// Candidate sets can genuinely shrink to zero (self-review notable
+			// c): with a real hash and nothing offered, every stored note is an
+			// orphan — invisible on the page but never cleaned by the keep-list
+			// form above, which previously skipped this case entirely.
+			await client.query(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
 		}
 		for (const s of similar) {
 			await client.query(
@@ -407,23 +445,6 @@ export async function upsertAiData(
 }
 
 /**
- * Clear a taxonomy-sync over-selection without spending an API call.
- *
- * aiDueCodes re-selects every species whose notes predate the last taxonomy
- * sync. When the candidate set turns out to be unchanged, this re-stamps the
- * substage clock so the next scan stops selecting it — and touches nothing
- * else, so the stored notes and their provenance stay exactly as they were.
- */
-export async function touchSimilarFresh(code: string): Promise<void> {
-	await query(
-		`UPDATE species_enrichment
-		    SET similar_generated_at = NOW(), similar_attempted_at = NOW(), updated_at = NOW()
-		  WHERE species_code = $1`,
-		[code]
-	);
-}
-
-/**
  * Fingerprint of the candidate set the notes were generated for.
  *
  * Computed in Node, not SQL: expanding 1,035 slash taxa per in-scope species
@@ -436,25 +457,37 @@ export function similarCandidatesHash(codes: readonly string[]): string {
 	return createHash('sha1').update([...codes].sort().join(',')).digest('hex').slice(0, 16);
 }
 
-export async function markAiError(code: string, message: string): Promise<void> {
-	// The similar-note substage shares this failure because it shares the CALL:
-	// one request produces field craft and notes together, so if it failed,
-	// neither ran. Stamping the substage too is what gives it the same 7-day
-	// backoff — leaving similar_status NULL after a failure would make
-	// aiDueCodes' "never attempted" clause true on every single scan, and the
-	// species would retry the AI stage every pass forever with no backoff at
-	// all (the same shape as the quarter-hourly WDQS loop noted in the wiki
-	// lane). Existing notes are PRESERVED: a transient failure must not blank
-	// out rows that are already on the page (same last-good rule as
-	// markMediaError).
-	await query(
-		`UPDATE species_enrichment SET
-		   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(),
-		   similar_status = 'error', similar_error = $2, similar_attempted_at = NOW(),
-		   updated_at = NOW()
-		 WHERE species_code = $1`,
-		[code, sanitizeErrorText(message).slice(0, 500)]
-	);
+export async function markAiError(
+	code: string,
+	message: string,
+	opts: { similarParticipating: boolean } = { similarParticipating: true }
+): Promise<void> {
+	// STAGE-AWARE (CODEX1 F4 / self-review R-F4b): the similar substage shares
+	// this failure ONLY when the run actually participated in it. Participation
+	// is an EXPLICIT flag captured from the inat-status read BEFORE the try
+	// body — never inferred from "hash is null", because a throw during
+	// candidate resolution predates any hash. When participating, the substage
+	// gets the same 7-day backoff (leaving similar_status NULL would make the
+	// never-attempted clause true every scan). When NOT participating (inat
+	// pending/error), similar_* stays untouched so the substage runs the
+	// moment inat lands. Existing notes are PRESERVED either way (last-good).
+	if (opts.similarParticipating) {
+		await query(
+			`UPDATE species_enrichment SET
+			   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(),
+			   similar_status = 'error', similar_error = $2, similar_attempted_at = NOW(),
+			   updated_at = NOW()
+			 WHERE species_code = $1`,
+			[code, sanitizeErrorText(message).slice(0, 500)]
+		);
+	} else {
+		await query(
+			`UPDATE species_enrichment SET
+			   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(), updated_at = NOW()
+			 WHERE species_code = $1`,
+			[code, sanitizeErrorText(message).slice(0, 500)]
+		);
+	}
 }
 
 /**
@@ -546,22 +579,27 @@ export async function aiDueCodes(): Promise<string[]> {
 		            se.ai_status IS NULL
 		         OR (se.ai_status = 'ok' AND se.ai_source_rev_id IS DISTINCT FROM se.wikipedia_rev_id)
 		         OR (se.ai_status = 'error' AND se.ai_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
-		         -- Similar-note substage (td-8f0ed8). It needs its own conditions
-		         -- because the three above cannot see either of the two things
-		         -- that make NOTES stale: a species already annotated at the
-		         -- current revision is invisible to them, so without this the
-		         -- whole existing corpus would never generate a note at all.
-		         OR se.similar_status IS NULL
-		         OR (se.similar_status = 'error'
-		             AND se.similar_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
-		         -- A taxonomy re-sync can change the candidate set without
-		         -- touching wikipedia_rev_id. This is a deliberate
-		         -- OVER-approximation: it re-selects every species annotated
-		         -- before the last sync, and the candidate-set hash checked in
-		         -- the handler is what stops an actual API call when the set
-		         -- turns out to be unchanged.
-		         OR (se.similar_generated_at IS NOT NULL
-		             AND se.similar_generated_at < (SELECT MAX(fetched_at) FROM taxonomy_cache))
+		         -- Similar-note substage (td-460b1c Phase B). EVERY clause below
+		         -- carries the inat-terminal gate (self-review R1): a species
+		         -- whose confusion data is pending or errored must never enter
+		         -- the notes lane, or it loops candidate-less every scan.
+		         OR (se.inat_similar_status IN ('ok','none','no_mapping') AND (
+		               se.similar_status IS NULL
+		            OR (se.similar_status = 'error'
+		                AND se.similar_attempted_at < NOW() - INTERVAL '${ERROR_RETRY_DAYS} days')
+		            -- New iNat data means the notes are stale.
+		            OR (se.similar_generated_at IS NOT NULL
+		                AND se.similar_generated_at < se.inat_similar_fetched_at)
+		            -- Targeted-invalidation marker (AGY A3): a partner's edge or
+		            -- mapping change nulled our hash; the reconcile writes it
+		            -- back every time (R1), so this cannot loop.
+		            OR (se.similar_candidates_hash IS NULL AND se.similar_status IS NOT NULL)
+		            -- Taxonomy re-sync over-approximation: stored resolutions can
+		            -- shift. The reconcile's forward fingerprint (R9 two-tier)
+		            -- short-circuits the unchanged majority without an AI call.
+		            OR (se.similar_generated_at IS NOT NULL
+		                AND se.similar_generated_at < (SELECT MAX(fetched_at) FROM taxonomy_cache))
+		         ))
 		      )
 		 )
 		 ORDER BY 1`
@@ -871,6 +909,11 @@ export interface AiStageInput {
 	similarCandidatesHash: string | null;
 	similarSourceRevId: number | null;
 	similarAttemptedAt: string | null;
+	similarGeneratedAt: string | null;
+	/** Sourcing-stage state (td-460b1c): the substage only participates when
+	 * this is terminal ('ok'/'none'/'no_mapping'). */
+	inatSimilarStatus: string | null;
+	inatSimilarFetchedAt: string | null;
 }
 
 /**
@@ -889,11 +932,15 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		similar_candidates_hash: string | null;
 		similar_source_rev_id: string | null;
 		similar_attempted_at: string | null;
+		similar_generated_at: string | null;
+		inat_similar_status: string | null;
+		inat_similar_fetched_at: string | null;
 	}>(
 		`SELECT wikipedia_extract, wikipedia_sections, wikipedia_rev_id::text,
 		        ai_status, ai_source_rev_id::text, ai_attempted_at::text,
 		        similar_status, similar_candidates_hash,
-		        similar_source_rev_id::text, similar_attempted_at::text
+		        similar_source_rev_id::text, similar_attempted_at::text,
+		        similar_generated_at::text, inat_similar_status, inat_similar_fetched_at::text
 		   FROM species_enrichment
 		  WHERE species_code = $1 AND wiki_status = 'ok' AND wikipedia_extract IS NOT NULL`,
 		[code]
@@ -911,7 +958,10 @@ export async function aiStageInputFor(code: string): Promise<AiStageInput | null
 		similarCandidatesHash: row.similar_candidates_hash,
 		similarSourceRevId:
 			row.similar_source_rev_id == null ? null : Number(row.similar_source_rev_id),
-		similarAttemptedAt: row.similar_attempted_at
+		similarAttemptedAt: row.similar_attempted_at,
+		similarGeneratedAt: row.similar_generated_at,
+		inatSimilarStatus: row.inat_similar_status,
+		inatSimilarFetchedAt: row.inat_similar_fetched_at
 	};
 }
 
@@ -1084,9 +1134,8 @@ export interface SimilarSpeciesRow {
 	species_code: string;
 	com_name: string;
 	sci_name: string;
-	basis: 'ebird_slash' | 'genus';
-	/** The slash taxon that groups them, e.g. "Downy/Hairy Woodpecker". */
-	slash_com_name: string | null;
+	/** Observer misidentification count; null for reverse-support extras. */
+	misid_count: number | null;
 	/** AI "how to tell them apart" line; null until the note stage runs. */
 	note: string | null;
 	photo: {
@@ -1101,251 +1150,613 @@ export interface SimilarSpeciesRow {
 	seen: boolean;
 }
 
-export interface SimilarSpeciesResult {
-	/** eBird slash taxa — Cornell's own "these are confusable" claim. */
-	similar: SimilarSpeciesRow[];
-	/** Same genus — taxonomically close, explicitly NOT a confusion claim. */
-	related: SimilarSpeciesRow[];
+/** An iNat confusion partner with no eBird mapping — surfaced, never dropped
+ * (binding decision 2). */
+export interface UnresolvedSimilarRow {
+	inat_sci_name: string;
+	inat_com_name: string | null;
+	misid_count: number;
 }
 
-/** Genus mates beyond this are a family index, not a shortlist — tier 2 is dropped entirely. */
-const MAX_GENUS_MATES = 3;
+export type InatSimilarStatus = 'pending' | 'ok' | 'none' | 'no_mapping' | 'error';
 
-/** Candidate rows before any per-user data is attached. */
-interface CandidateSet {
-	slash: { species_code: string; com_name: string; sci_name: string; slash_com_name: string }[];
-	genus: { species_code: string; com_name: string; sci_name: string }[];
+export interface SimilarSpeciesResult {
+	similar: SimilarSpeciesRow[];
+	unresolved: UnresolvedSimilarRow[];
+	inatStatus: InatSimilarStatus;
+}
+
+// ---------------------------------------------------------------------------
+// Selection + reconcile (td-460b1c Phase B). Resolution, selection, and
+// reverse-current-source support run at RECONCILE time in the worker and are
+// persisted to species_similar_display (AGY A1) — the page reads one indexed
+// query and can never diverge from the stored notes' hash.
+// ---------------------------------------------------------------------------
+
+/** Cross-family pairs need materially stronger support than same-family ones
+ * (AGY A4: raw counts put Canada Goose on Bald Eagle's list). */
+const CROSS_FAMILY_MIN = 20;
+const CROSS_FAMILY_LEADER_FRACTION = 0.1;
+
+/** One raw edge after the two-arm resolution pass. */
+export interface ResolvedEdgeInput {
+	inatTaxonId: string;
+	misidCount: number;
+	inatSciName: string;
+	inatComName: string | null;
+	declined: boolean;
+	/** 'ambiguous' = the winning arm matched >1 distinct codes (surfaced as
+	 * unresolved, never a lexicographic pick — CODEX1 F2). */
+	resolution:
+		| { speciesCode: string; comName: string; sciName: string; family: string | null; inScope: boolean }
+		| 'ambiguous'
+		| null;
+}
+
+export interface SelectedCandidate {
+	speciesCode: string;
+	comName: string;
+	sciName: string;
+	misidCount: number;
+	inatTaxonId: string;
+}
+
+export interface InatSelection {
+	selected: SelectedCandidate[];
+	unresolved: UnresolvedSimilarRow[];
 }
 
 /**
- * The candidate species for one focal species, tier 1 then tier 2.
+ * Pure selection over resolved edges (exported for tests). Pipeline order is
+ * FIXED (self-review R8 — it changes seat counts and the pre-flight
+ * histogram): dedupe-by-code -> scope filter -> family floors (declined
+ * excluded first) -> rank -> cap.
  *
- * Shared deliberately between the page loader and the AI note stage: the
- * stored candidate-set hash is only meaningful if both see the SAME set, so
- * there must be exactly one place that decides it.
+ * Floors: leader = max count over non-declined edges. Normal data: same-family
+ * passes count >= min(leader, 3); cross-family (or unknown-family resolved)
+ * needs count >= max(CROSS_FAMILY_MIN, ceil(0.1 x leader)). Weak data
+ * (leader < 3, GROK G1/self-review R8): same-family only, at most 3 seats —
+ * thin evidence gets a thin card, but the leader still shows. Unresolved rows
+ * pass the base floor only (family unknowable) and never consume seats.
  */
-async function candidateSet(code: string, sciName: string): Promise<CandidateSet> {
-	const genus = sciName.trim().split(/\s+/)[0] ?? '';
+export function selectInatCandidates(
+	edges: readonly ResolvedEdgeInput[],
+	focalFamily: string | null
+): InatSelection {
+	const live = edges.filter((e) => !e.declined);
+	const leader = live.reduce((m, e) => Math.max(m, e.misidCount), 0);
+	if (leader === 0) return { selected: [], unresolved: [] };
+	const weakData = leader < 3;
+	const baseFloor = Math.min(leader, 3);
+	const crossFloor = Math.max(CROSS_FAMILY_MIN, Math.ceil(leader * CROSS_FAMILY_LEADER_FRACTION));
 
-	const [slashRes, genusRes] = await Promise.all([
-		// All 1,035 slash taxa. ORDER BY is load-bearing, not tidiness: a species
-		// can belong to several slash taxa (Cooper's Hawk sits in both
-		// "Accipiter striatus/Astur cooperii" and "Astur cooperii/atricapillus"),
-		// so without a deterministic row order the merged candidate order — and
-		// therefore which duplicate survives dedupe — would vary between loads.
-		query<{ species_code: string; com_name: string; sci_name: string }>(
-			`SELECT species_code, com_name, sci_name
-			   FROM taxonomy_cache WHERE category = 'slash' ORDER BY species_code`
-		),
-		genus
-			? query<{ species_code: string }>(
-					`SELECT tc.species_code
-					   FROM taxonomy_cache tc
-					  WHERE tc.category = 'species'
-					    AND split_part(tc.sci_name, ' ', 1) = $1
-					    AND tc.species_code <> $2
-					    AND tc.species_code IN (${IN_SCOPE_CODES_SQL}
-					        )
-					  ORDER BY tc.species_code`,
-					[genus, code]
-				)
-			: Promise.resolve({ rows: [] as { species_code: string }[] })
-	]);
-
-	// Tier 1: expand every slash taxon this species belongs to, ordered by
-	// (slash taxon code, member ordinal), then dedupe by target keeping first.
-	const slashByName = new Map<string, string>();
-	for (const row of slashRes.rows) {
-		for (const p of slashPartnersFor(sciName, row.sci_name)) {
-			const key = p.sciName.toLowerCase();
-			if (!slashByName.has(key)) slashByName.set(key, row.com_name);
+	// Dedupe two iNat taxa resolving to the same eBird code, keeping the
+	// higher count (deterministic: ties keep the lower taxon id, which sorts
+	// first below).
+	const byCode = new Map<string, ResolvedEdgeInput>();
+	const rest: ResolvedEdgeInput[] = [];
+	for (const e of [...live].sort(
+		(a, b) => b.misidCount - a.misidCount || a.inatTaxonId.localeCompare(b.inatTaxonId)
+	)) {
+		if (typeof e.resolution === 'object' && e.resolution !== null) {
+			const key = e.resolution.speciesCode;
+			if (!byCode.has(key)) byCode.set(key, e);
+		} else {
+			rest.push(e);
 		}
 	}
-	const slashNames = [...slashByName.keys()];
 
-	// Tier 2 is gated on CARDINALITY, and the gate is checked BEFORE the
-	// tier-1 exclusion below: a genus that is large overall is dropped whole,
-	// rather than sneaking in because tier 1 happened to absorb most of it.
-	const genusCodes =
-		genusRes.rows.length >= 1 && genusRes.rows.length <= MAX_GENUS_MATES
-			? genusRes.rows.map((r) => r.species_code)
-			: [];
+	const sameFamily = (fam: string | null) =>
+		focalFamily !== null && fam !== null && fam === focalFamily;
 
-	if (slashNames.length === 0 && genusCodes.length === 0) return { slash: [], genus: [] };
+	const eligible = [...byCode.values()].filter((e) => {
+		const r = e.resolution as Exclude<ResolvedEdgeInput['resolution'], 'ambiguous' | null>;
+		if (!r.inScope) return false; // extralimital noise (AGY A4) — dropped, NOT "unresolved"
+		if (weakData) return sameFamily(r.family);
+		return sameFamily(r.family) ? e.misidCount >= baseFloor : e.misidCount >= crossFloor;
+	});
 
-	const res = await query<{ species_code: string; com_name: string; sci_name: string }>(
-		// category='species' is required, not decorative: taxonomy_sci_idx is NOT
-		// unique and taxonomy_cache holds issf/hybrid/slash/spuh rows whose
-		// sci_name can collide with a species binomial.
-		`SELECT species_code, com_name, sci_name
-		   FROM taxonomy_cache
-		  WHERE category = 'species'
-		    AND (lower(sci_name) = ANY($1::text[]) OR species_code = ANY($2::text[]))`,
-		// $1 is ALREADY lowercased — expandSlashSciNames preserves the stored
-		// capitalisation, so comparing it raw against lower(sci_name) matches
-		// nothing at all and the feature ships silently empty.
-		[slashNames, genusCodes]
-	);
-	const byName = new Map(res.rows.map((r) => [r.sci_name.toLowerCase(), r]));
-	const byCode = new Map(res.rows.map((r) => [r.species_code, r]));
+	const cap = weakData ? Math.min(3, MAX_SIMILAR) : MAX_SIMILAR;
+	const selected = eligible
+		.sort((a, b) => b.misidCount - a.misidCount || a.inatTaxonId.localeCompare(b.inatTaxonId))
+		.slice(0, cap)
+		.map((e) => {
+			const r = e.resolution as Exclude<ResolvedEdgeInput['resolution'], 'ambiguous' | null>;
+			return {
+				speciesCode: r.speciesCode,
+				comName: r.comName,
+				sciName: r.sciName,
+				misidCount: e.misidCount,
+				inatTaxonId: e.inatTaxonId
+			};
+		});
 
-	const slash: CandidateSet['slash'] = [];
-	for (const name of slashNames) {
-		const r = byName.get(name);
-		// A member that resolves to nothing is DROPPED, never surfaced as a bare
-		// code or a synthesised name (cs.md: no placeholder data).
-		if (r) slash.push({ ...r, slash_com_name: slashByName.get(name) ?? '' });
-	}
+	// ALL floor-passing unresolved rows are surfaced (binding decision 2 /
+	// CODEX1 F8 — no display cap); ambiguous resolutions land here too.
+	const unresolved = rest
+		.filter((e) => e.misidCount >= baseFloor)
+		.sort((a, b) => b.misidCount - a.misidCount || a.inatTaxonId.localeCompare(b.inatTaxonId))
+		.map((e) => ({
+			inat_sci_name: e.inatSciName,
+			inat_com_name: e.inatComName,
+			misid_count: e.misidCount
+		}));
 
-	const shown = new Set(slash.map((s) => s.species_code));
-	const genusRows = genusCodes
-		.filter((c) => !shown.has(c))
-		.map((c) => byCode.get(c))
-		.filter((r): r is NonNullable<typeof r> => r != null)
-		.sort((a, b) => a.com_name.localeCompare(b.com_name));
-
-	return { slash, genus: genusRows };
+	return { selected, unresolved };
 }
 
 /**
- * Species that already carry a note ABOUT `code`.
- *
- * Confusability is mutual even though the note is directional: if Belted
- * Kingfisher's page explains how to separate Ringed, then Ringed's page owes
- * the reverse. Without this the genus tier decides independently in each
- * direction and produces exactly the asymmetry Gaylon reported — a good note
- * one way, a bare "Same genus" row the other.
- *
- * Slash pairs are already symmetric by construction (both directions are
- * required), so this only ever adds genus candidates.
+ * Two-arm resolution of one species' raw edges (CODEX1 F2, executed at
+ * reconcile time): cross-id arm (priority 1, expression-indexed) then exact
+ * sci-name arm (priority 2, taxonomy_sci_idx). A winning arm with >1 distinct
+ * codes is AMBIGUOUS. Scope check is per-code EXISTS probes (all three scope
+ * tables have species_code indexes) — never the 23M-row scope UNION.
  */
-export async function reciprocalNoteCodes(code: string): Promise<string[]> {
-	const r = await query<{ species_code: string }>(
-		`SELECT species_code FROM species_similar WHERE similar_code = $1`,
+async function loadResolvedEdges(code: string, exec: Exec = query): Promise<ResolvedEdgeInput[]> {
+	const r = await exec<{
+		inat_taxon_id: string;
+		misid_count: number;
+		inat_sci_name: string;
+		inat_com_name: string | null;
+		declined: boolean;
+		cross_matches: string[] | null;
+		name_matches: string[] | null;
+	}>(
+		`SELECT sis.inat_taxon_id::text, sis.misid_count, sis.inat_sci_name, sis.inat_com_name,
+		        (sis.declined_at IS NOT NULL) AS declined,
+		        cm.cross_matches, nm.name_matches
+		   FROM species_inat_similar sis
+		   LEFT JOIN LATERAL (
+		     SELECT array_agg(DISTINCT se.species_code) AS cross_matches
+		       FROM species_enrichment se
+		       JOIN taxonomy_cache t ON t.species_code = se.species_code AND t.category = 'species'
+		      WHERE se.cross_ids->>'inat_taxon_id' = sis.inat_taxon_id::text
+		        AND se.species_code <> sis.species_code
+		   ) cm ON TRUE
+		   LEFT JOIN LATERAL (
+		     SELECT array_agg(DISTINCT tc.species_code) AS name_matches
+		       FROM taxonomy_cache tc
+		      WHERE tc.category = 'species'
+		        AND lower(tc.sci_name) = lower(sis.inat_sci_name)
+		        AND tc.species_code <> sis.species_code
+		   ) nm ON TRUE
+		  WHERE sis.species_code = $1
+		  ORDER BY sis.misid_count DESC, sis.inat_taxon_id`,
 		[code]
 	);
-	return r.rows.map((x) => x.species_code);
-}
-
-/**
- * The closed candidate list handed to the model, in display order./**
- * The closed candidate list handed to the model, in display order. Same set the
- * page shows, by construction — see candidateSet.
- */
-export async function similarCandidatesFor(
-	code: string,
-	sciName: string
-): Promise<
-	{
-		code: string;
-		comName: string;
-		sciName: string;
-		basis: 'ebird_slash' | 'genus';
-		reciprocal: boolean;
-	}[]
-> {
-	const [set, reciprocal] = await Promise.all([
-		candidateSet(code, sciName),
-		reciprocalNoteCodes(code)
-	]);
-	const owesBack = new Set(reciprocal);
-	// Tier is passed through, not flattened: the model needs to know which
-	// candidates carry Cornell's "these are confused in the field" judgement.
-	return [
-		...set.slash.map((r) => ({ ...r, basis: 'ebird_slash' as const })),
-		...set.genus.map((r) => ({ ...r, basis: 'genus' as const }))
-	].map((r) => ({
-		code: r.species_code,
-		comName: r.com_name,
-		sciName: r.sci_name,
-		basis: r.basis,
-		reciprocal: owesBack.has(r.species_code)
-	}));
-}
-
-/**
- * Candidates for the species page's "Similar species" / "Related species" card
- * (td-8f0ed8). DB-only, like getSpeciesMedia: never calls out on GET.
- *
- * Edges are DERIVED here rather than stored — see 0031_species_similar.sql for
- * why. Only the note is persisted.
- */
-export async function getSimilarSpecies(
-	code: string,
-	sciName: string,
-	userId: number
-): Promise<SimilarSpeciesResult> {
-	const set = await candidateSet(code, sciName);
-	const codes = [...set.slash, ...set.genus].map((r) => r.species_code);
-	if (codes.length === 0) return { similar: [], related: [] };
-
-	const extra = await query<{
-		species_code: string;
-		seen: boolean;
-		note: string | null;
-		thumbnail_url: string | null;
-		source_url: string | null;
-		creator: string | null;
-		license_code: string | null;
-		license_url: string | null;
-		width: number | null;
-		height: number | null;
-	}>(
-		`SELECT tc.species_code,
-		        (ss.species_code IS NOT NULL) AS seen,
-		        sim.note,
-		        sm.thumbnail_url, sm.source_url, sm.creator,
-		        sm.license_code, sm.license_url, sm.width, sm.height
-		   FROM taxonomy_cache tc
-		   LEFT JOIN seen_species ss
-		          ON ss.species_code = tc.species_code AND ss.user_id = $1
-		   LEFT JOIN species_similar sim
-		          ON sim.species_code = $2 AND sim.similar_code = tc.species_code
-		   LEFT JOIN species_media sm
-		          ON sm.species_code = tc.species_code AND sm.kind = 'photo' AND sm.rank = 1
-		  WHERE tc.species_code = ANY($3::text[])`,
-		[userId, code, codes]
-	);
-	const byCode = new Map(extra.rows.map((r) => [r.species_code, r]));
-
-	const toRow = (
-		base: { species_code: string; com_name: string; sci_name: string },
-		basis: 'ebird_slash' | 'genus',
-		slashComName: string | null
-	): SimilarSpeciesRow => {
-		const x = byCode.get(base.species_code);
-		return {
-			species_code: base.species_code,
-			com_name: base.com_name,
-			sci_name: base.sci_name,
-			basis,
-			slash_com_name: slashComName,
-			note: x?.note ?? null,
-			photo: x?.source_url
+	// Batch-load names/family/scope for every uniquely-resolved code.
+	const winners = new Map<string, string>(); // edge taxonId -> species code
+	for (const row of r.rows) {
+		const arm =
+			row.cross_matches && row.cross_matches.length > 0 ? row.cross_matches : row.name_matches;
+		if (arm && arm.length === 1) winners.set(row.inat_taxon_id, arm[0]);
+	}
+	const codes = [...new Set(winners.values())];
+	const meta = new Map<
+		string,
+		{ com_name: string; sci_name: string; family: string | null; in_scope: boolean }
+	>();
+	if (codes.length > 0) {
+		const m = await exec<{
+			species_code: string;
+			com_name: string;
+			sci_name: string;
+			family: string | null;
+			in_scope: boolean;
+		}>(
+			`SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+			        (EXISTS (SELECT 1 FROM seen_species s WHERE s.species_code = tc.species_code)
+			      OR EXISTS (SELECT 1 FROM species_frequency f WHERE f.species_code = tc.species_code)
+			      OR EXISTS (SELECT 1 FROM photo_links p WHERE p.species_code = tc.species_code)) AS in_scope
+			   FROM taxonomy_cache tc
+			  WHERE tc.category = 'species' AND tc.species_code = ANY($1::text[])`,
+			[codes]
+		);
+		for (const row of m.rows) {
+			meta.set(row.species_code, {
+				com_name: row.com_name,
+				sci_name: row.sci_name,
+				family: row.family,
+				in_scope: row.in_scope
+			});
+		}
+	}
+	return r.rows.map((row) => {
+		const arm =
+			row.cross_matches && row.cross_matches.length > 0 ? row.cross_matches : row.name_matches;
+		let resolution: ResolvedEdgeInput['resolution'] = null;
+		if (arm && arm.length > 1) resolution = 'ambiguous';
+		else if (arm && arm.length === 1) {
+			const info = meta.get(arm[0]);
+			// A winner that vanished from taxonomy between the two queries (or a
+			// non-species collision) degrades to unresolved, never a guess.
+			resolution = info
 				? {
-						thumbnail_url: x.thumbnail_url,
-						source_url: x.source_url,
-						creator: x.creator,
-						license_code: x.license_code ?? '',
-						license_url: x.license_url,
-						width: x.width,
-						height: x.height
+						speciesCode: arm[0],
+						comName: info.com_name,
+						sciName: info.sci_name,
+						family: info.family,
+						inScope: info.in_scope
+					}
+				: null;
+		}
+		return {
+			inatTaxonId: row.inat_taxon_id,
+			misidCount: row.misid_count,
+			inatSciName: row.inat_sci_name,
+			inatComName: row.inat_com_name,
+			declined: row.declined,
+			resolution
+		};
+	});
+}
+
+/** Offered candidate as the AI stage sees it. */
+export interface SimilarCandidateRow {
+	code: string;
+	comName: string;
+	sciName: string;
+	/** null = reverse-support extra (the count lives on the partner's edge). */
+	misidCount: number | null;
+}
+
+/** Fingerprint of the FORWARD selection outcome — the two-tier reconcile
+ * short-circuit (self-review R9). */
+function forwardFingerprint(sel: InatSelection): string {
+	const parts = [
+		...sel.selected.map((s) => `s:${s.speciesCode}:${s.misidCount}`),
+		...sel.unresolved.map((u) => `u:${u.inat_sci_name}:${u.misid_count}`)
+	];
+	return createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 16);
+}
+
+interface FocalInatState {
+	inatTaxonId: string | null;
+	inatSciName: string | null;
+	ebirdSciName: string | null;
+	family: string | null;
+	status: InatSimilarStatus;
+	fingerprint: string | null;
+	similarStatus: string | null;
+	similarHash: string | null;
+}
+
+async function focalInatState(code: string, exec: Exec = query): Promise<FocalInatState> {
+	const r = await exec<{
+		inat_taxon_id: string | null;
+		inat_sci_name: string | null;
+		ebird_sci_name: string | null;
+		family: string | null;
+		inat_similar_status: string | null;
+		inat_resolution_fingerprint: string | null;
+		similar_status: string | null;
+		similar_candidates_hash: string | null;
+	}>(
+		`SELECT se.inat_taxon_id::text, se.inat_sci_name, tc.sci_name AS ebird_sci_name, tc.family,
+		        se.inat_similar_status, se.inat_resolution_fingerprint,
+		        se.similar_status, se.similar_candidates_hash
+		   FROM species_enrichment se
+		   LEFT JOIN taxonomy_cache tc
+		          ON tc.species_code = se.species_code AND tc.category = 'species'
+		  WHERE se.species_code = $1`,
+		[code]
+	);
+	const row = r.rows[0];
+	return {
+		inatTaxonId: row?.inat_taxon_id ?? null,
+		inatSciName: row?.inat_sci_name ?? null,
+		ebirdSciName: row?.ebird_sci_name ?? null,
+		family: row?.family ?? null,
+		status: (row?.inat_similar_status ?? 'pending') as InatSimilarStatus,
+		fingerprint: row?.inat_resolution_fingerprint ?? null,
+		similarStatus: row?.similar_status ?? null,
+		similarHash: row?.similar_candidates_hash ?? null
+	};
+}
+
+/**
+ * Reconcile one species' display set and return the offered candidates.
+ *
+ * Cheap tier: forward resolution + selection (<=30 indexed rows). If the
+ * forward fingerprint is unchanged AND the stored hash/status are intact, the
+ * persisted display set is returned as-is (this is what makes the
+ * taxonomy-sync over-selection affordable, self-review R9). Otherwise the
+ * full tier runs reverse-current-source support (CODEX1 F1: reciprocity from
+ * CURRENT iNat data only) and rewrites species_similar_display transactionally.
+ *
+ * The hash over the returned codes is exactly the offered set — one source of
+ * truth for the page, the model, and the stored notes.
+ */
+export async function similarCandidatesFor(code: string): Promise<SimilarCandidateRow[]> {
+	return withTransaction(async (client) => {
+		const exec = clientExec(client);
+		const st = await focalInatState(code, exec);
+		const forward = selectInatCandidates(await loadResolvedEdges(code, exec), st.family);
+		const fp = forwardFingerprint(forward);
+		if (fp === st.fingerprint && st.similarHash !== null && st.similarStatus !== null) {
+			const persisted = await exec<{
+				resolved_code: string | null;
+				inat_sci_name: string;
+				misid_count: number | null;
+			}>(
+				`SELECT d.resolved_code, d.inat_sci_name, d.misid_count
+				   FROM species_similar_display d
+				  WHERE d.species_code = $1 AND d.resolved_code IS NOT NULL
+				  ORDER BY d.position`,
+				[code]
+			);
+			const codes = persisted.rows.map((x) => x.resolved_code as string);
+			if (codes.length > 0 || forward.selected.length === 0) {
+				const names = await candidateNames(codes, exec);
+				return persisted.rows
+					.map((x) => {
+						const n = names.get(x.resolved_code as string);
+						return n
+							? {
+									code: x.resolved_code as string,
+									comName: n.com_name,
+									sciName: n.sci_name,
+									misidCount: x.misid_count
+								}
+							: null;
+					})
+					.filter((x): x is SimilarCandidateRow => x !== null);
+			}
+			// Fingerprint matches but nothing persisted (e.g. pre-Phase-B rows):
+			// fall through to a full reconcile.
+		}
+
+		// Full tier: reverse-current-source support. Partners = species whose
+		// raw edges point at the focal (id arm, then iNat-binomial arm, then
+		// the eBird binomial as a last resort), filtered to those whose OWN
+		// selection includes the focal.
+		const nameArm = (st.inatSciName ?? st.ebirdSciName)?.toLowerCase() ?? null;
+		const partnersRes = await exec<{ species_code: string }>(
+			`SELECT DISTINCT sis.species_code
+			   FROM species_inat_similar sis
+			  WHERE sis.species_code <> $1
+			    AND (($2::text IS NOT NULL AND sis.inat_taxon_id::text = $2)
+			         OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
+			[code, st.inatTaxonId, nameArm]
+		);
+		const reverse: SimilarCandidateRow[] = [];
+		const forwardCodes = new Set(forward.selected.map((s) => s.speciesCode));
+		for (const p of partnersRes.rows) {
+			if (forwardCodes.has(p.species_code)) continue;
+			const pState = await focalInatState(p.species_code, exec);
+			const pSel = selectInatCandidates(await loadResolvedEdges(p.species_code, exec), pState.family);
+			if (pSel.selected.some((s) => s.speciesCode === code)) {
+				const names = await candidateNames([p.species_code], exec);
+				const n = names.get(p.species_code);
+				if (n) {
+					reverse.push({
+						code: p.species_code,
+						comName: n.com_name,
+						sciName: n.sci_name,
+						misidCount: null
+					});
+				}
+			}
+		}
+		reverse.sort((a, b) => a.code.localeCompare(b.code));
+
+		// Persist display set + fingerprint in THIS transaction.
+		await exec(`DELETE FROM species_similar_display WHERE species_code = $1`, [code]);
+		let pos = 0;
+		for (const s of forward.selected) {
+			pos++;
+			await exec(
+				`INSERT INTO species_similar_display
+				   (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
+				    inat_com_name, misid_count, origin, unresolved)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, 'forward', FALSE)`,
+				[code, pos, s.speciesCode, s.inatTaxonId, s.sciName, null, s.misidCount]
+			);
+		}
+		for (const rrow of reverse) {
+			pos++;
+			await exec(
+				`INSERT INTO species_similar_display
+				   (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
+				    inat_com_name, misid_count, origin, unresolved)
+				 VALUES ($1, $2, $3, NULL, $4, NULL, NULL, 'reverse', FALSE)`,
+				[code, pos, rrow.code, rrow.sciName]
+			);
+		}
+		for (const u of forward.unresolved) {
+			pos++;
+			await exec(
+				`INSERT INTO species_similar_display
+				   (species_code, position, resolved_code, inat_taxon_id, inat_sci_name,
+				    inat_com_name, misid_count, origin, unresolved)
+				 VALUES ($1, $2, NULL, NULL, $3, $4, $5, 'forward', TRUE)`,
+				[code, pos, u.inat_sci_name, u.inat_com_name, u.misid_count]
+			);
+		}
+		await exec(
+			`UPDATE species_enrichment
+			    SET inat_resolution_fingerprint = $2, updated_at = NOW()
+			  WHERE species_code = $1`,
+			[code, fp]
+		);
+
+		return [
+			...forward.selected.map((s) => ({
+				code: s.speciesCode,
+				comName: s.comName,
+				sciName: s.sciName,
+				misidCount: s.misidCount as number | null
+			})),
+			...reverse
+		];
+	});
+}
+
+async function candidateNames(
+	codes: readonly string[],
+	exec: Exec = query
+): Promise<Map<string, { com_name: string; sci_name: string }>> {
+	if (codes.length === 0) return new Map();
+	const r = await exec<{ species_code: string; com_name: string; sci_name: string }>(
+		`SELECT species_code, com_name, sci_name FROM taxonomy_cache
+		  WHERE category = 'species' AND species_code = ANY($1::text[])`,
+		[codes]
+	);
+	return new Map(r.rows.map((x) => [x.species_code, x]));
+}
+
+/**
+ * Record the model's terminal per-pair "not confusable" verdicts (self-review
+ * R2): stamps declined_at on the raw edges so the NEXT selection excludes
+ * them — the decline never retries and never reaches the error lane.
+ */
+export async function markSimilarDeclined(code: string, declinedCodes: readonly string[]): Promise<void> {
+	if (declinedCodes.length === 0) return;
+	await query(
+		`UPDATE species_inat_similar sis SET declined_at = NOW()
+		  WHERE sis.species_code = $1
+		    AND sis.inat_taxon_id IN (
+		      SELECT d.inat_taxon_id FROM species_similar_display d
+		       WHERE d.species_code = $1 AND d.resolved_code = ANY($2::text[])
+		         AND d.inat_taxon_id IS NOT NULL)`,
+		[code, declinedCodes]
+	);
+}
+
+/**
+ * Similar-substage bookkeeping WITHOUT the monolithic AI write (CODEX1 F3):
+ * touches ONLY the similar_* columns and prunes species_similar rows not in
+ * the offered set. Used by the no-call fast path and every reconcile outcome —
+ * the hash is ALWAYS written back (self-review R1: a nulled hash must be
+ * repopulated or the invalidation marker clause re-selects forever).
+ */
+export async function reconcileSimilarState(
+	code: string,
+	offeredCodes: readonly string[],
+	hash: string,
+	status: 'ok' | 'none',
+	model: string | null
+): Promise<void> {
+	await withTransaction(async (client) => {
+		const exec = clientExec(client);
+		await exec(
+			`UPDATE species_enrichment SET
+			   similar_status = $2, similar_candidates_hash = $3,
+			   similar_generated_at = NOW(), similar_attempted_at = NOW(),
+			   similar_error = NULL,
+			   similar_model = CASE WHEN $4::text IS NULL THEN similar_model ELSE $4 END,
+			   updated_at = NOW()
+			 WHERE species_code = $1`,
+			[code, status, hash, model]
+		);
+		if (offeredCodes.length > 0) {
+			await exec(
+				`DELETE FROM species_similar
+				  WHERE species_code = $1 AND similar_code <> ALL($2::text[])`,
+				[code, offeredCodes]
+			);
+		} else {
+			// Candidate sets can genuinely shrink to zero — orphan notes go too
+			// (the old keep-list skipped this case; self-review notable c).
+			await exec(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
+		}
+	});
+}
+
+/**
+ * The species page's card data (td-460b1c Phase B). PURE READ of the
+ * persisted display set — no resolution, no selection, no early return
+ * (GROK G5: unresolved-only and no_mapping species must keep their
+ * explanatory card; a missing enrichment row maps to 'pending').
+ */
+export async function getSimilarSpecies(code: string, userId: number): Promise<SimilarSpeciesResult> {
+	const [statusRes, rowsRes] = await Promise.all([
+		query<{ inat_similar_status: string | null }>(
+			`SELECT inat_similar_status FROM species_enrichment WHERE species_code = $1`,
+			[code]
+		),
+		query<{
+			resolved_code: string | null;
+			inat_sci_name: string;
+			inat_com_name: string | null;
+			misid_count: number | null;
+			unresolved: boolean;
+			in_scope: boolean;
+			com_name: string | null;
+			sci_name: string | null;
+			seen: boolean;
+			note: string | null;
+			thumbnail_url: string | null;
+			source_url: string | null;
+			creator: string | null;
+			license_code: string | null;
+			license_url: string | null;
+			width: number | null;
+			height: number | null;
+		}>(
+			`SELECT d.resolved_code, d.inat_sci_name, d.inat_com_name, d.misid_count, d.unresolved,
+			        tc.com_name, tc.sci_name,
+			        (ss.species_code IS NOT NULL) AS seen,
+			        sim.note,
+			        sm.thumbnail_url, sm.source_url, sm.creator,
+			        sm.license_code, sm.license_url, sm.width, sm.height,
+			        (EXISTS (SELECT 1 FROM seen_species s2 WHERE s2.species_code = d.resolved_code)
+			      OR EXISTS (SELECT 1 FROM species_frequency f2 WHERE f2.species_code = d.resolved_code)
+			      OR EXISTS (SELECT 1 FROM photo_links p2 WHERE p2.species_code = d.resolved_code)) AS in_scope
+			   FROM species_similar_display d
+			   LEFT JOIN taxonomy_cache tc
+			          ON tc.species_code = d.resolved_code AND tc.category = 'species'
+			   LEFT JOIN seen_species ss
+			          ON ss.species_code = d.resolved_code AND ss.user_id = $1
+			   LEFT JOIN species_similar sim
+			          ON sim.species_code = $2 AND sim.similar_code = d.resolved_code
+			   LEFT JOIN species_media sm
+			          ON sm.species_code = d.resolved_code AND sm.kind = 'photo' AND sm.rank = 1
+			  WHERE d.species_code = $2
+			  ORDER BY d.position`,
+			[userId, code]
+		)
+	]);
+	const inatStatus = (statusRes.rows[0]?.inat_similar_status ?? 'pending') as InatSimilarStatus;
+	const similar: SimilarSpeciesRow[] = [];
+	const unresolved: UnresolvedSimilarRow[] = [];
+	for (const r of rowsRes.rows) {
+		if (r.unresolved || r.resolved_code === null) {
+			unresolved.push({
+				inat_sci_name: r.inat_sci_name,
+				inat_com_name: r.inat_com_name,
+				misid_count: r.misid_count ?? 0
+			});
+			continue;
+		}
+		// A resolved code whose taxonomy row vanished (post-sync churn) is
+		// skipped here; the next reconcile heals the display set.
+		if (r.com_name === null || r.sci_name === null) continue;
+		// Read-time scope filter (self-review R7): a species that LEFT the
+		// scope universe disappears immediately; entering scope is healed by
+		// the new-species pipeline's partner stamping.
+		if (!r.in_scope) continue;
+		similar.push({
+			species_code: r.resolved_code,
+			com_name: r.com_name,
+			sci_name: r.sci_name,
+			misid_count: r.misid_count,
+			note: r.note,
+			photo: r.source_url
+				? {
+						thumbnail_url: r.thumbnail_url,
+						source_url: r.source_url,
+						creator: r.creator,
+						license_code: r.license_code ?? '',
+						license_url: r.license_url,
+						width: r.width,
+						height: r.height
 					}
 				: null,
-			seen: x?.seen ?? false
-		};
-	};
-
-	return {
-		// Slash rows always render: the eBird grouping is itself the information,
-		// so the basis line carries meaning even before a note exists.
-		similar: set.slash.map((r) => toRow(r, 'ebird_slash', r.slash_com_name || null)),
-		// Genus rows only render WITH a note. Without one the row says
-		// "same genus, may or may not be a look-alike", which is close to zero
-		// information and reads as missing data — reported from the phone view of
-		// Ringed Kingfisher, where the only content was the generic basis line.
-		related: set.genus.map((r) => toRow(r, 'genus', null)).filter((r) => r.note != null)
-	};
+			seen: r.seen
+		});
+	}
+	return { similar, unresolved, inatStatus };
 }
 
 /**

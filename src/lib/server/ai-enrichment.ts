@@ -118,20 +118,12 @@ export interface SimilarCandidate {
 	comName: string;
 	sciName: string;
 	/**
-	 * Which tier produced this candidate. Surfaced to the model because the two
-	 * carry very different priors: an eBird slash taxon means Cornell groups the
-	 * pair precisely BECAUSE field separation is hard, so "no useful difference"
-	 * is essentially never right there. A same-genus candidate may genuinely not
-	 * be a look-alike.
+	 * How many iNaturalist observers actually misidentified this pair — the
+	 * source of the confusability claim (td-460b1c). null = a reverse-support
+	 * extra: this species' own page selects the focal, so a note is owed here
+	 * for symmetry even though the count lives on the other edge.
 	 */
-	basis: 'ebird_slash' | 'genus';
-	/**
-	 * This candidate already has a note about the focal species on ITS page, so
-	 * a note is owed in return. Confusability is mutual even though the note is
-	 * directional; without this the genus tier decides independently in each
-	 * direction and one page ends up with a bare "Same genus" row.
-	 */
-	reciprocal?: boolean;
+	misidCount: number | null;
 }
 
 export interface SpeciesAnnotation {
@@ -143,6 +135,11 @@ export interface SpeciesAnnotation {
 	similar: { code: string; note: string }[];
 	/** Codes the model returned that were not in the candidate set. */
 	droppedSimilar: string[];
+	/** Candidates the model DECLINED (returned null): its terminal per-pair
+	 * verdict that the two are not genuinely confusable in the field
+	 * (self-review R2 — the refusal channel that keeps noise pairs out of the
+	 * 7-day error lane forever). */
+	declinedSimilar: string[];
 }
 
 const SYSTEM =
@@ -182,11 +179,9 @@ function candidateBlock(candidates: readonly SimilarCandidate[]): string {
 		.map(
 			(c) =>
 				`${c.code} = ${c.comName} (${c.sciName}) — ` +
-				(c.basis === 'ebird_slash'
-					? 'eBird reporting group: routinely confused in the field'
-					: c.reciprocal === true
-						? "same genus, and this app already explains the pair on that species' page — a note is owed here too"
-						: 'same genus: may or may not be a look-alike')
+				(c.misidCount !== null
+					? `iNaturalist observers misidentified this pair ${c.misidCount} time${c.misidCount === 1 ? '' : 's'}`
+					: 'this pair is flagged confusable from the other species\u2019 data')
 		)
 		.join('\n');
 }
@@ -232,18 +227,21 @@ export function buildUserPrompt(input: {
 		`stage is most productive and why. Under ${FIELD_CRAFT_MAX_CHARS} characters.\n` +
 		(candidates.length > 0
 			? `3. "similar": an object whose KEYS are candidate codes from the list ` +
-				`above and whose values are the note for that species.\n` +
+				`above and whose values are the note for that species, or null.\n` +
 				// Calibration, not decoration. Under a flat "an empty list is a valid
 				// answer" this stage returned NOTHING on roughly one call in three
-				// during bring-up — including for pairs eBird itself groups as
-				// confusable, where silence is close to always wrong.
-				`   ALWAYS write a note for every "eBird reporting group" candidate: ` +
-				`those are grouped because experienced birders confuse them, so a ` +
-				`separating mark always exists even when it is subtle. Say what it is, ` +
-				`and say plainly when the two are effectively inseparable except by ` +
-				`voice or in certain plumages — that is itself the useful answer. For ` +
-				`"same genus" candidates, include one only if the two could actually be ` +
-				`mistaken for each other; skip the rest.\n` +
+				// during bring-up — including for pairs real observers demonstrably
+				// confuse, where silence is close to always wrong.
+				`   Write a note for EVERY candidate: each pair above was genuinely ` +
+				`misidentified by real observers, so a separating mark usually exists ` +
+				`even when it is subtle. Say what it is, and say plainly when the two ` +
+				`are effectively inseparable except by voice or in certain plumages — ` +
+				`that is itself the useful answer. Return null for a candidate ONLY ` +
+				`when the two are NOT genuinely confusable in the field (e.g. a ` +
+				`beginner-photo artifact) — null is a definitive verdict, not a skip.\n` +
+				`   Never mention iNaturalist, misidentification counts, reciprocity, ` +
+				`or database relationships in the note text — write only about visible ` +
+				`field marks, structure, and voice that separate the two species.\n` +
 				`   Each "note" tells a birder in the field how to separate THAT species ` +
 				`from ${input.comName}. Write about the candidate, not about ` +
 				`${input.comName}. Lead with the single most reliable mark, then add the ` +
@@ -310,17 +308,19 @@ export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Reco
 		// minLength, just as it has no maxLength). Live runs returned empty
 		// values for required slash keys, so the retry loop and the validator
 		// below are load-bearing, not belt-and-braces (GROK P2).
+		// string | null: null is the model's DECLINE channel (self-review R2) —
+		// a terminal "not genuinely confusable" verdict, distinct from an empty
+		// string (which is a miss the retry loop chases).
 		const noteProps: Record<string, unknown> = {};
-		for (const c of candidates) noteProps[c.code] = { type: 'string' };
+		for (const c of candidates) noteProps[c.code] = { type: ['string', 'null'] };
 
 		properties.similar = {
 			type: 'object',
 			properties: noteProps,
-			// Required = Cornell says they are confused, OR we have already told the
-			// user they are confused on the other species' page.
-			required: candidates
-				.filter((c) => c.basis === 'ebird_slash' || c.reciprocal === true)
-				.map((c) => c.code),
+			// EVERY candidate is required (td-460b1c Phase B): each offered pair
+			// carries a real-observer confusion claim, so the model must answer
+			// for each — with a note or an explicit null.
+			required: candidates.map((c) => c.code),
 			additionalProperties: false
 		};
 		required.push('similar');
@@ -610,7 +610,7 @@ function validateSimilar(
 	raw: unknown,
 	candidates: readonly string[],
 	focalCode: string | null
-): { similar: { code: string; note: string }[]; dropped: string[] } {
+): { similar: { code: string; note: string }[]; dropped: string[]; declined: string[] } {
 	// Structured outputs return `similar` as an object keyed by species code
 	// (see buildOutputSchema). The array-of-{code,note} form is still accepted
 	// because it is what an unconstrained response produces — the schema is the
@@ -621,15 +621,23 @@ function validateSimilar(
 			note
 		}));
 	}
-	if (!Array.isArray(raw)) return { similar: [], dropped: [] };
+	if (!Array.isArray(raw)) return { similar: [], dropped: [], declined: [] };
 
 	const allowed = new Map(candidates.map((c) => [c.toLowerCase(), c]));
 	const similar: { code: string; note: string }[] = [];
 	const dropped: string[] = [];
+	const declined: string[] = [];
 	const seen = new Set<string>();
 
+	// Cap = the OFFERED set size, never MAX_SIMILAR (GROK G4): the offered set
+	// is selection's top-7 PLUS reverse-support extras, so a fixed 7 would drop
+	// every extra as over-cap, owed() would chase them, and the substage would
+	// wedge in 'error' on exactly the well-connected species.
+	const cap = candidates.length;
 	for (const entry of raw) {
-		if (similar.length >= MAX_SIMILAR) {
+		// cap === 0 (no candidates offered) falls through to the closed-set
+		// reject below — 'not allowed' is the truthful drop reason, not over-cap.
+		if (cap > 0 && similar.length >= cap) {
 			// Observed fan-out reaches 7; silently dropping the tail would hide
 			// which candidates never got a note (GROK P2).
 			if (typeof (entry as { code?: unknown }).code === 'string') {
@@ -648,6 +656,13 @@ function validateSimilar(
 		}
 		if (seen.has(canonical)) continue;
 
+		// null = the model's DECLINE verdict (self-review R2): terminal, never
+		// retried, distinct from empty-string (a miss the retry loop chases).
+		if (note === null) {
+			seen.add(canonical);
+			declined.push(canonical);
+			continue;
+		}
 		const text = typeof note === 'string' ? clampNote(note) : '';
 		// Every rejection is RECORDED. Empty used to be skipped silently, which
 		// is how a required-but-empty value looked identical to "the model had
@@ -669,7 +684,7 @@ function validateSimilar(
 		seen.add(canonical);
 		similar.push({ code: canonical, note: text });
 	}
-	return { similar, dropped };
+	return { similar, dropped, declined };
 }
 
 /**
@@ -706,10 +721,10 @@ export function parseAnnotation(
 	if (fieldCraft.length === 0) {
 		throw new EnrichmentAiError('AI response had no field craft text.', 0, false);
 	}
-	const { similar, dropped: droppedSimilar } = validateSimilar(
-		parsed.similar,
-		opts.candidates ?? [],
-		opts.focalCode ?? null
-	);
-	return { tags, fieldCraft, droppedTags: dropped, similar, droppedSimilar };
+	const {
+		similar,
+		dropped: droppedSimilar,
+		declined: declinedSimilar
+	} = validateSimilar(parsed.similar, opts.candidates ?? [], opts.focalCode ?? null);
+	return { tags, fieldCraft, droppedTags: dropped, similar, droppedSimilar, declinedSimilar };
 }

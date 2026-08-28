@@ -369,7 +369,7 @@ export const actions: Actions = {
           kind: "compare" as const,
           error: `${taxon.com_name} has no stored Wikipedia prose yet — enrich it first.`,
         });
-      const candidates = await similarCandidatesFor(species, taxon.sci_name);
+      const candidates = await similarCandidatesFor(species);
       const nameFor = new Map(candidates.map((c) => [c.code, c.comName]));
       const input = {
         comName: taxon.com_name,

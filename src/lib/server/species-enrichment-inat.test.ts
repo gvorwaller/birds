@@ -5,7 +5,11 @@ import {
 	inatFresh,
 	upsertInatSimilar,
 	markInatNoMapping,
-	markInatError
+	markInatError,
+	selectInatCandidates,
+	similarCandidatesFor,
+	similarCandidatesHash,
+	type ResolvedEdgeInput
 } from './species-enrichment';
 
 // DB-backed cases run only when the test cluster is up (jobs-db pattern).
@@ -280,6 +284,247 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 				expect(await inatDueCodes()).not.toContain(FOCAL);
 			} finally {
 				await cleanup();
+			}
+		}
+	);
+});
+
+
+// ---------------------------------------------------------------------------
+// selectInatCandidates — pure selection rules (Phase B)
+// ---------------------------------------------------------------------------
+
+function edge(over: Partial<ResolvedEdgeInput> & { id: string; count: number }): ResolvedEdgeInput {
+	return {
+		inatTaxonId: over.id,
+		misidCount: over.count,
+		inatSciName: over.inatSciName ?? `Testus sp${over.id}`,
+		inatComName: over.inatComName ?? null,
+		declined: over.declined ?? false,
+		resolution:
+			over.resolution !== undefined
+				? over.resolution
+				: {
+						speciesCode: `sp${over.id}`,
+						comName: `Species ${over.id}`,
+						sciName: over.inatSciName ?? `Testus sp${over.id}`,
+						family: 'Testidae',
+						inScope: true
+					}
+	};
+}
+
+describe('selectInatCandidates — floors, families, scope (GROK G1/G7, AGY A4, R8)', () => {
+	it('weak data (leader < 3): same-family only, leader still emits, seats cap at 3', () => {
+		const sel = selectInatCandidates(
+			[
+				edge({ id: '1', count: 1 }),
+				edge({ id: '2', count: 1 }),
+				edge({ id: '3', count: 1 }),
+				edge({ id: '4', count: 1 }),
+				edge({
+					id: '5',
+					count: 2,
+					resolution: {
+						speciesCode: 'spX',
+						comName: 'Cross Family',
+						sciName: 'Alius alius',
+						family: 'Aliidae',
+						inScope: true
+					}
+				})
+			],
+			'Testidae'
+		);
+		// Leader=2 < 3: cross-family spX excluded despite being the leader row's
+		// count; same-family rows pass but at most 3 seats.
+		expect(sel.selected.length).toBe(3);
+		expect(sel.selected.every((s) => s.speciesCode.startsWith('sp'))).toBe(true);
+		expect(sel.selected.map((s) => s.speciesCode)).not.toContain('spX');
+	});
+
+	it('leader=1 still emits the leader (Eskimo Curlew case) — never an empty fake-none', () => {
+		const sel = selectInatCandidates([edge({ id: '9', count: 1 })], 'Testidae');
+		expect(sel.selected.map((s) => s.speciesCode)).toEqual(['sp9']);
+	});
+
+	it('Downy-shaped distribution keeps its mid-tier (no 5% relative floor)', () => {
+		const sel = selectInatCandidates(
+			[
+				edge({ id: '1', count: 4693 }),
+				edge({ id: '2', count: 312 }),
+				edge({ id: '3', count: 233 }),
+				edge({ id: '4', count: 171 }),
+				edge({ id: '5', count: 70 })
+			],
+			'Testidae'
+		);
+		expect(sel.selected.length).toBe(5);
+	});
+
+	it('cross-family pairs need max(20, 10% of leader); same-family passes the base floor', () => {
+		const cross = (id: string, count: number) =>
+			edge({
+				id,
+				count,
+				resolution: {
+					speciesCode: `x${id}`,
+					comName: `Cross ${id}`,
+					sciName: `Alius a${id}`,
+					family: 'Aliidae',
+					inScope: true
+				}
+			});
+		const sel = selectInatCandidates(
+			[
+				edge({ id: '1', count: 600 }), // same-family leader
+				cross('2', 55), // eagle→goose shape: 55 < max(20, 60) → dropped
+				cross('3', 80), // ≥ 60 and ≥ 20 → kept
+				edge({ id: '4', count: 4 }) // same-family small → kept (floor 3)
+			],
+			'Testidae'
+		);
+		const codes = sel.selected.map((s) => s.speciesCode);
+		expect(codes).toContain('x3');
+		expect(codes).not.toContain('x2');
+		expect(codes).toContain('sp4');
+	});
+
+	it('out-of-scope resolved rows are DROPPED (not unresolved); unmappable/ambiguous surface as unresolved', () => {
+		const sel = selectInatCandidates(
+			[
+				edge({ id: '1', count: 50 }),
+				edge({
+					id: '2',
+					count: 40,
+					resolution: {
+						speciesCode: 'spFar',
+						comName: 'Faraway',
+						sciName: 'Testus peregrinus',
+						family: 'Testidae',
+						inScope: false
+					}
+				}),
+				edge({ id: '3', count: 30, resolution: null, inatSciName: 'Ignotus ignotus' }),
+				edge({ id: '4', count: 20, resolution: 'ambiguous', inatSciName: 'Dubius dubius' })
+			],
+			'Testidae'
+		);
+		expect(sel.selected.map((s) => s.speciesCode)).toEqual(['sp1']);
+		expect(sel.unresolved.map((u) => u.inat_sci_name)).toEqual(['Ignotus ignotus', 'Dubius dubius']);
+	});
+
+	it('declined edges are excluded from selection entirely (self-review R2)', () => {
+		const sel = selectInatCandidates(
+			[edge({ id: '1', count: 50, declined: true }), edge({ id: '2', count: 10 })],
+			'Testidae'
+		);
+		expect(sel.selected.map((s) => s.speciesCode)).toEqual(['sp2']);
+	});
+
+	it('dedupes two iNat taxa resolving to the same eBird code, keeping the higher count', () => {
+		const shared = {
+			speciesCode: 'spdup',
+			comName: 'Dup',
+			sciName: 'Testus dup',
+			family: 'Testidae',
+			inScope: true
+		};
+		const sel = selectInatCandidates(
+			[
+				edge({ id: '1', count: 30, resolution: shared }),
+				edge({ id: '2', count: 50, resolution: shared })
+			],
+			'Testidae'
+		);
+		expect(sel.selected).toHaveLength(1);
+		expect(sel.selected[0].misidCount).toBe(50);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// similarCandidatesFor — reconcile end-to-end on the test cluster
+// ---------------------------------------------------------------------------
+
+describe.runIf(dbUp)('similarCandidatesFor — reconcile persists display + reverse support', () => {
+	const F = 'zzrec1';
+	const P = 'zzrec2';
+	const RCODES = [F, P];
+
+	async function seedPair() {
+		for (const [code, sci, inatId] of [
+			[F, 'Testus recfocal', 9101],
+			[P, 'Testus recpartner', 9102]
+		] as const) {
+			await query(
+				`INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+				 VALUES ($1, 'Rec Test Bird', $2, 'species', 'Testidae')
+				 ON CONFLICT (species_code) DO UPDATE SET sci_name = $2, category = 'species'`,
+				[code, sci]
+			);
+			const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`))
+				.rows[0].id;
+			await query(
+				`INSERT INTO seen_species (user_id, species_code, source)
+				 VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+				[uid, code]
+			);
+			await query(
+				`INSERT INTO species_enrichment (species_code, inat_taxon_id, inat_similar_status,
+				    inat_similar_fetched_at, inat_similar_attempted_at)
+				 VALUES ($1, $2, 'ok', NOW(), NOW())
+				 ON CONFLICT (species_code) DO UPDATE SET
+				   inat_taxon_id = $2, inat_similar_status = 'ok',
+				   inat_similar_fetched_at = NOW(), inat_similar_attempted_at = NOW()`,
+				[code, inatId]
+			);
+		}
+	}
+	async function cleanPair() {
+		await query(`DELETE FROM species_similar_display WHERE species_code = ANY($1)`, [RCODES]);
+		await query(`DELETE FROM species_inat_similar WHERE species_code = ANY($1)`, [RCODES]);
+		await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [RCODES]);
+		await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [RCODES]);
+		await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [RCODES]);
+	}
+
+	it(
+		'reverse-current-source union: P selects F, so F offers P as a reverse extra; display persists',
+		{ timeout: 60_000 },
+		async () => {
+			await seedPair();
+			try {
+				// P's raw edges point at F (resolvable via sci name). F has NO
+				// forward edges at all.
+				await query(
+					`INSERT INTO species_inat_similar
+					   (species_code, inat_taxon_id, rank, misid_count, inat_sci_name, inat_com_name)
+					 VALUES ($1, 9101, 1, 25, 'Testus recfocal', 'Rec Test Bird')
+					 ON CONFLICT DO NOTHING`,
+					[P]
+				);
+				const offered = await similarCandidatesFor(F);
+				expect(offered.map((c) => c.code)).toEqual([P]);
+				expect(offered[0].misidCount).toBeNull(); // reverse extra
+				const disp = await query<{ resolved_code: string; origin: string }>(
+					`SELECT resolved_code, origin FROM species_similar_display
+					  WHERE species_code = $1 ORDER BY position`,
+					[F]
+				);
+				expect(disp.rows).toEqual([{ resolved_code: P, origin: 'reverse' }]);
+
+				// Second call with unchanged data returns the same offered set
+				// (fingerprint short-circuit needs a stored hash — simulate the
+				// AI stage having written it).
+				await query(
+					`UPDATE species_enrichment SET similar_candidates_hash = $2, similar_status = 'ok'
+					  WHERE species_code = $1`,
+					[F, similarCandidatesHash([P])]
+				);
+				const again = await similarCandidatesFor(F);
+				expect(again.map((c) => c.code)).toEqual([P]);
+			} finally {
+				await cleanPair();
 			}
 		}
 	);

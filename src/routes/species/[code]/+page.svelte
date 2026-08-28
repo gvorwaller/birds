@@ -232,7 +232,8 @@
 
   <SimilarSpeciesCard
     similar={data.similar.similar}
-    related={data.similar.related}
+    unresolved={data.similar.unresolved}
+    inatStatus={data.similar.inatStatus}
     backDays={data.backDays}
     returnTo={data.returnLink.href}
     context={data.locationContext}

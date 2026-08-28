@@ -79,7 +79,8 @@ import {
 	mediaFresh,
 	similarCandidatesFor,
 	similarCandidatesHash,
-	touchSimilarFresh,
+	reconcileSimilarState,
+	markSimilarDeclined,
 	upsertAiData,
 	upsertResolution,
 	upsertWikiOk,
@@ -927,15 +928,17 @@ async function enqueueEnrichmentChunks(
 	const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
 	const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
 	const wikiSet = new Set(wikiWork);
-	const aiWork = AI_STAGE_ENABLED
-		? (await aiDueCodes()).filter((c) => !wikiSet.has(c)).sort()
-		: [];
 	// iNat sourcing (td-460b1c): a mid-wiki species has no cross_ids yet and
-	// would waste its name-search fallback — wiki lands first. NOTE Phase A
-	// deliberately does NOT subtract inatWork from aiWork (that gating ships
-	// with the Phase-B AI-layer changes; doing it now would stall the AI lane
-	// for the whole backfill with zero anti-double-bill benefit).
+	// would waste its name-search fallback — wiki lands first.
 	const inatWork = (await inatDueCodes()).filter((c) => !wikiSet.has(c)).sort();
+	const inatSet = new Set(inatWork);
+	// Source-first per species (CODEX1 F6, Phase B): a species with confusion
+	// data still due must not get a candidate-less AI call now and a second
+	// billed call after inat lands. (aiDueCodes' inat-terminal gate already
+	// excludes never-fetched species; this subtraction covers refresh overlap.)
+	const aiWork = AI_STAGE_ENABLED
+		? (await aiDueCodes()).filter((c) => !wikiSet.has(c) && !inatSet.has(c)).sort()
+		: [];
 	// Media partition (td-86a2b6): separate from wiki/AI — a media failure
 	// never blocks or is blocked by prose/annotation work. Do not subtract
 	// wikiWork here: enrich_species does not repair media, and a species can
@@ -1412,33 +1415,60 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			await recordEvent(job.id, 'progress', { code, aiSkipped: 'no-taxonomy' });
 			return 'no_taxonomy';
 		}
+		// Similar-substage participation is an EXPLICIT flag captured BEFORE the
+		// try body (CODEX1 F4 / self-review R-F4b): a throw during candidate
+		// reconciliation must not be mistaken for a deliberate inat-pending run.
+		const inatStatusRes = await query<{ inat_similar_status: string | null }>(
+			`SELECT inat_similar_status FROM species_enrichment WHERE species_code = $1`,
+			[code]
+		);
+		const inatStatus = inatStatusRes.rows[0]?.inat_similar_status ?? null;
+		const similarParticipating =
+			inatStatus === 'ok' || inatStatus === 'none' || inatStatus === 'no_mapping';
 		try {
-			// Closed candidate set for the similar-species notes (td-8f0ed8).
-			// Same set the page renders, by construction — see candidateSet.
-			const candidates = await similarCandidatesFor(code, t.sci_name);
-			const hash = similarCandidatesHash(candidates.map((c) => c.code));
+			// Offered candidate set (td-460b1c Phase B): the reconcile resolves,
+			// selects, and persists the display set, so the page and the model
+			// see the SAME candidates by construction. When the confusion data
+			// is still pending/errored, the run does not participate in the
+			// substage at all — tags/field craft proceed, notes wait for inat.
+			const offered = similarParticipating ? await similarCandidatesFor(code) : [];
+			const hash = similarCandidatesHash(offered.map((c) => c.code));
 
-			// The scanner deliberately over-selects after a taxonomy sync. If
-			// the candidate set is actually unchanged and everything else is
-			// current, there is nothing to ask the model — re-stamp the clock
-			// and skip the call rather than spend it.
-			const nothingToDo =
+			// Note preservation (binding decision 4): only candidates WITHOUT a
+			// stored note are asked for. Preserved notes are never re-billed and
+			// never appear in the prompt, the schema, or the returned notes.
+			let askFor: typeof offered = [];
+			if (similarParticipating && offered.length > 0) {
+				const noted = await query<{ similar_code: string }>(
+					`SELECT similar_code FROM species_similar
+					  WHERE species_code = $1 AND similar_code = ANY($2::text[])`,
+					[code, offered.map((c) => c.code)]
+				);
+				const have = new Set(noted.rows.map((x) => x.similar_code));
+				askFor = offered.filter((c) => !have.has(c.code));
+			}
+
+			// No-call fast path (CODEX1 F3): everything current and every offered
+			// pair already noted -> similar bookkeeping only, via the dedicated
+			// writer that touches ONLY similar_* columns (never field craft/tags)
+			// and ALWAYS writes the hash back (self-review R1).
+			if (
+				similarParticipating &&
+				askFor.length === 0 &&
 				prose.aiStatus === 'ok' &&
-				prose.aiSourceRevId === prose.revId &&
-				prose.similarStatus != null &&
-				prose.similarStatus !== 'error' &&
-				prose.similarCandidatesHash === hash &&
-				prose.similarSourceRevId === prose.revId;
-			if (nothingToDo) {
-				await touchSimilarFresh(code);
+				prose.aiSourceRevId === prose.revId
+			) {
+				await reconcileSimilarState(
+					code,
+					offered.map((c) => c.code),
+					hash,
+					offered.length > 0 ? 'ok' : 'none',
+					null
+				);
 				counts.fresh++;
 				return 'ok';
 			}
 
-			// EDIT SITE 1 of 3 (plan step 5): the closure is a meteredAiCall
-			// invocation — model resolved from config PER CALL (a dropdown change
-			// lands on the next species), timeout owned by the chokepoint, and
-			// every call — including each retry below — writes its ledger rows.
 			const annotate = (): Promise<AiAttempt<SpeciesAnnotation>> =>
 				meteredAiCall({
 					purpose: 'enrichment',
@@ -1455,7 +1485,9 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 								family: t.family,
 								extract: prose.extract,
 								sections: prose.sections,
-								candidates,
+								// The model sees ONLY the un-noted candidates (G3):
+								// preserved codes are never required, never returned.
+								candidates: askFor,
 								speciesCode: code
 							},
 							model,
@@ -1465,46 +1497,18 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					}
 				});
 
-			// EDIT SITE 2 of 3: provenance travels WITH the attempt (CODEX1 P1-4).
-			// The keep-best logic below swaps WHOLE attempt objects, so the kept
-			// annotation and the model that produced it can never be separated —
-			// config can change between retries, and a fallback can serve any one
-			// attempt.
 			let kept = await annotate();
-			// An empty `similar` when candidates WERE offered is ambiguous: either
-			// the model judged none of them worth a note, or it returned nothing
-			// usable. Both were observed on identical input, so left alone they are
-			// indistinguishable.
-			//
-			// The retry must never LOSE a good attempt. A first call can succeed
-			// (valid tags + field craft, empty similar) and the retry then throw —
-			// e.g. on the request timeout — which previously discarded the first
-			// result entirely and cost a first-time species its field craft too
-			// (GROK P1). Keep the best result seen and let a failing retry fall
-			// back to it rather than propagate.
-			// Retrying only on a WHOLLY empty result misses the partial case: with
-			// three candidates and one note dropped as malformed, `similar` is
-			// non-empty and the dropped candidate silently gets nothing. ~2% of
-			// live notes were corrupted, so this is not hypothetical. Trigger on
-			// "some eBird-slash candidate still has no note" instead — that is the
-			// set the schema marks required and the set a birder is owed.
+			// Declines are terminal per-pair verdicts (self-review R2), tracked
+			// across retries: a declined candidate is satisfied, not owed.
+			const declined = new Set<string>(kept.result.declinedSimilar ?? []);
 			const owed = () => {
-				const have = new Set(kept.result.similar.map((s) => s.code));
-				return candidates
-					.filter(
-						(c) => (c.basis === 'ebird_slash' || c.reciprocal === true) && !have.has(c.code)
-					)
+				const have = new Set(kept.result.similar.map((x) => x.code));
+				return askFor
+					.filter((c) => !have.has(c.code) && !declined.has(c.code))
 					.map((c) => c.code);
 			};
 			for (let attempt = 0; attempt < SIMILAR_EMPTY_RETRIES; attempt++) {
-				// Retry on what is OWED, not on emptiness. A genus-only candidate set
-				// that the model correctly skipped is empty AND complete — gating on
-				// `similar.length > 0` retried it twice for nothing, the same
-				// coupling that left it stuck in 'error' on the persist side (GROK).
-				if (candidates.length === 0 || owed().length === 0) break;
-				// A species may otherwise issue multiple paid calls while filling
-				// missing similar-species notes. Honor an Admin pause between those
-				// calls too; keep and persist the successful result already paid for.
+				if (askFor.length === 0 || owed().length === 0) break;
 				if (await ctx.isPauseRequested?.()) {
 					await recordEvent(job.id, 'progress', {
 						code,
@@ -1516,28 +1520,20 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
 				try {
 					const next = await annotate();
-					// Keep the new attempt ONLY if it owes strictly fewer notes. On a
-					// tie the earlier attempt wins: an equal-count retry can fill a
-					// different slash candidate or drop genus notes, so "no worse"
-					// is not the same as "no change" and churn is not an improvement
-					// (GROK — the previous >-comparison let a tie replace the result
-					// while the comment claimed it could not).
+					// Keep the new attempt ONLY if it owes strictly fewer notes
+					// (tie -> earlier wins; churn is not improvement). Declines
+					// accumulate from every attempt — a verdict once given holds.
+					for (const d of next.result.declinedSimilar ?? []) declined.add(d);
 					const before = owed().length;
 					const prev = kept;
 					kept = next;
 					if (owed().length >= before) kept = prev;
 				} catch (err) {
-					// Keep the earlier successful annotation and stop retrying; the
-					// species still gets its field craft, and the missing notes are
-					// recorded below so the substage retries on its own clock.
 					await recordEvent(job.id, 'progress', {
 						code,
 						similarEmpty: 'retry_failed',
 						error: sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 120)
 					});
-					// A 429 on the retry used to be swallowed here, so the drain
-					// kept hammering the API (and billing the refusals-as-unknown
-					// rows) while the outer catch's rate-limit pause never fired.
 					if (err instanceof EnrichmentAiError && err.rateLimited) {
 						aiRateLimited = true;
 						aiRetryAfterMs = err.retryAfterMs;
@@ -1546,34 +1542,42 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					break;
 				}
 			}
+
+			// Record declines on the raw edges and shrink the offered set so the
+			// stored hash matches the NEXT reconcile (which excludes declined
+			// edges at selection) — otherwise the hash mismatches forever.
+			let effectiveOffered = offered;
+			let effectiveHash = hash;
+			if (declined.size > 0) {
+				await markSimilarDeclined(code, [...declined]);
+				effectiveOffered = offered.filter((c) => !declined.has(c.code));
+				effectiveHash = similarCandidatesHash(effectiveOffered.map((c) => c.code));
+				await recordEvent(job.id, 'progress', { code, similarDeclined: [...declined] });
+			}
+
 			const stillOwed = owed();
-			if (candidates.length > 0 && stillOwed.length > 0) {
-				// Survived every attempt. Recorded with the OWED CODES, not just a
-				// flag: a partial miss leaves real notes on the page, so without
-				// this the only breadcrumb was droppedSimilar on the kept attempt.
-				// upsertAiData stores this as an ERROR, not 'none' or 'ok', so the
-				// 7-day window applies and the good notes are preserved.
+			if (askFor.length > 0 && stillOwed.length > 0) {
 				await recordEvent(job.id, 'progress', {
 					code,
 					similarEmpty: kept.result.similar.length === 0 ? 'confirmed' : 'partial',
 					owed: stillOwed
 				});
 			}
-			// EDIT SITE 3 of 3: the provenance stamp is the KEPT attempt's SERVED
-			// model — never a constant, never "the model most recently resolved".
-			// Under Opus 5 fallbacks the server can answer with a different model
-			// than requested; the page's ai_model column must say what actually
-			// wrote the notes.
+			// G3 contract, spelled: offeredCodes/candidateCount are ALWAYS the
+			// FULL (post-decline) offered set — never askFor. The keep-list is
+			// what protects preserved notes; candidateCount=0 must only mean a
+			// genuinely empty candidate set. Non-participating runs pass a null
+			// hash, which leaves every similar_* column untouched.
 			await upsertAiData(code, {
 				fieldCraft: kept.result.fieldCraft,
 				tags: kept.result.tags,
 				model: kept.servedModel ?? kept.requestedModel,
 				sourceRevId: prose.revId,
 				similar: kept.result.similar,
-				similarCandidatesHash: hash,
-				candidateCount: candidates.length,
+				similarCandidatesHash: similarParticipating ? effectiveHash : null,
+				candidateCount: effectiveOffered.length,
 				owedCodes: stillOwed,
-				offeredCodes: candidates.map((c) => c.code)
+				offeredCodes: effectiveOffered.map((c) => c.code)
 			});
 			counts.aiOk++;
 			if (kept.result.droppedTags.length > 0) {
@@ -1596,7 +1600,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				0,
 				200
 			);
-			await markAiError(code, message).catch(() => {});
+			await markAiError(code, message, { similarParticipating }).catch(() => {});
 			aiFailed.push(code);
 			await recordEvent(job.id, 'unit_failed', { code, stage: 'ai', error: message });
 			return 'error';
@@ -1729,8 +1733,23 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					ai?.similarStatus === 'error' &&
 					(ai.similarAttemptedAt == null ||
 						Date.now() - new Date(ai.similarAttemptedAt).getTime() > 7 * 86_400_000);
+				// Same predicates as aiDueCodes (GROK G2: hand-copied clauses
+				// diverge): inat-terminal gate on EVERY branch, plus the new-data
+				// and invalidation-marker clauses.
+				const inatTerminal =
+					ai?.inatSimilarStatus === 'ok' ||
+					ai?.inatSimilarStatus === 'none' ||
+					ai?.inatSimilarStatus === 'no_mapping';
 				const similarDue =
-					ai != null && (ai.similarStatus == null || similarErrorRetryDue);
+					ai != null &&
+					inatTerminal &&
+					(ai.similarStatus == null ||
+						similarErrorRetryDue ||
+						(ai.similarCandidatesHash == null && ai.similarStatus != null) ||
+						(ai.similarGeneratedAt != null &&
+							ai.inatSimilarFetchedAt != null &&
+							new Date(ai.similarGeneratedAt).getTime() <
+								new Date(ai.inatSimilarFetchedAt).getTime()));
 				const aiDue =
 					ai != null &&
 					(force ||

@@ -1,14 +1,12 @@
 <script lang="ts" module>
-	// Structurally matches SimilarSpecies from $server/species-enrichment
-	// (kept local to avoid importing a server-only module into client code —
-	// same pattern as SpeciesMediaCard.svelte's MediaRow / BestPlaces.svelte's
-	// Place / FrequencyChart's ChartMonth).
+	// Structurally matches the shapes from $server/species-enrichment (kept
+	// local to avoid importing a server-only module into client code — same
+	// pattern as SpeciesMediaCard.svelte's MediaRow).
 	export interface SimilarSpeciesRow {
 		species_code: string;
 		com_name: string;
 		sci_name: string;
-		basis: 'ebird_slash' | 'genus';
-		slash_com_name: string | null;
+		misid_count: number | null;
 		note: string | null;
 		photo: {
 			thumbnail_url: string | null;
@@ -21,38 +19,47 @@
 		} | null;
 		seen: boolean;
 	}
+	export interface UnresolvedSimilarRow {
+		inat_sci_name: string;
+		inat_com_name: string | null;
+		misid_count: number;
+	}
+	export type InatSimilarStatus = 'pending' | 'ok' | 'none' | 'no_mapping' | 'error';
 </script>
 
 <script lang="ts">
-	// Similar species / related species card (plan: docs/2026-08-25-similar-
-	// species-plan.md, td-8f0ed8). Placed after Identification, before
-	// "Finding this bird" (species page §5). Tier 1 (similar) is eBird's own
-	// slash-taxa reporting groups — a sourced confusion claim. Tier 2
-	// (related) is same-genus — NOT a confusion claim, just taxonomic
-	// closeness. One card, adaptive heading: whichever tier(s) are non-empty
-	// decide whether we render a single <h2> or a combined <h2> + two <h3>s.
-	// Renders nothing at all when both arrays are empty (silent zero state —
-	// every other card on this page is likewise conditionally present).
+	// Similar species card (td-460b1c Phase B, plan: docs/2026-08-27-similar-
+	// species-inat-plan.md). One tier: confusion pairs sourced from iNaturalist
+	// observer misidentification data, resolved and selected by the worker's
+	// reconcile step. Render predicate (GROK G5/G8): the card shows when there
+	// are rows OR unresolved entries OR an honest data-state to explain
+	// (no_mapping/error — Gaylon 2026-08-28: "I'm the primary user, and I want
+	// to know"). 'none' and 'pending' stay hidden (decision 7).
 	import Badge from './Badge.svelte';
 	import { speciesLinkHref, type SpeciesLocationContext } from '$lib/species-context';
 
 	let {
 		similar,
-		related,
+		unresolved,
+		inatStatus,
 		backDays,
 		returnTo,
 		context = null
 	}: {
 		similar: SimilarSpeciesRow[];
-		related: SimilarSpeciesRow[];
+		unresolved: UnresolvedSimilarRow[];
+		inatStatus: InatSimilarStatus;
 		backDays: number;
 		returnTo: string;
 		context?: SpeciesLocationContext | null;
 	} = $props();
 
-	const hasSimilar = $derived(similar.length > 0);
-	const hasRelated = $derived(related.length > 0);
-	const hasAiNote = $derived([...similar, ...related].some((item) => item.note != null));
+	const showCard = $derived(
+		similar.length > 0 ||
+			unresolved.length > 0 ||
+			inatStatus === 'no_mapping' ||
+			inatStatus === 'error'
+	);
 </script>
 
 {#snippet row(item: SimilarSpeciesRow)}
@@ -100,51 +107,67 @@
 			{/if}
 
 			<p class="basis muted">
-				{#if item.basis === 'ebird_slash' && item.slash_com_name}
-					eBird reporting group: <em>{item.slash_com_name}</em>
+				{#if item.misid_count !== null}
+					Misidentified for each other {item.misid_count} time{item.misid_count === 1
+						? ''
+						: 's'} on iNaturalist
 				{:else}
-					Same genus — not necessarily a look-alike
+					Flagged confusable from this species&rsquo; own confusion data
 				{/if}
 			</p>
 		</div>
 	</div>
 {/snippet}
 
-{#if hasSimilar || hasRelated}
+{#if showCard}
 	<section class="card">
-		{#if hasSimilar && hasRelated}
-			<h2>Similar &amp; related species</h2>
-			<h3>Similar species</h3>
+		<h2>Similar species</h2>
+		{#if similar.length > 0}
 			<div class="similar-list">
 				{#each similar as item (item.species_code)}
 					{@render row(item)}
 				{/each}
 			</div>
-			<div class="tier-divider"></div>
-			<h3>Related species</h3>
-			<div class="similar-list">
-				{#each related as item (item.species_code)}
-					{@render row(item)}
-				{/each}
-			</div>
-		{:else if hasSimilar}
-			<h2>Similar species</h2>
-			<div class="similar-list">
-				{#each similar as item (item.species_code)}
-					{@render row(item)}
-				{/each}
-			</div>
-		{:else}
-			<h2>Related species</h2>
-			<div class="similar-list">
-				{#each related as item (item.species_code)}
-					{@render row(item)}
-				{/each}
-			</div>
+		{:else if inatStatus === 'no_mapping'}
+			<p class="state-note muted">
+				This species couldn’t be matched to iNaturalist’s taxonomy, so no
+				misidentification data is available for it.
+			</p>
+		{:else if inatStatus === 'error'}
+			<p class="state-note muted">
+				Couldn’t load misidentification data for this species; it will retry
+				automatically.
+			</p>
 		{/if}
-		{#if hasAiNote}
-			<p class="ai-attrib muted">AI-generated from Wikipedia · verify in the field</p>
+		{#if unresolved.length > 0}
+			{#if unresolved.length <= 2}
+				<p class="unresolved muted">
+					iNaturalist observers also confuse this species with
+					{#each unresolved as u, i}{i > 0 ? '; ' : ''}<em>{u.inat_sci_name}</em
+						>{#if u.inat_com_name}&nbsp;({u.inat_com_name}){/if}{/each} — no matching eBird
+					species here.
+				</p>
+			{:else}
+				<details class="unresolved-details">
+					<summary class="unresolved muted"
+						>{unresolved.length} more confusion partners with no matching eBird species</summary
+					>
+					<ul class="unresolved-list muted">
+						{#each unresolved as u (u.inat_sci_name)}
+							<li>
+								<em>{u.inat_sci_name}</em>{#if u.inat_com_name}&nbsp;({u.inat_com_name}){/if} —
+								{u.misid_count} misidentification{u.misid_count === 1 ? '' : 's'}
+							</li>
+						{/each}
+					</ul>
+				</details>
+			{/if}
 		{/if}
+		<p class="ai-attrib muted">
+			Confusion data from
+			<a href="https://www.inaturalist.org" target="_blank" rel="noopener">iNaturalist</a>
+			observer misidentifications · notes AI-generated · verify in the field
+		</p>
 	</section>
 {/if}
 
@@ -160,13 +183,31 @@
 		font-size: 1.05rem;
 		margin-bottom: 10px;
 	}
-	.card h3 {
-		font-size: 0.92rem;
-		margin-bottom: 6px;
+	.state-note {
+		font-size: 0.86rem;
+		margin: 4px 0 0;
+		line-height: 1.4;
 	}
-	.tier-divider {
-		border-top: 1px solid var(--border);
-		margin: 12px 0;
+	.unresolved {
+		font-size: 0.8rem;
+		margin: 10px 0 0;
+		line-height: 1.4;
+	}
+	.unresolved-details {
+		margin: 10px 0 0;
+	}
+	.unresolved-details summary {
+		cursor: pointer;
+	}
+	.unresolved-list {
+		font-size: 0.8rem;
+		margin: 6px 0 0;
+		padding-left: 18px;
+		line-height: 1.5;
+	}
+	.ai-attrib a {
+		color: var(--link);
+		text-underline-offset: 2px;
 	}
 	.similar-list {
 		display: flex;

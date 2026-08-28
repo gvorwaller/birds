@@ -243,7 +243,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const [enrichment, sampleMedia, similar] = await Promise.all([
     getEnrichment(code),
     getSpeciesMedia(code),
-    getSimilarSpecies(code, t.sci_name, userId),
+    getSimilarSpecies(code, userId),
   ]);
 
   // Tides beside the tide tags (td-6a3d2e): only for species with an actionable
@@ -291,6 +291,23 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     tide,
   };
 };
+
+
+/**
+ * The aiOnly enqueue gate (GROK G2, td-460b1c Phase B): a species whose
+ * confusion data is still pending or errored must not get a candidate-less AI
+ * call now and a second billed call after inat lands. Terminal non-error
+ * statuses participate; everything else defers to the scan, which picks the
+ * species up via aiDueCodes the moment inat lands.
+ */
+async function inatTerminalFor(code: string): Promise<boolean> {
+  const r = await query<{ inat_similar_status: string | null }>(
+    `SELECT inat_similar_status FROM species_enrichment WHERE species_code = $1`,
+    [code],
+  );
+  const st = r.rows[0]?.inat_similar_status ?? null;
+  return st === "ok" || st === "none" || st === "no_mapping";
+}
 
 export const actions: Actions = {
   /**
@@ -362,7 +379,7 @@ export const actions: Actions = {
       } catch {
         // Non-fatal: the recurring scan covers it.
       }
-      if (now.aiDue && AI_STAGE_ENABLED) {
+      if (now.aiDue && AI_STAGE_ENABLED && (await inatTerminalFor(code))) {
         try {
           const ai = await enqueueJob({
             type: "enrich_species",
@@ -485,7 +502,7 @@ export const actions: Actions = {
       : null;
 
     if (now.outcome === "ok") {
-      if (now.aiDue && AI_STAGE_ENABLED) {
+      if (now.aiDue && AI_STAGE_ENABLED && (await inatTerminalFor(code))) {
         const ai = await enqueueJob({
           type: "enrich_species",
           payload: { codes: [code], aiOnly: true },
