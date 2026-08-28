@@ -120,6 +120,11 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Worker pause control</strong> — Admins can pause long-running
+								background loads or enrichment at a safe unit boundary, then resume
+								the preserved queue without consuming a retry.
+							</li>
+							<li>
 								<strong>Trip export &amp; sharing</strong> — trips export as a
 								self-contained HTML field sheet (needs lists, field tips, map
 								links) or Markdown; a new in-app Share panel works safely from

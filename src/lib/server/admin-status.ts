@@ -37,6 +37,7 @@ export interface AdminWorker {
   startedAt: string | null;
   heartbeatAt: string | null;
   currentJobId: number | null;
+  pauseRequested: boolean;
 }
 
 export interface AdminLiveStatus {
@@ -87,6 +88,7 @@ export async function adminLiveStatus(): Promise<AdminLiveStatus> {
       startedAt: worker.startedAt?.toISOString() ?? null,
       heartbeatAt: worker.heartbeatAt?.toISOString() ?? null,
       currentJobId: worker.currentJobId,
+      pauseRequested: worker.pauseRequested,
     },
     jobs: jobs.map((job) => decorateAdminJob(job, now)),
   };

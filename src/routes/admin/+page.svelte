@@ -9,6 +9,7 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let nudgeBusy = $state(false);
+  let workerPauseBusy = $state(false);
   let refreshBusy = $state(false);
   let manualRefreshError = $state<string | null>(null);
   let liveRefreshError = $state<string | null>(null);
@@ -275,8 +276,14 @@
       <table>
         <tbody>
           <tr><th>State</th><td>
-            <span class="badge" data-color={liveWorker.alive ? "ok" : "error"}>
-              {liveWorker.alive ? (liveWorker.state ?? "unknown") : "down"}
+            <span class="badge" data-color={!liveWorker.alive ? "error" : liveWorker.pauseRequested ? "busy" : "ok"}>
+              {liveWorker.alive
+                ? liveWorker.state === "paused"
+                  ? "paused"
+                  : liveWorker.pauseRequested
+                    ? "pause requested"
+                    : (liveWorker.state ?? "unknown")
+                : "down"}
             </span>
           </td></tr>
           <tr><th>Heartbeat</th><td>{ago(liveWorker.heartbeatAt)}</td></tr>
@@ -286,6 +293,44 @@
         </tbody>
       </table>
     </div>
+    <form
+      method="POST"
+      action="?/set_worker_pause"
+      class="worker-control"
+      use:enhance={() => {
+        workerPauseBusy = true;
+        return async ({ update }) => {
+          try {
+            await update();
+          } finally {
+            workerPauseBusy = false;
+          }
+        };
+      }}
+    >
+      <input type="hidden" name="intent" value={liveWorker.pauseRequested ? "resume" : "pause"} />
+      <button
+        type="submit"
+        class:resume={liveWorker.pauseRequested}
+        disabled={workerPauseBusy || !liveWorker.alive}
+        aria-busy={workerPauseBusy}
+      >
+        {workerPauseBusy
+          ? "Updating…"
+          : liveWorker.pauseRequested
+            ? "▶ Resume worker"
+            : "⏸ Pause worker"}
+      </button>
+      <span class="muted">
+        Pause finishes the current species or location, preserves its job, and stops before the next unit.
+      </span>
+    </form>
+    {#if form?.kind === "worker_pause" && "message" in form && form.message}
+      <p class="ok">{form.message}</p>
+    {/if}
+    {#if form?.kind === "worker_pause" && "error" in form && form.error}
+      <p class="error" role="alert">{form.error}</p>
+    {/if}
     <form
       method="POST"
       action="?/nudge_enrichment"
@@ -883,6 +928,33 @@
     align-items: center;
     flex-wrap: wrap;
     margin: 12px 0 4px;
+  }
+  .worker-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  .worker-control button {
+    min-height: 48px;
+    padding: 9px 16px;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--danger);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .worker-control button.resume {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+  }
+  .worker-control button:disabled {
+    border-color: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
   }
   .nudge button {
     min-height: 48px;

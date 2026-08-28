@@ -502,6 +502,17 @@ describe("runJob — frequency jobs", () => {
     expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
+  it("admin pause mid-job → requeues without consuming the attempt", async () => {
+    const paused = { isDraining: () => false, isPauseRequested: async () => true };
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      expect(await opts.shouldStop()).toBe("pause");
+      return ensureResult({ notAttempted: locs.map((l: Loc) => l.code) });
+    });
+    await runJob(jobRow(), paused);
+    expect(mocks.requeueInterrupted).toHaveBeenCalledWith(42, 1, "worker paused");
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
   it("unit failures are recorded as events AND in progress counters", async () => {
     mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
       await opts.onUnit(locs[0], { status: "ok" });
@@ -2403,6 +2414,30 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
       });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(2);
+  });
+
+  it("admin pause prevents another paid similar-note retry", async () => {
+    freshAiDueDbWithCandidates();
+    enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
+    let checks = 0;
+    const pauseAfterFirstCall = {
+      isDraining: () => false,
+      // First check is the chunk boundary before the species. The retry-loop
+      // check sees the newly requested pause.
+      isPauseRequested: async () => ++checks > 1,
+    };
+    await runJob(
+      jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }),
+      pauseAfterFirstCall,
+    );
+    expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.recordEvent.mock.calls.some(
+        (c) =>
+          (c[2] as { similarEmpty?: string; reason?: string })?.similarEmpty === "retry_skipped" &&
+          (c[2] as { reason?: string })?.reason === "worker_paused",
+      ),
+    ).toBe(true);
   });
 
   it("stops retrying as soon as notes come back", async () => {

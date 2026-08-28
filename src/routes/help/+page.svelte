@@ -715,6 +715,41 @@
 		<!-- Admin: AI & Cost -->
 		<button
 			class="toggle"
+			class:open={open === 'worker-control'}
+			aria-expanded={open === 'worker-control'}
+			onclick={() => toggle('worker-control')}
+		>
+			<span class="ico">⏸</span>
+			<span class="title">Admin: Worker control</span>
+			<span class="chev">{open === 'worker-control' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'worker-control'}
+			<div class="body">
+				<p class="lead">
+					Admins can pause and resume the background worker from the
+					<strong>Status</strong> tab on the Admin page.
+				</p>
+				<ul>
+					<li>
+						<strong>Pause is cooperative</strong> — an API request already in flight
+						finishes so a paid result is not thrown away. The worker then preserves
+						the current job and stops before the next species or location.
+					</li>
+					<li>
+						Queued work remains visible and does not consume retry attempts while
+						paused. Choose <strong>Resume worker</strong> to continue the same queue.
+					</li>
+					<li>
+						The pause setting survives worker restarts and deployments until an
+						admin explicitly resumes it.
+					</li>
+				</ul>
+			</div>
+		{/if}
+
+		<!-- Admin: AI & Cost -->
+		<button
+			class="toggle"
 			class:open={open === 'ai-cost'}
 			aria-expanded={open === 'ai-cost'}
 			onclick={() => toggle('ai-cost')}

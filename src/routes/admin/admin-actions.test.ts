@@ -25,11 +25,13 @@ vi.mock("$lib/db", () => ({
 
 const mocks = vi.hoisted(() => ({
   nudgeEnrichmentScan: vi.fn(),
+  setWorkerPauseRequested: vi.fn(),
   generateSpeciesAnnotation: vi.fn(),
   aiStageInputFor: vi.fn(),
   similarCandidatesFor: vi.fn(),
 }));
 vi.mock("$server/job-handlers", () => ({ nudgeEnrichmentScan: mocks.nudgeEnrichmentScan }));
+vi.mock("$server/jobs", () => ({ setWorkerPauseRequested: mocks.setWorkerPauseRequested }));
 vi.mock("$server/admin-status", () => ({ adminLiveStatus: vi.fn() }));
 vi.mock("$server/gallery", () => ({ galleryHealth: vi.fn() }));
 vi.mock("$server/ai-enrichment", () => ({
@@ -119,6 +121,7 @@ beforeEach(() => {
   dbCalls.length = 0;
   queryHandler = () => ({ rows: [] });
   mocks.nudgeEnrichmentScan.mockReset();
+  mocks.setWorkerPauseRequested.mockReset();
   mocks.generateSpeciesAnnotation.mockReset();
   mocks.aiStageInputFor.mockReset();
   mocks.similarCandidatesFor.mockReset();
@@ -154,6 +157,38 @@ describe("kind discriminant — the one-ActionData-slot fix", () => {
     const ok = (await actions.nudge_enrichment(ADMIN as never)) as { kind: string; ok: boolean };
     expect(ok.kind).toBe("nudge");
     expect(ok.ok).toBe(true);
+  });
+});
+
+describe("set_worker_pause", () => {
+  it("admin-gates, validates, and persists pause/resume intent", async () => {
+    const denied = (await actions.set_worker_pause({
+      ...VIEWER,
+      request: req({ intent: "pause" }),
+    } as never)) as { status: number; data: { kind: string } };
+    expect(denied.status).toBe(403);
+    expect(denied.data.kind).toBe("worker_pause");
+
+    const invalid = (await actions.set_worker_pause({
+      ...ADMIN,
+      request: req({ intent: "stop" }),
+    } as never)) as { status: number };
+    expect(invalid.status).toBe(400);
+    expect(mocks.setWorkerPauseRequested).not.toHaveBeenCalled();
+
+    const paused = (await actions.set_worker_pause({
+      ...ADMIN,
+      request: req({ intent: "pause" }),
+    } as never)) as { kind: string; message: string };
+    expect(paused.kind).toBe("worker_pause");
+    expect(paused.message).toMatch(/finish its current unit/);
+    expect(mocks.setWorkerPauseRequested).toHaveBeenLastCalledWith(true);
+
+    await actions.set_worker_pause({
+      ...ADMIN,
+      request: req({ intent: "resume" }),
+    } as never);
+    expect(mocks.setWorkerPauseRequested).toHaveBeenLastCalledWith(false);
   });
 });
 

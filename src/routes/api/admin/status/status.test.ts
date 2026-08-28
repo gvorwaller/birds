@@ -30,6 +30,7 @@ describe("GET /api/admin/status", () => {
         startedAt: "2026-08-23T15:00:00.000Z",
         heartbeatAt: "2026-08-23T15:59:59.000Z",
         currentJobId: null,
+        pauseRequested: false,
       },
       jobs: [],
     });

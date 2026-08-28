@@ -13,7 +13,7 @@
  *   winning row.
  * - Payloads/events/results NEVER contain credentials (cs.md sacred rules).
  */
-import { query, withTransaction } from '$lib/db';
+import { query, queryTimed, withTransaction } from '$lib/db';
 import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
 
 export type JobType =
@@ -322,7 +322,11 @@ export async function yieldRemainder(
  * — a deploy must not consume retry budget (plan §5). A raced cancel still
  * wins: the job must not resurrect as pending on the next worker.
  */
-export async function requeueInterrupted(jobId: number, expectedAttempts: number): Promise<boolean> {
+export async function requeueInterrupted(
+	jobId: number,
+	expectedAttempts: number,
+	reason = 'worker draining'
+): Promise<boolean> {
 	const final = await transition(
 		jobId,
 		expectedAttempts,
@@ -332,7 +336,7 @@ export async function requeueInterrupted(jobId: number, expectedAttempts: number
 		 attempts = GREATEST(attempts - 1, 0)`,
 		[]
 	);
-	if (final === 'pending') await recordEvent(jobId, 'interrupted', { reason: 'worker draining' });
+	if (final === 'pending') await recordEvent(jobId, 'interrupted', { reason });
 	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_requeue' });
 	return final != null;
 }
@@ -546,7 +550,39 @@ export async function pruneHistory(): Promise<void> {
 // Worker status
 // ---------------------------------------------------------------------------
 
-export type WorkerState = 'idle' | 'working' | 'draining';
+export type WorkerState = 'idle' | 'working' | 'paused' | 'draining';
+
+const WORKER_CONTROL_READ_TIMEOUT_MS = 5_000;
+
+/** Persist the operator's desired state. The worker acknowledges this at a
+ * safe unit boundary; this write never pretends an in-flight call stopped
+ * synchronously. */
+export async function setWorkerPauseRequested(paused: boolean): Promise<void> {
+	await query(
+		`UPDATE worker_status SET pause_requested = $1, updated_at = NOW() WHERE id = TRUE`,
+		[paused]
+	);
+}
+
+/** Hot-path control read. A DB error fails safe to PAUSED: continuing an
+ * expensive AI drain when its kill switch cannot be read is the unsafe side
+ * of the ambiguity. */
+export async function workerPauseRequested(): Promise<boolean> {
+	try {
+		const r = await queryTimed<{ pause_requested: boolean }>(
+			`SELECT pause_requested FROM worker_status WHERE id = TRUE`,
+			[],
+			WORKER_CONTROL_READ_TIMEOUT_MS
+		);
+		return r.rows[0]?.pause_requested ?? true;
+	} catch (err) {
+		console.error(
+			'[birds-worker] pause control read failed; pausing safely:',
+			err instanceof Error ? err.message : err
+		);
+		return true;
+	}
+}
 
 export async function setWorkerStatus(
 	fields: { pid: number; version: string; state: WorkerState; currentJobId: number | null },
@@ -571,14 +607,16 @@ export async function setWorkerStatus(
 export async function markWorkerStarted(pid: number, version: string): Promise<void> {
 	await query(
 		`UPDATE worker_status
-		    SET pid = $1, version = $2, state = 'idle', current_job_id = NULL,
+		    SET pid = $1, version = $2,
+		        state = CASE WHEN pause_requested THEN 'paused' ELSE 'idle' END,
+		        current_job_id = NULL,
 		        started_at = NOW(), heartbeat_at = NOW(), updated_at = NOW()
 		  WHERE id = TRUE`,
 		[pid, version]
 	);
 	await query(
 		`INSERT INTO worker_status_history (pid, version, state, note)
-		 VALUES ($1, $2, 'idle', 'startup')`,
+		 SELECT $1, $2, state, 'startup' FROM worker_status WHERE id = TRUE`,
 		[pid, version]
 	);
 }
@@ -595,6 +633,7 @@ export interface WorkerHealth {
 	startedAt: Date | null;
 	heartbeatAt: Date | null;
 	currentJobId: number | null;
+	pauseRequested: boolean;
 }
 
 export const WORKER_ALIVE_WINDOW_MS = 60_000;
@@ -605,9 +644,10 @@ export async function workerHealth(): Promise<WorkerHealth> {
 		version: string | null;
 		state: WorkerState;
 		current_job_id: number | null;
+		pause_requested: boolean;
 		started_at: string | null;
 		heartbeat_at: string | null;
-	}>(`SELECT pid, version, state, current_job_id, started_at, heartbeat_at FROM worker_status WHERE id = TRUE`);
+	}>(`SELECT pid, version, state, current_job_id, started_at, heartbeat_at, pause_requested FROM worker_status WHERE id = TRUE`);
 	const row = r.rows[0];
 	if (!row) {
 		return {
@@ -617,7 +657,8 @@ export async function workerHealth(): Promise<WorkerHealth> {
 			version: null,
 			startedAt: null,
 			heartbeatAt: null,
-			currentJobId: null
+			currentJobId: null,
+			pauseRequested: false
 		};
 	}
 	const hb = row.heartbeat_at ? new Date(row.heartbeat_at) : null;
@@ -628,7 +669,8 @@ export async function workerHealth(): Promise<WorkerHealth> {
 		version: row.version,
 		startedAt: row.started_at ? new Date(row.started_at) : null,
 		heartbeatAt: hb,
-		currentJobId: row.current_job_id
+		currentJobId: row.current_job_id,
+		pauseRequested: row.pause_requested
 	};
 }
 

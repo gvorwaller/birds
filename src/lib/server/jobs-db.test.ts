@@ -53,6 +53,8 @@ const {
   terminalizeAndReschedule,
   updateProgress,
   workerHealth,
+  workerPauseRequested,
+  setWorkerPauseRequested,
   yieldRemainder,
 } = await import("./jobs");
 
@@ -815,6 +817,18 @@ describe.runIf(dbUp)("listing, health, prune", () => {
   it("workerHealth never throws and reports staleness honestly", async () => {
     const h = await workerHealth();
     expect(typeof h.alive).toBe("boolean");
+    expect(typeof h.pauseRequested).toBe("boolean");
+  });
+
+  it("persists pause control and exposes it through worker health", async () => {
+    try {
+      await setWorkerPauseRequested(true);
+      expect(await workerPauseRequested()).toBe(true);
+      expect((await workerHealth()).pauseRequested).toBe(true);
+    } finally {
+      await setWorkerPauseRequested(false);
+    }
+    expect(await workerPauseRequested()).toBe(false);
   });
 
   it("pruneHistory removes old finished jobs and their events", async () => {

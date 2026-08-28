@@ -16,6 +16,7 @@ import {
 import { CONFIG_KEYS, getConfig, setConfig } from "$server/app-config";
 import { usageAggregates } from "$server/ai-usage";
 import { meteredAiCall } from "$server/ai-call";
+import { setWorkerPauseRequested } from "$server/jobs";
 import { generateSpeciesAnnotation } from "$server/ai-enrichment";
 import { aiStageInputFor, similarCandidatesFor } from "$server/species-enrichment";
 
@@ -217,6 +218,32 @@ export interface CompareColumn {
 }
 
 export const actions: Actions = {
+  set_worker_pause: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin")
+      return fail(403, { kind: "worker_pause" as const, error: "Admins only." });
+    const form = await request.formData();
+    const intent = String(form.get("intent") ?? "");
+    if (intent !== "pause" && intent !== "resume")
+      return fail(400, { kind: "worker_pause" as const, error: "Unknown worker action." });
+    try {
+      await setWorkerPauseRequested(intent === "pause");
+      return {
+        kind: "worker_pause" as const,
+        ok: true as const,
+        message:
+          intent === "pause"
+            ? "Pause requested. The worker will finish its current unit, preserve the job, then pause."
+            : "Resume requested. The worker will continue the preserved queue shortly.",
+      };
+    } catch (err) {
+      console.error("admin worker pause action failed", err);
+      return fail(500, {
+        kind: "worker_pause" as const,
+        error: "Could not update the worker control. Nothing was changed.",
+      });
+    }
+  },
+
   /**
    * "Impatient nudge" (Gaylon): run an enrichment scan pass NOW instead of
    * waiting out the idle 24h cadence — e.g. right after new hotspot loads

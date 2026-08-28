@@ -15,7 +15,7 @@
 process.env.BIRDS_DB_APP_NAME = 'birds-worker';
 
 import pg from 'pg';
-import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory } from '$server/jobs';
+import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
 import { runJob, ensureNeedAlertScan, ensureEnrichmentScan } from '$server/job-handlers';
 
 declare const __GIT_SHA__: string;
@@ -97,7 +97,11 @@ async function main(): Promise<void> {
 
 	let draining = false;
 	let currentJobId: number | null = null;
-	const ctx = { isDraining: () => draining };
+	const ctx = {
+		isDraining: () => draining,
+		isPauseRequested: workerPauseRequested
+	};
+	let reportedPaused = await workerPauseRequested();
 
 	const drain = (signal: string) => {
 		if (draining) return;
@@ -117,6 +121,27 @@ async function main(): Promise<void> {
 
 	for (;;) {
 		if (draining) break;
+		const paused = await workerPauseRequested();
+		if (paused) {
+			if (!reportedPaused) {
+				reportedPaused = true;
+				await setWorkerStatus(
+					{ pid: process.pid, version: VERSION, state: 'paused', currentJobId: null },
+					'paused by admin'
+				);
+				console.log('[birds-worker] paused by admin');
+			}
+			await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
+			continue;
+		}
+		if (reportedPaused) {
+			reportedPaused = false;
+			await setWorkerStatus(
+				{ pid: process.pid, version: VERSION, state: 'idle', currentJobId: null },
+				'resumed by admin'
+			);
+			console.log('[birds-worker] resumed by admin');
+		}
 		let job = null;
 		try {
 			job = await claimNextJob();
@@ -152,8 +177,16 @@ async function main(): Promise<void> {
 		await runJob(job, ctx);
 		currentJobId = null;
 		if (!draining) {
+			const pauseAfterJob = await workerPauseRequested();
+			reportedPaused = pauseAfterJob;
 			await setWorkerStatus(
-				{ pid: process.pid, version: VERSION, state: 'idle', currentJobId: null }
+				{
+					pid: process.pid,
+					version: VERSION,
+					state: pauseAfterJob ? 'paused' : 'idle',
+					currentJobId: null
+				},
+				pauseAfterJob ? 'paused by admin' : undefined
 			);
 		}
 	}

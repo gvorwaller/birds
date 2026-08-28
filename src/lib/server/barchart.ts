@@ -549,7 +549,7 @@ export interface LocToEnsure {
 /** How the batch should wind down early, if at all. 'budget' = the caller's
  * chunk boundary hit — remaining locs route to notAttempted exactly like
  * cancel/drain; the CALLER (worker) yields the remainder for queue fairness. */
-export type StopSignal = 'no' | 'cancel' | 'drain' | 'budget';
+export type StopSignal = 'no' | 'cancel' | 'drain' | 'pause' | 'budget';
 
 interface EnsureOptions {
 	/**
@@ -569,7 +569,7 @@ interface EnsureOptions {
 	onUnit?: (loc: LocToEnsure, outcome: UnitOutcome) => Promise<void>;
 	/**
 	 * Cooperative stop — checked between units AND around the 5xx retry sleep
-	 * (GROK #6). 'cancel' and 'drain' both route remaining locs to
+	 * (GROK #6). 'cancel', 'drain', and 'pause' route remaining locs to
 	 * notAttempted and return normally; the CALLER decides the job's fate.
 	 */
 	shouldStop?: () => Promise<StopSignal>;

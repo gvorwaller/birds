@@ -99,6 +99,9 @@ import type { SpeciesAnnotation } from '$server/ai-enrichment';
 export interface WorkerContext {
 	/** True once SIGTERM/SIGINT received — jobs wind down and requeue. */
 	isDraining: () => boolean;
+	/** Persistent operator pause. Optional keeps non-worker callers/tests
+	 * source-compatible; the real worker always supplies it. */
+	isPauseRequested?: () => Promise<boolean>;
 }
 
 /** Cumulative narration across budget yields: the ORIGINAL batch total and
@@ -189,6 +192,7 @@ async function runFrequencyJob(
 	const shouldStop = async (): Promise<StopSignal> => {
 		if (cancelSeen) return (stopCause = 'cancel');
 		if (ctx.isDraining()) return (stopCause = 'drain');
+		if (await ctx.isPauseRequested?.()) return (stopCause = 'pause');
 		if (Date.now() - chunkStart > BATCH_TIME_BUDGET_MS) return (stopCause = 'budget');
 		return 'no';
 	};
@@ -264,6 +268,10 @@ async function runFrequencyJob(
 	}
 	if (stopCause === 'drain') {
 		await requeueInterrupted(job.id, attempts);
+		return;
+	}
+	if (stopCause === 'pause') {
+		await requeueInterrupted(job.id, attempts, 'worker paused');
 		return;
 	}
 	if (stopCause === 'budget') {
@@ -1162,6 +1170,10 @@ async function runChunkLifecycle<S>(opts: ChunkLifecycleOpts<S>): Promise<void> 
 			await requeueInterrupted(job.id, attempts);
 			return;
 		}
+		if (await ctx.isPauseRequested?.()) {
+			await requeueInterrupted(job.id, attempts, 'worker paused');
+			return;
+		}
 		if (cancelSeen) break;
 		// Wall budget (CODEX1 #1): never START a new unit past the budget —
 		// the remainder becomes a fresh content-hashed chunk so this job ends
@@ -1422,6 +1434,17 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				// `similar.length > 0` retried it twice for nothing, the same
 				// coupling that left it stuck in 'error' on the persist side (GROK).
 				if (candidates.length === 0 || owed().length === 0) break;
+				// A species may otherwise issue multiple paid calls while filling
+				// missing similar-species notes. Honor an Admin pause between those
+				// calls too; keep and persist the successful result already paid for.
+				if (await ctx.isPauseRequested?.()) {
+					await recordEvent(job.id, 'progress', {
+						code,
+						similarEmpty: 'retry_skipped',
+						reason: 'worker_paused'
+					});
+					break;
+				}
 				await recordEvent(job.id, 'progress', { code, similarEmpty: 'retrying', attempt });
 				try {
 					const next = await annotate();
