@@ -1549,7 +1549,7 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 			         OR ($3::text IS NOT NULL AND lower(sis.inat_sci_name) = $3))`,
 			[code, st.inatTaxonId, nameArm]
 		);
-		const reverse: (SimilarCandidateRow & { sourceEdgeTaxonId: string })[] = [];
+		let reverse: (SimilarCandidateRow & { sourceEdgeTaxonId: string; pairCount: number })[] = [];
 		const forwardCodes = new Set(forward.selected.map((s) => s.speciesCode));
 		for (const p of partnersRes.rows) {
 			if (forwardCodes.has(p.species_code)) continue;
@@ -1565,11 +1565,22 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 						comName: n.com_name,
 						sciName: n.sci_name,
 						misidCount: null,
-						sourceEdgeTaxonId: support.inatTaxonId
+						sourceEdgeTaxonId: support.inatTaxonId,
+						pairCount: support.misidCount
 					});
 				}
 			}
 		}
+		// Reverse extras are CAPPED at MAX_SIMILAR (Gaylon 2026-08-28, from the
+		// pre-flight gate: the union was unbounded and "hub" species everyone
+		// selects accumulated 42/64/100 offered candidates — an AI call with ~90
+		// required notes blows the output budget and wedges in the owed loop,
+		// and a 100-row card is unusable). Priority = the PARTNER's pair count
+		// (the strongest confusions reciprocate first); a capped-out partner
+		// still carries its own note about this species on its own page, so the
+		// confusion is always explained where the learner actually is.
+		reverse.sort((a, b) => b.pairCount - a.pairCount || a.code.localeCompare(b.code));
+		reverse = reverse.slice(0, MAX_SIMILAR);
 		reverse.sort((a, b) => a.code.localeCompare(b.code));
 
 		// Persist display set + fingerprint in THIS transaction.
@@ -1612,7 +1623,9 @@ export async function similarCandidatesFor(code: string): Promise<SimilarCandida
 				sciName: s.sciName,
 				misidCount: s.misidCount as number | null
 			})),
-			...reverse.map(({ sourceEdgeTaxonId: _sourceEdgeTaxonId, ...candidate }) => candidate)
+			...reverse.map(
+				({ sourceEdgeTaxonId: _sourceEdgeTaxonId, pairCount: _pairCount, ...candidate }) => candidate
+			)
 		];
 		const offeredHash = similarCandidatesHash(offered.map((c) => c.code));
 		await exec(

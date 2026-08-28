@@ -578,3 +578,82 @@ describe.runIf(dbUp)('similarCandidatesFor — reconcile persists display + reve
 		}
 	);
 });
+
+
+describe.runIf(dbUp)('reverse-support cap (Gaylon 2026-08-28: hub species bounded at MAX_SIMILAR)', () => {
+	const HUB = 'zzhub1';
+	const SATS = Array.from({ length: 9 }, (_, i) => `zzsat${i + 1}`);
+	const HCODES = [HUB, ...SATS];
+
+	async function seedHub() {
+		const uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0]
+			.id;
+		for (let i = 0; i < HCODES.length; i++) {
+			const code = HCODES[i];
+			await query(
+				`INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+				 VALUES ($1, 'Hub Test Bird', $2, 'species', 'Testidae')
+				 ON CONFLICT (species_code) DO UPDATE SET sci_name = $2, category = 'species'`,
+				[code, `Testus hub${i}`]
+			);
+			await query(
+				`INSERT INTO seen_species (user_id, species_code, source)
+				 VALUES ($1, $2, 'manual') ON CONFLICT DO NOTHING`,
+				[uid, code]
+			);
+			await query(
+				`INSERT INTO species_enrichment (species_code, inat_taxon_id, inat_similar_status,
+				    inat_similar_fetched_at, inat_similar_attempted_at)
+				 VALUES ($1, $2, 'ok', NOW(), NOW())
+				 ON CONFLICT (species_code) DO UPDATE SET
+				   inat_taxon_id = $2, inat_similar_status = 'ok',
+				   inat_similar_fetched_at = NOW(), inat_similar_attempted_at = NOW()`,
+				[code, 9200 + i]
+			);
+		}
+		// Every satellite's raw edges select the hub (count = 10 + i so the cap
+		// keeps the HIGHEST-count partners). The hub has no forward edges.
+		for (let i = 0; i < SATS.length; i++) {
+			await query(
+				`INSERT INTO species_inat_similar
+				   (species_code, inat_taxon_id, rank, misid_count, inat_sci_name, inat_com_name)
+				 VALUES ($1, 9200, 1, $2, 'Testus hub0', 'Hub Test Bird')
+				 ON CONFLICT DO NOTHING`,
+				[SATS[i], 10 + i]
+			);
+		}
+	}
+	async function cleanHub() {
+		await query(`DELETE FROM species_similar_display WHERE species_code = ANY($1)`, [HCODES]);
+		await query(`DELETE FROM species_inat_similar WHERE species_code = ANY($1)`, [HCODES]);
+		await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [HCODES]);
+		await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [HCODES]);
+		await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [HCODES]);
+	}
+
+	it(
+		'nine reverse supporters collapse to the seven strongest pairs',
+		{ timeout: 60_000 },
+		async () => {
+			await seedHub();
+			try {
+				const offered = await similarCandidatesFor(HUB);
+				expect(offered).toHaveLength(7);
+				// Counts were 10..18; the cap drops the two weakest (zzsat1/zzsat2).
+				const codes = offered.map((c) => c.code);
+				expect(codes).not.toContain('zzsat1');
+				expect(codes).not.toContain('zzsat2');
+				expect(codes).toContain('zzsat9');
+				// Display set matches the offered set exactly (hash coherence).
+				const disp = await query<{ c: string }>(
+					`SELECT count(*) AS c FROM species_similar_display
+					  WHERE species_code = $1 AND resolved_code IS NOT NULL`,
+					[HUB]
+				);
+				expect(Number(disp.rows[0].c)).toBe(7);
+			} finally {
+				await cleanHub();
+			}
+		}
+	);
+});
