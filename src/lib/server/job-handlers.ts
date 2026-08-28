@@ -94,7 +94,6 @@ import {
 } from '$server/species-enrichment';
 import {
 	fetchInatSimilarSpecies,
-	fetchInatTaxonName,
 	searchInatTaxonBySciName,
 	normalizeSimilarResults,
 	INAT_POLITENESS_MS
@@ -2175,10 +2174,12 @@ async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<vo
 			let resolution: InatResolution | null = null;
 			const crossNum = st.crossId !== null ? Number(st.crossId) : NaN;
 			if (Number.isInteger(crossNum) && crossNum > 0) {
-				let inatName = st.storedId === st.crossId ? st.inatSciName : null;
-				if (!inatName) {
-					inatName = (await fetchInatTaxonName(crossNum, gw))?.sciName ?? null;
-				}
+				// No fetchInatTaxonName here: it doubled the request count for 98%
+				// of the corpus and iNat's real rate ceiling is far below the
+				// documented one (measured 2026-08-28). The focal's iNat binomial
+				// is a nice-to-have for the sci-name invalidation arm — the id arm
+				// covers the common case; Phase B's reconcile can fill it lazily.
+				const inatName = st.storedId === st.crossId ? st.inatSciName : null;
 				resolution = { taxonId: crossNum, source: 'cross', sciName: inatName };
 			} else if (st.storedId !== null && st.storedSource === 'search') {
 				resolution = {

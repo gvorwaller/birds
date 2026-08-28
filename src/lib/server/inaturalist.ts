@@ -22,8 +22,14 @@ import { enrichmentUserAgent, parseRetryAfterMs } from '$server/wikidata';
 
 export const INAT_API_BASE = 'https://api.inaturalist.org/v1';
 const REQUEST_TIMEOUT_MS = 30_000;
-/** Politeness between outbound iNat requests (~54/min, under the 60/min norm). */
-export const INAT_POLITENESS_MS = 1100;
+/**
+ * Politeness between outbound iNat requests. Measured on prod 2026-08-28: the
+ * documented "60/min" is NOT what the API enforces for these endpoints — at
+ * ~27 req/min sustained it allowed ~140 requests and then hard-429'd (no
+ * Retry-After) for ~30 minutes. 3s spacing (~20/min) keeps the backfill under
+ * that ceiling; the loss is ~2h of wall time, not correctness.
+ */
+export const INAT_POLITENESS_MS = 3000;
 /** Raw edges stored per focal after normalization. */
 export const INAT_MAX_STORED = 30;
 
