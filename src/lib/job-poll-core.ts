@@ -11,6 +11,12 @@ export interface PolledJob {
 	progress: { phase?: string; unitsDone?: number } | Record<string, never>;
 }
 
+export interface PolledWorkerControl {
+	alive: boolean;
+	state: string | null;
+	pauseRequested: boolean;
+}
+
 export const ACTIVE_STATUSES = new Set(['pending', 'running']);
 export const POLL_ACTIVE_MS = 2_500;
 /** Everything active is just waiting out a long backoff — poll lazily (GROK #13). */
@@ -18,6 +24,16 @@ export const POLL_WAITING_MS = 15_000;
 /** Tab hasn't had a good poll for this long → show the stale line (GROK #3). */
 export const STALE_AFTER_MS = 10_000;
 export const INVALIDATE_THROTTLE_MS = 15_000;
+
+/**
+ * A pause/resume command has been stored, but the worker has not acknowledged
+ * the requested state yet. Admin keeps its fast poll alive for this brief
+ * transition even when the job queue itself is idle.
+ */
+export function isWorkerControlTransitioning(worker: PolledWorkerControl): boolean {
+	if (!worker.alive) return false;
+	return worker.pauseRequested ? worker.state !== 'paused' : worker.state === 'paused';
+}
 
 export function isActive(job: Pick<PolledJob, 'status' | 'scheduled'>): boolean {
 	// A recurring singleton parked until its NEXT run (scheduled) is not

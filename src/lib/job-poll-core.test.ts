@@ -8,6 +8,7 @@ import {
   invalidateStep,
   isActive,
   isStaleNow,
+  isWorkerControlTransitioning,
   nextIntervalMs,
   shouldInvalidate,
   terminalTransitions,
@@ -45,6 +46,52 @@ describe("nextIntervalMs", () => {
         job(2, "running"),
       ]),
     ).toBe(POLL_ACTIVE_MS);
+  });
+});
+
+describe("isWorkerControlTransitioning", () => {
+  it("keeps polling until a pause request is acknowledged", () => {
+    expect(
+      isWorkerControlTransitioning({
+        alive: true,
+        state: "idle",
+        pauseRequested: true,
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerControlTransitioning({
+        alive: true,
+        state: "paused",
+        pauseRequested: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps polling until a resume request is acknowledged", () => {
+    expect(
+      isWorkerControlTransitioning({
+        alive: true,
+        state: "paused",
+        pauseRequested: false,
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerControlTransitioning({
+        alive: true,
+        state: "idle",
+        pauseRequested: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not poll indefinitely when the worker is down", () => {
+    expect(
+      isWorkerControlTransitioning({
+        alive: false,
+        state: "idle",
+        pauseRequested: true,
+      }),
+    ).toBe(false);
   });
 });
 

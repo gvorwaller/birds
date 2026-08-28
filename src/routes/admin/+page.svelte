@@ -2,7 +2,11 @@
   import { invalidateAll } from "$app/navigation";
   import { enhance } from "$app/forms";
   import { onMount, untrack } from "svelte";
-  import { nextIntervalMs } from "$lib/job-poll-core";
+  import {
+    isWorkerControlTransitioning,
+    nextIntervalMs,
+    POLL_ACTIVE_MS,
+  } from "$lib/job-poll-core";
   import { meterDollars } from "$lib/ai-meter";
   import type { AdminLiveStatus } from "$server/admin-status";
   import type { ActionData, PageData } from "./$types";
@@ -57,7 +61,9 @@
   function scheduleLiveRefresh() {
     if (!mounted) return;
     if (liveTimer) clearTimeout(liveTimer);
-    const delay = nextIntervalMs(liveJobs);
+    const delay = isWorkerControlTransitioning(liveWorker)
+      ? POLL_ACTIVE_MS
+      : nextIntervalMs(liveJobs);
     liveTimer = delay == null ? null : setTimeout(refreshLiveStatus, delay);
   }
 
