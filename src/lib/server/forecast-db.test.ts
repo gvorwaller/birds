@@ -85,9 +85,8 @@ const cleanup = async () => {
   await query(
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'US-QQ-%'",
   );
-  await query(
-    "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'ZZ%'",
-  );
+  await query("DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'ZZ%'");
+  await query("DELETE FROM region_centroids WHERE loc_code LIKE 'TEST-%'");
 };
 
 describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
@@ -160,6 +159,31 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       "SELECT 1 FROM species_frequency WHERE loc_code = 'TESTX-DEL'",
     );
     expect(orphans.rows).toHaveLength(0);
+  });
+
+  it("region centroid outcomes accept durable/transient misses and reject invalid coordinates", async () => {
+    await query(
+      `INSERT INTO region_centroids (loc_code, lat, lon, retry_after) VALUES
+         ('TEST-OK', 44.1, -68.2, NULL),
+         ('TEST-GONE', NULL, NULL, NULL),
+         ('TEST-RETRY', NULL, NULL, NOW() + INTERVAL '1 day')`,
+    );
+    await expect(
+      query(
+        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-PAIR', 1, NULL)",
+      ),
+    ).rejects.toThrow(/region_centroids_coordinate_pair/i);
+    await expect(
+      query(
+        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-RANGE', 91, 0)",
+      ),
+    ).rejects.toThrow(/region_centroids_lat_range/i);
+    await expect(
+      query(
+        `INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
+         VALUES ('TEST-SHAPE', 1, 2, NOW())`,
+      ),
+    ).rejects.toThrow(/region_centroids_retry_shape/i);
   });
 
   it("storeFrequencies replaces atomically and keeps old data on failure", async () => {

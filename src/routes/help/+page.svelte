@@ -253,7 +253,9 @@
 				<ul>
 					<li>
 						A <strong>Country</strong> picker sits above the region select — it
-						defaults to the US, but any of eBird's countries works. Species
+						defaults to the US, but any of eBird's countries works. When you
+						have a saved home, countries and regions are ordered nearest-first
+						(the US remains pinned at the top of the country list). Species
 						search is bounded to birds actually reported in the selected
 						region, most frequent first — type "storm petrel" and you get the
 						four Florida ones, not the world's twenty-odd.
@@ -326,7 +328,9 @@
 					</li>
 					<li>
 						Species pages show a <strong>Best time of year</strong> chart with
-						a "Where should I go?" link, and trip stops link straight to the
+						the nearest loaded region where the bird has reliable sightings;
+						when a different region is most findable overall, that is linked
+						below the chart. The card has a "Where should I go?" link, and trip stops link straight to the
 						forecast for the trip's month.
 					</li>
 					<li>

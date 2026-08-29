@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const centroidMocks = vi.hoisted(() => ({
+  query: vi.fn(),
+  fetchRegionCentroid: vi.fn(),
+}));
+
+vi.mock("$lib/db", () => ({
+  query: centroidMocks.query,
+  withTransaction: vi.fn(),
+}));
+vi.mock("$server/ebird", () => ({
+  fetchRegionCentroid: centroidMocks.fetchRegionCentroid,
+  hotspotsNear: vi.fn(),
+  subregions: vi.fn(),
+}));
 import {
   FORECAST_HOTSPOT_LIMIT,
   MIN_MONTH_N,
@@ -13,6 +28,11 @@ import {
 } from "./forecast";
 
 const WEEKS = 48;
+
+beforeEach(() => {
+  centroidMocks.query.mockReset();
+  centroidMocks.fetchRegionCentroid.mockReset();
+});
 
 /** sampleSizes helper: n for every week of one month, 0 elsewhere. */
 function monthOnlySamples(month: number, perWeek: number[]): number[] {
@@ -255,8 +275,9 @@ describe("selectForecastHotspots", () => {
   it("mixes nearest and most-active, deduped, nearest-first order", () => {
     // 12 hotspots: A0..A11 by increasing distance; activity is inverted so the
     // most active are the farthest.
-    const hotspots = Array.from({ length: 12 }, (_, i) =>
-      hs(`A${i}`, i, 100 + (11 - i) * 0), // activity assigned below
+    const hotspots = Array.from(
+      { length: 12 },
+      (_, i) => hs(`A${i}`, i, 100 + (11 - i) * 0), // activity assigned below
     ).map((h, i) => ({ ...h, numSpeciesAllTime: i * 10 })); // farthest = most active
     const picked = selectForecastHotspots(hotspots, ORIGIN);
     expect(picked).toHaveLength(FORECAST_HOTSPOT_LIMIT);
@@ -415,7 +436,8 @@ describe("buildForecastSpecies", () => {
 
 describe("reliability and concentration", () => {
   it("bands frequencies at the documented cutoffs", async () => {
-    const { reliabilityOf, FREQ_LIKELY, FREQ_POSSIBLE } = await import("./forecast");
+    const { reliabilityOf, FREQ_LIKELY, FREQ_POSSIBLE } =
+      await import("./forecast");
     expect(reliabilityOf(FREQ_LIKELY)).toBe("likely");
     expect(reliabilityOf(FREQ_LIKELY - 0.001)).toBe("possible");
     expect(reliabilityOf(FREQ_POSSIBLE)).toBe("possible");
@@ -432,9 +454,7 @@ describe("reliability and concentration", () => {
     expect(
       concentrationOf([{ freq: 0.4 }, { freq: 0.35 }, { freq: 0.3 }]),
     ).toBe("widespread");
-    expect(
-      concentrationOf([{ freq: 0.3 }, { freq: 0.2 }]),
-    ).toBe("mixed");
+    expect(concentrationOf([{ freq: 0.3 }, { freq: 0.2 }])).toBe("mixed");
   });
 
   it("downranks vague eBird location names in topHotspots", () => {
@@ -443,7 +463,10 @@ describe("reliability and concentration", () => {
       ["L2", 1000],
     ]);
     const names = new Map([
-      ["L1", "Mount Desert Island (please use more specific location if possible)"],
+      [
+        "L1",
+        "Mount Desert Island (please use more specific location if possible)",
+      ],
       ["L2", "Sears Island"],
     ]);
     const out = buildForecastSpecies(
@@ -456,9 +479,11 @@ describe("reliability and concentration", () => {
       new Set(),
     );
     expect(out[0].topHotspots[0].locName).toBe("Sears Island");
-    expect(out[0].topHotspots.every((h) => !/please use more specific/i.test(h.locName))).toBe(
-      true,
-    );
+    expect(
+      out[0].topHotspots.every(
+        (h) => !/please use more specific/i.test(h.locName),
+      ),
+    ).toBe(true);
   });
 
   it("does not claim 'mostly at' when the true leader was a vague name", () => {
@@ -467,7 +492,10 @@ describe("reliability and concentration", () => {
       ["L2", 1000],
     ]);
     const names = new Map([
-      ["L1", "Mount Desert Island (please use more specific location if possible)"],
+      [
+        "L1",
+        "Mount Desert Island (please use more specific location if possible)",
+      ],
       ["L2", "Sears Island"],
     ]);
     // Vague site 50%, specific 10% — local, but the leader is hidden.
@@ -658,6 +686,29 @@ describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () =
     );
     expect(pick?.locCode).toBe("US-FL");
   });
+
+  it("breaks equal-distance and equal-frequency ties on sample size before code", async () => {
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    const samePoint = new Map([
+      ["US-AA", { lat: 35.5, lon: -79.5 }],
+      ["US-ZZ", { lat: 35.5, lon: -79.5 }],
+    ]);
+    const pick = pickNearestTeaserCandidate(
+      [
+        {
+          ...cand("US-AA", 0.2),
+          best: { month: 4, freq: 0.2, n: 100, lowSample: false },
+        },
+        {
+          ...cand("US-ZZ", 0.2),
+          best: { month: 4, freq: 0.2, n: 500, lowSample: false },
+        },
+      ],
+      HOME,
+      samePoint,
+    );
+    expect(pick?.locCode).toBe("US-ZZ");
+  });
 });
 
 describe("sortByProximity (picker dropdowns, 2026-08-29 follow-up)", () => {
@@ -693,6 +744,116 @@ describe("sortByProximity (picker dropdowns, 2026-08-29 follow-up)", () => {
     const copy = [...ITEMS];
     sortByProximity(ITEMS, HOME, CENTROIDS);
     expect(ITEMS).toEqual(copy);
+  });
+
+  it("sorts multiple unknown distances alphabetically and pins a requested code directly", async () => {
+    const { sortByProximity } = await import("./forecast");
+    const items = [
+      { code: "ZZ", name: "Zulu" },
+      { code: "US", name: "United States" },
+      { code: "AA", name: "Alpha" },
+    ];
+    expect(sortByProximity(items, HOME, new Map()).map((i) => i.code)).toEqual([
+      "AA",
+      "US",
+      "ZZ",
+    ]);
+    expect(
+      sortByProximity(items, HOME, new Map(), "US").map((i) => i.code),
+    ).toEqual(["US", "AA", "ZZ"]);
+  });
+});
+
+describe("ensureRegionCentroids", () => {
+  it("skips durable misses and cooling errors, advances to due/new codes, and records outcomes", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("SELECT loc_code")) {
+        return {
+          rows: [
+            { loc_code: "OK", lat: 1, lon: 2, retry_after: null },
+            { loc_code: "GONE", lat: null, lon: null, retry_after: null },
+            {
+              loc_code: "COOL",
+              lat: null,
+              lon: null,
+              retry_after: new Date(Date.now() + 60_000),
+            },
+            {
+              loc_code: "DUE",
+              lat: null,
+              lon: null,
+              retry_after: new Date(Date.now() - 60_000),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    centroidMocks.fetchRegionCentroid
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce({ lat: 3, lon: 4 });
+
+    const result = await ensureRegionCentroids(
+      "key",
+      ["OK", "GONE", "COOL", "DUE", "NEW", "NEW"],
+      { maxFetches: 2 },
+    );
+
+    expect(
+      centroidMocks.fetchRegionCentroid.mock.calls.map((c) => c[1]),
+    ).toEqual(["DUE", "NEW"]);
+    expect(result).toEqual(
+      new Map([
+        ["OK", { lat: 1, lon: 2 }],
+        ["NEW", { lat: 3, lon: 4 }],
+      ]),
+    );
+    const writes = centroidMocks.query.mock.calls
+      .slice(1)
+      .map((c) => c[0] as string);
+    expect(writes.some((sql) => sql.includes("INTERVAL '1 day'"))).toBe(true);
+    expect(writes.some((sql) => sql.includes("SET lat = EXCLUDED.lat"))).toBe(
+      true,
+    );
+    expect(
+      writes
+        .filter((sql) => sql.includes("SET lat = NULL"))
+        .every((sql) => sql.includes("WHERE region_centroids.lat IS NULL")),
+    ).toBe(true);
+  });
+
+  it("shares one page budget across calls and persists a durable 404/410 miss", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockImplementation(async () => ({ rows: [] }));
+    centroidMocks.fetchRegionCentroid.mockResolvedValue(null);
+    const budget = { remaining: 1 };
+
+    await ensureRegionCentroids("key", ["FIRST", "SECOND"], {
+      maxFetches: 5,
+      budget,
+    });
+    await ensureRegionCentroids("key", ["THIRD"], { maxFetches: 5, budget });
+
+    expect(budget.remaining).toBe(0);
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith(
+      "key",
+      "FIRST",
+    );
+    expect(centroidMocks.query.mock.calls[1][0]).toContain(
+      "retry_after)\n\t\t\t\t\t VALUES",
+    );
+  });
+
+  it("treats a negative shared allowance as exhausted, never as slice(0, -1)", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    await ensureRegionCentroids("key", ["FIRST", "SECOND"], {
+      maxFetches: 5,
+      budget: { remaining: -1 },
+    });
+    expect(centroidMocks.fetchRegionCentroid).not.toHaveBeenCalled();
   });
 });
 

@@ -110,13 +110,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
           : "Could not load the country list.";
     }
   }
-  // Centroids converge over a handful of loads (bounded live lookups per
-  // load, same pattern as the species-page teaser) — cache-only when no key.
-  const countryCentroids = await ensureRegionCentroids(
-    apiKey,
-    countryList.map((c) => c.code),
-    { maxFetches: 15 },
-  );
+  // Share one five-call allowance across both picker levels. Negative results
+  // and transient cooldowns are persisted, so later codes still converge.
+  const centroidBudget = { remaining: 5 };
 
   // Country param: explicit ?country=, else the selected region's own
   // country (deep links keep working), else US.
@@ -158,9 +154,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const stateCentroids = await ensureRegionCentroids(
     apiKey,
     states.map((s) => s.code),
-    { maxFetches: 15 },
+    { maxFetches: 5, budget: centroidBudget },
   );
   states = sortByProximity(states, home, stateCentroids);
+  // The selected country's regions get first use of the budget; warming an
+  // alphabetical world prefix must not delay the picker the user is using.
+  const countryCentroids = await ensureRegionCentroids(
+    apiKey,
+    countryList.map((c) => c.code),
+    { maxFetches: 5, budget: centroidBudget },
+  );
 
   // Selected species (validated against the taxonomy — never echoed blindly).
   let taxon: SpeciesMatch | null = null;
@@ -460,11 +463,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // its own optgroup regardless of array position, so this only orders
   // "All countries"); everything else nearest-home-first when home is known
   // (Gaylon 2026-08-29), else the original alphabetical fallback.
-  const sortedCountries = sortByProximity(countryList, home, countryCentroids).sort((a, b) => {
-    if (a.code === "US") return -1;
-    if (b.code === "US") return 1;
-    return 0; // stable: preserves sortByProximity's ordering otherwise
-  });
+  const sortedCountries = sortByProximity(countryList, home, countryCentroids, "US");
 
   return {
     q,

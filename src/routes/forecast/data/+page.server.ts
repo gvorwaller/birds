@@ -230,13 +230,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
   const countryName = new Map(countryList.map((c) => [c.code, c.name]));
-  // Bounded live lookups per load, same convergence pattern as the
-  // species-page teaser — cache-only when there's no key.
-  const countryCentroids = await ensureRegionCentroids(
-    apiKey,
-    countryList.map((c) => c.code),
-    { maxFetches: 15 },
-  );
+  // Share one five-call allowance across both picker levels. Negative results
+  // and transient cooldowns are persisted, so later codes still converge.
+  const centroidBudget = { remaining: 5 };
 
   const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
   let selectedCountry = DEFAULT_COUNTRY;
@@ -417,12 +413,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const selectedCountryCentroids = await ensureRegionCentroids(
     apiKey,
     selectedCountryRegionsRaw.map((s) => s.code),
-    { maxFetches: 15 },
+    { maxFetches: 5, budget: centroidBudget },
   );
   const selectedCountryRegions = sortByProximity(
     selectedCountryRegionsRaw,
     home,
     selectedCountryCentroids,
+  );
+  // The selected country's regions get first use of the budget; warming an
+  // alphabetical world prefix must not delay the picker the user is using.
+  const countryCentroids = await ensureRegionCentroids(
+    apiKey,
+    countryList.map((c) => c.code),
+    { maxFetches: 5, budget: centroidBudget },
   );
 
   for (const g of groups.values()) {
@@ -566,11 +569,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // its own optgroup regardless of array position, so this only orders
   // "All countries"); everything else nearest-home-first when home is known
   // (Gaylon 2026-08-29), else the original alphabetical fallback.
-  const sortedCountries = sortByProximity(countryList, home, countryCentroids).sort((a, b) => {
-    if (a.code === DEFAULT_COUNTRY) return -1;
-    if (b.code === DEFAULT_COUNTRY) return 1;
-    return 0; // stable: preserves sortByProximity's ordering otherwise
-  });
+  const sortedCountries = sortByProximity(
+    countryList,
+    home,
+    countryCentroids,
+    DEFAULT_COUNTRY,
+  );
 
   return {
     stateGroups,

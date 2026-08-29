@@ -120,6 +120,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Nearby-first seasonal planning</strong> — country and region
+								pickers now put places nearest your saved home first, while species
+								pages lead with the nearest loaded region where the bird is findable
+								and still link the strongest region overall when it differs.
+							</li>
+							<li>
 								<strong>Similar species, rebuilt on real misidentifications</strong>
 								— confusion pairs now come from iNaturalist observer
 								misidentification data instead of eBird reporting groups, so

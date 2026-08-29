@@ -13,12 +13,7 @@
  */
 import { query } from '$lib/db';
 import { fetchRegionCentroid } from '$server/ebird';
-import {
-	frequencyMeta,
-	lastCompleteYear,
-	WEEKS,
-	type FrequencyMeta
-} from '$server/barchart';
+import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
 import { hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
@@ -129,9 +124,7 @@ export function reliabilityOf(freq: number): Reliability {
  */
 export type Concentration = 'local' | 'widespread' | 'mixed';
 
-export function concentrationOf(
-	hotspots: readonly { freq: number }[]
-): Concentration {
+export function concentrationOf(hotspots: readonly { freq: number }[]): Concentration {
 	const positive = hotspots.filter((h) => h.freq > 0).sort((a, b) => b.freq - a.freq);
 	if (positive.length <= 1) return 'local';
 	const top = positive[0].freq;
@@ -209,7 +202,11 @@ export function weekCurve(
 ): WeekStat[] {
 	const out: WeekStat[] = [];
 	for (let w = 1; w <= WEEKS; w++) {
-		out.push({ week: w, freq: freqByWeek.get(w) ?? 0, n: sampleSizes[w - 1] ?? 0 });
+		out.push({
+			week: w,
+			freq: freqByWeek.get(w) ?? 0,
+			n: sampleSizes[w - 1] ?? 0
+		});
 	}
 	return out;
 }
@@ -584,14 +581,24 @@ export function buildForecastSpecies(
 	const areaN = [...denomByLoc.values()].reduce((a, b) => a + b, 0);
 	const byCode = new Map<
 		string,
-		{ comName: string; sciName: string; num: number; hotspots: ForecastHotspotStat[] }
+		{
+			comName: string;
+			sciName: string;
+			num: number;
+			hotspots: ForecastHotspotStat[];
+		}
 	>();
 	for (const row of aggRows) {
 		if (seen.has(row.code)) continue;
 		const denom = denomByLoc.get(row.locId) ?? 0;
 		let entry = byCode.get(row.code);
 		if (!entry) {
-			entry = { comName: row.comName, sciName: row.sciName, num: 0, hotspots: [] };
+			entry = {
+				comName: row.comName,
+				sciName: row.sciName,
+				num: 0,
+				hotspots: []
+			};
 			byCode.set(row.code, entry);
 		}
 		entry.num += row.num;
@@ -626,10 +633,7 @@ export function buildForecastSpecies(
 			topHotspots: forDisplay.slice(0, 3),
 			concentration,
 			localClaim:
-				concentration === 'local' &&
-				!!trueTop &&
-				!!shownTop &&
-				trueTop.locId === shownTop.locId
+				concentration === 'local' && !!trueTop && !!shownTop && trueTop.locId === shownTop.locId
 		});
 	}
 	// Adequately-sampled block first, each block by frequency descending.
@@ -745,9 +749,7 @@ export async function forecastNeedsNear(
 			fetchedAt: m?.fetchedAt.toISOString() ?? null
 		};
 	};
-	const analyzed = loaded
-		.map(toAnalyzed)
-		.sort((a, b) => a.distanceKm - b.distanceKm);
+	const analyzed = loaded.map(toAnalyzed).sort((a, b) => a.distanceKm - b.distanceKm);
 	const suggested = suggestedPick.map(toAnalyzed);
 	// EVERYTHING in range without data, nearest first — the user's pick list.
 	// No cap (GBV 2026-08-15): every local hotspot must be offerable for load;
@@ -845,10 +847,7 @@ export const COUNTY_HOTSPOT_LIMIT = 6;
  * Pure; lives in the engine so it's testable (was module-private in the
  * species route).
  */
-function mixBySpeciesRecency(
-	pool: readonly EbirdHotspot[],
-	limit: number
-): EbirdHotspot[] {
+function mixBySpeciesRecency(pool: readonly EbirdHotspot[], limit: number): EbirdHotspot[] {
 	const bySpecies = [...pool].sort(
 		(a, b) => (b.numSpeciesAllTime ?? 0) - (a.numSpeciesAllTime ?? 0)
 	);
@@ -975,7 +974,12 @@ export async function rankLocsForSpeciesMonth(
 ): Promise<RankedLoc[]> {
 	if (locCodes.length === 0) return [];
 	const { from, to } = monthWeeks(month);
-	const r = await query<{ loc_code: string; loc_name: string; freq: number | null; n: number }>(
+	const r = await query<{
+		loc_code: string;
+		loc_name: string;
+		freq: number | null;
+		n: number;
+	}>(
 		`SELECT ff.loc_code, ff.loc_name,
 		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
 		        SUM(ss.n)::float8 AS n
@@ -1039,7 +1043,12 @@ export async function rankCountiesForNeeds(
 	if (counties.length === 0) return [];
 	const codes = counties.map((c) => c.loc_code);
 	const names = new Map(counties.map((c) => [c.loc_code, c.loc_name]));
-	const r = await query<{ loc_code: string; species_code: string; freq: number | null; n: number }>(
+	const r = await query<{
+		loc_code: string;
+		species_code: string;
+		freq: number | null;
+		n: number;
+	}>(
 		`SELECT ff.loc_code, sp.species_code,
 		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
 		        SUM(ss.n)::float8 AS n
@@ -1059,7 +1068,10 @@ export async function rankCountiesForNeeds(
 		  GROUP BY ff.loc_code, sp.species_code`,
 		[codes, from, to]
 	);
-	const byLoc = new Map<string, { likely: number; possible: number; longshot: number; n: number }>();
+	const byLoc = new Map<
+		string,
+		{ likely: number; possible: number; longshot: number; n: number }
+	>();
 	for (const row of r.rows) {
 		if (seenResolved.has(row.species_code)) continue;
 		const freq = Number(row.freq ?? 0);
@@ -1100,7 +1112,12 @@ export async function bestMonthsByLoc(
 ): Promise<Map<string, BestMonth>> {
 	const out = new Map<string, BestMonth>();
 	if (locCodes.length === 0) return out;
-	const r = await query<{ loc_code: string; month: number; freq: number | null; n: number }>(
+	const r = await query<{
+		loc_code: string;
+		month: number;
+		freq: number | null;
+		n: number;
+	}>(
 		`SELECT ff.loc_code,
 		        ((ss.week - 1) / 4 + 1)::int AS month,
 		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
@@ -1116,7 +1133,11 @@ export async function bestMonthsByLoc(
 	const byLoc = new Map<string, MonthStat[]>();
 	for (const row of r.rows) {
 		const list = byLoc.get(row.loc_code) ?? [];
-		list.push({ month: Number(row.month), freq: Number(row.freq ?? 0), n: Number(row.n) });
+		list.push({
+			month: Number(row.month),
+			freq: Number(row.freq ?? 0),
+			n: Number(row.n)
+		});
 		byLoc.set(row.loc_code, list);
 	}
 	for (const [code, curve] of byLoc) {
@@ -1193,37 +1214,80 @@ export async function frequencyRegionCodes(): Promise<string[]> {
 
 /**
  * Cached region centroids, lazily filled from eBird (0039). At most
- * `maxFetches` live lookups per call — a page load warms a few, the cache
- * converges after a handful of loads, and a null apiKey serves cache-only.
- * Fetch failures are soft: the region simply stays distance-unknown.
+ * `maxFetches` live lookups per call; callers can share a mutable `budget`
+ * across picker levels to enforce a whole-page cap. Durable misses and
+ * transient cooldowns let later codes converge instead of starving behind a
+ * bad prefix. A null apiKey serves cache-only.
  */
 export async function ensureRegionCentroids(
 	apiKey: string | null,
 	codes: readonly string[],
-	opts: { maxFetches?: number } = {}
+	opts: { maxFetches?: number; budget?: { remaining: number } } = {}
 ): Promise<Map<string, { lat: number; lon: number }>> {
 	const out = new Map<string, { lat: number; lon: number }>();
-	if (codes.length === 0) return out;
-	const cached = await query<{ loc_code: string; lat: number; lon: number }>(
-		`SELECT loc_code, lat, lon FROM region_centroids WHERE loc_code = ANY($1::text[])`,
-		[codes]
+	const uniqueCodes = [...new Set(codes)];
+	if (uniqueCodes.length === 0) return out;
+	const cached = await query<{
+		loc_code: string;
+		lat: number | null;
+		lon: number | null;
+		retry_after: string | Date | null;
+	}>(
+		`SELECT loc_code, lat, lon, retry_after
+		   FROM region_centroids WHERE loc_code = ANY($1::text[])`,
+		[uniqueCodes]
 	);
-	for (const row of cached.rows) out.set(row.loc_code, { lat: row.lat, lon: row.lon });
+	const cachedByCode = new Map(cached.rows.map((row) => [row.loc_code, row]));
+	for (const row of cached.rows) {
+		if (row.lat != null && row.lon != null) out.set(row.loc_code, { lat: row.lat, lon: row.lon });
+	}
 	if (!apiKey) return out;
-	const missing = codes.filter((c) => !out.has(c)).slice(0, opts.maxFetches ?? 5);
+	const now = Date.now();
+	const maxFetches = Math.max(0, Math.floor(opts.maxFetches ?? 5));
+	const allowance = Math.max(0, Math.min(maxFetches, opts.budget?.remaining ?? maxFetches));
+	const missing = uniqueCodes
+		.filter((code) => {
+			const row = cachedByCode.get(code);
+			if (!row) return true;
+			if (row.lat != null) return false;
+			return row.retry_after != null && new Date(row.retry_after).getTime() <= now;
+		})
+		.slice(0, allowance);
 	for (const code of missing) {
+		if (opts.budget) opts.budget.remaining = Math.max(0, opts.budget.remaining - 1);
 		try {
 			const c = await fetchRegionCentroid(apiKey, code);
 			if (c) {
 				await query(
 					`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
-					 ON CONFLICT (loc_code) DO NOTHING`,
+					 ON CONFLICT (loc_code) DO UPDATE
+					 SET lat = EXCLUDED.lat, lon = EXCLUDED.lon,
+					     fetched_at = NOW(), retry_after = NULL`,
 					[code, c.lat, c.lon]
-				);
+				).catch(() => {});
 				out.set(code, c);
+			} else {
+				await query(
+					`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
+					 VALUES ($1, NULL, NULL, NULL)
+						 ON CONFLICT (loc_code) DO UPDATE
+						 SET lat = NULL, lon = NULL, fetched_at = NOW(), retry_after = NULL
+						 WHERE region_centroids.lat IS NULL`,
+					[code]
+				).catch(() => {});
 			}
 		} catch {
-			// Soft: distance-unknown this load; retried on a later load.
+			// Cool transient failures down so one bad prefix cannot starve the
+			// tail of a large country list on every page load.
+			await query(
+				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
+				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '1 day')
+					 ON CONFLICT (loc_code) DO UPDATE
+					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
+					     retry_after = NOW() + INTERVAL '1 day'
+					 WHERE region_centroids.lat IS NULL`,
+				[code]
+			).catch(() => {});
 		}
 	}
 	return out;
@@ -1233,7 +1297,8 @@ export async function ensureRegionCentroids(
  * Pure proximity picker (Gaylon 2026-08-29): the nearest region where the
  * species is actually findable, honoring the same sampled-over-low-n
  * discipline as pickTeaserCandidate. Regions with unknown centroids rank
- * last (Infinity); ties break toward higher peak frequency, then loc code.
+ * last (Infinity); ties break toward higher peak frequency, checklist count,
+ * then loc code.
  * Null when nothing findable has a known distance — callers fall back to
  * the global pick.
  */
@@ -1252,28 +1317,37 @@ export function pickNearestTeaserCandidate(
 		if (
 			!best ||
 			d < best.d ||
-			(d === best.d && (s.best!.freq > best.s.best!.freq ||
-				(s.best!.freq === best.s.best!.freq && s.locCode.localeCompare(best.s.locCode) < 0)))
+			(d === best.d &&
+				(s.best!.freq > best.s.best!.freq ||
+					(s.best!.freq === best.s.best!.freq && s.best!.n > best.s.best!.n) ||
+					(s.best!.freq === best.s.best!.freq &&
+						s.best!.n === best.s.best!.n &&
+						s.locCode.localeCompare(best.s.locCode) < 0)))
 		) {
 			best = { s, d };
 		}
 	}
 	if (!best || best.d === Infinity) return null;
-	return { locCode: best.s.locCode, locName: best.s.locName, distanceKm: best.d };
+	return {
+		locCode: best.s.locCode,
+		locName: best.s.locName,
+		distanceKm: best.d
+	};
 }
 
 /**
  * Pure proximity sort for picker lists (country/region dropdowns, Gaylon
  * 2026-08-29 follow-up to the species-page teaser): nearest-to-home first,
- * unknown-distance entries (centroid not yet cached) fall to the end in
- * their original relative order, tie-broken alphabetically. With no home,
+ * unknown-distance entries (centroid not yet cached) fall to the end,
+ * tie-broken alphabetically. With no home,
  * this degrades to a plain alphabetical sort — the pre-existing behavior for
  * users who haven't set one.
  */
 export function sortByProximity<T extends { code: string; name: string }>(
 	items: readonly T[],
 	home: { lat: number; lon: number } | null,
-	centroids: ReadonlyMap<string, { lat: number; lon: number }>
+	centroids: ReadonlyMap<string, { lat: number; lon: number }>,
+	pinnedCode?: string
 ): T[] {
 	const distanceOf = (code: string): number => {
 		if (!home) return 0; // irrelevant when unused below
@@ -1281,11 +1355,16 @@ export function sortByProximity<T extends { code: string; name: string }>(
 		return c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
 	};
 	return [...items].sort((a, b) => {
-		if (home) {
-			const d = distanceOf(a.code) - distanceOf(b.code);
-			if (d !== 0) return d;
+		if (pinnedCode && a.code !== b.code) {
+			if (a.code === pinnedCode) return -1;
+			if (b.code === pinnedCode) return 1;
 		}
-		return a.name.localeCompare(b.name);
+		if (home) {
+			const aDistance = distanceOf(a.code);
+			const bDistance = distanceOf(b.code);
+			if (aDistance !== bDistance) return aDistance < bDistance ? -1 : 1;
+		}
+		return a.name.localeCompare(b.name) || a.code.localeCompare(b.code);
 	});
 }
 
@@ -1319,10 +1398,12 @@ export async function pickSpeciesTeaserState(
 	for (const row of r.rows) {
 		let entry = byLoc.get(row.loc_code);
 		if (!entry) {
-			const sizes = Array.isArray(row.sample_sizes)
-				? row.sample_sizes.map((n) => Number(n))
-				: [];
-			entry = { locName: row.loc_name, sampleSizes: sizes, freqByWeek: new Map() };
+			const sizes = Array.isArray(row.sample_sizes) ? row.sample_sizes.map((n) => Number(n)) : [];
+			entry = {
+				locName: row.loc_name,
+				sampleSizes: sizes,
+				freqByWeek: new Map()
+			};
 			byLoc.set(row.loc_code, entry);
 		}
 		if (row.week != null && row.freq != null) {

@@ -65,7 +65,14 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 export async function ebirdFetchOrNull<T>(
 	path: string,
 	apiKey: string,
-	opts: { fetcher?: typeof fetch; nullOn?: readonly number[]; signal?: AbortSignal } = {}
+	opts: {
+		fetcher?: typeof fetch;
+		nullOn?: readonly number[];
+		signal?: AbortSignal;
+		/** Empty/malformed successful bodies are errors when the caller needs to
+		 * distinguish a real null status from a transient bad response. */
+		strictBody?: boolean;
+	} = {}
 ): Promise<T | null> {
 	const doFetch = opts.fetcher ?? fetch;
 	const nullOn = opts.nullOn ?? [404];
@@ -93,10 +100,14 @@ export async function ebirdFetchOrNull<T>(
 	// which bypassed the resolver's catch and aborted every prod pass
 	// (td-2fbfc1 root cause). Parse safely: empty or non-JSON 200 → null.
 	const body = await res.text();
-	if (!body.trim()) return null;
+	if (!body.trim()) {
+		if (opts.strictBody) throw new EbirdError(`eBird API returned an empty response for ${path}`);
+		return null;
+	}
 	try {
 		return JSON.parse(body) as T;
 	} catch {
+		if (opts.strictBody) throw new EbirdError(`eBird API returned invalid JSON for ${path}`);
 		return null;
 	}
 }
@@ -142,7 +153,11 @@ async function cachedFetch<T>(
 	const row = cached.rows[0];
 	const fresh = row && Date.now() - new Date(row.fetched_at).getTime() < ttlMinutes * 60_000;
 	if (row && fresh) {
-		return { data: row.payload, fetchedAt: new Date(row.fetched_at), stale: false };
+		return {
+			data: row.payload,
+			fetchedAt: new Date(row.fetched_at),
+			stale: false
+		};
 	}
 
 	try {
@@ -156,7 +171,11 @@ async function cachedFetch<T>(
 		return { data, fetchedAt: new Date(), stale: false };
 	} catch (err) {
 		if (row) {
-			return { data: row.payload, fetchedAt: new Date(row.fetched_at), stale: true };
+			return {
+				data: row.payload,
+				fetchedAt: new Date(row.fetched_at),
+				stale: true
+			};
 		}
 		throw err;
 	}
@@ -346,10 +365,7 @@ export async function hotspotsNear(
 	const ln = lng.toFixed(2);
 	const dist = Math.min(Math.max(distKm, 1), 50);
 	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, () =>
-		ebirdFetch<EbirdHotspot[]>(
-			`/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`,
-			apiKey
-		)
+		ebirdFetch<EbirdHotspot[]>(`/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`, apiKey)
 	);
 }
 
@@ -443,14 +459,26 @@ export async function fetchRegionCentroid(
 	opts: { fetcher?: typeof fetch; signal?: AbortSignal } = {}
 ): Promise<{ lat: number; lon: number } | null> {
 	if (!/^[A-Z]{2}(-[A-Za-z0-9]+)?$/.test(regionCode)) return null;
-	const info = await ebirdFetchOrNull<{ latitude?: number; longitude?: number }>(
-		`/ref/region/info/${regionCode}`,
-		apiKey,
-		{ ...opts, nullOn: [404, 410] }
-	);
-	if (!info || typeof info.latitude !== 'number' || typeof info.longitude !== 'number') {
-		return null;
+	const info = await ebirdFetchOrNull<{
+		latitude?: number;
+		longitude?: number;
+	}>(`/ref/region/info/${regionCode}`, apiKey, {
+		...opts,
+		nullOn: [404, 410],
+		strictBody: true
+	});
+	if (!info) return null;
+	if (
+		typeof info.latitude !== 'number' ||
+		!Number.isFinite(info.latitude) ||
+		info.latitude < -90 ||
+		info.latitude > 90 ||
+		typeof info.longitude !== 'number' ||
+		!Number.isFinite(info.longitude) ||
+		info.longitude < -180 ||
+		info.longitude > 180
+	) {
+		throw new EbirdError(`eBird region info returned invalid coordinates for ${regionCode}`);
 	}
 	return { lat: info.latitude, lon: info.longitude };
 }
-
