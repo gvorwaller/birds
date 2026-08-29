@@ -870,9 +870,10 @@ describe("ensureRegionCentroids", () => {
       "key",
       "FIRST",
     );
-    expect(centroidMocks.query.mock.calls[1][0]).toContain(
-      "retry_after)\n\t\t\t\t\t VALUES",
-    );
+    const write = centroidMocks.query.mock.calls[1][0] as string;
+    expect(write).toContain("INSERT INTO region_centroids");
+    expect(write).toContain("retry_after");
+    expect(write).toContain("30 days");
   });
 
   it("treats a negative shared allowance as exhausted, never as slice(0, -1)", async () => {
@@ -920,7 +921,24 @@ describe("ensureRegionCentroids", () => {
     await ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
     const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
     expect(writes.some((sql) => sql.includes("retry_after"))).toBe(true);
+    expect(writes.some((sql) => sql.includes("30 days"))).toBe(false);
+    expect(writes.some((sql) => sql.includes("1 days"))).toBe(true);
   });
+
+  it.each([422, 400])(
+    "treats a %i (data-quality) failure as durable, not a daily-forever retry (round 4 self-review)",
+    async (status) => {
+      const { ensureRegionCentroids } = await import("./forecast");
+      centroidMocks.query.mockResolvedValue({ rows: [] });
+      centroidMocks.fetchRegionCentroid.mockRejectedValue(
+        new MockEbirdError("invalid coordinates", status),
+      );
+      await ensureRegionCentroids("key", ["BAD_DATA"], { maxFetches: 5 });
+      const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
+      expect(writes.some((sql) => sql.includes("30 days"))).toBe(true);
+      expect(writes.some((sql) => sql.includes("1 days"))).toBe(false);
+    },
+  );
 
   it("de-dupes concurrent live lookups for the same code across overlapping calls (AGY P2)", async () => {
     const { ensureRegionCentroids } = await import("./forecast");
@@ -945,6 +963,162 @@ describe("ensureRegionCentroids", () => {
     expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
     expect(a.get("SHARED")).toEqual({ lat: 9, lon: 9 });
     expect(b.get("SHARED")).toEqual({ lat: 9, lon: 9 });
+  });
+
+  it("does NOT share an in-flight fetch across different apiKeys for the same code (round 3 P2 #1)", async () => {
+    // This app has several real accounts (cs.md: every user has their OWN
+    // eBird credentials, never an admin fallback). Keying the in-flight map
+    // by code alone would let User B's concurrent request piggyback on User
+    // A's fetch — using A's key, and if it failed with an account-level
+    // error, incorrectly aborting B's own sweep over a key problem that was
+    // never B's.
+    //
+    // Discriminating power matters here (self-review, sanity-validation
+    // pass, 2026-08-29): an earlier version of this test let call A's op
+    // fully resolve (mocked fetchRegionCentroid returns immediately) before
+    // call B even started, so there was never any overlap to share in the
+    // first place — the test passed identically whether or not the map was
+    // keyed by apiKey, proving nothing. A's fetch must still be GENUINELY
+    // PENDING (held open by a manual resolver) when B starts, so that if the
+    // map were still keyed by bare code, B would find and reuse A's
+    // still-in-flight op and this test would fail.
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    let resolveA!: (v: { lat: number; lon: number }) => void;
+    let resolveB!: (v: { lat: number; lon: number }) => void;
+    const deferredA = new Promise<{ lat: number; lon: number }>((res) => {
+      resolveA = res;
+    });
+    const deferredB = new Promise<{ lat: number; lon: number }>((res) => {
+      resolveB = res;
+    });
+    centroidMocks.fetchRegionCentroid.mockImplementation(async (key: string) =>
+      key === "key-a" ? deferredA : deferredB,
+    );
+
+    const callA = ensureRegionCentroids("key-a", ["SAME_CODE"], { maxFetches: 5 });
+    // Flush so callA runs past its cache-check query and registers its
+    // in-flight op — which is still PENDING (deferredA unresolved) — before
+    // callB starts.
+    await new Promise((r) => setImmediate(r));
+    const callB = ensureRegionCentroids("key-b", ["SAME_CODE"], { maxFetches: 5 });
+
+    resolveA({ lat: 1, lon: 0 });
+    resolveB({ lat: 2, lon: 0 });
+    const [a, b] = await Promise.all([callA, callB]);
+
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(2);
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith("key-a", "SAME_CODE");
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith("key-b", "SAME_CODE");
+    // Each caller got the result fetched with ITS OWN key, not the other's.
+    expect(a.get("SAME_CODE")).toEqual({ lat: 1, lon: 0 });
+    expect(b.get("SAME_CODE")).toEqual({ lat: 2, lon: 0 });
+  });
+
+  it("an account-level failure aborts only the sweep of the caller whose key actually failed (round 3 P2 #1)", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    centroidMocks.fetchRegionCentroid.mockImplementation(async (key: string) => {
+      if (key === "bad-key") throw new MockEbirdError("invalid key", 403);
+      return { lat: 5, lon: 6 };
+    });
+
+    // Two DIFFERENT codes so each caller's sweep has something to keep
+    // iterating over after its first code resolves/rejects.
+    const badResult = await ensureRegionCentroids("bad-key", ["ONE", "TWO"], {
+      maxFetches: 5,
+    });
+    const goodResult = await ensureRegionCentroids("good-key", ["THREE"], {
+      maxFetches: 5,
+    });
+
+    // The bad key's own sweep aborted after its first code (never reached
+    // "TWO"). The good key's own, unrelated sweep succeeded normally.
+    expect(badResult.size).toBe(0);
+    expect(goodResult.get("THREE")).toEqual({ lat: 5, lon: 6 });
+  });
+
+  it("de-dupes concurrent live lookups that REJECT too, and writes the cooldown exactly once (self-review, 2026-08-29)", async () => {
+    // The resolves-case test above doesn't exercise the path this loop's own
+    // hostile review flagged: cleanup must wait for the shared operation's
+    // DB write, not just the raw fetch, or a third caller arriving between
+    // "fetch settled" and "write landed" would fire a redundant live fetch.
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    let rejectFetch!: (err: unknown) => void;
+    const deferred = new Promise<{ lat: number; lon: number }>((_res, rej) => {
+      rejectFetch = rej;
+    });
+    centroidMocks.fetchRegionCentroid.mockReturnValue(deferred);
+
+    const callA = ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
+    await new Promise((r) => setImmediate(r));
+    const callB = ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
+
+    rejectFetch(new Error("network blip"));
+    const [a, b] = await Promise.all([callA, callB]);
+
+    // Neither awaiter throws — each has its own try/catch around the shared
+    // operation — and neither found a result to store.
+    expect(a.has("FLAKY")).toBe(false);
+    expect(b.has("FLAKY")).toBe(false);
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
+    // Exactly ONE cooldown write for the shared failure, not one per
+    // awaiter — the write lives inside the shared operation now, not in
+    // each caller's own catch block. (Filter on the INSERT, not a bare
+    // "retry_after" substring — the cache-check SELECT also names that
+    // column and would otherwise be miscounted as a write.)
+    const cooldownWrites = centroidMocks.query.mock.calls.filter(
+      (c) =>
+        (c[0] as string).includes("INSERT INTO region_centroids") &&
+        (c[0] as string).includes("retry_after"),
+    );
+    expect(cooldownWrites).toHaveLength(1);
+  });
+
+  it("a call issued AFTER a prior call fully returns reuses the persisted row, never refetches (sequential reuse)", async () => {
+    // NOT a concurrency/race test — the two calls here are fully sequential
+    // (the second is only issued after the first's returned promise has
+    // settled). What this pins down: ensureRegionCentroids's own write has
+    // actually landed in the (mocked) DB by the time it returns, so a caller
+    // that runs strictly after it sees the cached result immediately.
+    //
+    // The specific race this loop's hostile review worried about — a THIRD
+    // caller arriving in the gap between "map entry cleared" and "DB write
+    // landed" — no longer has a gap to arrive in: fetchAndPersistCentroid's
+    // returned promise cannot settle until AFTER its own internal DB write
+    // completes (the write is sequenced before the return/throw inside the
+    // same async function body), so the in-flight map and the DB can never
+    // disagree about a code that has settled. That's a structural property
+    // of the code shape, not something a timing-based unit test can usefully
+    // exercise without becoming a test of Node's microtask scheduler.
+    const { ensureRegionCentroids } = await import("./forecast");
+    let written: { lat: number; lon: number } | null = null;
+    centroidMocks.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("SELECT loc_code")) {
+        return {
+          rows: written
+            ? [{ loc_code: "SHARED2", lat: written.lat, lon: written.lon, retry_after: null }]
+            : [],
+        };
+      }
+      // Guard the shape before trusting params[1]/[2] as lat/lon — the
+      // negative/cooldown INSERTs share this same "INSERT INTO
+      // region_centroids" prefix but pass only [code] with NULL literals
+      // baked into the SQL text, not real params (self-review P2 #2).
+      if (sql.includes("INSERT INTO region_centroids") && sql.includes("VALUES ($1, $2, $3)")) {
+        const p = params as [string, number, number];
+        written = { lat: p[1], lon: p[2] };
+      }
+      return { rows: [] };
+    });
+    centroidMocks.fetchRegionCentroid.mockResolvedValue({ lat: 7, lon: 8 });
+
+    await ensureRegionCentroids("key", ["SHARED2"], { maxFetches: 5 });
+    const again = await ensureRegionCentroids("key", ["SHARED2"], { maxFetches: 5 });
+
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
+    expect(again.get("SHARED2")).toEqual({ lat: 7, lon: 8 });
   });
 });
 

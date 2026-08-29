@@ -1133,7 +1133,15 @@
               };
             }}
           >
-            <select name="region" required>
+            <!-- Single instance on this page (not inside an {#each}) — the
+                 for/id pairing below assumes that; a future refactor that
+                 repeats this form must namespace the id. -->
+            <label for="region-select"
+              >Region{#if data.hasHome}<span class="muted">
+                  (nearest known first)</span
+                >{/if}</label
+            >
+            <select id="region-select" name="region" required>
               <option value="">Choose a region…</option>
               {#if data.selectedCountry !== "US" && !data.wholeCountryLoaded}
                 <option value={data.selectedCountry}

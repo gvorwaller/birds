@@ -11,6 +11,7 @@
  * Jan 22-end of Jan, etc. Monthly stats are checklist-weighted means of the
  * month's 4 weeks — Σ(freqᵢ·nᵢ)/Σnᵢ — NEVER an unweighted mean (CODEX1 #2).
  */
+import { createHash } from 'node:crypto';
 import { query } from '$lib/db';
 import { fetchRegionCentroid, EbirdError } from '$server/ebird';
 import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
@@ -1208,11 +1209,143 @@ const CENTROID_NEGATIVE_TTL_DAYS = 30;
  * SAME region code — short, because the failure is expected to clear soon. */
 const CENTROID_TRANSIENT_COOLDOWN_DAYS = 1;
 
+/**
+ * One classification, used by BOTH what-to-cool-down (fetchAndPersistCentroid)
+ * and whether-to-abort-my-sweep (ensureRegionCentroids) decisions. Extracted
+ * per self-review (2026-08-29, hostile-review loop round 2 P2 #3): the two
+ * call sites previously duplicated this exact if/else ladder, which nothing
+ * enforced staying in sync — a future edit to one copy (e.g. adding 408 to
+ * "transient") without the other would silently desync what gets cooled down
+ * from what aborts the sweep, with no test able to catch the divergence
+ * since both were always exercised together through the same fixtures.
+ * - 'account': bad/expired key, rate limit — not a fact about this region;
+ *   every other in-flight code would fail identically.
+ * - 'systemic': 5xx — also not a per-region fact.
+ * - 'data-quality': malformed/invalid 200 body — a genuine defect in eBird's
+ *   data for this specific code, will keep failing identically every retry.
+ * - 'transient': anything else (network unreachable, etc.) — expected to
+ *   clear on its own soon.
+ */
+type CentroidErrorClass = 'account' | 'systemic' | 'data-quality' | 'transient';
+
+function classifyCentroidError(err: unknown): CentroidErrorClass {
+	if (err instanceof EbirdError) {
+		if (err.status === 401 || err.status === 403 || err.status === 429) return 'account';
+		if (err.status != null && err.status >= 500) return 'systemic';
+		// 422 (our own strictBody/coordinate validation) and 400 (a malformed
+		// request eBird itself rejects outright) are both a defect specific to
+		// THIS region code, not a blip — round 4 hostile-review pass: 400 was
+		// left in the 'transient' bucket, symmetric with the exact 1-day-
+		// forever-retry gap the 422 fix (round 1) closed.
+		if (err.status === 422 || err.status === 400) return 'data-quality';
+	}
+	return 'transient';
+}
+
 /** Process-local de-dup for concurrent identical live lookups (AGY P2: two
  * tabs / a fast back-button loading the same page can both find the same
  * missing code before either write lands). Scoped to one worker process —
- * cross-process races still just do one extra harmless eBird call. */
-const inFlightCentroidFetches = new Map<string, Promise<{ lat: number; lon: number } | null>>();
+ * cross-process races still just do one extra harmless eBird call.
+ *
+ * Keyed by a hash of `${apiKey}:${code}`, NOT code alone (self-review
+ * 2026-08-29, hostile-review loop round 3 P2 #1): this app has several real
+ * accounts (cs.md — every user has their OWN eBird credentials, never an
+ * admin fallback), and every call site passes a per-user key. Keying by code
+ * alone would let one user's concurrent request piggyback on ANOTHER user's
+ * in-flight fetch — using that user's credentials for the lookup, and, if it
+ * failed with an account-level error, incorrectly aborting the FIRST user's
+ * own sweep over a key problem that was never theirs. Hashed (not the raw
+ * key) so the key material never sits in a plain-string Map key that a
+ * future debugging session might accidentally log or inspect.
+ *
+ * Holds the COMBINED fetch-and-persist operation (self-review, 2026-08-29,
+ * hostile-review loop round 1 P2 #2) — not just the raw eBird fetch. The
+ * earlier version cleaned up the map as soon as the FETCH settled, before
+ * the DB write it triggered had landed; a third caller arriving in that gap
+ * found neither the map entry nor a fresh cache row and fired a redundant
+ * live fetch. Sharing the whole operation means every concurrent caller
+ * (original or piggybacking) awaits the SAME promise and the write happens
+ * exactly once, not once per awaiter — the map entry only clears once that
+ * write has actually landed. */
+const inFlightCentroidFetches = new Map<
+	string,
+	Promise<{ lat: number; lon: number } | null>
+>();
+
+function inFlightCentroidKey(apiKey: string, code: string): string {
+	return `${createHash('sha1').update(apiKey).digest('hex').slice(0, 16)}:${code}`;
+}
+
+/** Persist one centroid outcome; failures are logged (never thrown further —
+ * the cache is best-effort) so a systemic DB problem on this shared,
+ * every-caller-relies-on-it write path isn't silently invisible (self-review
+ * 2026-08-29, hostile-review loop round 3 P3 #4). */
+async function persistCentroidOutcome(sql: string, params: unknown[]): Promise<void> {
+	try {
+		await query(sql, params);
+	} catch (err) {
+		console.error('region_centroids write failed:', err instanceof Error ? err.message : err);
+	}
+}
+
+/**
+ * Fetch one region's centroid and persist the outcome, exactly once no
+ * matter how many concurrent callers are awaiting it (see
+ * inFlightCentroidFetches above). Re-throws on failure so every awaiter
+ * still sees it — but only writes a per-region cooldown for a failure that
+ * is actually ABOUT this region; an account-level or systemic failure is
+ * left unwritten so each caller's own sweep-abort decision (in
+ * ensureRegionCentroids below) is independent of this shared write.
+ */
+async function fetchAndPersistCentroid(
+	apiKey: string,
+	code: string
+): Promise<{ lat: number; lon: number } | null> {
+	try {
+		const c = await fetchRegionCentroid(apiKey, code);
+		if (c) {
+			await persistCentroidOutcome(
+				`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
+				 ON CONFLICT (loc_code) DO UPDATE
+				 SET lat = EXCLUDED.lat, lon = EXCLUDED.lon,
+				     fetched_at = NOW(), retry_after = NULL`,
+				[code, c.lat, c.lon]
+			);
+		} else {
+			// Durable miss (404/410) — see CENTROID_NEGATIVE_TTL_DAYS above.
+			await persistCentroidOutcome(
+				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
+				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days')
+					 ON CONFLICT (loc_code) DO UPDATE
+					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
+					     retry_after = NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days'
+					 WHERE region_centroids.lat IS NULL`,
+				[code]
+			);
+		}
+		return c;
+	} catch (err) {
+		const cls = classifyCentroidError(err);
+		// Account-level and systemic failures are NOT a fact about this
+		// region — no cooldown is written for them here. Each caller's own
+		// loop (in ensureRegionCentroids) decides whether to abort ITS sweep
+		// based on the re-thrown error and the SAME classification.
+		if (cls !== 'account' && cls !== 'systemic') {
+			const ttlDays =
+				cls === 'data-quality' ? CENTROID_NEGATIVE_TTL_DAYS : CENTROID_TRANSIENT_COOLDOWN_DAYS;
+			await persistCentroidOutcome(
+				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
+				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${ttlDays} days')
+					 ON CONFLICT (loc_code) DO UPDATE
+					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
+					     retry_after = NOW() + INTERVAL '${ttlDays} days'
+					 WHERE region_centroids.lat IS NULL`,
+				[code]
+			);
+		}
+		throw err;
+	}
+}
 
 /**
  * Cached region centroids, lazily filled from eBird (0039/0040). At most
@@ -1264,70 +1397,37 @@ export async function ensureRegionCentroids(
 		.slice(0, allowance);
 	for (const code of missing) {
 		if (opts.budget) opts.budget.remaining = Math.max(0, opts.budget.remaining - 1);
+		// Keyed by apiKey too, not just code — see inFlightCentroidFetches'
+		// docstring for why (round 3 P2 #1: cross-user piggybacking on a
+		// DIFFERENT user's key/failure).
+		const flightKey = inFlightCentroidKey(apiKey, code);
+		let op = inFlightCentroidFetches.get(flightKey);
+		if (!op) {
+			op = fetchAndPersistCentroid(apiKey, code);
+			inFlightCentroidFetches.set(flightKey, op);
+			// Cleanup waits for the WHOLE operation (fetch + persist), not just
+			// the raw fetch — see the docstring on inFlightCentroidFetches for
+			// why that distinction is the actual fix, not a cosmetic one.
+			op.finally(() => inFlightCentroidFetches.delete(flightKey)).catch(() => {});
+		}
 		try {
-			let fetchPromise = inFlightCentroidFetches.get(code);
-			if (!fetchPromise) {
-				fetchPromise = fetchRegionCentroid(apiKey, code);
-				inFlightCentroidFetches.set(code, fetchPromise);
-				fetchPromise.finally(() => inFlightCentroidFetches.delete(code)).catch(() => {});
-			}
-			const c = await fetchPromise;
-			if (c) {
-				await query(
-					`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
-					 ON CONFLICT (loc_code) DO UPDATE
-					 SET lat = EXCLUDED.lat, lon = EXCLUDED.lon,
-					     fetched_at = NOW(), retry_after = NULL`,
-					[code, c.lat, c.lon]
-				).catch(() => {});
-				out.set(code, c);
-			} else {
-				await query(
-					`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-					 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days')
-						 ON CONFLICT (loc_code) DO UPDATE
-						 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-						     retry_after = NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days'
-						 WHERE region_centroids.lat IS NULL`,
-					[code]
-				).catch(() => {});
-			}
+			const c = await op;
+			if (c) out.set(code, c);
 		} catch (err) {
-			if (err instanceof EbirdError && (err.status === 401 || err.status === 403 || err.status === 429)) {
-				// Account-level failure (bad/expired key, rate limit) — not a fact
-				// about this region. Every remaining code would fail identically,
-				// so stop the sweep rather than write a cooldown that poisons the
-				// SHARED cache for every other user (AGY P1).
-				break;
-			}
-			if (err instanceof EbirdError && err.status != null && err.status >= 500) {
-				// Systemic eBird-side failure, not a per-region fact either — every
-				// other in-flight code would very likely fail identically right
-				// now. Stop the sweep rather than burn the rest of this load's
-				// budget on requests doomed the same way (GROK P2).
-				break;
-			}
-			// A malformed/invalid 200 body (fetchRegionCentroid validates lat/lon
-			// range and finiteness; ebirdFetchOrNull's strictBody catches empty/
-			// non-JSON) is a DATA-QUALITY issue on eBird's side, not a blip — it
-			// will keep failing identically every retry, so it gets the same
-			// long TTL as a durable 404/410 rather than being retried daily
-			// forever (GROK P2: the original flat 1-day cooldown let exactly
-			// this case sit at the front of `missing` and re-fail every single
-			// day indefinitely).
-			const isDataQualityFailure = err instanceof EbirdError && err.status === 422;
-			const ttlDays = isDataQualityFailure
-				? CENTROID_NEGATIVE_TTL_DAYS
-				: CENTROID_TRANSIENT_COOLDOWN_DAYS;
-			await query(
-				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${ttlDays} days')
-					 ON CONFLICT (loc_code) DO UPDATE
-					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-					     retry_after = NOW() + INTERVAL '${ttlDays} days'
-					 WHERE region_centroids.lat IS NULL`,
-				[code]
-			).catch(() => {});
+			// classifyCentroidError is the ONE function fetchAndPersistCentroid
+			// also uses to decide whether to write a cooldown (self-review P2
+			// #3) — called again here (pure and deterministic, so re-evaluating
+			// it is harmless) so "what gets cooled down" and "what aborts the
+			// sweep" read from the same rule, never two independently-edited
+			// copies that could silently desync. Account-level and systemic
+			// failures abort THIS caller's own sweep (per-caller, since a
+			// different concurrent caller sharing the same op gets to make its
+			// own decision); every
+			// other class already got its per-region cooldown written inside
+			// fetchAndPersistCentroid (shared across every awaiter, exactly
+			// once), so there's nothing further to do for this code here.
+			const cls = classifyCentroidError(err);
+			if (cls === 'account' || cls === 'systemic') break;
 		}
 	}
 	return out;
