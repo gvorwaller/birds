@@ -799,3 +799,14 @@ through the backfill); missing species_enrichment row → 'pending'; empty
 offered set → 'none' not 'ok'; the cross-id index is a FULL expression index
 (a partial `? key` index can't serve `->>` joins); all 0037 DDL carries
 IF NOT EXISTS guards.
+
+---
+
+## DELIVERED (2026-08-29)
+
+Both phases shipped and the annotation wave completed. Final: 2,835 Sonnet 5
+calls / $38.03; 11,776 new notes + 1,646 preserved; 260 declines; 3,005 ok /
+508 none / 37 error (7-day lane). Post-plan deltas: reverse-support extras
+capped at MAX_SIMILAR (pre-flight found unbounded hubs at 42/64/100);
+enrichment model stays Sonnet 5 by Gaylon's live-quality verdict. Full wrap-up:
+docs/devlog/2026-08-29.md.
