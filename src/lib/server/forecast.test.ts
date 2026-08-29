@@ -660,6 +660,42 @@ describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () =
   });
 });
 
+describe("sortByProximity (picker dropdowns, 2026-08-29 follow-up)", () => {
+  const HOME = { lat: 35.0, lon: -80.0 }; // North Carolina
+  const ITEMS = [
+    { code: "AU", name: "Australia" },
+    { code: "US", name: "United States" }, // callers re-pin US separately
+    { code: "IS", name: "Iceland" },
+    { code: "NO", name: "Norway" },
+    { code: "MX", name: "Mexico" }, // no centroid cached — must rank last
+  ];
+  const CENTROIDS = new Map([
+    ["AU", { lat: -25.0, lon: 135.0 }],
+    ["US", { lat: 39.0, lon: -98.0 }],
+    ["IS", { lat: 65.0, lon: -19.0 }],
+    ["NO", { lat: 61.0, lon: 8.5 }],
+  ]);
+
+  it("orders nearest-to-home first; unknown centroids fall to the end", async () => {
+    const { sortByProximity } = await import("./forecast");
+    const sorted = sortByProximity(ITEMS, HOME, CENTROIDS);
+    expect(sorted.map((i) => i.code)).toEqual(["US", "IS", "NO", "AU", "MX"]);
+  });
+
+  it("degrades to plain alphabetical when no home is set (pre-existing behavior)", async () => {
+    const { sortByProximity } = await import("./forecast");
+    const sorted = sortByProximity(ITEMS, null, CENTROIDS);
+    expect(sorted.map((i) => i.code)).toEqual(["AU", "IS", "MX", "NO", "US"]);
+  });
+
+  it("is a pure function — never mutates the input array", async () => {
+    const { sortByProximity } = await import("./forecast");
+    const copy = [...ITEMS];
+    sortByProximity(ITEMS, HOME, CENTROIDS);
+    expect(ITEMS).toEqual(copy);
+  });
+});
+
 describe("pickTeaserCandidate", () => {
   it("prefers an adequately sampled state over a 100% n=1 state", async () => {
     const { pickTeaserCandidate } = await import("./forecast");

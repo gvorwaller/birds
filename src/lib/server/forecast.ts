@@ -1262,6 +1262,33 @@ export function pickNearestTeaserCandidate(
 	return { locCode: best.s.locCode, locName: best.s.locName, distanceKm: best.d };
 }
 
+/**
+ * Pure proximity sort for picker lists (country/region dropdowns, Gaylon
+ * 2026-08-29 follow-up to the species-page teaser): nearest-to-home first,
+ * unknown-distance entries (centroid not yet cached) fall to the end in
+ * their original relative order, tie-broken alphabetically. With no home,
+ * this degrades to a plain alphabetical sort — the pre-existing behavior for
+ * users who haven't set one.
+ */
+export function sortByProximity<T extends { code: string; name: string }>(
+	items: readonly T[],
+	home: { lat: number; lon: number } | null,
+	centroids: ReadonlyMap<string, { lat: number; lon: number }>
+): T[] {
+	const distanceOf = (code: string): number => {
+		if (!home) return 0; // irrelevant when unused below
+		const c = centroids.get(code);
+		return c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
+	};
+	return [...items].sort((a, b) => {
+		if (home) {
+			const d = distanceOf(a.code) - distanceOf(b.code);
+			if (d !== 0) return d;
+		}
+		return a.name.localeCompare(b.name);
+	});
+}
+
 export async function pickSpeciesTeaserState(
 	speciesCode: string,
 	opts: {

@@ -8,7 +8,12 @@ import {
   EbirdError,
 } from "$server/ebird";
 import { sweepAreaHotspots } from "$server/hotspot-sweep";
-import { coverageFromMeta, recentFailures } from "$server/forecast";
+import {
+  coverageFromMeta,
+  recentFailures,
+  ensureRegionCentroids,
+  sortByProximity,
+} from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
@@ -198,6 +203,18 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   );
   const hasLogin = credsRow.rows[0]?.login_set === true;
 
+  // Home location, for nearest-first picker ordering (Gaylon 2026-08-29 —
+  // "save some clicks changing country and region"). Soft: null just means
+  // both pickers fall back to their prior alphabetical order.
+  const homeRow = await query<{ home_lat: number | null; home_lon: number | null }>(
+    "SELECT home_lat, home_lon FROM users WHERE id = $1",
+    [userId],
+  );
+  const home =
+    homeRow.rows[0]?.home_lat != null && homeRow.rows[0]?.home_lon != null
+      ? { lat: homeRow.rows[0].home_lat, lon: homeRow.rows[0].home_lon }
+      : null;
+
   // Countries: drives the picker + display names for country-level groups
   // and non-US region labels. Cache-first with stale fallback (cs.md).
   let countryList: { code: string; name: string }[] = [];
@@ -213,6 +230,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
   const countryName = new Map(countryList.map((c) => [c.code, c.name]));
+  // Bounded live lookups per load, same convergence pattern as the
+  // species-page teaser — cache-only when there's no key.
+  const countryCentroids = await ensureRegionCentroids(
+    apiKey,
+    countryList.map((c) => c.code),
+    { maxFetches: 15 },
+  );
 
   const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
   let selectedCountry = DEFAULT_COUNTRY;
@@ -386,8 +410,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   if (!statesError) {
     statesError = subnat1ByCountry.find((s) => s.country === selectedCountry)?.error ?? null;
   }
-  const selectedCountryRegions =
+  const selectedCountryRegionsRaw =
     subnat1ByCountry.find((s) => s.country === selectedCountry)?.list ?? [];
+  // Nearest-first within the selected country (Gaylon 2026-08-29) — falls
+  // back to the eBird-supplied order with no home set.
+  const selectedCountryCentroids = await ensureRegionCentroids(
+    apiKey,
+    selectedCountryRegionsRaw.map((s) => s.code),
+    { maxFetches: 15 },
+  );
+  const selectedCountryRegions = sortByProximity(
+    selectedCountryRegionsRaw,
+    home,
+    selectedCountryCentroids,
+  );
 
   for (const g of groups.values()) {
     g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
@@ -526,11 +562,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     a.countryName.localeCompare(b.countryName),
   );
 
-  // US pinned first, then alphabetical by display name (AGY-accepted pin 2).
-  const sortedCountries = [...countryList].sort((a, b) => {
+  // US pinned first (AGY-accepted pin 2 — the template also pulls US into
+  // its own optgroup regardless of array position, so this only orders
+  // "All countries"); everything else nearest-home-first when home is known
+  // (Gaylon 2026-08-29), else the original alphabetical fallback.
+  const sortedCountries = sortByProximity(countryList, home, countryCentroids).sort((a, b) => {
     if (a.code === DEFAULT_COUNTRY) return -1;
     if (b.code === DEFAULT_COUNTRY) return 1;
-    return a.name.localeCompare(b.name);
+    return 0; // stable: preserves sortByProximity's ordering otherwise
   });
 
   return {

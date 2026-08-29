@@ -33,6 +33,8 @@ import {
   rankLocsForSpeciesMonth,
   recentFailures,
   speciesLocForecast,
+  ensureRegionCentroids,
+  sortByProximity,
   type RankedLoc,
 } from "$server/forecast";
 
@@ -82,6 +84,18 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   );
   const hasLogin = credsRow.rows[0]?.login_set === true;
 
+  // Home location, for nearest-first picker ordering (Gaylon 2026-08-29 —
+  // "save some clicks changing country and region"). Soft: null just means
+  // both pickers fall back to their prior alphabetical order.
+  const homeRow = await query<{ home_lat: number | null; home_lon: number | null }>(
+    "SELECT home_lat, home_lon FROM users WHERE id = $1",
+    [userId],
+  );
+  const home =
+    homeRow.rows[0]?.home_lat != null && homeRow.rows[0]?.home_lon != null
+      ? { lat: homeRow.rows[0].home_lat, lon: homeRow.rows[0].home_lon }
+      : null;
+
   // Countries (world list), for the country picker + country-level region
   // validation. Cache-first with stale fallback (cs.md).
   let countryList: { code: string; name: string }[] = [];
@@ -96,6 +110,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
           : "Could not load the country list.";
     }
   }
+  // Centroids converge over a handful of loads (bounded live lookups per
+  // load, same pattern as the species-page teaser) — cache-only when no key.
+  const countryCentroids = await ensureRegionCentroids(
+    apiKey,
+    countryList.map((c) => c.code),
+    { maxFetches: 15 },
+  );
 
   // Country param: explicit ?country=, else the selected region's own
   // country (deep links keep working), else US.
@@ -131,6 +152,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
           : "Could not load the region list.";
     }
   }
+  // Nearest-first within the selected country (Gaylon 2026-08-29): a country
+  // the size of Norway or Australia is a scroll otherwise. Falls back to
+  // the eBird-supplied (alphabetical) order with no home set.
+  const stateCentroids = await ensureRegionCentroids(
+    apiKey,
+    states.map((s) => s.code),
+    { maxFetches: 15 },
+  );
+  states = sortByProximity(states, home, stateCentroids);
 
   // Selected species (validated against the taxonomy — never echoed blindly).
   let taxon: SpeciesMatch | null = null;
@@ -426,11 +456,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // US pinned first, then alphabetical by display name (AGY-accepted pin 2).
-  const sortedCountries = [...countryList].sort((a, b) => {
+  // US pinned first (AGY-accepted pin 2 — the template also pulls US into
+  // its own optgroup regardless of array position, so this only orders
+  // "All countries"); everything else nearest-home-first when home is known
+  // (Gaylon 2026-08-29), else the original alphabetical fallback.
+  const sortedCountries = sortByProximity(countryList, home, countryCentroids).sort((a, b) => {
     if (a.code === "US") return -1;
     if (b.code === "US") return 1;
-    return a.name.localeCompare(b.name);
+    return 0; // stable: preserves sortByProximity's ordering otherwise
   });
 
   return {
