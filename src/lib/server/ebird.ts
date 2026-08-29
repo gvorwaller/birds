@@ -430,3 +430,27 @@ export async function taxonomyCount(): Promise<number> {
 	const r = await query<{ n: string }>('SELECT COUNT(*) AS n FROM taxonomy_cache');
 	return Number(r.rows[0]?.n ?? 0);
 }
+
+/**
+ * Centroid of an eBird region ('US-FL', 'NO-03', 'IS') from
+ * GET /ref/region/info/{code}. The envelope carries latitude/longitude
+ * directly (verified live 2026-08-29); bounds are ignored. null on 404/410
+ * (retired or unknown code) — callers cache hits forever, misses are cheap.
+ */
+export async function fetchRegionCentroid(
+	apiKey: string,
+	regionCode: string,
+	opts: { fetcher?: typeof fetch; signal?: AbortSignal } = {}
+): Promise<{ lat: number; lon: number } | null> {
+	if (!/^[A-Z]{2}(-[A-Za-z0-9]+)?$/.test(regionCode)) return null;
+	const info = await ebirdFetchOrNull<{ latitude?: number; longitude?: number }>(
+		`/ref/region/info/${regionCode}`,
+		apiKey,
+		{ ...opts, nullOn: [404, 410] }
+	);
+	if (!info || typeof info.latitude !== 'number' || typeof info.longitude !== 'number') {
+		return null;
+	}
+	return { lat: info.latitude, lon: info.longitude };
+}
+

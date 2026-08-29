@@ -333,7 +333,9 @@
     <section class="card">
       <h2>
         Best time of year — {ft.regionName}
-        <span class="muted">among loaded states</span>
+        <span class="muted"
+          >{ft.nearestBased ? "nearest loaded region with sightings" : "among loaded regions"}</span
+        >
         {#if ft.peakPhrase}
           <span class="muted">peaks {ft.peakPhrase}</span>
         {:else if ft.best}
@@ -352,6 +354,15 @@
       />
       {#if data.forecastTeaser.migration}
         <p class="migration">🛫 {data.forecastTeaser.migration}</p>
+      {/if}
+      {#if ft.alsoBest}
+        <p class="muted">
+          Most findable overall:
+          <a
+            href="/forecast/species?species={data.taxon
+              .species_code}&region={ft.alsoBest.locCode}">{ft.alsoBest.locName}</a
+          >
+        </p>
       {/if}
       <p class="muted">
         <a

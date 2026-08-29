@@ -12,6 +12,7 @@
  * month's 4 weeks — Σ(freqᵢ·nᵢ)/Σnᵢ — NEVER an unweighted mean (CODEX1 #2).
  */
 import { query } from '$lib/db';
+import { fetchRegionCentroid } from '$server/ebird';
 import {
 	frequencyMeta,
 	lastCompleteYear,
@@ -1169,6 +1170,11 @@ export interface SpeciesTeaserPick {
 	migration: string | null;
 	best: BestMonth | null;
 	peakPhrase: string | null;
+	/** True when the pick is proximity-based (home + centroid known). */
+	nearestBased: boolean;
+	distanceKm: number | null;
+	/** The globally most-findable region, when it differs from the pick. */
+	alsoBest: { locCode: string; locName: string } | null;
 }
 
 /**
@@ -1176,8 +1182,92 @@ export interface SpeciesTeaserPick {
  * where this species is most findable. One query for every stored
  * countrywide or subnational1 row (e.g. 'US-FL', 'NO-03', 'IS') — no N+1.
  */
+/** All stored countrywide/subnational1 frequency regions (teaser universe). */
+export async function frequencyRegionCodes(): Promise<string[]> {
+	const r = await query<{ loc_code: string }>(
+		`SELECT loc_code FROM frequency_fetch
+		  WHERE loc_kind = 'region' AND loc_code ~ '^[A-Z]{2}(-[^-]+)?$'`
+	);
+	return r.rows.map((x) => x.loc_code);
+}
+
+/**
+ * Cached region centroids, lazily filled from eBird (0039). At most
+ * `maxFetches` live lookups per call — a page load warms a few, the cache
+ * converges after a handful of loads, and a null apiKey serves cache-only.
+ * Fetch failures are soft: the region simply stays distance-unknown.
+ */
+export async function ensureRegionCentroids(
+	apiKey: string | null,
+	codes: readonly string[],
+	opts: { maxFetches?: number } = {}
+): Promise<Map<string, { lat: number; lon: number }>> {
+	const out = new Map<string, { lat: number; lon: number }>();
+	if (codes.length === 0) return out;
+	const cached = await query<{ loc_code: string; lat: number; lon: number }>(
+		`SELECT loc_code, lat, lon FROM region_centroids WHERE loc_code = ANY($1::text[])`,
+		[codes]
+	);
+	for (const row of cached.rows) out.set(row.loc_code, { lat: row.lat, lon: row.lon });
+	if (!apiKey) return out;
+	const missing = codes.filter((c) => !out.has(c)).slice(0, opts.maxFetches ?? 5);
+	for (const code of missing) {
+		try {
+			const c = await fetchRegionCentroid(apiKey, code);
+			if (c) {
+				await query(
+					`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
+					 ON CONFLICT (loc_code) DO NOTHING`,
+					[code, c.lat, c.lon]
+				);
+				out.set(code, c);
+			}
+		} catch {
+			// Soft: distance-unknown this load; retried on a later load.
+		}
+	}
+	return out;
+}
+
+/**
+ * Pure proximity picker (Gaylon 2026-08-29): the nearest region where the
+ * species is actually findable, honoring the same sampled-over-low-n
+ * discipline as pickTeaserCandidate. Regions with unknown centroids rank
+ * last (Infinity); ties break toward higher peak frequency, then loc code.
+ * Null when nothing findable has a known distance — callers fall back to
+ * the global pick.
+ */
+export function pickNearestTeaserCandidate(
+	states: readonly TeaserCandidate[],
+	home: { lat: number; lon: number },
+	centroids: ReadonlyMap<string, { lat: number; lon: number }>
+): { locCode: string; locName: string; distanceKm: number } | null {
+	const usable = states.filter((s) => !s.neverReported && s.best && s.best.freq > 0);
+	const sampled = usable.filter((s) => s.best && !s.best.lowSample);
+	const pool = sampled.length > 0 ? sampled : usable;
+	let best: { s: TeaserCandidate; d: number } | null = null;
+	for (const s of pool) {
+		const c = centroids.get(s.locCode);
+		const d = c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
+		if (
+			!best ||
+			d < best.d ||
+			(d === best.d && (s.best!.freq > best.s.best!.freq ||
+				(s.best!.freq === best.s.best!.freq && s.locCode.localeCompare(best.s.locCode) < 0)))
+		) {
+			best = { s, d };
+		}
+	}
+	if (!best || best.d === Infinity) return null;
+	return { locCode: best.s.locCode, locName: best.s.locName, distanceKm: best.d };
+}
+
 export async function pickSpeciesTeaserState(
-	speciesCode: string
+	speciesCode: string,
+	opts: {
+		home?: { lat: number; lon: number } | null;
+		centroids?: ReadonlyMap<string, { lat: number; lon: number }>;
+	} = {}
 ): Promise<SpeciesTeaserPick | null> {
 	const r = await query<{
 		loc_code: string;
@@ -1236,8 +1326,21 @@ export async function pickSpeciesTeaserState(
 			peakPhrase
 		});
 	}
-	const pick = pickTeaserCandidate(built.map((b) => b.candidate));
-	if (!pick) return null;
+	const globalPick = pickTeaserCandidate(built.map((b) => b.candidate));
+	if (!globalPick) return null;
+	// Proximity-first (Gaylon 2026-08-29): the actionable region is the one a
+	// birder can reach from home; the world's best region is a footnote, not
+	// the headline. Falls back to the global pick when home/centroids are
+	// unavailable.
+	const nearest =
+		opts.home != null
+			? pickNearestTeaserCandidate(
+					built.map((b) => b.candidate),
+					opts.home,
+					opts.centroids ?? new Map()
+				)
+			: null;
+	const pick = nearest ?? globalPick;
 	const win = built.find((b) => b.candidate.locCode === pick.locCode);
 	if (!win) return null;
 	const e = byLoc.get(pick.locCode)!;
@@ -1249,7 +1352,13 @@ export async function pickSpeciesTeaserState(
 		weeks,
 		migration: migrationSentence(weeks),
 		best: win.candidate.best,
-		peakPhrase: win.peakPhrase
+		peakPhrase: win.peakPhrase,
+		nearestBased: nearest != null,
+		distanceKm: nearest?.distanceKm ?? null,
+		alsoBest:
+			nearest != null && globalPick.locCode !== nearest.locCode
+				? { locCode: globalPick.locCode, locName: globalPick.locName }
+				: null
 	};
 }
 

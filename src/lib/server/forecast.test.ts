@@ -597,6 +597,69 @@ describe("majorityRegionCode", () => {
   });
 });
 
+describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () => {
+  const HOME = { lat: 35.0, lon: -80.0 };
+  const cand = (locCode: string, freq: number, lowSample = false) => ({
+    locCode,
+    locName: locCode,
+    best: { month: 4, freq, lowSample },
+    neverReported: false,
+  });
+  const centroids = new Map([
+    ["US-NC", { lat: 35.5, lon: -79.5 }], // ~75 km
+    ["US-FL", { lat: 28.0, lon: -82.0 }], // ~800 km
+    ["AU-QLD", { lat: -22.0, lon: 144.0 }], // far side of the planet
+  ]);
+
+  it("nearest findable region wins even when a farther one is far more findable", async () => {
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    const pick = pickNearestTeaserCandidate(
+      [cand("AU-QLD", 0.6), cand("US-FL", 0.3), cand("US-NC", 0.02)],
+      HOME,
+      centroids,
+    );
+    expect(pick?.locCode).toBe("US-NC");
+    expect(pick?.distanceKm).toBeGreaterThan(0);
+    expect(pick?.distanceKm).toBeLessThan(200);
+  });
+
+  it("keeps the sampled-over-low-n discipline: a low-sample nearby region loses to a sampled farther one", async () => {
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    const pick = pickNearestTeaserCandidate(
+      [cand("US-NC", 0.4, true), cand("US-FL", 0.3)],
+      HOME,
+      centroids,
+    );
+    expect(pick?.locCode).toBe("US-FL");
+  });
+
+  it("unknown centroids rank last; all-unknown returns null (caller falls back to global pick)", async () => {
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    const pick = pickNearestTeaserCandidate(
+      [cand("XX-ZZ", 0.9), cand("US-FL", 0.1)],
+      HOME,
+      centroids,
+    );
+    expect(pick?.locCode).toBe("US-FL");
+    expect(
+      pickNearestTeaserCandidate([cand("XX-ZZ", 0.9)], HOME, centroids),
+    ).toBeNull();
+  });
+
+  it("never picks a never-reported or zero-frequency region no matter how close", async () => {
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    const pick = pickNearestTeaserCandidate(
+      [
+        { locCode: "US-NC", locName: "US-NC", best: null, neverReported: true },
+        cand("US-FL", 0.2),
+      ],
+      HOME,
+      centroids,
+    );
+    expect(pick?.locCode).toBe("US-FL");
+  });
+});
+
 describe("pickTeaserCandidate", () => {
   it("prefers an adequately sampled state over a 100% n=1 state", async () => {
     const { pickTeaserCandidate } = await import("./forecast");

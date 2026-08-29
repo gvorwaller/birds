@@ -30,7 +30,12 @@ import {
   type SpeciesObservationDetail,
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
-import { goodMonths, pickSpeciesTeaserState } from "$server/forecast";
+import {
+  goodMonths,
+  pickSpeciesTeaserState,
+  ensureRegionCentroids,
+  frequencyRegionCodes,
+} from "$server/forecast";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -110,7 +115,17 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
-  const teaserP = pickSpeciesTeaserState(code);
+  // Proximity-first teaser (Gaylon 2026-08-29): centroids warm lazily
+  // (<=5 eBird lookups per load, cached forever), then the pick prefers the
+  // region nearest the active origin — the searched place when one is set,
+  // else saved home. Key-less users get cache-only centroids.
+  const teaserP = (async () => {
+    const centroids = await ensureRegionCentroids(
+      apiKey,
+      await frequencyRegionCodes(),
+    );
+    return pickSpeciesTeaserState(code, { home: origin, centroids });
+  })();
   if (apiKey && origin) {
     try {
       const [recentResult, notableResult] = await Promise.allSettled([
@@ -224,6 +239,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     peakPhrase: string | null;
     /** Months within 80% of the peak — the "good window". */
     good: number[];
+    nearestBased: boolean;
+    distanceKm: number | null;
+    alsoBest: { locCode: string; locName: string } | null;
   } | null = null;
   const teaserState = await teaserP;
   if (teaserState && teaserState.best) {
@@ -236,6 +254,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       best: teaserState.best,
       peakPhrase: teaserState.peakPhrase,
       good: goodMonths(teaserState.curve),
+      nearestBased: teaserState.nearestBased,
+      distanceKm: teaserState.distanceKm,
+      alsoBest: teaserState.alsoBest,
     };
   }
 
