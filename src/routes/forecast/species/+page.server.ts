@@ -467,6 +467,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   return {
     q,
+    hasHome: home != null,
     speciesMatches,
     searchScope,
     searchFellBack,

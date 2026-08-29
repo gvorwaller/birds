@@ -1101,7 +1101,7 @@
                   <option value={usCountry.code}>{usCountry.name}</option>
                 </optgroup>
               {/if}
-              <optgroup label="All countries">
+              <optgroup label={data.hasHome ? "All countries (nearest first)" : "All countries"}>
                 {#each otherCountries as c (c.code)}
                   <option value={c.code}>{c.name}</option>
                 {/each}

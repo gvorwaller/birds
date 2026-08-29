@@ -5,6 +5,18 @@ const centroidMocks = vi.hoisted(() => ({
   fetchRegionCentroid: vi.fn(),
 }));
 
+const { MockEbirdError } = vi.hoisted(() => {
+  class MockEbirdError extends Error {
+    status?: number;
+    constructor(message: string, status?: number) {
+      super(message);
+      this.name = "EbirdError";
+      this.status = status;
+    }
+  }
+  return { MockEbirdError };
+});
+
 vi.mock("$lib/db", () => ({
   query: centroidMocks.query,
   withTransaction: vi.fn(),
@@ -13,6 +25,7 @@ vi.mock("$server/ebird", () => ({
   fetchRegionCentroid: centroidMocks.fetchRegionCentroid,
   hotspotsNear: vi.fn(),
   subregions: vi.fn(),
+  EbirdError: MockEbirdError,
 }));
 import {
   FORECAST_HOTSPOT_LIMIT,
@@ -812,7 +825,7 @@ describe("ensureRegionCentroids", () => {
     const writes = centroidMocks.query.mock.calls
       .slice(1)
       .map((c) => c[0] as string);
-    expect(writes.some((sql) => sql.includes("INTERVAL '1 day'"))).toBe(true);
+    expect(writes.some((sql) => sql.includes("INTERVAL '1 days'"))).toBe(true);
     expect(writes.some((sql) => sql.includes("SET lat = EXCLUDED.lat"))).toBe(
       true,
     );
@@ -854,6 +867,68 @@ describe("ensureRegionCentroids", () => {
       budget: { remaining: -1 },
     });
     expect(centroidMocks.fetchRegionCentroid).not.toHaveBeenCalled();
+  });
+
+  it("persists a durable 404/410 miss with a re-checkable TTL, not a permanent NULL retry_after (AGY P1)", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    centroidMocks.fetchRegionCentroid.mockResolvedValue(null);
+    await ensureRegionCentroids("key", ["RETIRED"], { maxFetches: 5 });
+    const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
+    // A NULL/no-expiry retry_after here would mean a code invalid today (or
+    // briefly misreported) stays negative-cached forever with no recovery.
+    expect(writes.some((sql) => sql.includes("retry_after"))).toBe(true);
+    expect(writes.some((sql) => /INTERVAL '\d+ days'/.test(sql))).toBe(true);
+  });
+
+  it("aborts the whole sweep on an account-level failure instead of poisoning the shared cache (AGY P1)", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    centroidMocks.fetchRegionCentroid.mockRejectedValue(
+      new MockEbirdError("eBird API key is missing or invalid.", 403),
+    );
+    await ensureRegionCentroids("bad-key", ["A", "B", "C"], { maxFetches: 5 });
+    // A bad key fails identically for every remaining code — one attempt,
+    // not one cooldown write per code in the shared table.
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
+    const cooldownWrites = centroidMocks.query.mock.calls
+      .slice(1)
+      .filter((c) => (c[0] as string).includes("retry_after"));
+    expect(cooldownWrites).toHaveLength(0);
+  });
+
+  it("still cools down a per-region transient failure that is NOT an account-level error", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    centroidMocks.fetchRegionCentroid.mockRejectedValue(new Error("network blip"));
+    await ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
+    const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
+    expect(writes.some((sql) => sql.includes("retry_after"))).toBe(true);
+  });
+
+  it("de-dupes concurrent live lookups for the same code across overlapping calls (AGY P2)", async () => {
+    const { ensureRegionCentroids } = await import("./forecast");
+    centroidMocks.query.mockResolvedValue({ rows: [] });
+    let resolveFetch!: (v: { lat: number; lon: number }) => void;
+    const deferred = new Promise<{ lat: number; lon: number }>((res) => {
+      resolveFetch = res;
+    });
+    centroidMocks.fetchRegionCentroid.mockReturnValue(deferred);
+
+    const callA = ensureRegionCentroids("key", ["SHARED"], { maxFetches: 5 });
+    // Flush microtasks/macrotasks so callA runs past its cache-check query
+    // and reaches (and registers) the in-flight fetch BEFORE callB starts —
+    // otherwise this test can't distinguish "coalesced" from "both raced
+    // the cache-miss check before either registered."
+    await new Promise((r) => setImmediate(r));
+    const callB = ensureRegionCentroids("key", ["SHARED"], { maxFetches: 5 });
+
+    resolveFetch({ lat: 9, lon: 9 });
+    const [a, b] = await Promise.all([callA, callB]);
+
+    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
+    expect(a.get("SHARED")).toEqual({ lat: 9, lon: 9 });
+    expect(b.get("SHARED")).toEqual({ lat: 9, lon: 9 });
   });
 });
 

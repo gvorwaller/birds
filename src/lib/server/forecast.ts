@@ -12,7 +12,7 @@
  * month's 4 weeks — Σ(freqᵢ·nᵢ)/Σnᵢ — NEVER an unweighted mean (CODEX1 #2).
  */
 import { query } from '$lib/db';
-import { fetchRegionCentroid } from '$server/ebird';
+import { fetchRegionCentroid, EbirdError } from '$server/ebird';
 import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
 import { hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
 import { seenSet } from '$server/needs';
@@ -1212,12 +1212,35 @@ export async function frequencyRegionCodes(): Promise<string[]> {
 	return r.rows.map((x) => x.loc_code);
 }
 
+/** How long a 404/410 ("no such region") stays cached before re-checking —
+ * matches REGION_TTL_MIN (ebird.ts): political subdivisions barely change,
+ * but eBird DOES occasionally split/rename/add a code, and AGY's review
+ * (2026-08-29) correctly flagged that a NULL retry_after here meant a code
+ * invalid today stays negative-cached forever with no recovery path. */
+const CENTROID_NEGATIVE_TTL_DAYS = 30;
+/** Cooldown for a transient failure (network blip, 5xx) before retrying the
+ * SAME region code — short, because the failure is expected to clear soon. */
+const CENTROID_TRANSIENT_COOLDOWN_DAYS = 1;
+
+/** Process-local de-dup for concurrent identical live lookups (AGY P2: two
+ * tabs / a fast back-button loading the same page can both find the same
+ * missing code before either write lands). Scoped to one worker process —
+ * cross-process races still just do one extra harmless eBird call. */
+const inFlightCentroidFetches = new Map<string, Promise<{ lat: number; lon: number } | null>>();
+
 /**
- * Cached region centroids, lazily filled from eBird (0039). At most
+ * Cached region centroids, lazily filled from eBird (0039/0040). At most
  * `maxFetches` live lookups per call; callers can share a mutable `budget`
  * across picker levels to enforce a whole-page cap. Durable misses and
- * transient cooldowns let later codes converge instead of starving behind a
- * bad prefix. A null apiKey serves cache-only.
+ * transient cooldowns both carry a TTL so a bad or since-corrected code
+ * eventually re-checks instead of starving behind it forever. A null apiKey
+ * serves cache-only. An account-level failure (bad key, rate limit) aborts
+ * the whole sweep instead of writing a per-region cooldown — the failure
+ * says nothing about whether THIS region's centroid is valid, and every
+ * other in-flight code would fail identically anyway (AGY P1: the original
+ * catch-all would have cooled down up to `maxFetches` unrelated regions for
+ * 24h off a single bad key, degrading the picker for every subsequent
+ * request on that shared cache).
  */
 export async function ensureRegionCentroids(
 	apiKey: string | null,
@@ -1256,7 +1279,13 @@ export async function ensureRegionCentroids(
 	for (const code of missing) {
 		if (opts.budget) opts.budget.remaining = Math.max(0, opts.budget.remaining - 1);
 		try {
-			const c = await fetchRegionCentroid(apiKey, code);
+			let fetchPromise = inFlightCentroidFetches.get(code);
+			if (!fetchPromise) {
+				fetchPromise = fetchRegionCentroid(apiKey, code);
+				inFlightCentroidFetches.set(code, fetchPromise);
+				fetchPromise.finally(() => inFlightCentroidFetches.delete(code)).catch(() => {});
+			}
+			const c = await fetchPromise;
 			if (c) {
 				await query(
 					`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
@@ -1269,22 +1298,31 @@ export async function ensureRegionCentroids(
 			} else {
 				await query(
 					`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-					 VALUES ($1, NULL, NULL, NULL)
+					 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days')
 						 ON CONFLICT (loc_code) DO UPDATE
-						 SET lat = NULL, lon = NULL, fetched_at = NOW(), retry_after = NULL
+						 SET lat = NULL, lon = NULL, fetched_at = NOW(),
+						     retry_after = NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days'
 						 WHERE region_centroids.lat IS NULL`,
 					[code]
 				).catch(() => {});
 			}
-		} catch {
-			// Cool transient failures down so one bad prefix cannot starve the
-			// tail of a large country list on every page load.
+		} catch (err) {
+			if (err instanceof EbirdError && (err.status === 401 || err.status === 403 || err.status === 429)) {
+				// Account-level failure (bad/expired key, rate limit) — not a fact
+				// about this region. Every remaining code would fail identically,
+				// so stop the sweep rather than write a cooldown that poisons the
+				// SHARED cache for every other user (AGY P1).
+				break;
+			}
+			// A per-region transient failure (network blip, 5xx from eBird) cools
+			// down briefly so one bad prefix cannot starve the tail of a large
+			// country list on every page load, while still re-checking soon.
 			await query(
 				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '1 day')
+				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_TRANSIENT_COOLDOWN_DAYS} days')
 					 ON CONFLICT (loc_code) DO UPDATE
 					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-					     retry_after = NOW() + INTERVAL '1 day'
+					     retry_after = NOW() + INTERVAL '${CENTROID_TRANSIENT_COOLDOWN_DAYS} days'
 					 WHERE region_centroids.lat IS NULL`,
 				[code]
 			).catch(() => {});

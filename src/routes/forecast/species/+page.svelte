@@ -245,7 +245,7 @@
               <option value={usCountry.code}>{usCountry.name}</option>
             </optgroup>
           {/if}
-          <optgroup label="All countries">
+          <optgroup label={data.hasHome ? "All countries (nearest first)" : "All countries"}>
             {#each otherCountries as c (c.code)}
               <option value={c.code}>{c.name}</option>
             {/each}
@@ -274,7 +274,10 @@
         {/if}
       </div>
       <div class="row">
-        <label for="region">Region</label>
+        <label for="region"
+          >Region{#if data.hasHome}<span class="muted"> (nearest first)</span
+            >{/if}</label
+        >
         <select id="region" name="region">
           <option value="">Choose a region…</option>
           {#if data.country !== "US"}
@@ -899,6 +902,11 @@
     color: var(--muted);
     margin: 0 0 16px;
     font-size: 0.92rem;
+  }
+  .muted {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 0.85em;
   }
   .card {
     background: var(--card);

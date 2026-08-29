@@ -577,6 +577,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   );
 
   return {
+    hasHome: home != null,
     stateGroups,
     countrySections: sortedCountrySections,
     orphanHotspots,

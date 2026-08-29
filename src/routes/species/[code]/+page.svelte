@@ -333,9 +333,18 @@
     <section class="card">
       <h2>
         Best time of year — {ft.regionName}
-        <span class="muted"
-          >{ft.nearestBased ? "nearest loaded region with sightings" : "among loaded regions"}</span
-        >
+        <span class="muted">
+          {#if ft.nearestBased && ft.distanceKm != null}
+            nearest loaded region with sightings · ~{formatDistance(
+              ft.distanceKm,
+              distanceUnit,
+            )} away
+          {:else if ft.nearestBased}
+            nearest loaded region with sightings
+          {:else}
+            among loaded regions
+          {/if}
+        </span>
         {#if ft.peakPhrase}
           <span class="muted">peaks {ft.peakPhrase}</span>
         {:else if ft.best}
