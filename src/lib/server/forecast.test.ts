@@ -602,7 +602,7 @@ describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () =
   const cand = (locCode: string, freq: number, lowSample = false) => ({
     locCode,
     locName: locCode,
-    best: { month: 4, freq, lowSample },
+    best: { month: 4, freq, n: 100, lowSample },
     neverReported: false,
   });
   const centroids = new Map([
