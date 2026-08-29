@@ -1198,20 +1198,6 @@ export interface SpeciesTeaserPick {
 	alsoBest: { locCode: string; locName: string } | null;
 }
 
-/**
- * Among loaded subnational1 regions and whole-country loads, pick the one
- * where this species is most findable. One query for every stored
- * countrywide or subnational1 row (e.g. 'US-FL', 'NO-03', 'IS') — no N+1.
- */
-/** All stored countrywide/subnational1 frequency regions (teaser universe). */
-export async function frequencyRegionCodes(): Promise<string[]> {
-	const r = await query<{ loc_code: string }>(
-		`SELECT loc_code FROM frequency_fetch
-		  WHERE loc_kind = 'region' AND loc_code ~ '^[A-Z]{2}(-[^-]+)?$'`
-	);
-	return r.rows.map((x) => x.loc_code);
-}
-
 /** How long a 404/410 ("no such region") stays cached before re-checking —
  * matches REGION_TTL_MIN (ebird.ts): political subdivisions barely change,
  * but eBird DOES occasionally split/rename/add a code, and AGY's review
@@ -1314,15 +1300,31 @@ export async function ensureRegionCentroids(
 				// SHARED cache for every other user (AGY P1).
 				break;
 			}
-			// A per-region transient failure (network blip, 5xx from eBird) cools
-			// down briefly so one bad prefix cannot starve the tail of a large
-			// country list on every page load, while still re-checking soon.
+			if (err instanceof EbirdError && err.status != null && err.status >= 500) {
+				// Systemic eBird-side failure, not a per-region fact either — every
+				// other in-flight code would very likely fail identically right
+				// now. Stop the sweep rather than burn the rest of this load's
+				// budget on requests doomed the same way (GROK P2).
+				break;
+			}
+			// A malformed/invalid 200 body (fetchRegionCentroid validates lat/lon
+			// range and finiteness; ebirdFetchOrNull's strictBody catches empty/
+			// non-JSON) is a DATA-QUALITY issue on eBird's side, not a blip — it
+			// will keep failing identically every retry, so it gets the same
+			// long TTL as a durable 404/410 rather than being retried daily
+			// forever (GROK P2: the original flat 1-day cooldown let exactly
+			// this case sit at the front of `missing` and re-fail every single
+			// day indefinitely).
+			const isDataQualityFailure = err instanceof EbirdError && err.status === 422;
+			const ttlDays = isDataQualityFailure
+				? CENTROID_NEGATIVE_TTL_DAYS
+				: CENTROID_TRANSIENT_COOLDOWN_DAYS;
 			await query(
 				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_TRANSIENT_COOLDOWN_DAYS} days')
+				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${ttlDays} days')
 					 ON CONFLICT (loc_code) DO UPDATE
 					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-					     retry_after = NOW() + INTERVAL '${CENTROID_TRANSIENT_COOLDOWN_DAYS} days'
+					     retry_after = NOW() + INTERVAL '${ttlDays} days'
 					 WHERE region_centroids.lat IS NULL`,
 				[code]
 			).catch(() => {});
@@ -1332,22 +1334,37 @@ export async function ensureRegionCentroids(
 }
 
 /**
+ * The subset of candidates that could actually win pickTeaserCandidate's /
+ * pickNearestTeaserCandidate's sampled-over-low-n selection. Shared so a
+ * caller can geocode exactly this set (GROK P1/P2, 2026-08-29) rather than
+ * an entire picker universe most of which could never win anyway.
+ */
+function teaserPool(states: readonly TeaserCandidate[]): TeaserCandidate[] {
+	const usable = states.filter((s) => !s.neverReported && s.best && s.best.freq > 0);
+	const sampled = usable.filter((s) => s.best && !s.best.lowSample);
+	return sampled.length > 0 ? sampled : usable;
+}
+
+/**
  * Pure proximity picker (Gaylon 2026-08-29): the nearest region where the
  * species is actually findable, honoring the same sampled-over-low-n
- * discipline as pickTeaserCandidate. Regions with unknown centroids rank
- * last (Infinity); ties break toward higher peak frequency, checklist count,
- * then loc code.
- * Null when nothing findable has a known distance — callers fall back to
- * the global pick.
+ * discipline as pickTeaserCandidate. Ties break toward higher peak
+ * frequency, checklist count, then loc code.
+ *
+ * Returns null — falling back to the global pick — whenever ANY pool member
+ * lacks a known centroid (GROK P1, 2026-08-29): with the cache still
+ * warming, an uncached region could easily be the true nearest one, so
+ * confidently naming a farther KNOWN region as "nearest" would be an
+ * honest-looking but false claim, not a best-effort approximation. Also
+ * null when the pool itself is empty.
  */
 export function pickNearestTeaserCandidate(
 	states: readonly TeaserCandidate[],
 	home: { lat: number; lon: number },
 	centroids: ReadonlyMap<string, { lat: number; lon: number }>
 ): { locCode: string; locName: string; distanceKm: number } | null {
-	const usable = states.filter((s) => !s.neverReported && s.best && s.best.freq > 0);
-	const sampled = usable.filter((s) => s.best && !s.best.lowSample);
-	const pool = sampled.length > 0 ? sampled : usable;
+	const pool = teaserPool(states);
+	if (pool.length === 0 || pool.some((s) => !centroids.has(s.locCode))) return null;
 	let best: { s: TeaserCandidate; d: number } | null = null;
 	for (const s of pool) {
 		const c = centroids.get(s.locCode);
@@ -1410,7 +1427,14 @@ export async function pickSpeciesTeaserState(
 	speciesCode: string,
 	opts: {
 		home?: { lat: number; lon: number } | null;
-		centroids?: ReadonlyMap<string, { lat: number; lon: number }>;
+		/** eBird API key for lazily warming centroids of THIS species' own
+		 * candidate pool (GROK P1/P2, 2026-08-29) — never the whole teaser
+		 * universe, which is typically far larger than one species is even
+		 * reported in and made "nearest" wrong while it warmed. null/absent
+		 * serves cache-only. */
+		apiKey?: string | null;
+		/** Shared fetch allowance across multiple calls on the same page load. */
+		centroidBudget?: { remaining: number };
 	} = {}
 ): Promise<SpeciesTeaserPick | null> {
 	const r = await query<{
@@ -1476,16 +1500,21 @@ export async function pickSpeciesTeaserState(
 	if (!globalPick) return null;
 	// Proximity-first (Gaylon 2026-08-29): the actionable region is the one a
 	// birder can reach from home; the world's best region is a footnote, not
-	// the headline. Falls back to the global pick when home/centroids are
-	// unavailable.
-	const nearest =
-		opts.home != null
-			? pickNearestTeaserCandidate(
-					built.map((b) => b.candidate),
-					opts.home,
-					opts.centroids ?? new Map()
-				)
-			: null;
+	// the headline. Falls back to the global pick when home is unavailable —
+	// or when the SPECIES' OWN candidate pool (not the whole teaser universe;
+	// GROK P1/P2) isn't fully geocoded yet, since pickNearestTeaserCandidate
+	// itself refuses to guess "nearest" with holes in that specific pool.
+	let nearest = null;
+	if (opts.home != null) {
+		const candidates = built.map((b) => b.candidate);
+		const pool = teaserPool(candidates);
+		const centroids = await ensureRegionCentroids(
+			opts.apiKey ?? null,
+			pool.map((s) => s.locCode),
+			{ maxFetches: 5, budget: opts.centroidBudget }
+		);
+		nearest = pickNearestTeaserCandidate(candidates, opts.home, centroids);
+	}
 	const pick = nearest ?? globalPick;
 	const win = built.find((b) => b.candidate.locCode === pick.locCode);
 	if (!win) return null;

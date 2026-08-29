@@ -30,12 +30,7 @@ import {
   type SpeciesObservationDetail,
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
-import {
-  goodMonths,
-  pickSpeciesTeaserState,
-  ensureRegionCentroids,
-  frequencyRegionCodes,
-} from "$server/forecast";
+import { goodMonths, pickSpeciesTeaserState } from "$server/forecast";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -115,17 +110,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
-  // Proximity-first teaser (Gaylon 2026-08-29): centroids warm lazily
-  // (<=5 eBird lookups per load, cached forever), then the pick prefers the
-  // region nearest the active origin — the searched place when one is set,
-  // else saved home. Key-less users get cache-only centroids.
-  const teaserP = (async () => {
-    const centroids = await ensureRegionCentroids(
-      apiKey,
-      await frequencyRegionCodes(),
-    );
-    return pickSpeciesTeaserState(code, { home: origin, centroids });
-  })();
+  // Proximity-first teaser (Gaylon 2026-08-29): pickSpeciesTeaserState warms
+  // centroids for just THIS species' own candidate regions (GROK P1/P2,
+  // 2026-08-29 — not the whole teaser universe, which is typically far
+  // larger than one species is even reported in, and made "nearest" wrong
+  // while the rest of it warmed). Prefers the region nearest the active
+  // origin — the searched place when one is set, else saved home. Key-less
+  // users get cache-only centroids.
+  const teaserP = pickSpeciesTeaserState(code, { home: origin, apiKey });
   if (apiKey && origin) {
     try {
       const [recentResult, notableResult] = await Promise.allSettled([

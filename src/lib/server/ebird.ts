@@ -101,13 +101,21 @@ export async function ebirdFetchOrNull<T>(
 	// (td-2fbfc1 root cause). Parse safely: empty or non-JSON 200 → null.
 	const body = await res.text();
 	if (!body.trim()) {
-		if (opts.strictBody) throw new EbirdError(`eBird API returned an empty response for ${path}`);
+		// Status 422 marks this as a DATA-QUALITY failure (the request/response
+		// cycle succeeded; the content is unusable) rather than a network blip —
+		// callers that distinguish the two (e.g. forecast.ts's centroid cache)
+		// treat it as durable, not something to retry every day forever.
+		if (opts.strictBody) {
+			throw new EbirdError(`eBird API returned an empty response for ${path}`, 422);
+		}
 		return null;
 	}
 	try {
 		return JSON.parse(body) as T;
 	} catch {
-		if (opts.strictBody) throw new EbirdError(`eBird API returned invalid JSON for ${path}`);
+		if (opts.strictBody) {
+			throw new EbirdError(`eBird API returned invalid JSON for ${path}`, 422);
+		}
 		return null;
 	}
 }
@@ -478,7 +486,12 @@ export async function fetchRegionCentroid(
 		info.longitude < -180 ||
 		info.longitude > 180
 	) {
-		throw new EbirdError(`eBird region info returned invalid coordinates for ${regionCode}`);
+		// Status 422: a data-quality problem with THIS record, not a blip —
+		// see the strictBody throws above for why callers key off this.
+		throw new EbirdError(
+			`eBird region info returned invalid coordinates for ${regionCode}`,
+			422
+		);
 	}
 	return { lat: info.latitude, lon: info.longitude };
 }

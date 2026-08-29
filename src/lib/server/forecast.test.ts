@@ -674,17 +674,33 @@ describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () =
     expect(pick?.locCode).toBe("US-FL");
   });
 
-  it("unknown centroids rank last; all-unknown returns null (caller falls back to global pick)", async () => {
+  it("refuses to guess when ANY pool member lacks a centroid — even a much weaker one (GROK P1, 2026-08-29)", async () => {
+    // The old behavior ranked unknowns last and picked the best KNOWN region.
+    // That is an honest-looking but false "nearest" claim: XX-ZZ (unknown
+    // distance) could easily be closer than US-FL — we simply don't know
+    // yet. Any hole in the pool's coverage must fall back to the global pick
+    // instead of picking among a partially-known subset.
+    const { pickNearestTeaserCandidate } = await import("./forecast");
+    expect(
+      pickNearestTeaserCandidate(
+        [cand("XX-ZZ", 0.9), cand("US-FL", 0.1)],
+        HOME,
+        centroids,
+      ),
+    ).toBeNull();
+    expect(
+      pickNearestTeaserCandidate([cand("XX-ZZ", 0.9)], HOME, centroids),
+    ).toBeNull();
+  });
+
+  it("picks confidently once every pool member IS geocoded", async () => {
     const { pickNearestTeaserCandidate } = await import("./forecast");
     const pick = pickNearestTeaserCandidate(
-      [cand("XX-ZZ", 0.9), cand("US-FL", 0.1)],
+      [cand("AU-QLD", 0.9), cand("US-FL", 0.1)],
       HOME,
       centroids,
     );
     expect(pick?.locCode).toBe("US-FL");
-    expect(
-      pickNearestTeaserCandidate([cand("XX-ZZ", 0.9)], HOME, centroids),
-    ).toBeNull();
   });
 
   it("never picks a never-reported or zero-frequency region no matter how close", async () => {
