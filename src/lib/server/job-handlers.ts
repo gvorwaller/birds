@@ -1000,7 +1000,7 @@ async function enqueueEnrichmentChunks(
 						>,
 						dedupKey: dedupKeys.enrichAiChunk(codes),
 						requestedBy: adminId,
-						label: `${codes.length} species (AI)`
+						label: `${codes.length} species`
 					})
 			},
 			{
@@ -1976,7 +1976,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 						} satisfies EnrichPayload as unknown as Record<string, unknown>,
 						dedupKey: dedupKeys.enrichAiChunk(remediation),
 						requestedBy: job.requested_by,
-						label: `${remediation.length} species (AI remediation)`,
+						label: `${remediation.length} species (remediation)`,
 						runAfterMs: aiRateLimited ? (aiRetryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS) : 0
 					});
 					await recordEvent(job.id, 'progress', { aiRemediation: remediation.length });

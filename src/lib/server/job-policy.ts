@@ -359,8 +359,16 @@ const TYPE_NAMES: Record<string, string> = {
 	enrich_species_inat: 'Species confusion data'
 };
 
-export function displayName(job: Pick<JobRow, 'type' | 'label'>): string {
-	const base = TYPE_NAMES[job.type] ?? job.type;
+export function displayName(
+	job: Pick<JobRow, 'type' | 'label'> & { payload?: unknown }
+): string {
+	// aiOnly chunks share the enrich_species TYPE but do no wiki work — showing
+	// them as "Species data" made the annotation wave look like a mass re-fetch
+	// (Gaylon 2026-08-29). The payload is the truth; label text is not.
+	const aiOnly =
+		job.type === 'enrich_species' &&
+		(job.payload as { aiOnly?: boolean } | null | undefined)?.aiOnly === true;
+	const base = aiOnly ? 'Species notes (AI)' : (TYPE_NAMES[job.type] ?? job.type);
 	return job.label ? `${base} — ${job.label}` : base;
 }
 

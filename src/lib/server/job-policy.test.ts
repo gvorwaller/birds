@@ -35,6 +35,17 @@ function failure(kind: UnitFailure["kind"], code = "L1"): UnitFailure {
   return { code, error: `${kind} problem`, kind };
 }
 
+describe("displayName — aiOnly enrich_species jobs get their own name (Gaylon 2026-08-29)", () => {
+  it("brands aiOnly payloads as Species notes (AI), wiki payloads as Species data", () => {
+    expect(displayName({ type: "enrich_species", label: "20 species", payload: { aiOnly: true } }))
+      .toBe("Species notes (AI) — 20 species");
+    expect(displayName({ type: "enrich_species", label: "20 species", payload: { codes: [] } }))
+      .toBe("Species data — 20 species");
+    // Payload absent (older callers) degrades to the type name, never throws.
+    expect(displayName({ type: "enrich_species", label: "x" })).toBe("Species data — x");
+  });
+});
+
 describe("retryDelayMs", () => {
   it("walks the transient schedule and clamps at the last entry", () => {
     expect(retryDelayMs(1, "transient")).toBe(TRANSIENT_RETRY_DELAYS_MS[0]);

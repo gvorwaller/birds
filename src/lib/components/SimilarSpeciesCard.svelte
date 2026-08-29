@@ -121,7 +121,8 @@
 
 {#if showCard}
 	<section class="card">
-		<h2>Similar species</h2>
+		<details class="sim-collapse" open>
+			<summary><h2>Similar species</h2></summary>
 		{#if similar.length > 0}
 			<div class="similar-list">
 				{#each similar as item (item.species_code)}
@@ -169,6 +170,7 @@
 			<a href="https://www.inaturalist.org" target="_blank" rel="noopener">iNaturalist</a>
 			observer misidentifications · notes AI-generated · verify in the field
 		</p>
+		</details>
 	</section>
 {/if}
 
@@ -182,7 +184,27 @@
 	}
 	.card h2 {
 		font-size: 1.05rem;
-		margin-bottom: 10px;
+		margin: 0;
+	}
+	.sim-collapse summary {
+		min-height: 48px;
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+		list-style: none;
+	}
+	.sim-collapse summary::-webkit-details-marker {
+		display: none;
+	}
+	.sim-collapse summary::after {
+		content: '▸';
+		margin-left: auto;
+		padding-left: 12px;
+		color: var(--accent);
+		font-size: 1.1em;
+	}
+	.sim-collapse[open] summary::after {
+		content: '▾';
 	}
 	.state-note {
 		font-size: 0.86rem;

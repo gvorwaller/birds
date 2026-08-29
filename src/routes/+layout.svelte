@@ -412,11 +412,23 @@
 		right: 0;
 		z-index: 1000;
 		background: rgba(255, 255, 255, 0.96);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
 		border-top: 1px solid var(--border);
 		display: flex;
 		padding-bottom: env(safe-area-inset-bottom);
+		/* iOS Safari: backdrop-filter directly on a position:fixed element is a
+		   known WebKit repaint-detach trigger — the bar intermittently paints
+		   mid-viewport after fast scrolls / URL-bar collapse (Gaylon's phone,
+		   2026-08-29). The blur lives on a ::before layer instead, and the
+		   transform pins the nav to its own compositor layer. */
+		transform: translateZ(0);
+	}
+	.bottom-nav::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
 	}
 	.bottom-nav a,
 	.more-btn {
