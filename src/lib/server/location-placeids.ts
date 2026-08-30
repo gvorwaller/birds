@@ -1,4 +1,5 @@
 import { env } from "$env/dynamic/private";
+import { timed } from "$server/request-timing";
 import { query } from "$lib/db";
 import { placeNameScore } from "$lib/place-name";
 
@@ -178,7 +179,9 @@ async function googlePlacesTextSearch(
   url.searchParams.set("location", `${loc.lat},${loc.lng}`);
   url.searchParams.set("radius", String(Math.round(radiusM)));
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  const res = await timed("google", () =>
+    fetch(url, { signal: AbortSignal.timeout(5000) }),
+  );
   if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
   const data = (await res.json()) as GooglePlacesTextResponse;
   if (data.status === "ZERO_RESULTS") return [];

@@ -3,6 +3,14 @@ import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
 import { scopeOwnerId } from '$server/access';
 import { dev } from '$app/environment';
+import {
+	newTimingBag,
+	PERF_LOG_SLOW_MS,
+	perfLogLine,
+	runWithTiming,
+	serverTimingHeader,
+	type TimingBag
+} from '$server/request-timing';
 
 export const SESSION_COOKIE_OPTS = {
 	path: '/',
@@ -84,7 +92,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (path.startsWith('/settings')) throw redirect(303, '/');
 	}
 
-	const response = await resolve(event);
+	// Latency accounting (refactor plan Phase 1): the bag rides the request
+	// via AsyncLocalStorage; db/eBird/Google/AI chokepoints record into it.
+	const bag = newTimingBag();
+	const response = await runWithTiming(bag, () => resolve(event));
 	// SSR responses previously carried NO Cache-Control, which let browsers
 	// (Safari especially) reuse them heuristically from disk cache — stale
 	// pages after data changed, and authenticated content on shared disks.
@@ -94,5 +105,65 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!response.headers.has('cache-control')) {
 		response.headers.set('cache-control', 'private, no-store');
 	}
-	return response;
+	// Server-Timing measures the SHELL: resolve() returns when the shell is
+	// ready, but a streamed page's deferred chunks drain into the body
+	// afterwards (CODEX1 P1-2). The stdout perf line below fires at body
+	// completion and covers the whole response — two numbers, kept apart.
+	const shellMs = Date.now() - bag.startedAt;
+	response.headers.set('server-timing', serverTimingHeader(bag, shellMs));
+	return withBodyCompletionLog(response, event.url.pathname, bag, shellMs);
 };
+
+/**
+ * Wrap the response body so one perf line hits stdout when the stream
+ * finishes (close OR client cancel — a TransformStream's flush misses
+ * cancel, so this pumps a reader instead). Never touches status/headers;
+ * body-less responses (redirects, 204s) log immediately.
+ */
+function withBodyCompletionLog(
+	response: Response,
+	pathname: string,
+	bag: TimingBag,
+	shellMs: number
+): Response {
+	let fired = false;
+	const fire = () => {
+		if (fired) return;
+		fired = true;
+		const totalMs = Date.now() - bag.startedAt;
+		if (dev || totalMs > PERF_LOG_SLOW_MS) {
+			console.log(perfLogLine(pathname, response.status, shellMs, totalMs, bag));
+		}
+	};
+	const body = response.body;
+	if (!body) {
+		fire();
+		return response;
+	}
+	const reader = body.getReader();
+	const wrapped = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					controller.close();
+					fire();
+					return;
+				}
+				controller.enqueue(value);
+			} catch (err) {
+				fire();
+				controller.error(err);
+			}
+		},
+		cancel(reason) {
+			fire();
+			return reader.cancel(reason);
+		}
+	});
+	return new Response(wrapped, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers
+	});
+}

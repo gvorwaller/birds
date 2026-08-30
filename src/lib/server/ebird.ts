@@ -6,6 +6,7 @@
  * fall back to cached data, never log the key.
  */
 import { query, withTransaction } from '$lib/db';
+import { timed } from '$server/request-timing';
 import { decryptSecret } from '$server/crypto';
 
 const API = 'https://api.ebird.org/v2';
@@ -78,10 +79,12 @@ export async function ebirdFetchOrNull<T>(
 	const nullOn = opts.nullOn ?? [404];
 	let res: Response;
 	try {
-		res = await doFetch(`${API}${path}`, {
-			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
-			signal: opts.signal
-		});
+		res = await timed('ebird', () =>
+			doFetch(`${API}${path}`, {
+				headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
+				signal: opts.signal
+			})
+		);
 	} catch (err) {
 		if (opts.signal?.aborted) {
 			throw new EbirdError('eBird API request aborted (deadline).');
@@ -123,10 +126,14 @@ export async function ebirdFetchOrNull<T>(
 async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
 	let res: Response;
 	try {
-		res = await fetch(`${API}${path}`, {
-			headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
-			signal
-		});
+		// Only live HTTP is timed — cachedFetch hits never reach this function,
+		// which is exactly the cache-hit/miss distinction worth measuring.
+		res = await timed('ebird', () =>
+			fetch(`${API}${path}`, {
+				headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
+				signal
+			})
+		);
 	} catch (err) {
 		if (signal?.aborted) {
 			throw new EbirdError('eBird API request aborted (deadline).');

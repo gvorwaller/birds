@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { env } from '$env/dynamic/private';
+import { timed } from '$server/request-timing';
 
 const { Pool } = pg;
 
@@ -28,7 +29,9 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 	text: string,
 	params?: unknown[]
 ): Promise<pg.QueryResult<T>> {
-	return getPool().query<T>(text, params as never);
+	// timed() is a no-op outside a request context (the worker), so this is
+	// safe as the single shared entry point (plan Phase 1).
+	return timed('db', () => getPool().query<T>(text, params as never));
 }
 
 /**
@@ -46,6 +49,14 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
  *   an unknown state.
  */
 export async function queryTimed<T extends pg.QueryResultRow = pg.QueryResultRow>(
+	text: string,
+	params: unknown[] | undefined,
+	timeoutMs: number
+): Promise<pg.QueryResult<T>> {
+	return timed('db', () => queryTimedInner<T>(text, params, timeoutMs));
+}
+
+async function queryTimedInner<T extends pg.QueryResultRow = pg.QueryResultRow>(
 	text: string,
 	params: unknown[] | undefined,
 	timeoutMs: number

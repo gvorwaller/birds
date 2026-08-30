@@ -16,6 +16,7 @@ import {
 	type ModelEntry
 } from './ai-models';
 import { getConfig } from './app-config';
+import { recordTiming } from './request-timing';
 import { recordUsage, type AiPurpose } from './ai-usage';
 
 export interface MeteredAiCallOpts<T> {
@@ -80,6 +81,8 @@ export async function meteredAiCall<T>(opts: MeteredAiCallOpts<T>): Promise<AiAt
 	const started = Date.now();
 	try {
 		const { result, envelope } = await opts.run(model, signal);
+		// Request-scoped perf bucket (plan Phase 1); no-op in the worker.
+		recordTiming('ai', Date.now() - started);
 		await record(opts, model, envelope, Date.now() - started, true, null);
 		return {
 			result,

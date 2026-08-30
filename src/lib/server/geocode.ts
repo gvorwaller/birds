@@ -4,6 +4,7 @@
  * user types place names, never eBird region codes.
  */
 import { env } from "$env/dynamic/private";
+import { timed } from "$server/request-timing";
 
 export interface GeoResult {
   lat: number;
@@ -33,7 +34,9 @@ async function geocodeCall(
 
   let res: Response;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    res = await timed("google", () =>
+      fetch(url, { signal: AbortSignal.timeout(10000) }),
+    );
   } catch {
     return null;
   }
@@ -78,7 +81,9 @@ async function placesTextSearch(
 
   let res: Response;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    res = await timed("google", () =>
+      fetch(url, { signal: AbortSignal.timeout(10000) }),
+    );
   } catch {
     return null;
   }
@@ -184,7 +189,9 @@ export async function placesNearby(
 
   let res: Response;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    res = await timed("google", () =>
+      fetch(url, { signal: AbortSignal.timeout(10000) }),
+    );
   } catch {
     return { status: "upstream_error" };
   }
