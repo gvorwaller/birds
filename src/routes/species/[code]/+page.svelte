@@ -14,6 +14,8 @@
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
   import { allAboutBirdsUrl } from "$lib/species-links";
   import { formatFeet, tideWord, TIDE_ATTRIBUTION_URL } from "$lib/tide-format";
+  import type { TideResult } from "$lib/tide-format";
+  import Skeleton from "$components/Skeleton.svelte";
   import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
   import SimilarSpeciesCard from "$components/SimilarSpeciesCard.svelte";
   import type { ActionData, PageData } from "./$types";
@@ -57,6 +59,40 @@
    * the bird and, one level further, to the list this page was opened from
    * (Gaylon 2026-08-29: the drill was a dead end otherwise).
    */
+  // --- Streamed sections (plan Phase 9) -----------------------------------
+  // Each streamed promise's LAST RESOLVED value is held per species and only
+  // swapped when the new promise settles, so a jobsPoll invalidateAll() (or
+  // any same-page reload) never blanks a populated section back to its
+  // skeleton (AGY review). Navigating to a different species resets to the
+  // skeleton via the derived species-code check.
+  type StreamedResult<T> = { ok: true; data: T } | { ok: false; error: string };
+  function retained<T>(get: () => Promise<StreamedResult<T>> | null) {
+    let view = $state<{ code: string; res: StreamedResult<T> } | null>(null);
+    $effect(() => {
+      const code = data.taxon.species_code;
+      const p = get();
+      if (!p) return;
+      let alive = true;
+      void p.then((res) => {
+        if (alive) view = { code, res };
+      });
+      return () => {
+        alive = false;
+      };
+    });
+    return {
+      get current() {
+        return view?.code === data.taxon.species_code ? view.res : null;
+      },
+    };
+  }
+  const nearbyView = retained(() => data.nearby);
+  const nearestView = retained(() => data.nearest);
+  // Tide never rejects (server contract) — wrap to the same shape.
+  const tideView = retained<TideResult | null>(() =>
+    data.tide.then((t) => ({ ok: true as const, data: t })),
+  );
+
   // --- Best-time-of-year peers (plan Phase 5) -----------------------------
   // Selection is client-side only: every peer carries its own curve, so
   // switching tabs re-renders the chart with no round trip.
@@ -322,8 +358,8 @@
           {/each}
         </div>
       {/if}
-      {#if data.tide}
-        {@const t = data.tide}
+      {#if tideView.current?.ok && tideView.current.data}
+        {@const t = tideView.current.data}
         <div class="tideline">
           <span class="tidehead"
             >🌊 Tide at {t.station.name}
@@ -353,7 +389,7 @@
       <p class="ai-attrib muted">
         AI-generated from the Wikipedia article{#if aiGeneratedOn}&nbsp;·
           {aiGeneratedOn}{/if} · verify in the field
-        {#if data.tide}
+        {#if tideView.current?.ok && tideView.current.data}
           · <a href={TIDE_ATTRIBUTION_URL} target="_blank" rel="noopener"
             >Tides: NOAA CO-OPS</a
           >
@@ -483,7 +519,10 @@
     <div class="card-head">
       <h2>
         Recent reports near {originName} — {windowPhrase(data.backDays)}
-        {#if data.stale}<Badge kind="stale" label="cached" />{/if}
+        {#if nearbyView.current?.ok && nearbyView.current.data.stale}<Badge
+            kind="stale"
+            label="cached"
+          />{/if}
       </h2>
       <div class="unit-control">
         <span>Units</span>
@@ -500,14 +539,18 @@
           > to see nearby reports.
         {/if}
       </p>
-    {:else if data.nearbyError}
-      <p class="muted">{data.nearbyError}</p>
-    {:else if data.nearby.length === 0}
+    {:else if nearbyView.current == null}
+      <!-- Streamed (Phase 9): reserved height so settling never shifts the
+           cards below (AGY P1 — the min-height IS the point). -->
+      <Skeleton minHeight="220px" label="Checking recent reports…" />
+    {:else if !nearbyView.current.ok}
+      <p class="muted">{nearbyView.current.error}</p>
+    {:else if nearbyView.current.data.rows.length === 0}
       <p class="muted">
         No reports within {formatDistance(data.distKm, distanceUnit)} in this window.
       </p>
     {:else}
-      {#each data.nearby as o (o.locId + o.obsDt)}
+      {#each nearbyView.current.data.rows as o (o.locId + o.obsDt)}
         <div class="obs">
           <div class="grow">
             <div class="name">
@@ -572,9 +615,12 @@
     <section class="card">
       <h2>
         Nearest reports — any distance
-        {#if data.nearest?.stale}<Badge kind="stale" label="cached" />{/if}
+        {#if nearestView.current?.ok && nearestView.current.data.stale}<Badge
+            kind="stale"
+            label="cached"
+          />{/if}
       </h2>
-      {#if !data.wantNearest}
+      {#if !data.wantNearest || data.nearest == null}
         <p class="muted">
           How far away is the closest current report? One eBird lookup, any
           distance from home.
@@ -585,14 +631,16 @@
         <a class="nearestcta" href={nearestHref} data-sveltekit-noscroll
           >Check nearest reports</a
         >
-      {:else if data.nearest?.error}
-        <p class="muted">{data.nearest.error}</p>
-      {:else if (data.nearest?.rows.length ?? 0) === 0}
+      {:else if nearestView.current == null}
+        <Skeleton minHeight="140px" label="Checking nearest reports…" />
+      {:else if !nearestView.current.ok}
+        <p class="muted">{nearestView.current.error}</p>
+      {:else if nearestView.current.data.rows.length === 0}
         <p class="muted">
           No reports anywhere in the last {data.backDays} days.
         </p>
-      {:else if data.nearest}
-        {#each data.nearest.rows as o (o.locId + o.obsDt)}
+      {:else}
+        {#each nearestView.current.data.rows as o (o.locId + o.obsDt)}
           <div class="nrow">
             <div class="nline1">
               {#if o.distanceKm != null}

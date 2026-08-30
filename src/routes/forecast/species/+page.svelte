@@ -5,6 +5,7 @@
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
+  import Skeleton from "$components/Skeleton.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
@@ -55,6 +56,36 @@
   }
 
   const progress = $derived(data.countyCoverage);
+
+  // Streamed county stats (Phase 9): the last resolved value is retained per
+  // (species, region, month) so a jobsPoll invalidateAll() never blanks a
+  // populated ranking back to its skeleton; changing the query resets it.
+  type CountyStatsData = Awaited<typeof data.countyStats> extends
+    | { ok: true; data: infer D }
+    | { ok: false; error: string }
+    ? D
+    : never;
+  type CountyStatsRes =
+    | { ok: true; data: CountyStatsData }
+    | { ok: false; error: string };
+  let countyStatsView = $state<{ key: string; res: CountyStatsRes } | null>(null);
+  const countyStatsKey = $derived(
+    `${data.taxon?.species_code ?? ""}|${data.region?.code ?? ""}|${data.month}`,
+  );
+  $effect(() => {
+    const key = countyStatsKey;
+    const pr = data.countyStats;
+    let alive = true;
+    void pr.then((res) => {
+      if (alive) countyStatsView = { key, res };
+    });
+    return () => {
+      alive = false;
+    };
+  });
+  const countyStats = $derived(
+    countyStatsView?.key === countyStatsKey ? countyStatsView.res : null,
+  );
 
   // "county"/"counties" for US states' subnational2 children; "region"/
   // "regions" everywhere else (non-US subnational1's children, and any
@@ -515,8 +546,8 @@
 
         {#if progress}
           <p class="coverage">
-            {#if data.countyDataYears}{data.countyDataYears.begin}–{data
-                .countyDataYears.end} ·
+            {#if countyStats?.ok && countyStats.data.dataYears}{countyStats.data
+                .dataYears.begin}–{countyStats.data.dataYears.end} ·
             {/if}{#if data.hasApiKey}{progress.current}/{progress.total}
               {countyNounPlural}{:else}{progress.current} {countyNounPlural} loaded{/if}
             {#if progress.stale > 0}
@@ -594,11 +625,17 @@
           {/if}
         {/if}
 
-        {#if data.countyRanking.length > 0}
-          {@const reported = data.countyRanking.filter((c) => c.freq > 0)}
+        {#if countyStats == null && progress && progress.current + progress.stale > 0}
+          <!-- Streamed (Phase 9): reserved height ≈ the settled ranking list,
+               so arrival never shifts the drill section below (AGY P1). -->
+          <Skeleton minHeight="360px" label="Ranking {countyNounPlural}…" />
+        {:else if countyStats != null && !countyStats.ok}
+          <p class="error">{countyStats.error}</p>
+        {:else if countyStats?.ok && countyStats.data.ranking.length > 0}
+          {@const reported = countyStats.data.ranking.filter((c) => c.freq > 0)}
           {@const adequate = reported.filter((c) => !c.lowSample)}
           {@const lowSampleCounties = reported.filter((c) => c.lowSample)}
-          {@const unreported = data.countyRanking.length - reported.length}
+          {@const unreported = countyStats.data.ranking.length - reported.length}
           {#if reported.length === 0}
             <p>
               Not reported in any analyzed {countyNoun}'s checklists in
@@ -612,7 +649,7 @@
               </p>
               <ol class="ranked">
                 {#each adequate.slice(0, 15) as c (c.code)}
-                  {@const peak = data.countyPeaks[c.code]}
+                  {@const peak = countyStats.data.peaks[c.code]}
                   <li>
                     <div class="sp">
                       <span>

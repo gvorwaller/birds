@@ -23,6 +23,7 @@ import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
 import { returnTrail } from "$lib/return-link";
+import { streamed, type Streamed } from "$lib/streamed";
 import {
   parseRegionCode,
   isCountry,
@@ -247,12 +248,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     failed: number;
     remaining: number;
   } | null = null;
-  let countyRanking: (RankedLoc & {
-    seat: string | null;
-    mapQuery: string;
-  })[] = [];
-  let countyPeaks: Record<string, { month: number; freq: number }> = {};
-  let countyDataYears: { begin: number; end: number } | null = null;
+  interface CountyStats {
+    ranking: (RankedLoc & { seat: string | null; mapQuery: string })[];
+    peaks: Record<string, { month: number; freq: number }>;
+    dataYears: { begin: number; end: number } | null;
+  }
+  let countyStats: Promise<Streamed<CountyStats>> = Promise.resolve({
+    ok: true,
+    data: { ranking: [], peaks: {}, dataYears: null },
+  });
   if (taxon && region && regionChildLevel) {
     if (apiKey) {
       try {
@@ -307,29 +311,45 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         remaining: cov.remaining,
       };
       const usable = [...cov.current, ...cov.stale];
-      // Each county carries its seat + a Maps query that outlines the county
-      // (td-01ddb6 — "I don't know Florida much by counties").
-      countyRanking = (
-        await rankLocsForSpeciesMonth(usable, taxon.species_code, month)
-      ).map((c) => ({
-        ...c,
-        seat: countySeat(c.code),
-        mapQuery: countyMapQuery(c.code, c.name, region.name),
-      }));
-      const peaks = await bestMonthsByLoc(usable, taxon.species_code);
-      countyPeaks = Object.fromEntries(
-        [...peaks.entries()].map(([code, b]) => [
-          code,
-          { month: b.month, freq: b.freq },
-        ]),
+      const regionName = region.name;
+      const speciesCode = taxon.species_code;
+      // STREAMED (Phase 9): the two species_frequency aggregates are this
+      // loader's dominant DB cost (the 1.47 GB table — td-3bf3a2's one real
+      // scan-cost table); the shell (pickers, chart, coverage) renders while
+      // they run. Independent aggregates share one Promise.all — the
+      // back-to-back await was td-3bf3a2's finding, folded in here since
+      // this restructure touches the exact lines.
+      countyStats = streamed(
+        (async () => {
+          const [ranked, peaks] = await Promise.all([
+            rankLocsForSpeciesMonth(usable, speciesCode, month),
+            bestMonthsByLoc(usable, speciesCode),
+          ]);
+          const usedMetas = usable.map((c) => meta.get(c)!);
+          return {
+            // Each county carries its seat + a Maps query that outlines the
+            // county (td-01ddb6 — "I don't know Florida much by counties").
+            ranking: ranked.map((c) => ({
+              ...c,
+              seat: countySeat(c.code),
+              mapQuery: countyMapQuery(c.code, c.name, regionName),
+            })),
+            peaks: Object.fromEntries(
+              [...peaks.entries()].map(([code, b]) => [
+                code,
+                { month: b.month, freq: b.freq },
+              ]),
+            ),
+            dataYears: usedMetas.length
+              ? {
+                  begin: Math.min(...usedMetas.map((m) => m.beginYear)),
+                  end: Math.max(...usedMetas.map((m) => m.endYear)),
+                }
+              : null,
+          };
+        })(),
+        () => "Could not rank counties — try again shortly.",
       );
-      const usedMetas = usable.map((c) => meta.get(c)!);
-      countyDataYears = usedMetas.length
-        ? {
-            begin: Math.min(...usedMetas.map((m) => m.beginYear)),
-            end: Math.max(...usedMetas.map((m) => m.endYear)),
-          }
-        : null;
     }
   }
 
@@ -439,9 +459,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     month,
     countyError,
     countyCoverage,
-    countyRanking,
-    countyPeaks,
-    countyDataYears,
+    countyStats,
     county,
     hotspotError,
     countyHotspots,

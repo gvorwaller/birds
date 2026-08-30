@@ -540,8 +540,15 @@ never fails silently.
   (pure DB after Phase 5, and it is the card the page exists for). Stream `nearby`, `nearest`, `tide`.
 - **`/forecast/species`** — shell keeps pickers, search, region header, main chart. Stream
   `countyAnalysis` and `countyHotspots`.
-- **`/forecast/data`** — shell keeps the inventory query (`:160`). Stream `childTotals`,
-  `corrections`, `failed`.
+- **`/forecast/data`** — **implementation deviation (2026-08-30):** not streamed. After Phase 3
+  its read path is cached-DB only (the reference-list eBird calls are gone; measured 71 ms shell
+  locally via Phase 1 instrumentation), the per-group fan-out batching is owned by td-3bf3a2, and
+  its child-totals mutate deeply-shared group objects that also feed the failed-loads labels —
+  streaming would be churn without a measured win. Revisit only if prod perf lines show otherwise.
+- **`/forecast/species`** deviation note: streamed `countyStats` = the two `species_frequency`
+  aggregates only (ranking/peaks/dataYears) — coverage/county/hotspot-drill stay awaited because
+  they are cheap meta reads wired through forms and job-progress logic. The two aggregates now
+  share one `Promise.all` (td-3bf3a2's finding, folded in since the restructure touched the lines).
 - **`invalidateAll()` interaction:** `jobsPoll` invalidates on job completion, re-running loaders and
   resetting streamed sections to pending; `/forecast/data` is both the page it affects most and the
   one with the most to stream. Hold the last resolved value in `$state` and swap only when the new

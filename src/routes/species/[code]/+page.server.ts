@@ -31,6 +31,7 @@ import {
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
 import { pickSpeciesTeaserState } from "$server/forecast";
+import { streamed } from "$lib/streamed";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -106,113 +107,109 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const distKm = locationContext?.distKm ?? SPECIES_DEFAULT_DIST_KM;
   const originLabel = locationContext?.label ?? null;
 
-  let nearby: SpeciesObservationDetail[] = [];
-  let nearbyError: string | null = null;
-  let stale = false;
   const apiKey = await getEbirdApiKey(userId);
   // Teaser peers (refactor plan Phase 5): closest-vs-best from the regions
   // reference table — pure DB, no eBird calls, works without an API key.
   // Origin rule unchanged: the searched place wins over the saved home.
   const teaserP = pickSpeciesTeaserState(code, { home: origin });
-  if (apiKey && origin) {
-    try {
-      const [recentResult, notableResult] = await Promise.allSettled([
-        recentNearbySpeciesObs(
-          apiKey,
-          code,
-          origin.lat,
-          origin.lon,
-          distKm,
-          backDays,
-        ),
-        notableNearbyObs(apiKey, origin.lat, origin.lon, distKm, backDays),
-      ]);
-      if (
-        recentResult.status === "rejected" &&
-        notableResult.status === "rejected"
-      ) {
-        throw recentResult.reason;
-      }
-      const recentData =
-        recentResult.status === "fulfilled" ? recentResult.value.data : [];
-      const notableData =
-        notableResult.status === "fulfilled" ? notableResult.value.data : [];
-      stale =
-        (recentResult.status === "fulfilled" && recentResult.value.stale) ||
-        (notableResult.status === "fulfilled" && notableResult.value.stale);
-      const observations = mergeSpeciesObservations(
-        code,
-        recentData,
-        notableData,
-      );
-      const hotspots = await verifiedHotspotLocIds(
+
+  // Nearby reports — STREAMED (refactor plan Phase 9): the eBird recent +
+  // notable + hotspots + Google Places chain is the page's worst offender by
+  // wall time, so the shell renders while it fills in. The promise resolves
+  // to a discriminated result and never rejects (see $lib/streamed).
+  const loadNearby = async (): Promise<{
+    rows: SpeciesObservationDetail[];
+    stale: boolean;
+  }> => {
+    if (!apiKey || !origin) return { rows: [], stale: false };
+    const [recentResult, notableResult] = await Promise.allSettled([
+      recentNearbySpeciesObs(
         apiKey,
+        code,
         origin.lat,
         origin.lon,
         distKm,
-      );
-      stale = stale || hotspots.stale;
-      const placeIds = await hydrateEbirdLocationPlaceIds(observations);
-      nearby = speciesObservationDetails(
+        backDays,
+      ),
+      notableNearbyObs(apiKey, origin.lat, origin.lon, distKm, backDays),
+    ]);
+    if (
+      recentResult.status === "rejected" &&
+      notableResult.status === "rejected"
+    ) {
+      throw recentResult.reason;
+    }
+    const recentData =
+      recentResult.status === "fulfilled" ? recentResult.value.data : [];
+    const notableData =
+      notableResult.status === "fulfilled" ? notableResult.value.data : [];
+    let stale =
+      (recentResult.status === "fulfilled" && recentResult.value.stale) ||
+      (notableResult.status === "fulfilled" && notableResult.value.stale);
+    const observations = mergeSpeciesObservations(code, recentData, notableData);
+    const hotspots = await verifiedHotspotLocIds(
+      apiKey,
+      origin.lat,
+      origin.lon,
+      distKm,
+    );
+    stale = stale || hotspots.stale;
+    const placeIds = await hydrateEbirdLocationPlaceIds(observations);
+    return {
+      rows: speciesObservationDetails(
         observations,
         origin,
         placeIds,
         hotspots.locIds,
-      );
-    } catch (err) {
-      nearbyError =
-        err instanceof EbirdError
-          ? err.message
-          : "Could not load nearby observations.";
-    }
-  }
+      ),
+      stale,
+    };
+  };
+  const nearby = streamed(loadNearby(), (err) =>
+    err instanceof EbirdError
+      ? err.message
+      : "Could not load nearby observations.",
+  );
 
   // Nearest reports (td-a6c322, GROK pins): ON-DEMAND only — ?nearest=1 —
   // NEED species only, unbounded distance from the SAVED HOME, inheriting
   // the page's back window. The default load never spends this eBird call.
   const isNeed = seen.rows[0] == null;
   const wantNearest = url.searchParams.get("nearest") === "1";
-  let nearest: {
+  // STREAMED when requested (Phase 9); null = section not requested at all.
+  const loadNearest = async (): Promise<{
     rows: SpeciesObservationDetail[];
     stale: boolean;
-    error: string | null;
-  } | null = null;
-  if (wantNearest && isNeed && apiKey && home) {
-    try {
-      const res = await nearestObsOfSpecies(
-        apiKey,
-        code,
-        home.lat,
-        home.lon,
-        backDays,
-      );
-      // DB-only (CODEX1 P1): no Google Places fanout for unbounded rows.
-      const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
-        resolveMissing: false,
-      });
-      // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
-      // lookup — nearest is unbounded, links derive from the L-id shape.
-      nearest = {
-        rows: speciesObservationDetails(
-          res.data,
-          home,
-          placeIds,
-          new Set(),
-        ).slice(0, 5),
-        stale: res.stale,
-        error: null,
-      };
-    } catch (err) {
-      nearest = {
-        rows: [],
-        stale: false,
-        error:
+  }> => {
+    const res = await nearestObsOfSpecies(
+      apiKey!,
+      code,
+      home!.lat,
+      home!.lon,
+      backDays,
+    );
+    // DB-only (CODEX1 P1): no Google Places fanout for unbounded rows.
+    const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
+      resolveMissing: false,
+    });
+    // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
+    // lookup — nearest is unbounded, links derive from the L-id shape.
+    return {
+      rows: speciesObservationDetails(res.data, home!, placeIds, new Set()).slice(
+        0,
+        5,
+      ),
+      stale: res.stale,
+    };
+  };
+  const nearest =
+    wantNearest && isNeed && apiKey && home
+      ? streamed(loadNearest(), (err) =>
           err instanceof EbirdError
             ? err.message
             : "Could not check nearest reports.",
-      };
-    }
-  }
+        )
+      : null;
 
   // Best-time-of-year card: 1-2 peers (closest / best overall), each carrying
   // its own curve so the client switches tabs with no round trip (Phase 5).
@@ -234,14 +231,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   // Gated on field_craft too — matches the "Finding this bird" card's own
   // render guard, so a partial enrichment row never spends a tide lookup for
   // markup the page hides.
-  let tide: TideResult | null = null;
-  if (
-    origin &&
-    enrichment?.field_craft &&
-    isTideTagged(enrichment.tags ?? [])
-  ) {
-    tide = await tidesNear(origin.lat, origin.lon).catch(() => null);
-  }
+  // STREAMED (Phase 9). tidesNear already resolves null on failure — the
+  // pre-existing silent-null behavior for this secondary section is kept.
+  const tide: Promise<TideResult | null> =
+    origin && enrichment?.field_craft && isTideTagged(enrichment.tags ?? [])
+      ? tidesNear(origin.lat, origin.lon).catch(() => null)
+      : Promise.resolve(null);
 
   return {
     taxon: t,
@@ -260,8 +255,6 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     nearby,
     nearest,
     wantNearest,
-    nearbyError,
-    stale,
     hasApiKey: !!apiKey,
     hasOrigin: !!origin,
     /** Nearest lookups run from the SAVED home only (GROK P2-3) — a searched
