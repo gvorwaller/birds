@@ -7,15 +7,18 @@ describe('nav-progress-core', () => {
 		expect(shouldShow(1000, 1000 + SHOW_DELAY_MS)).toBe(true);
 	});
 
-	it('width starts at 0, advances monotonically, never reaches 90', () => {
+	it('width starts at 0, advances toward but never reaches full', () => {
 		expect(widthAt(0)).toBe(0);
-		let prev = 0;
+		let prev = -1;
 		for (const t of [100, 300, 800, 1500, 3000, 10_000, 60_000]) {
 			const w = widthAt(t);
-			expect(w).toBeGreaterThan(prev);
+			// Monotone non-decreasing (the clamp flattens the far tail) and
+			// never full: a stalled navigation must never show a finished bar.
+			expect(w).toBeGreaterThanOrEqual(prev);
 			expect(w).toBeLessThan(90);
 			prev = w;
 		}
+		expect(widthAt(600_000)).toBe(89);
 	});
 
 	it('advances purely from elapsed time — no CSS animation dependency', () => {

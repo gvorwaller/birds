@@ -28,5 +28,8 @@ export function shouldShow(startedAt: number, now: number): boolean {
  */
 export function widthAt(elapsedMs: number): number {
 	if (elapsedMs <= 0) return 0;
-	return 90 * (1 - Math.exp(-elapsedMs / 1500));
+	// Explicit cap: past ~40 time-constants, 1 - exp(-t) rounds to exactly 1
+	// in float64, so without the clamp a long-stalled navigation would show a
+	// full bar while still loading — the one lie this bar must never tell.
+	return Math.min(89, 90 * (1 - Math.exp(-elapsedMs / 1500)));
 }
