@@ -41,7 +41,11 @@ import path from "node:path";
 import process from "node:process";
 
 const API = "https://api.ebird.org/v2";
-const BASE_DELAY_MS = 400; // conservative: ~2.5 req/s
+// Default measured 2026-08-30: eBird allows a fast initial burst (~500
+// requests), then throttles to ~17 req/min sustained — at 400ms every code
+// cost a 429 + a 6s retry (two requests each). 3600ms fits under the
+// sustained ceiling with ONE request per code. Env-tunable for pilots.
+const BASE_DELAY_MS = Number(process.env.REGIONS_DELAY_MS ?? 3600);
 const MAX_CONSECUTIVE_FAILURES = 6;
 const CACHE_PATH = ".local/regions-cache.json";
 const MANIFEST_PATH = "backend/db/regions-manifest.json";
@@ -121,8 +125,16 @@ let consecutiveFailures = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function ebirdGet(pathname) {
+  // Measured 2026-08-30: eBird throttles in WINDOWS — a burst of ~20 calls
+  // succeeds, then several minutes of hard 429s (whose Retry-After: 3 lies).
+  // So 429s are handled with patient, escalating waits and are NEVER counted
+  // against the attempt cap or the circuit breaker — a throttle window says
+  // nothing about this code or the run's health. Only real failures (network,
+  // 5xx, timeouts) burn attempts.
   let backoffMs = 5000;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  let throttleWaitMs = 30_000;
+  let attempt = 0;
+  for (;;) {
     await sleep(BASE_DELAY_MS + Math.random() * 150);
     stats.calls += 1;
     let res;
@@ -141,6 +153,7 @@ async function ebirdGet(pathname) {
     }
     if (res && (res.status === 200 || res.status === 404 || res.status === 410)) {
       consecutiveFailures = 0;
+      throttleWaitMs = 30_000;
       if (res.status !== 200) return { status: res.status, body: null };
       const text = await res.text();
       try {
@@ -149,6 +162,20 @@ async function ebirdGet(pathname) {
         return { status: 200, body: null }; // malformed 200 → treated as no data
       }
     }
+    if (res?.status === 429) {
+      stats.http429 += 1;
+      const retryAfter = Number(res.headers?.get("retry-after"));
+      const waitMs = Math.max(
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0,
+        throttleWaitMs,
+      );
+      console.error(`  throttled on ${pathname} — waiting ${Math.round(waitMs / 1000)}s for the window to clear`);
+      await sleep(waitMs);
+      throttleWaitMs = Math.min(throttleWaitMs * 2, 10 * 60_000);
+      continue;
+    }
+    // Real failure (network / 5xx / unexpected status).
+    attempt += 1;
     consecutiveFailures += 1;
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       saveCache(true);
@@ -158,18 +185,17 @@ async function ebirdGet(pathname) {
       );
       process.exit(1);
     }
+    if (attempt >= 5) {
+      saveCache(true);
+      console.error(`Giving up on ${pathname} after 5 real failures. Checkpoint saved.`);
+      process.exit(1);
+    }
     stats.retries += 1;
-    if (res?.status === 429) stats.http429 += 1;
     if (res && res.status >= 500) stats.http5xx += 1;
-    const retryAfter = Number(res?.headers?.get("retry-after"));
-    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : backoffMs;
-    console.error(`  ${res ? `HTTP ${res.status}` : "no response"} on ${pathname} — waiting ${Math.round(waitMs / 1000)}s`);
-    await sleep(waitMs);
+    console.error(`  ${res ? `HTTP ${res.status}` : "no response"} on ${pathname} — waiting ${Math.round(backoffMs / 1000)}s`);
+    await sleep(backoffMs);
     backoffMs = Math.min(backoffMs * 2, 120_000);
   }
-  saveCache(true);
-  console.error(`Giving up on ${pathname} after 5 attempts. Checkpoint saved.`);
-  process.exit(1);
 }
 
 async function regionList(level, parent) {
