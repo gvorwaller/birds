@@ -17,6 +17,7 @@ import {
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
+import { returnTrail } from "$lib/return-link";
 import {
   parseRegionCode,
   isCountry,
@@ -494,6 +495,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     hasApiKey: !!apiKey,
     hasLogin,
     isViewer,
+    // Breadcrumb back to wherever this drill started — the species page's
+    // "Where should I go?" link, and the field guide behind it (Gaylon
+    // 2026-08-29). Absent when the page was opened straight from the nav.
+    crumbs: returnTrail(url.searchParams.get("returnTo")).map((c) =>
+      c.speciesCode && c.speciesCode === taxon?.species_code
+        ? { href: c.href, label: taxon.com_name }
+        : { href: c.href, label: c.label },
+    ),
   };
 };
 

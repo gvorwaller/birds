@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeUrlWithQuery, safeReturnTo } from "./return-link";
+import { homeUrlWithQuery, returnTrail, safeReturnTo } from "./return-link";
 
 describe("homeUrlWithQuery", () => {
   it("maps a bare legacy URL to the canonical route", () => {
@@ -101,5 +101,54 @@ describe("Field guide returnTo (plan Phase 3)", () => {
       href: "/species/margod",
       label: "Back",
     });
+  });
+});
+
+describe("returnTrail (species forecast breadcrumb, 2026-08-29)", () => {
+  it("expands a species-page returnTo into guide → bird", () => {
+    const nested = encodeURIComponent("/species?q=gull");
+    expect(returnTrail(`/species/gbbgul?returnTo=${nested}`)).toEqual([
+      { href: "/species?q=gull", label: "Field guide" },
+      {
+        href: `/species/gbbgul?returnTo=${nested}`,
+        label: "Species",
+        speciesCode: "gbbgul",
+      },
+    ]);
+  });
+
+  it("keeps whatever page the species drill actually started from", () => {
+    const nested = encodeURIComponent("/?place=Bar+Harbor%2C+ME&back=7");
+    const trail = returnTrail(`/species/gbbgul?returnTo=${nested}`);
+    expect(trail[0]).toEqual({
+      href: "/?place=Bar+Harbor%2C+ME&back=7",
+      label: "Home",
+    });
+  });
+
+  it("yields a single crumb for a species page with no back link of its own", () => {
+    expect(returnTrail("/species/gbbgul")).toEqual([
+      { href: "/species/gbbgul", label: "Species", speciesCode: "gbbgul" },
+    ]);
+  });
+
+  it("passes a non-species returnTo through as one labeled crumb", () => {
+    expect(returnTrail("/life")).toEqual([{ href: "/life", label: "Life list" }]);
+  });
+
+  it("is empty for a missing returnTo and never follows an off-site one", () => {
+    expect(returnTrail(null)).toEqual([]);
+    expect(returnTrail("")).toEqual([]);
+    expect(returnTrail("https://evil.example/x")).toEqual([]);
+    expect(returnTrail("//evil.example/x")).toEqual([]);
+    // A nested off-site value is dropped; the species crumb itself survives.
+    const nested = encodeURIComponent("https://evil.example/x");
+    expect(returnTrail(`/species/gbbgul?returnTo=${nested}`)).toEqual([
+      {
+        href: `/species/gbbgul?returnTo=${nested}`,
+        label: "Species",
+        speciesCode: "gbbgul",
+      },
+    ]);
   });
 });

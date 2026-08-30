@@ -126,6 +126,11 @@
 								and still link the strongest region overall when it differs.
 							</li>
 							<li>
+								<strong>Breadcrumb out of the species forecast</strong> — following
+								"Where should I go?" from a species page now leaves a trail back to
+								that bird and to the field guide (or wherever the drill started).
+							</li>
+							<li>
 								<strong>Similar species, rebuilt on real misidentifications</strong>
 								— confusion pairs now come from iNaturalist observer
 								misidentification data instead of eBird reporting groups, so

@@ -330,8 +330,9 @@
 						Species pages show a <strong>Best time of year</strong> chart with
 						the nearest loaded region where the bird has reliable sightings;
 						when a different region is most findable overall, that is linked
-						below the chart. The card has a "Where should I go?" link, and trip stops link straight to the
-						forecast for the trip's month.
+						below the chart. The card has a "Where should I go?" link (which
+						leaves a breadcrumb back to the bird and the field guide), and trip
+						stops link straight to the forecast for the trip's month.
 					</li>
 					<li>
 						Loading data signs in to eBird as you, so each user needs their own

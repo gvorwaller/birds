@@ -70,3 +70,46 @@ export function safeReturnTo(raw: string | null | undefined): ReturnLink {
   }
   return { href: raw, label: "Back" };
 }
+
+/** A species DETAIL page: `/species/<code>`, never the guide index itself. */
+const SPECIES_DETAIL_RE = /^\/species\/([a-z0-9]{4,12})(?:[?#]|$)/;
+
+export interface Crumb extends ReturnLink {
+  /**
+   * Set when the crumb is a species detail page. Callers that know the
+   * taxonomy (the forecast pages do) swap in the bird's common name; the
+   * generic "Species" label is the fallback when they don't.
+   */
+  speciesCode?: string;
+}
+
+/**
+ * Expand a `returnTo` into a breadcrumb trail, oldest ancestor first.
+ *
+ * The species page links onward to the species forecast carrying its own URL
+ * — which itself carries the `returnTo` that brought the user to the species
+ * page. Following that one extra level turns a dead-end "← Back" into a real
+ * trail (Field guide › Great Black-backed Gull), so the forecast page can
+ * offer both the bird and the list it came from in one click
+ * (Gaylon 2026-08-29).
+ *
+ * Only ONE level of nesting is followed: deeper chains are rare, and each
+ * level doubles the URL length that has to survive every navigation.
+ */
+export function returnTrail(raw: string | null | undefined): Crumb[] {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return [];
+  const self = safeReturnTo(raw);
+  const detail = SPECIES_DETAIL_RE.exec(raw);
+  if (!detail) return [self];
+  const crumb: Crumb = { ...self, label: "Species", speciesCode: detail[1] };
+  // The species page's own back link — same open-redirect rule, since it
+  // arrived here as untrusted query text either way.
+  const nestedRaw = new URLSearchParams(raw.slice(raw.indexOf("?") + 1)).get(
+    "returnTo",
+  );
+  const parent =
+    raw.includes("?") && nestedRaw && nestedRaw.startsWith("/") && !nestedRaw.startsWith("//")
+      ? safeReturnTo(nestedRaw)
+      : null;
+  return parent ? [parent, crumb] : [crumb];
+}

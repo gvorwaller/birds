@@ -211,6 +211,15 @@
 </svelte:head>
 
 <div class="page">
+  {#if data.crumbs.length > 0}
+    <nav class="crumbs" aria-label="Breadcrumb">
+      {#each data.crumbs as crumb, i (i)}
+        <a href={crumb.href}>{crumb.label}</a>
+        <span class="sep" aria-hidden="true">›</span>
+      {/each}
+      <span class="here">Species forecast</span>
+    </nav>
+  {/if}
   <h1>Species forecast</h1>
   <ForecastTabs
     mode="species"
@@ -897,6 +906,20 @@
   h1 {
     font-size: 1.35rem;
     margin: 0 0 4px;
+  }
+  .crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px;
+    font-size: 0.92rem;
+  }
+  .crumbs .sep {
+    color: var(--muted);
+  }
+  .crumbs .here {
+    color: var(--muted);
   }
   .intro {
     color: var(--muted);

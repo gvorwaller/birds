@@ -51,6 +51,21 @@
     if (q) jobsPoll.track(q.jobId);
   });
 
+  /**
+   * Forecast drill for this species in one region, carrying THIS page's full
+   * URL as returnTo — the forecast page turns that into a breadcrumb back to
+   * the bird and, one level further, to the list this page was opened from
+   * (Gaylon 2026-08-29: the drill was a dead end otherwise).
+   */
+  function forecastHref(regionCode: string): string {
+    const params = new URLSearchParams({
+      species: data.taxon.species_code,
+      region: regionCode,
+      returnTo: page.url.pathname + page.url.search,
+    });
+    return `/forecast/species?${params.toString()}`;
+  }
+
   // GROK P2-1/P2-2: keep the whole current query (location context, back —
   // whose default here is 14, not 7 — returnTo) and only add nearest=1.
   const nearestHref = $derived.by(() => {
@@ -367,17 +382,11 @@
       {#if ft.alsoBest}
         <p class="muted">
           Most findable overall:
-          <a
-            href="/forecast/species?species={data.taxon
-              .species_code}&region={ft.alsoBest.locCode}">{ft.alsoBest.locName}</a
-          >
+          <a href={forecastHref(ft.alsoBest.locCode)}>{ft.alsoBest.locName}</a>
         </p>
       {/if}
       <p class="muted">
-        <a
-          href="/forecast/species?species={data.taxon
-            .species_code}&region={ft.regionCode}"
-        >
+        <a href={forecastHref(ft.regionCode)}>
           Where should I go? — county &amp; hotspot forecast →
         </a>
       </p>
