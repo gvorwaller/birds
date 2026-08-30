@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
+	import NavProgress from '$components/NavProgress.svelte';
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
@@ -89,6 +90,8 @@
 		menuOpen = false;
 	});
 </script>
+
+<NavProgress />
 
 {#if data.user}
 	<nav class="top-nav">

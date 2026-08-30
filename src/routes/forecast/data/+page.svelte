@@ -6,6 +6,7 @@
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { fmtNextScan } from "$lib/next-scan";
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
+  import ProgressBar from "$components/ProgressBar.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -1013,15 +1014,7 @@
               {/if}
             </div>
             {#if j.status === "running" && total > 0}
-              <div
-                class="progressbar"
-                role="progressbar"
-                aria-valuenow={done}
-                aria-valuemin={0}
-                aria-valuemax={total}
-              >
-                <div class="fill" style="width: {(done / total) * 100}%"></div>
-              </div>
+              <ProgressBar value={done} max={total} --pb-margin="8px 0 4px" />
               {#if j.progress.currentUnit}
                 <p class="jobdetail">now: {j.progress.currentUnit.name}</p>
               {/if}
@@ -1741,18 +1734,6 @@
   }
   .jobdetail.err {
     color: var(--danger);
-  }
-  .progressbar {
-    height: 8px;
-    background: var(--accent-soft, var(--border));
-    border-radius: 4px;
-    overflow: hidden;
-    margin: 8px 0 4px;
-  }
-  .progressbar .fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.4s ease;
   }
   .history summary {
     cursor: pointer;

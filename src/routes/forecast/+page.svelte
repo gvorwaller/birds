@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import ForecastTabs from "$components/ForecastTabs.svelte";
+  import ProgressBar from "$components/ProgressBar.svelte";
   import MapLink from "$components/MapLink.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
@@ -763,15 +764,7 @@
                 {/if}
               </span>
               {#if j.status === "running" && total > 0}
-                <div
-                  class="progressbar"
-                  role="progressbar"
-                  aria-valuenow={done}
-                  aria-valuemin={0}
-                  aria-valuemax={total}
-                >
-                  <div class="fill" style="width: {(done / total) * 100}%"></div>
-                </div>
+                <ProgressBar value={done} max={total} />
               {/if}
             </div>
           {/each}
@@ -1138,18 +1131,6 @@
   }
   .seatmap:hover {
     text-decoration: underline;
-  }
-  .progressbar {
-    height: 8px;
-    background: var(--accent-soft);
-    border-radius: 4px;
-    overflow: hidden;
-    margin: 8px 0;
-  }
-  .progressbar .fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.4s ease;
   }
   .pick {
     display: inline-flex;

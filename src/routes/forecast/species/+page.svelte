@@ -4,6 +4,7 @@
   import { page } from "$app/state";
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
+  import ProgressBar from "$components/ProgressBar.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
@@ -543,18 +544,7 @@
                   : "Analysis queued — starting shortly."
                 : `Analyzing… ${jDone} of ${jTotal}${analyzeJob.progress.currentUnit ? ` · ${analyzeJob.progress.currentUnit.name}` : ""}`}
             </p>
-            <div
-              class="progressbar"
-              role="progressbar"
-              aria-valuenow={jDone}
-              aria-valuemin={0}
-              aria-valuemax={jTotal}
-            >
-              <div
-                class="fill"
-                style="width: {jTotal > 0 ? (jDone / jTotal) * 100 : 0}%"
-              ></div>
-            </div>
+            <ProgressBar value={jDone} max={jTotal} --pb-margin="0 0 10px" />
             {#if jobsPoll.isStale}
               <p class="meta">
                 Connection to the app lost — the analysis continues on the
@@ -562,18 +552,11 @@
               </p>
             {/if}
           {:else if progress.current > 0 && progress.remaining > 0}
-            <div
-              class="progressbar"
-              role="progressbar"
-              aria-valuenow={progress.current}
-              aria-valuemin={0}
-              aria-valuemax={progress.total}
-            >
-              <div
-                class="fill"
-                style="width: {(progress.current / progress.total) * 100}%"
-              ></div>
-            </div>
+            <ProgressBar
+              value={progress.current}
+              max={progress.total}
+              --pb-margin="0 0 10px"
+            />
           {/if}
 
           {#if progress.remaining > 0 && !data.isViewer && !analyzing}
@@ -1068,18 +1051,6 @@
     color: var(--muted);
     font-size: 0.85rem;
     margin: 0 0 10px;
-  }
-  .progressbar {
-    height: 8px;
-    background: var(--accent-soft);
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 10px;
-  }
-  .progressbar .fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.4s ease;
   }
   .summary {
     margin: 14px 0 8px;
