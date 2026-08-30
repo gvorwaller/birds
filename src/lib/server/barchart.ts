@@ -733,7 +733,22 @@ export async function ensureFrequencies(
 			result.refreshed.push(loc.code);
 			outcome = { status: 'ok' };
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
+			let message = err instanceof Error ? err.message : String(err);
+			// A 23503 on frequency_fetch_region_fk (0045) means eBird knows a
+			// region this build's reference seed doesn't — classified HERE,
+			// where the typed pg error still exists (CODEX1 P1-3; by the time
+			// recordFailedAttempt runs there is only a string). Actionable
+			// operator message, never a synthetic row (cs.md).
+			if (
+				typeof err === 'object' &&
+				err !== null &&
+				(err as { code?: string }).code === '23503' &&
+				String((err as { constraint?: string }).constraint ?? '').includes('region_fk')
+			) {
+				message =
+					`eBird lists region ${loc.code}, but this build's region reference data ` +
+					`doesn't. Re-run scripts/generate-regions.mjs and deploy.`;
+			}
 			// Structured classification at the point where the typed error is
 			// in hand (CODEX1 #2) — job policy never parses messages.
 			let kind: UnitFailureKind = 'unit';

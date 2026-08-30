@@ -72,10 +72,13 @@ describe("loadHotspots rejects a county outside the selected region", () => {
 });
 
 describe("international country picker validates explicit query state", () => {
-  it("falls back from a country absent from the official country list", () => {
+  it("falls back from a country absent from the reference country list", () => {
+    // Phase 3 (regions refactor): the list is local reference data and always
+    // complete, so the old `countryList.length > 0 &&` escape clause (which
+    // covered "no API key → empty list") is gone — the membership check now
+    // applies unconditionally, which is a STRICTER form of this invariant.
     const body = loadBody(SPECIES);
-    expect(body).toMatch(
-      /countryList\.length > 0 && !countryList\.some\(\(c\) => c\.code === country\)/,
-    );
+    expect(body).toMatch(/!countryList\.some\(\(c\) => c\.code === country\)/);
+    expect(body).not.toMatch(/countryList\.length > 0 &&/);
   });
 });

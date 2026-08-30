@@ -4,14 +4,19 @@ import { query } from "$lib/db";
 import {
   getEbirdApiKey,
   subregions,
-  countries as ebirdCountries,
   EbirdError,
 } from "$server/ebird";
+import {
+  countriesList,
+  regionCoordsFor,
+  regionLabels,
+  subnational1Of,
+  validateRegionCode,
+} from "$server/regions";
 import { sweepAreaHotspots } from "$server/hotspot-sweep";
 import {
   coverageFromMeta,
   recentFailures,
-  ensureRegionCentroids,
   sortByProximity,
 } from "$server/forecast";
 import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
@@ -216,23 +221,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       : null;
 
   // Countries: drives the picker + display names for country-level groups
-  // and non-US region labels. Cache-first with stale fallback (cs.md).
-  let countryList: { code: string; name: string }[] = [];
-  let statesError: string | null = null;
-  if (apiKey) {
-    try {
-      countryList = (await ebirdCountries(apiKey)).data;
-    } catch (err) {
-      statesError =
-        err instanceof EbirdError
-          ? err.message
-          : "Could not load the country list.";
-    }
-  }
+  // and non-US region labels — local reference data (regions table, Phase 3).
+  // Works without an eBird API key.
+  const countryList: { code: string; name: string }[] = (await countriesList()).map(
+    (r) => ({ code: r.code, name: r.name }),
+  );
   const countryName = new Map(countryList.map((c) => [c.code, c.name]));
-  // Share one five-call allowance across both picker levels. Negative results
-  // and transient cooldowns are persisted, so later codes still converge.
-  const centroidBudget = { remaining: 5 };
 
   const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
   let selectedCountry = DEFAULT_COUNTRY;
@@ -370,21 +364,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (parsed) neededCountries.add(parsed.country);
   }
 
-  // Resolve real subnational1 display names (one cache-first fetch per
-  // distinct country involved, not per group) and backfill group names.
+  // Resolve real subnational1 display names from the local reference set —
+  // the old one-cached-eBird-fetch-per-country fan-out (and its per-country
+  // error channel) is gone (Phase 3).
   const subnat1ByCountry = await Promise.all(
-    [...neededCountries].map(async (country) => {
-      if (!apiKey) return { country, list: [] as { code: string; name: string }[], error: null as string | null };
-      try {
-        return { country, list: (await subregions(apiKey, country, "subnational1")).data, error: null as string | null };
-      } catch (err) {
-        return {
-          country,
-          list: [] as { code: string; name: string }[],
-          error: err instanceof EbirdError ? err.message : "Could not load the region list.",
-        };
-      }
-    }),
+    [...neededCountries].map(async (country) => ({
+      country,
+      list: (await subnational1Of(country)).map((r) => ({ code: r.code, name: r.name })),
+    })),
   );
   const regionDisplayName = new Map<string, string>();
   for (const { list } of subnat1ByCountry) {
@@ -401,32 +388,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       g.stateName = countryName.get(g.stateCode) ?? g.state?.locName ?? g.stateCode;
     }
   }
-  // The selected country's own subregion fetch also gates the picker —
-  // surface its error the same way the old single-country fetch did.
-  if (!statesError) {
-    statesError = subnat1ByCountry.find((s) => s.country === selectedCountry)?.error ?? null;
-  }
   const selectedCountryRegionsRaw =
-    subnat1ByCountry.find((s) => s.country === selectedCountry)?.list ?? [];
-  // Nearest-first within the selected country (Gaylon 2026-08-29) — falls
-  // back to the eBird-supplied order with no home set.
-  const selectedCountryCentroids = await ensureRegionCentroids(
-    apiKey,
-    selectedCountryRegionsRaw.map((s) => s.code),
-    { maxFetches: 5, budget: centroidBudget },
-  );
+    subnat1ByCountry.find((s) => s.country === selectedCountry)?.list ??
+    (await subnational1Of(selectedCountry)).map((r) => ({ code: r.code, name: r.name }));
+  // Nearest-first (Gaylon 2026-08-29). Coordinates come from the regions
+  // table — no live lookups, no per-page fetch budget.
   const selectedCountryRegions = sortByProximity(
     selectedCountryRegionsRaw,
     home,
-    selectedCountryCentroids,
+    await regionCoordsFor(selectedCountryRegionsRaw.map((s) => s.code)),
   );
-  // The selected country's regions get first use of the budget; warming an
-  // alphabetical world prefix must not delay the picker the user is using.
-  const countryCentroids = await ensureRegionCentroids(
-    apiKey,
-    countryList.map((c) => c.code),
-    { maxFetches: 5, budget: centroidBudget },
-  );
+  const countryCentroids = await regionCoordsFor(countryList.map((c) => c.code));
 
   for (const g of groups.values()) {
     g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
@@ -452,21 +424,23 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // (which only ever nests subnational2).
   const countyNames = new Map<string, string>(); // subnational2 (or, for a
   // country group's children, subnational1) code -> display name.
-  if (apiKey) {
+  {
     await Promise.all(
       allGroups.map(async (g) => {
         const childLvl = childLevel(g.level);
-        if (!childLvl) {
+        if (!childLvl || (childLvl === "subnational2" && !apiKey)) {
           g.countyTotal = null;
           g.countyRemaining = null;
           return;
         }
         try {
-          // childLvl is never "country" — g.level is always country|subnational1,
-          // so childLevel() only ever returns subnational1|subnational2 here.
-          const list = (
-            await subregions(apiKey, g.stateCode, childLvl as "subnational1" | "subnational2")
-          ).data;
+          // A country group's children come from the LOCAL reference set
+          // (works without an eBird key); subnational2 county lists stay
+          // live-from-eBird by design (plan decision 2).
+          const list =
+            childLvl === "subnational1"
+              ? (await subnational1Of(g.stateCode)).map((r) => ({ code: r.code, name: r.name }))
+              : (await subregions(apiKey!, g.stateCode, "subnational2")).data;
           g.countyTotal = list.length;
           for (const c of list) countyNames.set(c.code, c.name);
           // Blocks created from hotspots alone get their county's real name.
@@ -576,6 +550,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     DEFAULT_COUNTRY,
   );
 
+  // Country-qualified labels for the failed-loads list (rev 3: it mixes
+  // countries, so bare "Bornholm" would be ambiguous there).
+  const failedRegionLabels = await regionLabels(
+    failedRes.rows
+      .map((r) => (r.region_code ? parseRegionCode(r.region_code) : null))
+      .filter((x): x is NonNullable<typeof x> => x?.level === "subnational1")
+      .map((x) => x.code),
+  );
+
   return {
     hasHome: home != null,
     stateGroups,
@@ -589,7 +572,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         // "Sears Island · Hancock, Maine" beats "L602509 · US-ME-009".
         regionName = `${countyNames.get(parsed.code) ?? parsed.code}, ${regionDisplayName.get(parent) ?? countryName.get(parent) ?? parent}`;
       } else if (parsed?.level === "subnational1") {
-        regionName = regionDisplayName.get(parsed.code) ?? parsed.code;
+        // Qualified ("Bornholm, Denmark") — this list mixes countries (rev 3).
+        regionName =
+          failedRegionLabels.get(parsed.code) ??
+          regionDisplayName.get(parsed.code) ??
+          parsed.code;
       } else if (parsed?.level === "country") {
         regionName = countryName.get(parsed.code) ?? parsed.code;
       } else if (r.region_code) {
@@ -617,7 +604,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     countries: sortedCountries,
     selectedCountry,
     states: selectedCountryRegions.filter((s) => !loadedRegionCodes.has(s.code)),
-    statesError,
     wholeCountryLoaded,
     hasApiKey: !!apiKey,
     hasLogin,
@@ -649,23 +635,10 @@ export const actions: Actions = {
         error: "An eBird API key is required to list regions — add one in Settings.",
       });
     }
-    let name: string | null = null;
-    try {
-      name =
-        parsed.level === "country"
-          ? ((await ebirdCountries(apiKey)).data.find((c) => c.code === parsed.code)?.name ?? null)
-          : ((await subregions(apiKey, parsed.country, "subnational1")).data.find(
-              (s) => s.code === parsed.code,
-            )?.name ?? null);
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : "Could not verify the region against eBird.",
-      });
-    }
-    if (!name) return fail(400, { error: "eBird doesn't list that region." });
+    // Local reference-set validation (Phase 3) — no network failure mode.
+    const validated = await validateRegionCode(parsed.code);
+    if (!validated) return fail(400, { error: "eBird doesn't list that region." });
+    const name = validated.name;
 
     const label =
       parsed.level === "country" ? `${name} — countrywide` : `${name} statewide`;
@@ -707,29 +680,34 @@ export const actions: Actions = {
         error: "An eBird API key is required to list counties — add one in Settings.",
       });
     }
-    let regionName: string | null = null;
+    const validated = await validateRegionCode(parsed.code);
+    if (!validated) {
+      return fail(400, { error: "eBird doesn't list that region." });
+    }
+    const regionName = validated.name;
     let children: { code: string; name: string }[];
-    try {
-      regionName =
-        parsed.level === "country"
-          ? ((await ebirdCountries(apiKey)).data.find((c) => c.code === parsed.code)?.name ?? null)
-          : ((await subregions(apiKey, parsed.country, "subnational1")).data.find(
-              (s) => s.code === parsed.code,
-            )?.name ?? null);
-      if (!regionName) {
-        return fail(400, { error: "eBird doesn't list that region." });
+    if (childLvl === "subnational1") {
+      // Country parent: the child snapshot comes from the LOCAL reference set
+      // (Phase 3 worker guard, filter-at-enqueue) — the payload can never
+      // name a subnational1 code the regions seed doesn't cover, which is
+      // what makes the 0045 FK safe on this path.
+      children = (await subnational1Of(parsed.code)).map((r) => ({
+        code: r.code,
+        name: r.name,
+      }));
+    } else {
+      // Subnational1 parent: county (sub2) lists stay live-from-eBird by
+      // design (plan decision 2 — counties are outside the seed).
+      try {
+        children = (await subregions(apiKey, parsed.code, "subnational2")).data;
+      } catch (err) {
+        return fail(502, {
+          error:
+            err instanceof EbirdError
+              ? err.message
+              : "Could not list child regions for that region.",
+        });
       }
-      // childLvl is never "country" — parsed.level here is country|subnational1.
-      children = (
-        await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
-      ).data;
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : "Could not list child regions for that region.",
-      });
     }
     if (children.length === 0) {
       return fail(404, { error: "eBird lists no child regions for that region." });

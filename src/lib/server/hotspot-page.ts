@@ -7,6 +7,7 @@
  * row when loaded, and the previously-dark ebird_locations Google data.
  */
 import { query } from '$lib/db';
+import { getRegion } from '$server/regions';
 import type { EbirdObs } from '$server/ebird';
 import {
 	FREQ_LIKELY,
@@ -229,20 +230,32 @@ export async function hotspotMonthly(
 }
 
 /**
- * Resolve region codes (US-FL, US-FL-103) to display names from the cached
- * subregion lists — read-only, loader-safe (never fetches).
+ * Resolve region codes (US-FL, US-FL-103) to display names — read-only,
+ * loader-safe (never fetches). Country/subnational1 come from the local
+ * regions reference set (Phase 3); subnational2 counties stay resolved from
+ * the cached eBird subregion lists (plan decision 2 — outside the seed).
  */
 export async function regionNames(codes: readonly string[]): Promise<Map<string, string>> {
 	const wanted = codes.filter(Boolean);
 	if (wanted.length === 0) return new Map();
-	const r = await query<{ code: string; name: string }>(
-		`SELECT DISTINCT h->>'code' AS code, h->>'name' AS name
-		   FROM ebird_cache c, jsonb_array_elements(c.payload) h
-		  WHERE c.cache_key LIKE 'regions:%'
-		    AND h->>'code' = ANY($1)`,
-		[wanted]
-	);
-	return new Map(r.rows.map((x) => [x.code, x.name]));
+	const out = new Map<string, string>();
+	const stillUnknown: string[] = [];
+	for (const code of wanted) {
+		const r = await getRegion(code);
+		if (r) out.set(code, r.name);
+		else stillUnknown.push(code);
+	}
+	if (stillUnknown.length > 0) {
+		const r = await query<{ code: string; name: string }>(
+			`SELECT DISTINCT h->>'code' AS code, h->>'name' AS name
+			   FROM ebird_cache c, jsonb_array_elements(c.payload) h
+			  WHERE c.cache_key LIKE 'regions:%'
+			    AND h->>'code' = ANY($1)`,
+			[stillUnknown]
+		);
+		for (const x of r.rows) out.set(x.code, x.name);
+	}
+	return out;
 }
 
 export interface RecentReport {

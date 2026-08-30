@@ -1102,9 +1102,9 @@
             </select>
           </div>
         {/if}
-        {#if data.statesError}
-          <p class="error">{data.statesError}</p>
-        {:else if nothingLeftToLoad}
+        <!-- Region lists are local reference data (Phase 3) — the old
+             list-fetch error state no longer exists. -->
+        {#if nothingLeftToLoad}
           <!-- Every region of this country (and its countrywide export) is
                already loaded — an empty <select> holding only the placeholder
                reads as a broken picker (GBV 2026-08-24, Norway). -->

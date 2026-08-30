@@ -16,6 +16,8 @@ import {
 	type StopSignal
 } from '$server/barchart';
 import { coverageFromMeta, recentFailures } from '$server/forecast';
+import { getRegion } from '$server/regions';
+import { isSubnational1 } from '$lib/region-code';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
 import { env } from '$env/dynamic/private';
 import { query, queryTimed } from '$lib/db';
@@ -352,23 +354,45 @@ function frequencyLocs(job: JobRow): {
  * enqueue time. The worker recomputes only COVERAGE over that snapshot (what
  * is already current, what is cooling down) and loads the remainder.
  */
-async function analyzeCountiesLocs(job: JobRow): Promise<LocToEnsure[]> {
+async function analyzeCountiesLocs(
+	job: JobRow
+): Promise<{ locs: LocToEnsure[]; excluded: { code: string; name: string }[] }> {
 	const p = job.payload as unknown as AnalyzeCountiesPayload;
 	if (!Array.isArray(p?.counties) || p.counties.length === 0 || !p.regionCode) {
 		throw new Error('analyze_counties payload has no resolved counties');
 	}
-	const codes = p.counties.map((c) => c.code);
+	// Claim-time seed guard (refactor plan Phase 3, CODEX1 P1-3): a country
+	// parent's SUBNATIONAL1 children must exist in the regions reference set
+	// or the 0045 FK would reject their frequency rows. The enqueue path
+	// already snapshots from the seed, so this only fires for stale durable
+	// payloads enqueued before a seed change — excluded children are reported
+	// as SKIPPED with their own event, never silently dropped and never
+	// counted "ready". Subnational2 counties are outside the seed by design
+	// (plan decision 2) and pass through untouched.
+	const excluded: { code: string; name: string }[] = [];
+	const eligible: { code: string; name: string }[] = [];
+	for (const c of p.counties) {
+		if (isSubnational1(c.code) && (await getRegion(c.code)) == null) excluded.push(c);
+		else eligible.push(c);
+	}
+	if (eligible.length === 0) {
+		return { locs: [], excluded };
+	}
+	const codes = eligible.map((c) => c.code);
 	const [meta, attempts] = await Promise.all([frequencyMeta(codes), attemptMeta(codes)]);
 	const cov = coverageFromMeta(codes, meta, recentFailures(attempts, new Date()), lastCompleteYear());
 	const currentSet = new Set(cov.current);
-	return p.counties
-		.filter((c) => !currentSet.has(c.code))
-		.map((c) => ({
-			code: c.code,
-			kind: 'region' as const,
-			name: c.name,
-			regionCode: p.regionCode
-		}));
+	return {
+		locs: eligible
+			.filter((c) => !currentSet.has(c.code))
+			.map((c) => ({
+				code: c.code,
+				kind: 'region' as const,
+				name: c.name,
+				regionCode: p.regionCode
+			})),
+		excluded
+	};
 }
 
 /**
@@ -2333,12 +2357,26 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				return;
 			}
 			case 'analyze_counties': {
-				const locs = await analyzeCountiesLocs(job);
+				const { locs, excluded } = await analyzeCountiesLocs(job);
+				// Excluded (unseeded) children are SKIPPED, with their own event —
+				// reporting them "ready" would be silent false success (cs.md;
+				// CODEX1 P1-3). The event carries the actionable operator note;
+				// job events for this type are communal (FREQUENCY_JOB_TYPES).
+				if (excluded.length > 0) {
+					await recordEvent(job.id, 'unit_skipped', {
+						codes: excluded.map((c) => c.code),
+						reason: 'region not in this build\'s reference data — run scripts/generate-regions.mjs and deploy'
+					});
+				}
+				const payloadTotal = (job.payload as unknown as AnalyzeCountiesPayload).counties.length;
 				if (locs.length === 0) {
+					// Only the children that actually exist in the reference set
+					// may count as ready; excluded ones surface as skipped.
 					await completeJob(job.id, job.attempts, {
-						ready: (job.payload as unknown as AnalyzeCountiesPayload).counties.length,
+						ready: payloadTotal - excluded.length,
 						refreshed: 0,
 						failed: [],
+						skipped: excluded.map((c) => c.code),
 						notAttempted: 0,
 						credentialProblem: null,
 						rateLimited: false
@@ -2351,8 +2389,9 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				// ORIGINAL county snapshot is the total, and whatever the claim
 				// found already covered counts as done, so the bar keeps
 				// narrating N of TOTAL across yields instead of jumping back to
-				// 0 of remaining (CODEX1 #3 on afb305d).
-				const total = (job.payload as unknown as AnalyzeCountiesPayload).counties.length;
+				// 0 of remaining (CODEX1 #3 on afb305d). Excluded children are
+				// outside both total and done — they are neither work nor done.
+				const total = payloadTotal - excluded.length;
 				await runFrequencyJob(job, locs, false, ctx, {
 					base: { total, done: total - locs.length }
 				});

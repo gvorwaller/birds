@@ -15,10 +15,11 @@ import { createHash } from 'node:crypto';
 import { query } from '$lib/db';
 import { fetchRegionCentroid, EbirdError } from '$server/ebird';
 import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
-import { hotspotsNear, subregions, type EbirdHotspot } from '$server/ebird';
+import { hotspotsNear, type EbirdHotspot } from '$server/ebird';
+import { getRegion } from '$server/regions';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
-import { countryOf, isCountry, isSubnational1, parentOf } from '$lib/region-code';
+import { isCountry, isSubnational1, parentOf } from '$lib/region-code';
 
 /**
  * Months whose 4-week checklist total is below this are excluded from
@@ -772,13 +773,10 @@ export async function forecastNeedsNear(
 	const regionCode = rawRegion && isSubnational1(rawRegion) ? rawRegion : null;
 	let regionName: string | null = null;
 	if (regionCode) {
-		try {
-			const parentCountry = countryOf(regionCode)!;
-			const states = (await subregions(apiKey, parentCountry, 'subnational1')).data;
-			regionName = states.find((s) => s.code === regionCode)?.name ?? null;
-		} catch {
-			regionName = null;
-		}
+		// Local reference data (Phase 3) — bare name: this is always the user's
+		// own nearby state, so the country qualifier would be noise. Unknown
+		// code (never a guess) falls back to the stored loc_name, then the code.
+		regionName = (await getRegion(regionCode))?.name ?? null;
 		if (!regionName) {
 			const named = (await frequencyMeta([regionCode])).get(regionCode);
 			regionName = named?.locName && named.locName !== regionCode ? named.locName : regionCode;

@@ -346,9 +346,12 @@ function ensureResult(overrides: Record<string, unknown> = {}) {
 
 const ctx = { isDraining: () => false };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
+  // The regions accessor memoizes per process; without this reset, one
+  // test's seeded index would leak into every later test in the file.
+  (await import("$server/regions")).__resetRegionsCacheForTests();
   db.handler = null;
   db.calls.length = 0;
   db.stallTimedWrites = false;
@@ -944,6 +947,89 @@ describe("runJob — analyze_counties", () => {
     );
     expect(mocks.failJob).toHaveBeenCalledTimes(1);
     expect(mocks.failJob.mock.calls[0][2]).toMatch(/resolved counties/);
+  });
+});
+
+describe("runJob — analyze_counties seed guard (refactor plan Phase 3)", () => {
+  // A COUNTRY parent's children are subnational1 codes, checked against the
+  // regions reference table at claim time: a stale durable payload can name
+  // a region added upstream after the seed, and its frequency row would be
+  // rejected by the 0045 FK. Excluded children must surface as SKIPPED with
+  // an event — never silently dropped, never counted "ready" (CODEX1 P1-3).
+  const CHILDREN = [
+    { code: "NO-03", name: "Oslo" },
+    { code: "NO-99", name: "Brand New Fylke" }, // not in the seed
+  ];
+  const REGION_ROWS = [
+    { code: "NO", name: "Norway", level: "country", parent_code: null, lat: 64.6, lon: 12.7 },
+    { code: "NO-03", name: "Oslo", level: "subnational1", parent_code: "NO", lat: 59.9, lon: 10.7 },
+  ];
+
+  beforeEach(async () => {
+    const { __resetRegionsCacheForTests } = await import("$server/regions");
+    __resetRegionsCacheForTests();
+    db.handler = (text) =>
+      text.includes("FROM regions") ? { rows: REGION_ROWS } : undefined;
+  });
+
+  it("filters an unseeded subnational1 child, records it skipped, and analyzes the rest", async () => {
+    mocks.frequencyMeta.mockResolvedValue(new Map());
+    mocks.ensureFrequencies.mockResolvedValue(ensureResult({ refreshed: ["NO-03"] }));
+    await runJob(
+      jobRow({
+        type: "analyze_counties",
+        payload: { regionCode: "NO", regionName: "Norway", counties: CHILDREN },
+      }),
+      ctx,
+    );
+    const [, locs] = mocks.ensureFrequencies.mock.calls[0];
+    expect(locs).toEqual([
+      { code: "NO-03", kind: "region", name: "Oslo", regionCode: "NO" },
+    ]);
+    const skipped = mocks.recordEvent.mock.calls.find((c) => c[1] === "unit_skipped");
+    expect(skipped?.[2]).toMatchObject({ codes: ["NO-99"] });
+    expect(String((skipped?.[2] as { reason?: string }).reason)).toMatch(/generate-regions/);
+  });
+
+  it("ALL children excluded → completes with skipped, NEVER ready=all (silent false success)", async () => {
+    await runJob(
+      jobRow({
+        type: "analyze_counties",
+        payload: {
+          regionCode: "ZZ",
+          regionName: "Nowhere",
+          counties: [{ code: "ZZ-01", name: "Ghost Region" }],
+        },
+      }),
+      ctx,
+    );
+    expect(mocks.ensureFrequencies).not.toHaveBeenCalled();
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+    const result = mocks.completeJob.mock.calls[0][2] as {
+      ready: number;
+      skipped: string[];
+    };
+    expect(result.ready).toBe(0);
+    expect(result.skipped).toEqual(["ZZ-01"]);
+  });
+
+  it("subnational2 counties pass through untouched — they are outside the seed by design", async () => {
+    mocks.frequencyMeta.mockResolvedValue(new Map());
+    mocks.ensureFrequencies.mockResolvedValue(ensureResult({ refreshed: [] }));
+    await runJob(
+      jobRow({
+        type: "analyze_counties",
+        payload: {
+          regionCode: "US-ME",
+          regionName: "Maine",
+          counties: [{ code: "US-ME-001", name: "Androscoggin" }],
+        },
+      }),
+      ctx,
+    );
+    const [, locs] = mocks.ensureFrequencies.mock.calls[0];
+    expect(locs).toHaveLength(1);
+    expect(mocks.recordEvent.mock.calls.some((c) => c[1] === "unit_skipped")).toBe(false);
   });
 });
 

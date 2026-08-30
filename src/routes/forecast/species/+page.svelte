@@ -323,16 +323,9 @@
     {#if data.regionError}
       <p class="error">{data.regionError}</p>
     {/if}
-    {#if !data.hasApiKey}
-      <p class="notice">
-        The region list needs an eBird API key — add one in
-        <a href="/settings">Settings</a>.
-      </p>
-    {:else if data.statesError}
-      <p class="error">{data.statesError}</p>
-    {:else if data.statesStale}
-      <p class="notice">Region list shown from cache.</p>
-    {/if}
+    <!-- The country/region pickers are local reference data (Phase 3): they
+         work without an eBird API key, so the old key-needed notice and
+         list-fetch error/stale states no longer exist. -->
 
     {#if !data.taxon && data.q}
       {#if data.speciesMatches.length === 0}

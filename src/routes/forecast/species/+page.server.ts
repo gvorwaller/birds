@@ -5,10 +5,15 @@ import {
   getEbirdApiKey,
   hotspotsInRegion,
   subregions,
-  countries as ebirdCountries,
   EbirdError,
   type EbirdHotspot,
 } from "$server/ebird";
+import {
+  countriesList,
+  regionCoordsFor,
+  subnational1Of,
+  validateRegionCode,
+} from "$server/regions";
 import {
   attemptMeta,
   frequencyMeta,
@@ -34,7 +39,6 @@ import {
   rankLocsForSpeciesMonth,
   recentFailures,
   speciesLocForecast,
-  ensureRegionCentroids,
   sortByProximity,
   type RankedLoc,
 } from "$server/forecast";
@@ -98,22 +102,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       : null;
 
   // Countries (world list), for the country picker + country-level region
-  // validation. Cache-first with stale fallback (cs.md).
-  let countryList: { code: string; name: string }[] = [];
-  let statesError: string | null = null;
-  if (apiKey) {
-    try {
-      countryList = (await ebirdCountries(apiKey)).data;
-    } catch (err) {
-      statesError =
-        err instanceof EbirdError
-          ? err.message
-          : "Could not load the country list.";
-    }
-  }
-  // Share one five-call allowance across both picker levels. Negative results
-  // and transient cooldowns are persisted, so later codes still converge.
-  const centroidBudget = { remaining: 5 };
+  // validation — local reference data (regions table, refactor plan Phase 3).
+  // No eBird call, no API key needed: the picker works for key-less users
+  // and viewers, who previously got an empty picker and a regionError.
+  const countryList: { code: string; name: string }[] = (await countriesList()).map(
+    (r) => ({ code: r.code, name: r.name }),
+  );
 
   // Country param: explicit ?country=, else the selected region's own
   // country (deep links keep working), else US.
@@ -124,47 +118,22 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     country = parsedRegion?.country ?? "US";
   }
   // Keep the picker, hidden GET field, and region list on a real country.
-  // When the official list is unavailable, retain the existing syntax-only
-  // fallback so cached international forecast data can still render.
-  if (
-    !isCountry(country) ||
-    (countryList.length > 0 && !countryList.some((c) => c.code === country))
-  ) {
+  // The reference set is always complete, so the old "list unavailable —
+  // fall back to syntax-valid" ladder no longer has a state to cover.
+  if (!isCountry(country) || !countryList.some((c) => c.code === country)) {
     country = "US";
   }
 
-  // Subnational1 regions of the selected country (cache-first, 30-day TTL,
-  // stale fallback) — drives the region picker.
-  let states: { code: string; name: string }[] = [];
-  let statesStale = false;
-  if (apiKey && !statesError) {
-    try {
-      const r = await subregions(apiKey, country, "subnational1");
-      states = r.data;
-      statesStale = r.stale;
-    } catch (err) {
-      statesError =
-        err instanceof EbirdError
-          ? err.message
-          : "Could not load the region list.";
-    }
-  }
+  // Subnational1 regions of the selected country — local reference data.
+  let states: { code: string; name: string }[] = (await subnational1Of(country)).map(
+    (r) => ({ code: r.code, name: r.name }),
+  );
   // Nearest-first within the selected country (Gaylon 2026-08-29): a country
-  // the size of Norway or Australia is a scroll otherwise. Falls back to
-  // the eBird-supplied (alphabetical) order with no home set.
-  const stateCentroids = await ensureRegionCentroids(
-    apiKey,
-    states.map((s) => s.code),
-    { maxFetches: 5, budget: centroidBudget },
-  );
+  // the size of Norway or Australia is a scroll otherwise. Coordinates come
+  // from the regions table — no live lookups, no per-page fetch budget.
+  const stateCentroids = await regionCoordsFor(states.map((s) => s.code));
   states = sortByProximity(states, home, stateCentroids);
-  // The selected country's regions get first use of the budget; warming an
-  // alphabetical world prefix must not delay the picker the user is using.
-  const countryCentroids = await ensureRegionCentroids(
-    apiKey,
-    countryList.map((c) => c.code),
-    { maxFetches: 5, budget: centroidBudget },
-  );
+  const countryCentroids = await regionCoordsFor(countryList.map((c) => c.code));
 
   // Selected species (validated against the taxonomy — never echoed blindly).
   let taxon: SpeciesMatch | null = null;
@@ -184,28 +153,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Selected region, validated by syntax + membership in the country's
-  // region list (subnational1) or the world country list (country-level —
-  // a whole-country load, e.g. "IS").
+  // Selected region, validated by syntax + membership in the reference set
+  // (country-level or subnational1 — a whole-country load like "IS" works).
   let region: { code: string; name: string } | null = null;
   let regionError: string | null = null;
   if (regionParam) {
-    const parsed = parseRegionCode(regionParam);
-    if (!parsed || parsed.level === "subnational2") {
-      regionError = "Unrecognized region code.";
-    } else if (parsed.level === "country") {
-      const match = countryList.find((c) => c.code === parsed.code);
-      if (match) region = match;
-      else if (countryList.length > 0) regionError = "eBird doesn't list that region.";
-      // With no country list (no API key / API down) fall back to
-      // syntax-valid: cached forecast data can still render read-only.
-      else region = { code: parsed.code, name: parsed.code };
-    } else {
-      const match = states.find((s) => s.code === parsed.code);
-      if (match) region = match;
-      else if (states.length > 0) regionError = "eBird doesn't list that region.";
-      else region = { code: parsed.code, name: parsed.code };
-    }
+    const validated = await validateRegionCode(regionParam);
+    if (validated) region = { code: validated.code, name: validated.name };
+    else regionError = "Unrecognized region code.";
   }
 
   // Species search (server-side, taxonomy cache only). Word gaps become
@@ -479,8 +434,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     countries: sortedCountries,
     country,
     states,
-    statesStale,
-    statesError,
     forecast,
     attempt,
     month,
@@ -506,23 +459,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   };
 };
 
-/** Validate a region against the official eBird list; returns its display
- * name. Country-level codes validate against the world country list;
- * subnational1 codes against their parent country's region list. */
-async function validateRegion(
-  apiKey: string,
-  regionCode: string,
-): Promise<string | null> {
-  const parsed = parseRegionCode(regionCode);
-  if (!parsed || parsed.level === "subnational2") return null;
-  if (parsed.level === "country") {
-    const r = await ebirdCountries(apiKey);
-    return r.data.find((c) => c.code === parsed.code)?.name ?? null;
-  }
-  const r = await subregions(apiKey, parsed.country, "subnational1");
-  return r.data.find((s) => s.code === parsed.code)?.name ?? null;
-}
-
 export const actions: Actions = {
   /**
    * Fetch/refresh the region-level barchart (1 eBird request). Owner-only
@@ -546,20 +482,13 @@ export const actions: Actions = {
         error: "An eBird API key is required to list regions — add one in Settings.",
       });
     }
-    let stateName: string | null = null;
-    try {
-      stateName = await validateRegion(apiKey, parsed.code);
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : "Could not verify the region against eBird.",
-      });
-    }
-    if (!stateName) {
+    // Local reference-set validation (Phase 3) — no network failure mode,
+    // so the old "could not verify against eBird" 502 branch is gone.
+    const validated = await validateRegionCode(parsed.code);
+    if (!validated) {
       return fail(400, { error: "eBird doesn't list that region." });
     }
+    const stateName = validated.name;
 
     const label =
       parsed.level === "country" ? `${stateName} — countrywide` : `${stateName} statewide`;
@@ -601,24 +530,34 @@ export const actions: Actions = {
         error: "An eBird API key is required to list counties — add one in Settings.",
       });
     }
-    let regionName: string | null = null;
+    const validated = await validateRegionCode(parsed.code);
+    if (!validated) {
+      return fail(400, { error: "eBird doesn't list that region." });
+    }
+    const regionName = validated.name;
     let counties: { code: string; name: string }[];
-    try {
-      regionName = await validateRegion(apiKey, parsed.code);
-      if (!regionName) {
-        return fail(400, { error: "eBird doesn't list that region." });
+    if (childLvl === "subnational1") {
+      // Country parent: the child snapshot comes from the LOCAL reference set
+      // (Phase 3 worker guard, filter-at-enqueue) — the payload can therefore
+      // never name a subnational1 code the regions seed doesn't cover, which
+      // is what makes the 0045 FK safe on this path.
+      counties = (await subnational1Of(parsed.code)).map((r) => ({
+        code: r.code,
+        name: r.name,
+      }));
+    } else {
+      // Subnational1 parent: county (sub2) lists stay live-from-eBird by
+      // design (plan decision 2 — counties are outside the seed).
+      try {
+        counties = (await subregions(apiKey, parsed.code, "subnational2")).data;
+      } catch (err) {
+        return fail(502, {
+          error:
+            err instanceof EbirdError
+              ? err.message
+              : "Could not list child regions for that region.",
+        });
       }
-      // childLvl is never "country" — parsed.level here is country|subnational1.
-      counties = (
-        await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
-      ).data;
-    } catch (err) {
-      return fail(502, {
-        error:
-          err instanceof EbirdError
-            ? err.message
-            : "Could not list child regions for that region.",
-      });
     }
     if (counties.length === 0) {
       return fail(404, { error: "eBird lists no child regions for that region." });
@@ -671,12 +610,11 @@ export const actions: Actions = {
       });
     }
 
+    if (!(await validateRegionCode(parsed.code))) {
+      return fail(400, { error: "eBird doesn't list that region." });
+    }
     let selected: EbirdHotspot[];
     try {
-      const regionName = await validateRegion(apiKey, parsed.code);
-      if (!regionName) {
-        return fail(400, { error: "eBird doesn't list that region." });
-      }
       // childLvl is never "country" — parsed.level here is country|subnational1.
       const counties = (
         await subregions(apiKey, parsed.code, childLvl as "subnational1" | "subnational2")
