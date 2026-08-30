@@ -120,10 +120,18 @@
 					<div class="version-body">
 						<ul>
 							<li>
-								<strong>Nearby-first seasonal planning</strong> — country and region
-								pickers now put places nearest your saved home first, while species
-								pages lead with the nearest loaded region where the bird is findable
-								and still link the strongest region overall when it differs.
+								<strong>Side-by-side seasonal comparison</strong> — species pages
+								now show the closest loaded region with sightings and the most
+								findable region overall as two tappable choices, with the chart
+								following your pick. Region names include their country where
+								that isn't obvious ("Bornholm, Denmark"), and stray codes like
+								"[SE-01]" no longer leak into region names.
+							</li>
+							<li>
+								<strong>Faster, key-free region pickers</strong> — country and
+								region lists (nearest-first with a saved home) now come from
+								built-in reference data instead of live eBird lookups, so they
+								load instantly and work even before an eBird API key is set.
 							</li>
 							<li>
 								<strong>Breadcrumb out of the species forecast</strong> — following

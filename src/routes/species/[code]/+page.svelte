@@ -57,6 +57,48 @@
    * the bird and, one level further, to the list this page was opened from
    * (Gaylon 2026-08-29: the drill was a dead end otherwise).
    */
+  // --- Best-time-of-year peers (plan Phase 5) -----------------------------
+  // Selection is client-side only: every peer carries its own curve, so
+  // switching tabs re-renders the chart with no round trip.
+  let selectedTeaserCode = $state<string | null>(null);
+  $effect(() => {
+    // Reset to the server's default when navigating between species.
+    selectedTeaserCode = data.forecastTeaser?.defaultLocCode ?? null;
+  });
+  const selectedPeer = $derived(
+    data.forecastTeaser?.peers.find((p) => p.locCode === selectedTeaserCode) ??
+      data.forecastTeaser?.peers[0] ??
+      null,
+  );
+  function peerKindLabel(
+    kind: "closest" | "best" | "both",
+    poolSize: number,
+  ): string {
+    // "Best of N loaded regions": the qualifier lives in the label itself —
+    // an unqualified "Best overall" across N-of-the-world regions is a false
+    // claim (937bdb8 lesson; AGY review).
+    if (kind === "closest") return "Closest with sightings";
+    if (kind === "best")
+      return poolSize === 1
+        ? "Only loaded region with sightings"
+        : `Best of ${poolSize} loaded regions`;
+    return poolSize === 1
+      ? "Only loaded region with sightings"
+      : `Closest and best of ${poolSize} loaded regions`;
+  }
+  function onPeerTabKeydown(e: KeyboardEvent) {
+    // Arrow-key navigation with roving tabindex (ARIA tabs pattern).
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const peers = data.forecastTeaser?.peers ?? [];
+    if (peers.length < 2) return;
+    e.preventDefault();
+    const i = peers.findIndex((p) => p.locCode === selectedTeaserCode);
+    const next =
+      peers[(i + (e.key === "ArrowRight" ? 1 : peers.length - 1)) % peers.length];
+    selectedTeaserCode = next.locCode;
+    document.getElementById(`peer-tab-${next.locCode}`)?.focus();
+  }
+
   function forecastHref(regionCode: string): string {
     const params = new URLSearchParams({
       species: data.taxon.species_code,
@@ -343,53 +385,97 @@
     </section>
   {/if}
 
-  {#if data.forecastTeaser}
+  {#if data.forecastTeaser && selectedPeer}
     {@const ft = data.forecastTeaser}
     <section class="card">
-      <h2>
-        Best time of year — {ft.regionName}
-        <span class="muted">
-          {#if ft.nearestBased && ft.distanceKm != null}
-            nearest loaded region with sightings · ~{formatDistance(
-              ft.distanceKm,
-              distanceUnit,
-            )} away
-          {:else if ft.nearestBased}
-            nearest loaded region with sightings
-          {:else}
-            among loaded regions
+      <h2>Best time of year</h2>
+      <!-- Both picks as equal peers (plan Phase 5; AGY: a TABLIST, not a
+           radiogroup — this selects which region's data a panel displays).
+           The honesty qualifier lives IN the row label ("Best of N loaded
+           regions"), where the claim is made (937bdb8 lesson). -->
+      {#if ft.peers.length > 1}
+        <div class="peer-tabs" role="tablist" aria-label="Region to chart">
+          {#each ft.peers as peer (peer.locCode)}
+            {@const active = peer.locCode === selectedTeaserCode}
+            <button
+              type="button"
+              role="tab"
+              id="peer-tab-{peer.locCode}"
+              aria-selected={active}
+              aria-controls="teaser-panel"
+              tabindex={active ? 0 : -1}
+              class:active
+              onclick={() => (selectedTeaserCode = peer.locCode)}
+              onkeydown={onPeerTabKeydown}
+            >
+              <span class="peer-kind">{peerKindLabel(peer.kind, ft.poolSize)}</span>
+              <span class="peer-name">{peer.label}</span>
+              <span class="peer-meta">
+                {#if peer.kind === "closest" && peer.distanceKm != null}
+                  ~{formatDistance(peer.distanceKm, distanceUnit)} away
+                {:else if peer.peakPhrase}
+                  peaks {peer.peakPhrase}
+                {:else if peer.best}
+                  peak {MONTH_NAMES[peer.best.month - 1]}
+                {/if}
+              </span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <p class="peer-single">
+          <strong>{peerKindLabel(selectedPeer.kind, ft.poolSize)}</strong>
+          — {selectedPeer.label}
+          {#if selectedPeer.distanceKm != null}
+            <span class="muted"
+              >· ~{formatDistance(selectedPeer.distanceKm, distanceUnit)} away</span
+            >
           {/if}
-        </span>
-        {#if ft.peakPhrase}
-          <span class="muted">peaks {ft.peakPhrase}</span>
-        {:else if ft.best}
-          <span class="muted">peak {MONTH_NAMES[ft.best.month - 1]}</span>
-        {/if}
-        {#if ft.good.length > 1}
-          <span class="muted">· good {formatMonthWindow(ft.good)}</span>
-        {/if}
-      </h2>
-      <FrequencyChart
-        weeks={data.forecastTeaser.weeks}
-        months={ft.curve}
-        highlightMonth={ft.best?.month ?? null}
-        caption="Share of {ft.regionName} eBird checklists reporting {data.taxon
-          .com_name}, by month"
-      />
-      {#if data.forecastTeaser.migration}
-        <p class="migration">🛫 {data.forecastTeaser.migration}</p>
-      {/if}
-      {#if ft.alsoBest}
-        <p class="muted">
-          Most findable overall:
-          <a href={forecastHref(ft.alsoBest.locCode)}>{ft.alsoBest.locName}</a>
         </p>
+        {#if !ft.hasOrigin}
+          <p class="muted">
+            Set a home location in <a href="/settings">Settings</a> to see the
+            closest region with sightings.
+          </p>
+        {/if}
       {/if}
-      <p class="muted">
-        <a href={forecastHref(ft.regionCode)}>
-          Where should I go? — county &amp; hotspot forecast →
-        </a>
-      </p>
+      <!-- The chart, its caption, AND the "Where should I go?" link live
+           inside the tabpanel: the link target follows the selection, and
+           outside aria-controls a screen-reader user would never be told it
+           changed (AGY review). -->
+      <div
+        id="teaser-panel"
+        role={ft.peers.length > 1 ? "tabpanel" : null}
+        aria-labelledby={ft.peers.length > 1
+          ? `peer-tab-${selectedTeaserCode}`
+          : null}
+      >
+        <p class="muted peer-season">
+          {#if selectedPeer.peakPhrase}
+            peaks {selectedPeer.peakPhrase}
+          {:else if selectedPeer.best}
+            peak {MONTH_NAMES[selectedPeer.best.month - 1]}
+          {/if}
+          {#if selectedPeer.good.length > 1}
+            · good {formatMonthWindow(selectedPeer.good)}
+          {/if}
+        </p>
+        <FrequencyChart
+          weeks={selectedPeer.weeks}
+          months={selectedPeer.curve}
+          highlightMonth={selectedPeer.best?.month ?? null}
+          caption="Share of {selectedPeer.label} eBird checklists reporting {data
+            .taxon.com_name}, by month"
+        />
+        {#if selectedPeer.migration}
+          <p class="migration">🛫 {selectedPeer.migration}</p>
+        {/if}
+        <p class="muted">
+          <a href={forecastHref(selectedPeer.locCode)}>
+            Where should I go? — county &amp; hotspot forecast →
+          </a>
+        </p>
+      </div>
     </section>
   {/if}
 
@@ -762,6 +848,57 @@
   }
   h1 {
     font-size: 1.4rem;
+  }
+  /* Best-time-of-year peer tabs (Phase 5). Selection is colour AND border
+     AND aria-selected — never colour alone (cs.md). ≥48px tap targets. */
+  .peer-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 4px 0 10px;
+  }
+  .peer-tabs [role="tab"] {
+    flex: 1 1 240px;
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 12px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .peer-tabs [role="tab"].active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .peer-kind {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  .peer-tabs [role="tab"].active .peer-kind {
+    color: var(--accent);
+  }
+  .peer-name {
+    font-weight: 600;
+  }
+  .peer-meta {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .peer-single {
+    margin: 4px 0 6px;
+  }
+  .peer-season {
+    margin: 0 0 6px;
   }
   .sub,
   .muted {

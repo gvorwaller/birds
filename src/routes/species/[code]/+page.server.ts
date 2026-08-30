@@ -30,7 +30,7 @@ import {
   type SpeciesObservationDetail,
 } from "$server/observations";
 import { verifiedHotspotLocIds } from "$server/hotspots";
-import { goodMonths, pickSpeciesTeaserState } from "$server/forecast";
+import { pickSpeciesTeaserState } from "$server/forecast";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
 import { safeReturnTo } from "$lib/return-link";
 import {
@@ -110,14 +110,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let nearbyError: string | null = null;
   let stale = false;
   const apiKey = await getEbirdApiKey(userId);
-  // Proximity-first teaser (Gaylon 2026-08-29): pickSpeciesTeaserState warms
-  // centroids for just THIS species' own candidate regions (GROK P1/P2,
-  // 2026-08-29 — not the whole teaser universe, which is typically far
-  // larger than one species is even reported in, and made "nearest" wrong
-  // while the rest of it warmed). Prefers the region nearest the active
-  // origin — the searched place when one is set, else saved home. Key-less
-  // users get cache-only centroids.
-  const teaserP = pickSpeciesTeaserState(code, { home: origin, apiKey });
+  // Teaser peers (refactor plan Phase 5): closest-vs-best from the regions
+  // reference table — pure DB, no eBird calls, works without an API key.
+  // Origin rule unchanged: the searched place wins over the saved home.
+  const teaserP = pickSpeciesTeaserState(code, { home: origin });
   if (apiKey && origin) {
     try {
       const [recentResult, notableResult] = await Promise.allSettled([
@@ -218,39 +214,12 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     }
   }
 
-  // Forecast teaser: the loaded state where this species is most findable
-  // (highest peak month), not the state with the most checklists overall.
-  let forecastTeaser: {
-    regionCode: string;
-    regionName: string;
-    curve: { month: number; freq: number; n: number }[];
-    /** 48-week resolution for the chart's Week toggle (td-af8393). */
-    weeks: { week: number; freq: number; n: number }[];
-    migration: string | null;
-    best: { month: number; freq: number; lowSample: boolean } | null;
-    peakPhrase: string | null;
-    /** Months within 80% of the peak — the "good window". */
-    good: number[];
-    nearestBased: boolean;
-    distanceKm: number | null;
-    alsoBest: { locCode: string; locName: string } | null;
-  } | null = null;
+  // Best-time-of-year card: 1-2 peers (closest / best overall), each carrying
+  // its own curve so the client switches tabs with no round trip (Phase 5).
+  // Rendered only when the default peer has a usable best month.
   const teaserState = await teaserP;
-  if (teaserState && teaserState.best) {
-    forecastTeaser = {
-      regionCode: teaserState.locCode,
-      regionName: teaserState.locName,
-      curve: teaserState.curve,
-      weeks: teaserState.weeks,
-      migration: teaserState.migration,
-      best: teaserState.best,
-      peakPhrase: teaserState.peakPhrase,
-      good: goodMonths(teaserState.curve),
-      nearestBased: teaserState.nearestBased,
-      distanceKm: teaserState.distanceKm,
-      alsoBest: teaserState.alsoBest,
-    };
-  }
+  const forecastTeaser =
+    teaserState && teaserState.peers.some((pe) => pe.best != null) ? teaserState : null;
 
   // DB-only (spec invariant #1): never calls Commons/xeno-canto on GET.
   // Independent reads — run in parallel.

@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const centroidMocks = vi.hoisted(() => ({
+const dbMocks = vi.hoisted(() => ({
   query: vi.fn(),
-  fetchRegionCentroid: vi.fn(),
 }));
 
 const { MockEbirdError } = vi.hoisted(() => {
@@ -18,13 +17,11 @@ const { MockEbirdError } = vi.hoisted(() => {
 });
 
 vi.mock("$lib/db", () => ({
-  query: centroidMocks.query,
+  query: dbMocks.query,
   withTransaction: vi.fn(),
 }));
 vi.mock("$server/ebird", () => ({
-  fetchRegionCentroid: centroidMocks.fetchRegionCentroid,
   hotspotsNear: vi.fn(),
-  subregions: vi.fn(),
   EbirdError: MockEbirdError,
 }));
 import {
@@ -42,9 +39,10 @@ import {
 
 const WEEKS = 48;
 
-beforeEach(() => {
-  centroidMocks.query.mockReset();
-  centroidMocks.fetchRegionCentroid.mockReset();
+beforeEach(async () => {
+  dbMocks.query.mockReset();
+  // regions.ts memoizes per process — reset so each test controls its rows.
+  (await import("$server/regions")).__resetRegionsCacheForTests();
 });
 
 /** sampleSizes helper: n for every week of one month, 0 elsewhere. */
@@ -674,23 +672,22 @@ describe("pickNearestTeaserCandidate (proximity-first teaser, 2026-08-29)", () =
     expect(pick?.locCode).toBe("US-FL");
   });
 
-  it("refuses to guess when ANY pool member lacks a centroid — even a much weaker one (GROK P1, 2026-08-29)", async () => {
-    // The old behavior ranked unknowns last and picked the best KNOWN region.
-    // That is an honest-looking but false "nearest" claim: XX-ZZ (unknown
-    // distance) could easily be closer than US-FL — we simply don't know
-    // yet. Any hole in the pool's coverage must fall back to the global pick
-    // instead of picking among a partially-known subset.
+  it("no longer refuses on a missing coordinate — that state is unreachable by construction (Phase 5)", async () => {
+    // History: GROK P1 (2026-08-29) made this picker bail if ANY pool member
+    // lacked a centroid, because the lazily-warmed cache could hold holes and
+    // naming a farther KNOWN region "nearest" would be a false claim. The
+    // regions refactor removed the cache: coordinates come from the seeded
+    // regions table, and the 0045 FK guarantees every country/subnational1
+    // code with frequency data has a row with NOT NULL coordinates. The
+    // defensive bail was deleted WITH that justification (plan Phase 5) —
+    // among the members that DO have coordinates, nearest wins.
     const { pickNearestTeaserCandidate } = await import("./forecast");
-    expect(
-      pickNearestTeaserCandidate(
-        [cand("XX-ZZ", 0.9), cand("US-FL", 0.1)],
-        HOME,
-        centroids,
-      ),
-    ).toBeNull();
-    expect(
-      pickNearestTeaserCandidate([cand("XX-ZZ", 0.9)], HOME, centroids),
-    ).toBeNull();
+    const pick = pickNearestTeaserCandidate(
+      [cand("XX-ZZ", 0.9), cand("US-FL", 0.1)],
+      HOME,
+      centroids, // XX-ZZ has no entry
+    );
+    expect(pick?.locCode).toBe("US-FL");
   });
 
   it("picks confidently once every pool member IS geocoded", async () => {
@@ -793,332 +790,86 @@ describe("sortByProximity (picker dropdowns, 2026-08-29 follow-up)", () => {
   });
 });
 
-describe("ensureRegionCentroids", () => {
-  it("skips durable misses and cooling errors, advances to due/new codes, and records outcomes", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockImplementation(async (sql: string) => {
-      if (sql.includes("SELECT loc_code")) {
-        return {
-          rows: [
-            { loc_code: "OK", lat: 1, lon: 2, retry_after: null },
-            { loc_code: "GONE", lat: null, lon: null, retry_after: null },
-            {
-              loc_code: "COOL",
-              lat: null,
-              lon: null,
-              retry_after: new Date(Date.now() + 60_000),
-            },
-            {
-              loc_code: "DUE",
-              lat: null,
-              lon: null,
-              retry_after: new Date(Date.now() - 60_000),
-            },
-          ],
-        };
-      }
+describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
+  // Fixture universe: Florida (close to home, modest frequency) and Bornholm
+  // (far, most findable). Coordinates/labels come from the mocked regions
+  // table; frequency rows from the mocked teaser query.
+  const HOME = { lat: 30.3, lon: -81.7 }; // Jacksonville
+  const REGION_ROWS = [
+    { code: "US", name: "United States", level: "country", parent_code: null, lat: 37.1, lon: -95.7 },
+    { code: "US-FL", name: "Florida", level: "subnational1", parent_code: "US", lat: 28.6, lon: -82.4 },
+    { code: "DK", name: "Denmark", level: "country", parent_code: null, lat: 56.0, lon: 10.0 },
+    { code: "DK-05", name: "Bornholm", level: "subnational1", parent_code: "DK", lat: 55.1, lon: 14.9 },
+  ];
+  const sizes = Array(48).fill(100);
+  function freqRows(locCode: string, locName: string, freq: number) {
+    // Four well-sampled April weeks at `freq` — enough for a sampled best month.
+    return [13, 14, 15, 16].map((week) => ({
+      loc_code: locCode,
+      loc_name: locName,
+      sample_sizes: sizes,
+      week,
+      freq,
+    }));
+  }
+  function mockDb(teaserRows: unknown[]) {
+    dbMocks.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM regions")) return { rows: REGION_ROWS };
+      if (sql.includes("FROM frequency_fetch")) return { rows: teaserRows };
       return { rows: [] };
     });
-    centroidMocks.fetchRegionCentroid
-      .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValueOnce({ lat: 3, lon: 4 });
+  }
 
-    const result = await ensureRegionCentroids(
-      "key",
-      ["OK", "GONE", "COOL", "DUE", "NEW", "NEW"],
-      { maxFetches: 2 },
-    );
-
-    expect(
-      centroidMocks.fetchRegionCentroid.mock.calls.map((c) => c[1]),
-    ).toEqual(["DUE", "NEW"]);
-    expect(result).toEqual(
-      new Map([
-        ["OK", { lat: 1, lon: 2 }],
-        ["NEW", { lat: 3, lon: 4 }],
-      ]),
-    );
-    const writes = centroidMocks.query.mock.calls
-      .slice(1)
-      .map((c) => c[0] as string);
-    expect(writes.some((sql) => sql.includes("INTERVAL '1 days'"))).toBe(true);
-    expect(writes.some((sql) => sql.includes("SET lat = EXCLUDED.lat"))).toBe(
-      true,
-    );
-    expect(
-      writes
-        .filter((sql) => sql.includes("SET lat = NULL"))
-        .every((sql) => sql.includes("WHERE region_centroids.lat IS NULL")),
-    ).toBe(true);
+  it("closest and best differ → two peers, closest first and default, labels country-qualified", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb([...freqRows("US-FL", "Florida", 0.1), ...freqRows("DK-05", "Bornholm", 0.8)]);
+    const t = await pickSpeciesTeaserState("gbbgul", { home: HOME });
+    expect(t?.peers.map((p) => p.kind)).toEqual(["closest", "best"]);
+    expect(t?.peers[0].locCode).toBe("US-FL");
+    expect(t?.peers[0].label).toBe("Florida, United States");
+    expect(t?.peers[1].label).toBe("Bornholm, Denmark");
+    expect(t?.defaultLocCode).toBe("US-FL");
+    expect(t?.poolSize).toBe(2);
+    // A closest peer ALWAYS carries a distance (AGY edge case: never null).
+    expect(t?.peers[0].distanceKm).toBeGreaterThan(0);
+    expect(t?.peers[0].distanceKm).toBeLessThan(300);
+    // Each peer carries its own chart data — switching needs no round trip.
+    expect(t?.peers[1].curve).toHaveLength(12);
+    expect(t?.peers[1].weeks).toHaveLength(48);
   });
 
-  it("shares one page budget across calls and persists a durable 404/410 miss", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockImplementation(async () => ({ rows: [] }));
-    centroidMocks.fetchRegionCentroid.mockResolvedValue(null);
-    const budget = { remaining: 1 };
-
-    await ensureRegionCentroids("key", ["FIRST", "SECOND"], {
-      maxFetches: 5,
-      budget,
-    });
-    await ensureRegionCentroids("key", ["THIRD"], { maxFetches: 5, budget });
-
-    expect(budget.remaining).toBe(0);
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith(
-      "key",
-      "FIRST",
-    );
-    const write = centroidMocks.query.mock.calls[1][0] as string;
-    expect(write).toContain("INSERT INTO region_centroids");
-    expect(write).toContain("retry_after");
-    expect(write).toContain("30 days");
+  it("no origin → single 'best' peer, hasOrigin false, and NEVER a closest row", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb([...freqRows("US-FL", "Florida", 0.1), ...freqRows("DK-05", "Bornholm", 0.8)]);
+    const t = await pickSpeciesTeaserState("gbbgul", {});
+    expect(t?.peers.map((p) => p.kind)).toEqual(["best"]);
+    expect(t?.peers[0].locCode).toBe("DK-05");
+    expect(t?.peers[0].distanceKm).toBeNull();
+    expect(t?.hasOrigin).toBe(false);
   });
 
-  it("treats a negative shared allowance as exhausted, never as slice(0, -1)", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    await ensureRegionCentroids("key", ["FIRST", "SECOND"], {
-      maxFetches: 5,
-      budget: { remaining: -1 },
-    });
-    expect(centroidMocks.fetchRegionCentroid).not.toHaveBeenCalled();
+  it("closest IS best → one static 'both' peer with its distance", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb(freqRows("US-FL", "Florida", 0.4));
+    const t = await pickSpeciesTeaserState("gbbgul", { home: HOME });
+    expect(t?.peers.map((p) => p.kind)).toEqual(["both"]);
+    expect(t?.peers[0].distanceKm).toBeGreaterThan(0);
+    expect(t?.poolSize).toBe(1);
   });
 
-  it("persists a durable 404/410 miss with a re-checkable TTL, not a permanent NULL retry_after (AGY P1)", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    centroidMocks.fetchRegionCentroid.mockResolvedValue(null);
-    await ensureRegionCentroids("key", ["RETIRED"], { maxFetches: 5 });
-    const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
-    // A NULL/no-expiry retry_after here would mean a code invalid today (or
-    // briefly misreported) stays negative-cached forever with no recovery.
-    expect(writes.some((sql) => sql.includes("retry_after"))).toBe(true);
-    expect(writes.some((sql) => /INTERVAL '\d+ days'/.test(sql))).toBe(true);
+  it("unknown region code (not in the reference set) never invents a label — stored loc_name is used", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb(freqRows("XX-ZZ", "Mystery Region [XX-99]", 0.4));
+    const t = await pickSpeciesTeaserState("gbbgul", {});
+    expect(t?.peers[0].label).toBe("Mystery Region [XX-99]");
   });
 
-  it("aborts the whole sweep on an account-level failure instead of poisoning the shared cache (AGY P1)", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    centroidMocks.fetchRegionCentroid.mockRejectedValue(
-      new MockEbirdError("eBird API key is missing or invalid.", 403),
-    );
-    await ensureRegionCentroids("bad-key", ["A", "B", "C"], { maxFetches: 5 });
-    // A bad key fails identically for every remaining code — one attempt,
-    // not one cooldown write per code in the shared table.
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
-    const cooldownWrites = centroidMocks.query.mock.calls
-      .slice(1)
-      .filter((c) => (c[0] as string).includes("retry_after"));
-    expect(cooldownWrites).toHaveLength(0);
-  });
-
-  it("still cools down a per-region transient failure that is NOT an account-level error", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    centroidMocks.fetchRegionCentroid.mockRejectedValue(new Error("network blip"));
-    await ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
-    const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
-    expect(writes.some((sql) => sql.includes("retry_after"))).toBe(true);
-    expect(writes.some((sql) => sql.includes("30 days"))).toBe(false);
-    expect(writes.some((sql) => sql.includes("1 days"))).toBe(true);
-  });
-
-  it.each([422, 400])(
-    "treats a %i (data-quality) failure as durable, not a daily-forever retry (round 4 self-review)",
-    async (status) => {
-      const { ensureRegionCentroids } = await import("./forecast");
-      centroidMocks.query.mockResolvedValue({ rows: [] });
-      centroidMocks.fetchRegionCentroid.mockRejectedValue(
-        new MockEbirdError("invalid coordinates", status),
-      );
-      await ensureRegionCentroids("key", ["BAD_DATA"], { maxFetches: 5 });
-      const writes = centroidMocks.query.mock.calls.slice(1).map((c) => c[0] as string);
-      expect(writes.some((sql) => sql.includes("30 days"))).toBe(true);
-      expect(writes.some((sql) => sql.includes("1 days"))).toBe(false);
-    },
-  );
-
-  it("de-dupes concurrent live lookups for the same code across overlapping calls (AGY P2)", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    let resolveFetch!: (v: { lat: number; lon: number }) => void;
-    const deferred = new Promise<{ lat: number; lon: number }>((res) => {
-      resolveFetch = res;
-    });
-    centroidMocks.fetchRegionCentroid.mockReturnValue(deferred);
-
-    const callA = ensureRegionCentroids("key", ["SHARED"], { maxFetches: 5 });
-    // Flush microtasks/macrotasks so callA runs past its cache-check query
-    // and reaches (and registers) the in-flight fetch BEFORE callB starts —
-    // otherwise this test can't distinguish "coalesced" from "both raced
-    // the cache-miss check before either registered."
-    await new Promise((r) => setImmediate(r));
-    const callB = ensureRegionCentroids("key", ["SHARED"], { maxFetches: 5 });
-
-    resolveFetch({ lat: 9, lon: 9 });
-    const [a, b] = await Promise.all([callA, callB]);
-
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
-    expect(a.get("SHARED")).toEqual({ lat: 9, lon: 9 });
-    expect(b.get("SHARED")).toEqual({ lat: 9, lon: 9 });
-  });
-
-  it("does NOT share an in-flight fetch across different apiKeys for the same code (round 3 P2 #1)", async () => {
-    // This app has several real accounts (cs.md: every user has their OWN
-    // eBird credentials, never an admin fallback). Keying the in-flight map
-    // by code alone would let User B's concurrent request piggyback on User
-    // A's fetch — using A's key, and if it failed with an account-level
-    // error, incorrectly aborting B's own sweep over a key problem that was
-    // never B's.
-    //
-    // Discriminating power matters here (self-review, sanity-validation
-    // pass, 2026-08-29): an earlier version of this test let call A's op
-    // fully resolve (mocked fetchRegionCentroid returns immediately) before
-    // call B even started, so there was never any overlap to share in the
-    // first place — the test passed identically whether or not the map was
-    // keyed by apiKey, proving nothing. A's fetch must still be GENUINELY
-    // PENDING (held open by a manual resolver) when B starts, so that if the
-    // map were still keyed by bare code, B would find and reuse A's
-    // still-in-flight op and this test would fail.
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    let resolveA!: (v: { lat: number; lon: number }) => void;
-    let resolveB!: (v: { lat: number; lon: number }) => void;
-    const deferredA = new Promise<{ lat: number; lon: number }>((res) => {
-      resolveA = res;
-    });
-    const deferredB = new Promise<{ lat: number; lon: number }>((res) => {
-      resolveB = res;
-    });
-    centroidMocks.fetchRegionCentroid.mockImplementation(async (key: string) =>
-      key === "key-a" ? deferredA : deferredB,
-    );
-
-    const callA = ensureRegionCentroids("key-a", ["SAME_CODE"], { maxFetches: 5 });
-    // Flush so callA runs past its cache-check query and registers its
-    // in-flight op — which is still PENDING (deferredA unresolved) — before
-    // callB starts.
-    await new Promise((r) => setImmediate(r));
-    const callB = ensureRegionCentroids("key-b", ["SAME_CODE"], { maxFetches: 5 });
-
-    resolveA({ lat: 1, lon: 0 });
-    resolveB({ lat: 2, lon: 0 });
-    const [a, b] = await Promise.all([callA, callB]);
-
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(2);
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith("key-a", "SAME_CODE");
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledWith("key-b", "SAME_CODE");
-    // Each caller got the result fetched with ITS OWN key, not the other's.
-    expect(a.get("SAME_CODE")).toEqual({ lat: 1, lon: 0 });
-    expect(b.get("SAME_CODE")).toEqual({ lat: 2, lon: 0 });
-  });
-
-  it("an account-level failure aborts only the sweep of the caller whose key actually failed (round 3 P2 #1)", async () => {
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    centroidMocks.fetchRegionCentroid.mockImplementation(async (key: string) => {
-      if (key === "bad-key") throw new MockEbirdError("invalid key", 403);
-      return { lat: 5, lon: 6 };
-    });
-
-    // Two DIFFERENT codes so each caller's sweep has something to keep
-    // iterating over after its first code resolves/rejects.
-    const badResult = await ensureRegionCentroids("bad-key", ["ONE", "TWO"], {
-      maxFetches: 5,
-    });
-    const goodResult = await ensureRegionCentroids("good-key", ["THREE"], {
-      maxFetches: 5,
-    });
-
-    // The bad key's own sweep aborted after its first code (never reached
-    // "TWO"). The good key's own, unrelated sweep succeeded normally.
-    expect(badResult.size).toBe(0);
-    expect(goodResult.get("THREE")).toEqual({ lat: 5, lon: 6 });
-  });
-
-  it("de-dupes concurrent live lookups that REJECT too, and writes the cooldown exactly once (self-review, 2026-08-29)", async () => {
-    // The resolves-case test above doesn't exercise the path this loop's own
-    // hostile review flagged: cleanup must wait for the shared operation's
-    // DB write, not just the raw fetch, or a third caller arriving between
-    // "fetch settled" and "write landed" would fire a redundant live fetch.
-    const { ensureRegionCentroids } = await import("./forecast");
-    centroidMocks.query.mockResolvedValue({ rows: [] });
-    let rejectFetch!: (err: unknown) => void;
-    const deferred = new Promise<{ lat: number; lon: number }>((_res, rej) => {
-      rejectFetch = rej;
-    });
-    centroidMocks.fetchRegionCentroid.mockReturnValue(deferred);
-
-    const callA = ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
-    await new Promise((r) => setImmediate(r));
-    const callB = ensureRegionCentroids("key", ["FLAKY"], { maxFetches: 5 });
-
-    rejectFetch(new Error("network blip"));
-    const [a, b] = await Promise.all([callA, callB]);
-
-    // Neither awaiter throws — each has its own try/catch around the shared
-    // operation — and neither found a result to store.
-    expect(a.has("FLAKY")).toBe(false);
-    expect(b.has("FLAKY")).toBe(false);
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
-    // Exactly ONE cooldown write for the shared failure, not one per
-    // awaiter — the write lives inside the shared operation now, not in
-    // each caller's own catch block. (Filter on the INSERT, not a bare
-    // "retry_after" substring — the cache-check SELECT also names that
-    // column and would otherwise be miscounted as a write.)
-    const cooldownWrites = centroidMocks.query.mock.calls.filter(
-      (c) =>
-        (c[0] as string).includes("INSERT INTO region_centroids") &&
-        (c[0] as string).includes("retry_after"),
-    );
-    expect(cooldownWrites).toHaveLength(1);
-  });
-
-  it("a call issued AFTER a prior call fully returns reuses the persisted row, never refetches (sequential reuse)", async () => {
-    // NOT a concurrency/race test — the two calls here are fully sequential
-    // (the second is only issued after the first's returned promise has
-    // settled). What this pins down: ensureRegionCentroids's own write has
-    // actually landed in the (mocked) DB by the time it returns, so a caller
-    // that runs strictly after it sees the cached result immediately.
-    //
-    // The specific race this loop's hostile review worried about — a THIRD
-    // caller arriving in the gap between "map entry cleared" and "DB write
-    // landed" — no longer has a gap to arrive in: fetchAndPersistCentroid's
-    // returned promise cannot settle until AFTER its own internal DB write
-    // completes (the write is sequenced before the return/throw inside the
-    // same async function body), so the in-flight map and the DB can never
-    // disagree about a code that has settled. That's a structural property
-    // of the code shape, not something a timing-based unit test can usefully
-    // exercise without becoming a test of Node's microtask scheduler.
-    const { ensureRegionCentroids } = await import("./forecast");
-    let written: { lat: number; lon: number } | null = null;
-    centroidMocks.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.includes("SELECT loc_code")) {
-        return {
-          rows: written
-            ? [{ loc_code: "SHARED2", lat: written.lat, lon: written.lon, retry_after: null }]
-            : [],
-        };
-      }
-      // Guard the shape before trusting params[1]/[2] as lat/lon — the
-      // negative/cooldown INSERTs share this same "INSERT INTO
-      // region_centroids" prefix but pass only [code] with NULL literals
-      // baked into the SQL text, not real params (self-review P2 #2).
-      if (sql.includes("INSERT INTO region_centroids") && sql.includes("VALUES ($1, $2, $3)")) {
-        const p = params as [string, number, number];
-        written = { lat: p[1], lon: p[2] };
-      }
-      return { rows: [] };
-    });
-    centroidMocks.fetchRegionCentroid.mockResolvedValue({ lat: 7, lon: 8 });
-
-    await ensureRegionCentroids("key", ["SHARED2"], { maxFetches: 5 });
-    const again = await ensureRegionCentroids("key", ["SHARED2"], { maxFetches: 5 });
-
-    expect(centroidMocks.fetchRegionCentroid).toHaveBeenCalledTimes(1);
-    expect(again.get("SHARED2")).toEqual({ lat: 7, lon: 8 });
+  it("no usable pick (never reported anywhere) → null, card absent", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb([
+      { loc_code: "US-FL", loc_name: "Florida", sample_sizes: sizes, week: null, freq: null },
+    ]);
+    expect(await pickSpeciesTeaserState("gbbgul", { home: HOME })).toBeNull();
   });
 });
 

@@ -70,9 +70,6 @@ export async function ebirdFetchOrNull<T>(
 		fetcher?: typeof fetch;
 		nullOn?: readonly number[];
 		signal?: AbortSignal;
-		/** Empty/malformed successful bodies are errors when the caller needs to
-		 * distinguish a real null status from a transient bad response. */
-		strictBody?: boolean;
 	} = {}
 ): Promise<T | null> {
 	const doFetch = opts.fetcher ?? fetch;
@@ -103,22 +100,10 @@ export async function ebirdFetchOrNull<T>(
 	// which bypassed the resolver's catch and aborted every prod pass
 	// (td-2fbfc1 root cause). Parse safely: empty or non-JSON 200 → null.
 	const body = await res.text();
-	if (!body.trim()) {
-		// Status 422 marks this as a DATA-QUALITY failure (the request/response
-		// cycle succeeded; the content is unusable) rather than a network blip —
-		// callers that distinguish the two (e.g. forecast.ts's centroid cache)
-		// treat it as durable, not something to retry every day forever.
-		if (opts.strictBody) {
-			throw new EbirdError(`eBird API returned an empty response for ${path}`, 422);
-		}
-		return null;
-	}
+	if (!body.trim()) return null;
 	try {
 		return JSON.parse(body) as T;
 	} catch {
-		if (opts.strictBody) {
-			throw new EbirdError(`eBird API returned invalid JSON for ${path}`, 422);
-		}
 		return null;
 	}
 }
@@ -462,43 +447,3 @@ export async function taxonomyCount(): Promise<number> {
 	return Number(r.rows[0]?.n ?? 0);
 }
 
-/**
- * Centroid of an eBird region ('US-FL', 'NO-03', 'IS') from
- * GET /ref/region/info/{code}. The envelope carries latitude/longitude
- * directly (verified live 2026-08-29); bounds are ignored. null on 404/410
- * (retired or unknown code) — callers cache hits forever, misses are cheap.
- */
-export async function fetchRegionCentroid(
-	apiKey: string,
-	regionCode: string,
-	opts: { fetcher?: typeof fetch; signal?: AbortSignal } = {}
-): Promise<{ lat: number; lon: number } | null> {
-	if (!/^[A-Z]{2}(-[A-Za-z0-9]+)?$/.test(regionCode)) return null;
-	const info = await ebirdFetchOrNull<{
-		latitude?: number;
-		longitude?: number;
-	}>(`/ref/region/info/${regionCode}`, apiKey, {
-		...opts,
-		nullOn: [404, 410],
-		strictBody: true
-	});
-	if (!info) return null;
-	if (
-		typeof info.latitude !== 'number' ||
-		!Number.isFinite(info.latitude) ||
-		info.latitude < -90 ||
-		info.latitude > 90 ||
-		typeof info.longitude !== 'number' ||
-		!Number.isFinite(info.longitude) ||
-		info.longitude < -180 ||
-		info.longitude > 180
-	) {
-		// Status 422: a data-quality problem with THIS record, not a blip —
-		// see the strictBody throws above for why callers key off this.
-		throw new EbirdError(
-			`eBird region info returned invalid coordinates for ${regionCode}`,
-			422
-		);
-	}
-	return { lat: info.latitude, lon: info.longitude };
-}

@@ -11,12 +11,10 @@
  * Jan 22-end of Jan, etc. Monthly stats are checklist-weighted means of the
  * month's 4 weeks — Σ(freqᵢ·nᵢ)/Σnᵢ — NEVER an unweighted mean (CODEX1 #2).
  */
-import { createHash } from 'node:crypto';
 import { query } from '$lib/db';
-import { fetchRegionCentroid, EbirdError } from '$server/ebird';
 import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$server/barchart';
 import { hotspotsNear, type EbirdHotspot } from '$server/ebird';
-import { getRegion } from '$server/regions';
+import { getRegion, regionCoordsFor, regionLabel } from '$server/regions';
 import { seenSet } from '$server/needs';
 import { haversineKm } from '$lib/geo';
 import { isCountry, isSubnational1, parentOf } from '$lib/region-code';
@@ -1181,254 +1179,36 @@ export function pickTeaserCandidate(
 	return best ? { locCode: best.locCode, locName: best.locName } : null;
 }
 
-export interface SpeciesTeaserPick {
+/**
+ * One selectable row of the "Best time of year" card (refactor plan Phase 5:
+ * both picks as equal peers — Gaylon's decision 3).
+ */
+export interface TeaserPeer {
+	kind: 'closest' | 'best' | 'both';
 	locCode: string;
-	locName: string;
+	/** Country-qualified display label ("Bornholm, Denmark") — the teaser can
+	 * name regions in different countries, which is the point of the pair. */
+	label: string;
+	distanceKm: number | null;
 	curve: MonthStat[];
 	/** 48-week resolution for the Month|Week chart toggle (td-af8393). */
 	weeks: WeekStat[];
 	migration: string | null;
 	best: BestMonth | null;
 	peakPhrase: string | null;
-	/** True when the pick is proximity-based (home + centroid known). */
-	nearestBased: boolean;
-	distanceKm: number | null;
-	/** The globally most-findable region, when it differs from the pick. */
-	alsoBest: { locCode: string; locName: string } | null;
+	/** Months within 80% of the peak — the "good window". */
+	good: number[];
 }
 
-/** How long a 404/410 ("no such region") stays cached before re-checking —
- * matches REGION_TTL_MIN (ebird.ts): political subdivisions barely change,
- * but eBird DOES occasionally split/rename/add a code, and AGY's review
- * (2026-08-29) correctly flagged that a NULL retry_after here meant a code
- * invalid today stays negative-cached forever with no recovery path. */
-const CENTROID_NEGATIVE_TTL_DAYS = 30;
-/** Cooldown for a transient failure (network blip, 5xx) before retrying the
- * SAME region code — short, because the failure is expected to clear soon. */
-const CENTROID_TRANSIENT_COOLDOWN_DAYS = 1;
-
-/**
- * One classification, used by BOTH what-to-cool-down (fetchAndPersistCentroid)
- * and whether-to-abort-my-sweep (ensureRegionCentroids) decisions. Extracted
- * per self-review (2026-08-29, hostile-review loop round 2 P2 #3): the two
- * call sites previously duplicated this exact if/else ladder, which nothing
- * enforced staying in sync — a future edit to one copy (e.g. adding 408 to
- * "transient") without the other would silently desync what gets cooled down
- * from what aborts the sweep, with no test able to catch the divergence
- * since both were always exercised together through the same fixtures.
- * - 'account': bad/expired key, rate limit — not a fact about this region;
- *   every other in-flight code would fail identically.
- * - 'systemic': 5xx — also not a per-region fact.
- * - 'data-quality': malformed/invalid 200 body — a genuine defect in eBird's
- *   data for this specific code, will keep failing identically every retry.
- * - 'transient': anything else (network unreachable, etc.) — expected to
- *   clear on its own soon.
- */
-type CentroidErrorClass = 'account' | 'systemic' | 'data-quality' | 'transient';
-
-function classifyCentroidError(err: unknown): CentroidErrorClass {
-	if (err instanceof EbirdError) {
-		if (err.status === 401 || err.status === 403 || err.status === 429) return 'account';
-		if (err.status != null && err.status >= 500) return 'systemic';
-		// 422 (our own strictBody/coordinate validation) and 400 (a malformed
-		// request eBird itself rejects outright) are both a defect specific to
-		// THIS region code, not a blip — round 4 hostile-review pass: 400 was
-		// left in the 'transient' bucket, symmetric with the exact 1-day-
-		// forever-retry gap the 422 fix (round 1) closed.
-		if (err.status === 422 || err.status === 400) return 'data-quality';
-	}
-	return 'transient';
-}
-
-/** Process-local de-dup for concurrent identical live lookups (AGY P2: two
- * tabs / a fast back-button loading the same page can both find the same
- * missing code before either write lands). Scoped to one worker process —
- * cross-process races still just do one extra harmless eBird call.
- *
- * Keyed by a hash of `${apiKey}:${code}`, NOT code alone (self-review
- * 2026-08-29, hostile-review loop round 3 P2 #1): this app has several real
- * accounts (cs.md — every user has their OWN eBird credentials, never an
- * admin fallback), and every call site passes a per-user key. Keying by code
- * alone would let one user's concurrent request piggyback on ANOTHER user's
- * in-flight fetch — using that user's credentials for the lookup, and, if it
- * failed with an account-level error, incorrectly aborting the FIRST user's
- * own sweep over a key problem that was never theirs. Hashed (not the raw
- * key) so the key material never sits in a plain-string Map key that a
- * future debugging session might accidentally log or inspect.
- *
- * Holds the COMBINED fetch-and-persist operation (self-review, 2026-08-29,
- * hostile-review loop round 1 P2 #2) — not just the raw eBird fetch. The
- * earlier version cleaned up the map as soon as the FETCH settled, before
- * the DB write it triggered had landed; a third caller arriving in that gap
- * found neither the map entry nor a fresh cache row and fired a redundant
- * live fetch. Sharing the whole operation means every concurrent caller
- * (original or piggybacking) awaits the SAME promise and the write happens
- * exactly once, not once per awaiter — the map entry only clears once that
- * write has actually landed. */
-const inFlightCentroidFetches = new Map<
-	string,
-	Promise<{ lat: number; lon: number } | null>
->();
-
-function inFlightCentroidKey(apiKey: string, code: string): string {
-	return `${createHash('sha1').update(apiKey).digest('hex').slice(0, 16)}:${code}`;
-}
-
-/** Persist one centroid outcome; failures are logged (never thrown further —
- * the cache is best-effort) so a systemic DB problem on this shared,
- * every-caller-relies-on-it write path isn't silently invisible (self-review
- * 2026-08-29, hostile-review loop round 3 P3 #4). */
-async function persistCentroidOutcome(sql: string, params: unknown[]): Promise<void> {
-	try {
-		await query(sql, params);
-	} catch (err) {
-		console.error('region_centroids write failed:', err instanceof Error ? err.message : err);
-	}
-}
-
-/**
- * Fetch one region's centroid and persist the outcome, exactly once no
- * matter how many concurrent callers are awaiting it (see
- * inFlightCentroidFetches above). Re-throws on failure so every awaiter
- * still sees it — but only writes a per-region cooldown for a failure that
- * is actually ABOUT this region; an account-level or systemic failure is
- * left unwritten so each caller's own sweep-abort decision (in
- * ensureRegionCentroids below) is independent of this shared write.
- */
-async function fetchAndPersistCentroid(
-	apiKey: string,
-	code: string
-): Promise<{ lat: number; lon: number } | null> {
-	try {
-		const c = await fetchRegionCentroid(apiKey, code);
-		if (c) {
-			await persistCentroidOutcome(
-				`INSERT INTO region_centroids (loc_code, lat, lon) VALUES ($1, $2, $3)
-				 ON CONFLICT (loc_code) DO UPDATE
-				 SET lat = EXCLUDED.lat, lon = EXCLUDED.lon,
-				     fetched_at = NOW(), retry_after = NULL`,
-				[code, c.lat, c.lon]
-			);
-		} else {
-			// Durable miss (404/410) — see CENTROID_NEGATIVE_TTL_DAYS above.
-			await persistCentroidOutcome(
-				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days')
-					 ON CONFLICT (loc_code) DO UPDATE
-					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-					     retry_after = NOW() + INTERVAL '${CENTROID_NEGATIVE_TTL_DAYS} days'
-					 WHERE region_centroids.lat IS NULL`,
-				[code]
-			);
-		}
-		return c;
-	} catch (err) {
-		const cls = classifyCentroidError(err);
-		// Account-level and systemic failures are NOT a fact about this
-		// region — no cooldown is written for them here. Each caller's own
-		// loop (in ensureRegionCentroids) decides whether to abort ITS sweep
-		// based on the re-thrown error and the SAME classification.
-		if (cls !== 'account' && cls !== 'systemic') {
-			const ttlDays =
-				cls === 'data-quality' ? CENTROID_NEGATIVE_TTL_DAYS : CENTROID_TRANSIENT_COOLDOWN_DAYS;
-			await persistCentroidOutcome(
-				`INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-				 VALUES ($1, NULL, NULL, NOW() + INTERVAL '${ttlDays} days')
-					 ON CONFLICT (loc_code) DO UPDATE
-					 SET lat = NULL, lon = NULL, fetched_at = NOW(),
-					     retry_after = NOW() + INTERVAL '${ttlDays} days'
-					 WHERE region_centroids.lat IS NULL`,
-				[code]
-			);
-		}
-		throw err;
-	}
-}
-
-/**
- * Cached region centroids, lazily filled from eBird (0039/0040). At most
- * `maxFetches` live lookups per call; callers can share a mutable `budget`
- * across picker levels to enforce a whole-page cap. Durable misses and
- * transient cooldowns both carry a TTL so a bad or since-corrected code
- * eventually re-checks instead of starving behind it forever. A null apiKey
- * serves cache-only. An account-level failure (bad key, rate limit) aborts
- * the whole sweep instead of writing a per-region cooldown — the failure
- * says nothing about whether THIS region's centroid is valid, and every
- * other in-flight code would fail identically anyway (AGY P1: the original
- * catch-all would have cooled down up to `maxFetches` unrelated regions for
- * 24h off a single bad key, degrading the picker for every subsequent
- * request on that shared cache).
- */
-export async function ensureRegionCentroids(
-	apiKey: string | null,
-	codes: readonly string[],
-	opts: { maxFetches?: number; budget?: { remaining: number } } = {}
-): Promise<Map<string, { lat: number; lon: number }>> {
-	const out = new Map<string, { lat: number; lon: number }>();
-	const uniqueCodes = [...new Set(codes)];
-	if (uniqueCodes.length === 0) return out;
-	const cached = await query<{
-		loc_code: string;
-		lat: number | null;
-		lon: number | null;
-		retry_after: string | Date | null;
-	}>(
-		`SELECT loc_code, lat, lon, retry_after
-		   FROM region_centroids WHERE loc_code = ANY($1::text[])`,
-		[uniqueCodes]
-	);
-	const cachedByCode = new Map(cached.rows.map((row) => [row.loc_code, row]));
-	for (const row of cached.rows) {
-		if (row.lat != null && row.lon != null) out.set(row.loc_code, { lat: row.lat, lon: row.lon });
-	}
-	if (!apiKey) return out;
-	const now = Date.now();
-	const maxFetches = Math.max(0, Math.floor(opts.maxFetches ?? 5));
-	const allowance = Math.max(0, Math.min(maxFetches, opts.budget?.remaining ?? maxFetches));
-	const missing = uniqueCodes
-		.filter((code) => {
-			const row = cachedByCode.get(code);
-			if (!row) return true;
-			if (row.lat != null) return false;
-			return row.retry_after != null && new Date(row.retry_after).getTime() <= now;
-		})
-		.slice(0, allowance);
-	for (const code of missing) {
-		if (opts.budget) opts.budget.remaining = Math.max(0, opts.budget.remaining - 1);
-		// Keyed by apiKey too, not just code — see inFlightCentroidFetches'
-		// docstring for why (round 3 P2 #1: cross-user piggybacking on a
-		// DIFFERENT user's key/failure).
-		const flightKey = inFlightCentroidKey(apiKey, code);
-		let op = inFlightCentroidFetches.get(flightKey);
-		if (!op) {
-			op = fetchAndPersistCentroid(apiKey, code);
-			inFlightCentroidFetches.set(flightKey, op);
-			// Cleanup waits for the WHOLE operation (fetch + persist), not just
-			// the raw fetch — see the docstring on inFlightCentroidFetches for
-			// why that distinction is the actual fix, not a cosmetic one.
-			op.finally(() => inFlightCentroidFetches.delete(flightKey)).catch(() => {});
-		}
-		try {
-			const c = await op;
-			if (c) out.set(code, c);
-		} catch (err) {
-			// classifyCentroidError is the ONE function fetchAndPersistCentroid
-			// also uses to decide whether to write a cooldown (self-review P2
-			// #3) — called again here (pure and deterministic, so re-evaluating
-			// it is harmless) so "what gets cooled down" and "what aborts the
-			// sweep" read from the same rule, never two independently-edited
-			// copies that could silently desync. Account-level and systemic
-			// failures abort THIS caller's own sweep (per-caller, since a
-			// different concurrent caller sharing the same op gets to make its
-			// own decision); every
-			// other class already got its per-region cooldown written inside
-			// fetchAndPersistCentroid (shared across every awaiter, exactly
-			// once), so there's nothing further to do for this code here.
-			const cls = classifyCentroidError(err);
-			if (cls === 'account' || cls === 'systemic') break;
-		}
-	}
-	return out;
+export interface SpeciesTeaserPick {
+	/** 1 or 2 peers, display order; 2 only when closest and best differ. */
+	peers: TeaserPeer[];
+	defaultLocCode: string;
+	/** How many loaded regions the "best" claim ranges over — the honesty
+	 * qualifier lives in the ROW LABEL ("Best of {poolSize} loaded regions"),
+	 * where the claim is made (937bdb8 lesson; AGY review). */
+	poolSize: number;
+	hasOrigin: boolean;
 }
 
 /**
@@ -1449,12 +1229,12 @@ function teaserPool(states: readonly TeaserCandidate[]): TeaserCandidate[] {
  * discipline as pickTeaserCandidate. Ties break toward higher peak
  * frequency, checklist count, then loc code.
  *
- * Returns null — falling back to the global pick — whenever ANY pool member
- * lacks a known centroid (GROK P1, 2026-08-29): with the cache still
- * warming, an uncached region could easily be the true nearest one, so
- * confidently naming a farther KNOWN region as "nearest" would be an
- * honest-looking but false claim, not a best-effort approximation. Also
- * null when the pool itself is empty.
+ * Null only when the pool itself is empty. The old "refuse to guess when any
+ * pool member lacks a centroid" bail (GROK P1, 2026-08-29) is gone because
+ * the state it defended against is now unrepresentable: the 0045 FK
+ * guarantees every country/subnational1 code with frequency data has a
+ * regions row, and regions.lat/lon are NOT NULL (refactor plan Phase 5 —
+ * the deletion is justified BY the FK being live first).
  */
 export function pickNearestTeaserCandidate(
 	states: readonly TeaserCandidate[],
@@ -1462,7 +1242,7 @@ export function pickNearestTeaserCandidate(
 	centroids: ReadonlyMap<string, { lat: number; lon: number }>
 ): { locCode: string; locName: string; distanceKm: number } | null {
 	const pool = teaserPool(states);
-	if (pool.length === 0 || pool.some((s) => !centroids.has(s.locCode))) return null;
+	if (pool.length === 0) return null;
 	let best: { s: TeaserCandidate; d: number } | null = null;
 	for (const s of pool) {
 		const c = centroids.get(s.locCode);
@@ -1505,6 +1285,10 @@ export function sortByProximity<T extends { code: string; name: string }>(
 	const distanceOf = (code: string): number => {
 		if (!home) return 0; // irrelevant when unused below
 		const c = centroids.get(code);
+		// Unreachable by construction since Phase 5: picker lists come from the
+		// regions table itself, so every code has coordinates. Infinity remains
+		// as the type-level fallback — if it ever DID hit, last place is the
+		// only honest position for an unplaceable entry.
 		return c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
 	};
 	return [...items].sort((a, b) => {
@@ -1525,14 +1309,6 @@ export async function pickSpeciesTeaserState(
 	speciesCode: string,
 	opts: {
 		home?: { lat: number; lon: number } | null;
-		/** eBird API key for lazily warming centroids of THIS species' own
-		 * candidate pool (GROK P1/P2, 2026-08-29) — never the whole teaser
-		 * universe, which is typically far larger than one species is even
-		 * reported in and made "nearest" wrong while it warmed. null/absent
-		 * serves cache-only. */
-		apiKey?: string | null;
-		/** Shared fetch allowance across multiple calls on the same page load. */
-		centroidBudget?: { remaining: number };
 	} = {}
 ): Promise<SpeciesTeaserPick | null> {
 	const r = await query<{
@@ -1594,45 +1370,65 @@ export async function pickSpeciesTeaserState(
 			peakPhrase
 		});
 	}
-	const globalPick = pickTeaserCandidate(built.map((b) => b.candidate));
+	const candidates = built.map((b) => b.candidate);
+	const globalPick = pickTeaserCandidate(candidates);
 	if (!globalPick) return null;
-	// Proximity-first (Gaylon 2026-08-29): the actionable region is the one a
-	// birder can reach from home; the world's best region is a footnote, not
-	// the headline. Falls back to the global pick when home is unavailable —
-	// or when the SPECIES' OWN candidate pool (not the whole teaser universe;
-	// GROK P1/P2) isn't fully geocoded yet, since pickNearestTeaserCandidate
-	// itself refuses to guess "nearest" with holes in that specific pool.
-	let nearest = null;
-	if (opts.home != null) {
-		const candidates = built.map((b) => b.candidate);
-		const pool = teaserPool(candidates);
-		const centroids = await ensureRegionCentroids(
-			opts.apiKey ?? null,
-			pool.map((s) => s.locCode),
-			{ maxFetches: 5, budget: opts.centroidBudget }
-		);
-		nearest = pickNearestTeaserCandidate(candidates, opts.home, centroids);
-	}
-	const pick = nearest ?? globalPick;
-	const win = built.find((b) => b.candidate.locCode === pick.locCode);
-	if (!win) return null;
-	const e = byLoc.get(pick.locCode)!;
-	const weeks = weekCurve(e.freqByWeek, e.sampleSizes);
-	return {
-		locCode: pick.locCode,
-		locName: pick.locName,
-		curve: win.curve,
-		weeks,
-		migration: migrationSentence(weeks),
-		best: win.candidate.best,
-		peakPhrase: win.peakPhrase,
-		nearestBased: nearest != null,
-		distanceKm: nearest?.distanceKm ?? null,
-		alsoBest:
-			nearest != null && globalPick.locCode !== nearest.locCode
-				? { locCode: globalPick.locCode, locName: globalPick.locName }
-				: null
+	const pool = teaserPool(candidates);
+	// Coordinates from the regions reference table (Phase 5) — pure DB, no
+	// eBird call, no API key. Every pool member has them by the 0045 FK.
+	const coords = await regionCoordsFor(pool.map((c) => c.locCode));
+	const home = opts.home ?? null;
+	const nearest = home ? pickNearestTeaserCandidate(candidates, home, coords) : null;
+
+	const makePeer = async (
+		kind: TeaserPeer['kind'],
+		locCode: string,
+		distanceKm: number | null
+	): Promise<TeaserPeer> => {
+		const win = built.find((b) => b.candidate.locCode === locCode)!;
+		const e = byLoc.get(locCode)!;
+		const weeks = weekCurve(e.freqByWeek, e.sampleSizes);
+		return {
+			kind,
+			locCode,
+			// Qualified label ("Bornholm, Denmark") — the pair can span
+			// countries. Unknown code → never a guess: the stored loc_name.
+			label: (await regionLabel(locCode)) ?? win.candidate.locName,
+			distanceKm,
+			curve: win.curve,
+			weeks,
+			migration: migrationSentence(weeks),
+			best: win.candidate.best,
+			peakPhrase: win.peakPhrase,
+			good: goodMonths(win.curve)
+		};
 	};
+	const distanceTo = (locCode: string): number | null => {
+		const c = home ? coords.get(locCode) : undefined;
+		return home && c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : null;
+	};
+
+	let peers: TeaserPeer[];
+	let defaultLocCode: string;
+	if (nearest && nearest.locCode === globalPick.locCode) {
+		// Closest and best are the same region — one static row (AGY-reviewed
+		// edge case 1), with its distance.
+		peers = [await makePeer('both', globalPick.locCode, nearest.distanceKm)];
+		defaultLocCode = globalPick.locCode;
+	} else if (nearest) {
+		// Closest first — the actionable row is the default selection.
+		peers = [
+			await makePeer('closest', nearest.locCode, nearest.distanceKm),
+			await makePeer('best', globalPick.locCode, distanceTo(globalPick.locCode))
+		];
+		defaultLocCode = nearest.locCode;
+	} else {
+		// No origin (or an empty pool for the nearest picker): a single "best"
+		// row. NEVER a "closest" row with a null distance (AGY edge case 2).
+		peers = [await makePeer('best', globalPick.locCode, null)];
+		defaultLocCode = globalPick.locCode;
+	}
+	return { peers, defaultLocCode, poolSize: pool.length, hasOrigin: home != null };
 }
 
 /**
