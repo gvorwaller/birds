@@ -125,7 +125,10 @@
 								findable region overall as two tappable choices, with the chart
 								following your pick. Region names include their country where
 								that isn't obvious ("Bornholm, Denmark"), and stray codes like
-								"[SE-01]" no longer leak into region names.
+								"[SE-01]" no longer leak into region names. “Closest” now measures
+								to the region's reported edge (and recognizes when you're already
+								inside it), while the card makes clear that frequency is still a
+								whole-region average.
 							</li>
 							<li>
 								<strong>Faster, key-free region pickers</strong> — country and

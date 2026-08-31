@@ -283,6 +283,14 @@ function clampEdge(v, limit) {
   return v;
 }
 
+function boundsSupportProximity(b) {
+  const lonSpan = b.minLon <= b.maxLon
+    ? b.maxLon - b.minLon
+    : 360 - (b.minLon - b.maxLon);
+  const touchesPole = b.minLat <= -89.999 || b.maxLat >= 89.999;
+  return lonSpan <= 180 || (touchesPole && lonSpan >= 359.999);
+}
+
 function usableBounds(b) {
   if (!b) return null;
   const raw = [b.minY, b.maxY, b.minX, b.maxX];
@@ -296,7 +304,8 @@ function usableBounds(b) {
   // A degenerate all-zero box is the same null-island sentinel the centroid
   // check rejects, not a real extent.
   if (raw.every((x) => x === 0)) return null;
-  return { minLat, maxLat, minLon, maxLon };
+  const out = { minLat, maxLat, minLon, maxLon };
+  return out;
 }
 
 async function regionInfo(code) {
@@ -315,9 +324,10 @@ async function regionInfo(code) {
   // NOTE (measured 2026-08-31): eBird's CENTROID is unreliable for any region
   // whose extent crosses the antimeridian — it appears to average minX and
   // maxX, so Russia, Antarctica, Alaska, Fiji and New Zealand all report a
-  // longitude of ~0, i.e. the Gulf of Guinea. The box is the trustworthy
-  // field for those; this is a further reason bounds beat centroids, and why
-  // rejecting a box over a float artifact was expensive.
+  // longitude of ~0, i.e. the Gulf of Guinea. Its conventional nearly-global
+  // box is a real envelope but is also unsafe for proximity. Preserve the
+  // source extent; the runtime explicitly treats those few regions as
+  // unplaceable rather than letting either bad representation win.
   const out = ok ? { lat, lon, bounds: usableBounds(body?.bounds) } : { missing: true, status };
   cache.info[code] = out;
   saveCache();
@@ -392,6 +402,16 @@ const excludedCodes = infoTargets.filter((code) => cache.info[code]?.missing);
 for (const code of excludedCodes) regionsByCode.delete(code);
 const withBounds = infoTargets.filter((c) => cache.info[c]?.bounds).length;
 console.log(`bounds captured for ${withBounds}/${infoTargets.length} codes`);
+const proximityUnsafe = infoTargets.filter((c) => {
+  const b = cache.info[c]?.bounds;
+  return b && !boundsSupportProximity(b);
+});
+if (proximityUnsafe.length > 0) {
+  console.warn(
+    `WARNING: ${proximityUnsafe.length} nearly-global antimeridian envelope(s) ` +
+    `are preserved but unsafe for proximity: ${proximityUnsafe.join(", ")}`,
+  );
+}
 if (excludedCodes.length > 0) {
   console.warn(
     `WARNING: excluding ${excludedCodes.length} code(s) with no usable eBird coordinates ` +

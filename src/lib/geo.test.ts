@@ -59,9 +59,19 @@ describe("Google Maps link builders", () => {
 
 describe("region distance by bounding box (td-a4a3bf)", () => {
   // Real eBird bounds, fetched 2026-08-31.
-  const FL = { minLat: 24.520417, maxLat: 31.00211, minLon: -87.637231, maxLon: -79.72264 };
+  const FL = {
+    minLat: 24.520417,
+    maxLat: 31.00211,
+    minLon: -87.637231,
+    maxLon: -79.72264,
+  };
   // Georgia's extent (its southern edge is just north of Jacksonville).
-  const GA = { minLat: 30.355757, maxLat: 35.000771, minLon: -85.605165, maxLon: -80.840842 };
+  const GA = {
+    minLat: 30.355757,
+    maxLat: 35.000771,
+    minLon: -85.605165,
+    maxLon: -80.840842,
+  };
   const JAX = { lat: 30.263, lon: -81.637 }; // Gaylon's home
 
   it("THE BUG: the state you are standing in wins, where centroids said otherwise", () => {
@@ -90,9 +100,15 @@ describe("region distance by bounding box (td-a4a3bf)", () => {
   it("clamps on both axes for a corner-diagonal point", () => {
     const box = { minLat: 10, maxLat: 20, minLon: 10, maxLon: 20 };
     // Due south-west of the SW corner → distance to that corner exactly.
-    expect(distanceToBoxKm(5, 5, box)).toBeCloseTo(haversineKm(5, 5, 10, 10), 6);
-    // Due west, latitude inside the span → clamps longitude only.
-    expect(distanceToBoxKm(15, 5, box)).toBeCloseTo(haversineKm(15, 5, 15, 10), 6);
+    expect(distanceToBoxKm(5, 5, box)).toBeCloseTo(
+      haversineKm(5, 5, 10, 10),
+      6,
+    );
+    // Due west, latitude inside the span → the spherical perpendicular foot
+    // is slightly north of the query latitude, not a coordinate-wise clamp.
+    expect(distanceToBoxKm(15, 5, box)).toBeLessThan(
+      haversineKm(15, 5, 15, 10),
+    );
   });
 
   it("handles an antimeridian-crossing box (minLon > maxLon) without swapping it", () => {
@@ -106,6 +122,47 @@ describe("region distance by bounding box (td-a4a3bf)", () => {
     expect(west).toBeLessThan(haversineKm(-18, 175, -18, 165));
     expect(isInsideRegion(-18, 179, fiji)).toBe(true);
     expect(isInsideRegion(-18, 175, fiji)).toBe(false);
+  });
+
+  it("does not treat an ambiguous almost-global Alaska box as local", () => {
+    const alaska = {
+      minLat: 51.20972,
+      maxLat: 71.390685,
+      minLon: -179.150558,
+      maxLon: 179.773408,
+    };
+    const london = { lat: 51.5072, lon: -0.1276 };
+    const providerCentroid = { lat: 61.3002025, lon: 0.311425, box: alaska };
+    expect(isInsideRegion(london.lat, london.lon, alaska)).toBe(false);
+    expect(regionDistanceKm(london.lat, london.lon, providerCentroid)).toBe(
+      Infinity,
+    );
+  });
+
+  it("keeps a genuinely global polar extent usable", () => {
+    const antarctica = {
+      minLat: -89.9999999999999,
+      maxLat: -60.515777,
+      minLon: -180,
+      maxLon: 179.999986,
+    };
+    expect(isInsideRegion(-75, 120, antarctica)).toBe(true);
+    expect(isInsideRegion(-75, 180, antarctica)).toBe(true);
+    expect(distanceToBoxKm(-75, 120, antarctica)).toBe(0);
+  });
+
+  it("uses the spherical foot on a meridian instead of coordinate-wise clamping", () => {
+    const box = { minLat: 0, maxLat: 80, minLon: 60, maxLon: 70 };
+    const query = { lat: 60, lon: 0 };
+    const sameLatitude = haversineKm(
+      query.lat,
+      query.lon,
+      query.lat,
+      box.minLon,
+    );
+    expect(distanceToBoxKm(query.lat, query.lon, box)).toBeLessThan(
+      sameLatitude,
+    );
   });
 
   it("regionDistanceKm falls back to the centroid when bounds are unknown — never invents a box", () => {

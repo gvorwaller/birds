@@ -179,13 +179,37 @@ export interface RegionBox {
   maxLon: number;
 }
 
-/** Signed shortest angular difference a→b in degrees, in (-180, 180]. */
+/** Signed shortest angular difference a→b in degrees, in [-180, 180). */
 function lonDelta(a: number, b: number): number {
   return ((((b - a) % 360) + 540) % 360) - 180;
 }
 
+/** Width of the encoded longitude interval, following its stated wrap. */
+function lonSpan(box: RegionBox): number {
+  return box.minLon <= box.maxLon
+    ? box.maxLon - box.minLon
+    : 360 - (box.minLon - box.maxLon);
+}
+
+/**
+ * A conventional [-180, 180] bounding box for an antimeridian region can be
+ * almost 360° wide even when the region is not. That representation is not
+ * usable for proximity: Alaska would otherwise contain nearly every
+ * longitude from 51–71°N. A genuinely global polar extent (Antarctica) is
+ * the one safe wide case.
+ */
+function boxSupportsProximity(box: RegionBox): boolean {
+  const span = lonSpan(box);
+  const touchesPole = box.minLat <= -89.999 || box.maxLat >= 89.999;
+  return span <= 180 || (touchesPole && span >= 359.999);
+}
+
 /** Is `lon` within the box's longitude span, honoring antimeridian wrap? */
 function lonInBox(lon: number, box: RegionBox): boolean {
+  if (
+    (box.minLat <= -89.999 || box.maxLat >= 89.999) &&
+    lonSpan(box) >= 359.999
+  ) return true;
   return box.minLon <= box.maxLon
     ? lon >= box.minLon && lon <= box.maxLon
     : lon >= box.minLon || lon <= box.maxLon; // wrapped span
@@ -209,18 +233,38 @@ export function distanceToBoxKm(
   lon: number,
   box: RegionBox,
 ): number {
-  const nearestLat = Math.min(Math.max(lat, box.minLat), box.maxLat);
-  let nearestLon: number;
-  if (lonInBox(lon, box)) {
-    nearestLon = lon;
-  } else {
-    // Outside the span: clamp to whichever meridian edge is angularly nearer,
-    // which is what makes the wrapped case work without special-casing it.
-    const toMin = Math.abs(lonDelta(lon, box.minLon));
-    const toMax = Math.abs(lonDelta(lon, box.maxLon));
-    nearestLon = toMin <= toMax ? box.minLon : box.maxLon;
+  if (lat >= box.minLat && lat <= box.maxLat && lonInBox(lon, box)) return 0;
+
+  const toMin = Math.abs(lonDelta(lon, box.minLon));
+  const toMax = Math.abs(lonDelta(lon, box.maxLon));
+  const nearestLon = lonInBox(lon, box)
+    ? lon
+    : toMin <= toMax
+      ? box.minLon
+      : box.maxLon;
+  const candidates = [
+    // On a parallel, the closest point keeps the query longitude when that
+    // longitude is in the span; otherwise it is the nearer corner.
+    { lat: box.minLat, lon: nearestLon },
+    { lat: box.maxLat, lon: nearestLon },
+  ];
+  for (const edgeLon of [box.minLon, box.maxLon]) {
+    // A meridian is a great circle. Its perpendicular foot is not generally
+    // at the query latitude, so coordinate-wise clamping is wrong at high
+    // latitude or large longitude separation.
+    const phi = (lat * Math.PI) / 180;
+    const delta = (lonDelta(lon, edgeLon) * Math.PI) / 180;
+    const foot =
+      (Math.atan2(Math.sin(phi), Math.cos(phi) * Math.cos(delta)) * 180) /
+      Math.PI;
+    candidates.push({
+      lat: Math.min(Math.max(foot, box.minLat), box.maxLat),
+      lon: edgeLon,
+    });
   }
-  return haversineKm(lat, lon, nearestLat, nearestLon);
+  return Math.min(
+    ...candidates.map((p) => haversineKm(lat, lon, p.lat, p.lon)),
+  );
 }
 
 /**
@@ -234,9 +278,16 @@ export function regionDistanceKm(
   lon: number,
   region: { lat: number; lon: number; box?: RegionBox | null },
 ): number {
-  return region.box
-    ? distanceToBoxKm(lat, lon, region.box)
-    : haversineKm(lat, lon, region.lat, region.lon);
+  if (region.box) {
+    // An unsafe box is known-but-unplaceable, not "missing". Falling back to
+    // its provider centroid is also unsafe: eBird reports ~0° longitude for
+    // the same antimeridian regions. Infinity lets proximity pickers sort it
+    // last or decline a closest pick instead of fabricating one.
+    return boxSupportsProximity(region.box)
+      ? distanceToBoxKm(lat, lon, region.box)
+      : Infinity;
+  }
+  return haversineKm(lat, lon, region.lat, region.lon);
 }
 
 /** True when the point falls inside the region's known extent. */
@@ -246,5 +297,6 @@ export function isInsideRegion(
   box: RegionBox | null | undefined,
 ): boolean {
   if (!box) return false;
+  if (!boxSupportsProximity(box)) return false;
   return lat >= box.minLat && lat <= box.maxLat && lonInBox(lon, box);
 }

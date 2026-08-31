@@ -331,7 +331,10 @@
 						comparing the closest loaded region with sightings against the
 						region where the bird is most frequent overall (region names
 						include their country, like "Bornholm, Denmark"). Tap either
-						place to switch the chart, or use "Where should I go?" for county
+						place to switch the chart. “Closest” measures to the region's
+						reported extent — zero when your home is inside it — rather than
+						to a distant state or country center. The card's frequencies still
+						average the whole named region; use "Where should I go?" for county
 						and hotspot detail — it leaves a breadcrumb back to the bird and
 						the field guide. Trip stops link straight to the forecast for the
 						trip's month.
