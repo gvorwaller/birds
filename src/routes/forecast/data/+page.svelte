@@ -664,122 +664,129 @@
       <strong>{g.stateName}</strong>
       <span class="groupmeta">{groupStatusText(g)}</span>
     </summary>
-    {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
-      {@const missing = g.countyRemaining ?? 0}
-      {@const noun = countyNoun(g)}
-      {#if data.hasLogin}
-        <form
-          method="POST"
-          action="?/analyzeCounties"
-          class="groupaction"
-          use:enhance={() => {
-            refreshing = `counties-${g.stateCode}`;
-            return async ({ update }) => {
-              refreshing = null;
-              await update();
-            };
-          }}
-        >
-          <input type="hidden" name="region" value={g.stateCode} />
-          <button type="submit" disabled={refreshing !== null}>
-            {refreshing === `counties-${g.stateCode}`
-              ? "Queueing…"
-              : `Analyze ${missing} remaining ${missing === 1 ? noun : noun === "county" ? "counties" : "regions"}`}
-          </button>
-        </form>
-      {:else}
-        <p class="notice">
-          Analyzing {noun === "county" ? "counties" : "regions"} uses your
-          eBird sign-in — add it in
-          <a href="/settings">Settings</a>.
-        </p>
+    <!-- Lazy body (Gaylon 2026-08-31): a <details> keeps its contents in the
+         DOM even when closed, so all 3,459 loaded county rows used to render
+         and hydrate on every visit — blocking input on the country search for
+         ~10 s on a phone. Render a group's table only while it is open, the
+         same treatment the hotspot rows inside it already get. -->
+    {#if openStates.includes(g.stateCode)}
+      {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
+        {@const missing = g.countyRemaining ?? 0}
+        {@const noun = countyNoun(g)}
+        {#if data.hasLogin}
+          <form
+            method="POST"
+            action="?/analyzeCounties"
+            class="groupaction"
+            use:enhance={() => {
+              refreshing = `counties-${g.stateCode}`;
+              return async ({ update }) => {
+                refreshing = null;
+                await update();
+              };
+            }}
+          >
+            <input type="hidden" name="region" value={g.stateCode} />
+            <button type="submit" disabled={refreshing !== null}>
+              {refreshing === `counties-${g.stateCode}`
+                ? "Queueing…"
+                : `Analyze ${missing} remaining ${missing === 1 ? noun : noun === "county" ? "counties" : "regions"}`}
+            </button>
+          </form>
+        {:else}
+          <p class="notice">
+            Analyzing {noun === "county" ? "counties" : "regions"} uses your
+            eBird sign-in — add it in
+            <a href="/settings">Settings</a>.
+          </p>
+        {/if}
       {/if}
-    {/if}
-    {#if g.countyTotal === 0}
-      <!-- No child regions to drill into (e.g. Norwegian fylker have no
-           subnational2), so the region itself is the sweep unit. -->
-      <div class="groupaction">
-        {@render loadHotspotsButton(g.stateCode, g.stateName)}
-      </div>
-    {/if}
-    {#if g.state}
-      {@render dataTable(g.countryCode === "US" ? "Statewide" : "Regionwide", [g.state])}
-    {/if}
-    {#if g.countyBlocks.length > 0}
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{countyNoun(g) === "county" ? "County" : "Region"} · hotspots</th>
-              <th>Years</th>
-              <th>Species</th>
-              <th>Loaded</th>
-              {#if !data.isViewer}<th></th>{/if}
-            </tr>
-          </thead>
-          <tbody>
-            {#each g.countyBlocks as b (b.countyCode)}
-              {@const open = openCounties.includes(b.countyCode)}
+      {#if g.countyTotal === 0}
+        <!-- No child regions to drill into (e.g. Norwegian fylker have no
+             subnational2), so the region itself is the sweep unit. -->
+        <div class="groupaction">
+          {@render loadHotspotsButton(g.stateCode, g.stateName)}
+        </div>
+      {/if}
+      {#if g.state}
+        {@render dataTable(g.countryCode === "US" ? "Statewide" : "Regionwide", [g.state])}
+      {/if}
+      {#if g.countyBlocks.length > 0}
+        <div class="tablewrap">
+          <table>
+            <thead>
               <tr>
-                <td>
-                  {#if b.hotspots.length > 0}
-                    <button
-                      type="button"
-                      class="ctoggle"
-                      aria-expanded={open}
-                      onclick={() => toggleCounty(b.countyCode)}
-                    >
-                      <span class="chev" aria-hidden="true"
-                        >{open ? "▾" : "▸"}</span
-                      >
-                      <strong>{b.countyName}</strong>
-                      <span class="hscount"
-                        >{b.hotspots.length} hotspot{b.hotspots.length === 1
-                          ? ""
-                          : "s"}</span
-                      >
-                    </button>
-                  {:else}
-                    <strong>{b.countyName}</strong>
-                  {/if}
-                  {#if b.seat}
-                    <span class="seat">· {b.seat}</span>
-                  {/if}
-                  <a
-                    class="seatmap"
-                    href={mapsPlaceUrl({ name: b.mapQuery })}
-                    target="_blank"
-                    rel="noopener"
-                    title="Show {b.countyName} on Google Maps">📍 Map</a
-                  >
-                  <span class="code">{b.countyCode}</span>
-                  {@render loadHotspotsButton(b.countyCode, b.countyName)}
-                </td>
-                {#if b.county}
-                  {@render metaCells(b.county)}
-                {:else}
-                  <!-- Hotspots loaded before their county was analyzed -->
-                  <td colspan={data.isViewer ? 3 : 4} class="muted"
-                    >{countyNoun(g)} not analyzed yet</td
-                  >
-                {/if}
+                <th>{countyNoun(g) === "county" ? "County" : "Region"} · hotspots</th>
+                <th>Years</th>
+                <th>Species</th>
+                <th>Loaded</th>
+                {#if !data.isViewer}<th></th>{/if}
               </tr>
-              {#if open}
-                {#each b.hotspots as h (h.locCode)}
-                  {@render dataRowCells(h, true)}
-                {/each}
-              {/if}
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-    {#if g.stateHotspots.length > 0}
-      <p class="notice">
-        Hotspots below have no recorded {countyNoun(g)} — refreshing them
-        (or the next area load) files them correctly.
-      </p>
-      {@render dataTable("Hotspot", g.stateHotspots)}
+            </thead>
+            <tbody>
+              {#each g.countyBlocks as b (b.countyCode)}
+                {@const open = openCounties.includes(b.countyCode)}
+                <tr>
+                  <td>
+                    {#if b.hotspots.length > 0}
+                      <button
+                        type="button"
+                        class="ctoggle"
+                        aria-expanded={open}
+                        onclick={() => toggleCounty(b.countyCode)}
+                      >
+                        <span class="chev" aria-hidden="true"
+                          >{open ? "▾" : "▸"}</span
+                        >
+                        <strong>{b.countyName}</strong>
+                        <span class="hscount"
+                          >{b.hotspots.length} hotspot{b.hotspots.length === 1
+                            ? ""
+                            : "s"}</span
+                        >
+                      </button>
+                    {:else}
+                      <strong>{b.countyName}</strong>
+                    {/if}
+                    {#if b.seat}
+                      <span class="seat">· {b.seat}</span>
+                    {/if}
+                    <a
+                      class="seatmap"
+                      href={mapsPlaceUrl({ name: b.mapQuery })}
+                      target="_blank"
+                      rel="noopener"
+                      title="Show {b.countyName} on Google Maps">📍 Map</a
+                    >
+                    <span class="code">{b.countyCode}</span>
+                    {@render loadHotspotsButton(b.countyCode, b.countyName)}
+                  </td>
+                  {#if b.county}
+                    {@render metaCells(b.county)}
+                  {:else}
+                    <!-- Hotspots loaded before their county was analyzed -->
+                    <td colspan={data.isViewer ? 3 : 4} class="muted"
+                      >{countyNoun(g)} not analyzed yet</td
+                    >
+                  {/if}
+                </tr>
+                {#if open}
+                  {#each b.hotspots as h (h.locCode)}
+                    {@render dataRowCells(h, true)}
+                  {/each}
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      {#if g.stateHotspots.length > 0}
+        <p class="notice">
+          Hotspots below have no recorded {countyNoun(g)} — refreshing them
+          (or the next area load) files them correctly.
+        </p>
+        {@render dataTable("Hotspot", g.stateHotspots)}
+      {/if}
     {/if}
   </details>
 {/snippet}
@@ -800,48 +807,52 @@
       <strong>{s.countryName}</strong>
       <span class="groupmeta">{sectionStatusText(s)}</span>
     </summary>
-    {#if !data.isViewer && (s.regionRemaining ?? 0) > 0}
-      {@const missing = s.regionRemaining ?? 0}
-      {#if data.hasLogin}
-        <form
-          method="POST"
-          action="?/analyzeCounties"
-          class="groupaction"
-          use:enhance={() => {
-            refreshing = `counties-${s.countryCode}`;
-            return async ({ update }) => {
-              refreshing = null;
-              await update();
-            };
-          }}
-        >
-          <input type="hidden" name="region" value={s.countryCode} />
-          <button type="submit" disabled={refreshing !== null}>
-            {refreshing === `counties-${s.countryCode}`
-              ? "Queueing…"
-              : `Analyze ${missing} remaining region${missing === 1 ? "" : "s"}`}
-          </button>
-        </form>
-      {:else}
-        <p class="notice">
-          Analyzing regions uses your eBird sign-in — add it in
-          <a href="/settings">Settings</a>.
-        </p>
+    <!-- Same lazy body as the state groups above: a closed <details> still
+         hydrates everything inside it. -->
+    {#if openStates.includes(s.countryCode)}
+      {#if !data.isViewer && (s.regionRemaining ?? 0) > 0}
+        {@const missing = s.regionRemaining ?? 0}
+        {#if data.hasLogin}
+          <form
+            method="POST"
+            action="?/analyzeCounties"
+            class="groupaction"
+            use:enhance={() => {
+              refreshing = `counties-${s.countryCode}`;
+              return async ({ update }) => {
+                refreshing = null;
+                await update();
+              };
+            }}
+          >
+            <input type="hidden" name="region" value={s.countryCode} />
+            <button type="submit" disabled={refreshing !== null}>
+              {refreshing === `counties-${s.countryCode}`
+                ? "Queueing…"
+                : `Analyze ${missing} remaining region${missing === 1 ? "" : "s"}`}
+            </button>
+          </form>
+        {:else}
+          <p class="notice">
+            Analyzing regions uses your eBird sign-in — add it in
+            <a href="/settings">Settings</a>.
+          </p>
+        {/if}
       {/if}
+      {#if s.countrywide}
+        {@render dataTable("Countrywide", [s.countrywide])}
+      {/if}
+      {#if s.countryHotspots.length > 0}
+        <p class="notice">
+          Hotspots below have no recorded region — refreshing them (or the
+          next area load) files them correctly.
+        </p>
+        {@render dataTable("Hotspot", s.countryHotspots)}
+      {/if}
+      {#each s.groups as g (g.stateCode)}
+        {@render regionGroup(g, true)}
+      {/each}
     {/if}
-    {#if s.countrywide}
-      {@render dataTable("Countrywide", [s.countrywide])}
-    {/if}
-    {#if s.countryHotspots.length > 0}
-      <p class="notice">
-        Hotspots below have no recorded region — refreshing them (or the
-        next area load) files them correctly.
-      </p>
-      {@render dataTable("Hotspot", s.countryHotspots)}
-    {/if}
-    {#each s.groups as g (g.stateCode)}
-      {@render regionGroup(g, true)}
-    {/each}
   </details>
 {/snippet}
 
