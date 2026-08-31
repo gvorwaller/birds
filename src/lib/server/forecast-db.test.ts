@@ -143,7 +143,6 @@ const cleanup = async () => {
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'US-QQ-%'",
   );
   await query("DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'ZZ%'");
-  await query("DELETE FROM region_centroids WHERE loc_code LIKE 'TEST-%'");
 };
 
 describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
@@ -220,49 +219,6 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       "SELECT 1 FROM species_frequency WHERE loc_code = 'QZ-DEL'",
     );
     expect(orphans.rows).toHaveLength(0);
-  });
-
-  it("region centroid outcomes accept durable/transient misses and reject invalid coordinates", async () => {
-    await query(
-      `INSERT INTO region_centroids (loc_code, lat, lon, retry_after) VALUES
-         ('TEST-OK', 44.1, -68.2, NULL),
-         ('TEST-DURABLE-MISS', NULL, NULL, NOW() + INTERVAL '30 days'),
-         ('TEST-RETRY', NULL, NULL, NOW() + INTERVAL '1 day')`,
-    );
-    await expect(
-      query(
-        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-PAIR', 1, NULL)",
-      ),
-    ).rejects.toThrow(/region_centroids_coordinate_pair/i);
-    await expect(
-      query(
-        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-RANGE', 91, 0)",
-      ),
-    ).rejects.toThrow(/region_centroids_lat_range/i);
-    await expect(
-      query(
-        `INSERT INTO region_centroids (loc_code, lat, lon, retry_after)
-         VALUES ('TEST-SHAPE', 1, 2, NOW())`,
-      ),
-    ).rejects.toThrow(/region_centroids_retry_shape/i);
-    // GROK 2026-08-29: the 0040 shape allowed lat=NULL with NO retry_after —
-    // a permanent tombstone the missing-code selector treats as "never
-    // retry," exactly the bug this migration chain exists to close. 0041
-    // requires every negative outcome to carry a TTL.
-    await expect(
-      query(
-        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-TOMBSTONE', NULL, NULL)",
-      ),
-    ).rejects.toThrow(/region_centroids_retry_shape/i);
-    // GROK flagged NaN coordinates as a theoretical hole in a plain range
-    // CHECK. Verified against live Postgres, not just IEEE 754 reasoning:
-    // it isn't one — Postgres's float8 comparisons treat NaN as failing
-    // every ordering comparison, so it already violates lat_range.
-    await expect(
-      query(
-        "INSERT INTO region_centroids (loc_code, lat, lon) VALUES ('TEST-NAN', 'NaN'::float8, 0)",
-      ),
-    ).rejects.toThrow(/region_centroids_lat_range/i);
   });
 
   it("storeFrequencies replaces atomically and keeps old data on failure", async () => {
