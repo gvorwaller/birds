@@ -59,6 +59,23 @@
    * the bird and, one level further, to the list this page was opened from
    * (Gaylon 2026-08-29: the drill was a dead end otherwise).
    */
+  /**
+   * Similar-species links point BACK HERE (td-57822b). The card used to be
+   * handed THIS page's own back link, so tapping a look-alike skipped past
+   * the very bird you were comparing it against — a dead end.
+   *
+   * The nested returnTo is stripped so an A -> B -> C chain cannot accumulate
+   * an unbounded URL: every hop keeps its location context (lat/lng/dist/loc,
+   * back) and gets exactly one level of "back to the bird", which is what the
+   * comparison actually needs.
+   */
+  const similarReturnTo = $derived.by(() => {
+    const p = new URLSearchParams(page.url.searchParams);
+    p.delete("returnTo");
+    const qs = p.toString();
+    return page.url.pathname + (qs ? `?${qs}` : "");
+  });
+
   // --- Streamed sections (plan Phase 9) -----------------------------------
   // Each streamed promise's LAST RESOLVED value is held per species and only
   // swapped when the new promise settles, so a jobsPoll invalidateAll() (or
@@ -328,7 +345,7 @@
     unresolved={data.similar.unresolved}
     inatStatus={data.similar.inatStatus}
     backDays={data.backDays}
-    returnTo={data.returnLink.href}
+    returnTo={similarReturnTo}
     context={data.locationContext}
   />
 

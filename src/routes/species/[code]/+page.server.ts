@@ -33,7 +33,7 @@ import { verifiedHotspotLocIds } from "$server/hotspots";
 import { pickSpeciesTeaserState } from "$server/forecast";
 import { streamed } from "$lib/streamed";
 import { parseBackDays, SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
-import { safeReturnTo } from "$lib/return-link";
+import { returnTrail, safeReturnTo } from "$lib/return-link";
 import {
   parseSpeciesLocationContext,
   SPECIES_DEFAULT_DIST_KM,
@@ -76,7 +76,15 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     page_url: string;
     taken_on: string | null;
   };
-  const [seen, photos, userRow] = await Promise.all([
+  // td-57822b: when the back link points at ANOTHER species page (arrived via
+  // a Similar species card), name the bird — "← Great Black-backed Gull" —
+  // instead of the generic "Back" safeReturnTo gives a species detail path.
+  // Rides the existing parallel block so it costs no extra round trip.
+  const backSpeciesCode = returnTrail(url.searchParams.get("returnTo")).find(
+    (c) => c.speciesCode,
+  )?.speciesCode;
+
+  const [seen, photos, userRow, backSpecies] = await Promise.all([
     query<{ first_seen: string | null; source: string }>(
       "SELECT first_seen, source FROM seen_species WHERE user_id = $1 AND species_code = $2",
       [userId, code],
@@ -93,7 +101,16 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       "SELECT home_lat, home_lon FROM users WHERE id = $1",
       [userId],
     ),
+    backSpeciesCode
+      ? query<{ com_name: string }>(
+          "SELECT com_name FROM taxonomy_cache WHERE species_code = $1",
+          [backSpeciesCode],
+        )
+      : Promise.resolve({ rows: [] as { com_name: string }[] }),
   ]);
+  // Unknown code (stale link, retired taxon) keeps the generic label rather
+  // than inventing a name.
+  if (backSpecies.rows[0]) returnLink.label = backSpecies.rows[0].com_name;
 
   const home =
     userRow.rows[0]?.home_lat != null && userRow.rows[0]?.home_lon != null

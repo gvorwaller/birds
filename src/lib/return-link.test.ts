@@ -152,3 +152,43 @@ describe("returnTrail (species forecast breadcrumb, 2026-08-29)", () => {
     ]);
   });
 });
+
+describe("similar-species back link (td-57822b)", () => {
+  /** Mirrors the derivation in species/[code]/+page.svelte. */
+  function similarReturnTo(url: string): string {
+    const u = new URL(url, "https://x");
+    const p = new URLSearchParams(u.searchParams);
+    p.delete("returnTo");
+    const qs = p.toString();
+    return u.pathname + (qs ? `?${qs}` : "");
+  }
+
+  it("points at the CURRENT bird, and returnTrail names it", () => {
+    const back = similarReturnTo("/species/gbbgul?back=14&returnTo=%2Fspecies%3Fq%3Dgull");
+    expect(back).toBe("/species/gbbgul?back=14");
+    const trail = returnTrail(back);
+    expect(trail).toHaveLength(1);
+    expect(trail[0]).toMatchObject({ speciesCode: "gbbgul", href: "/species/gbbgul?back=14" });
+  });
+
+  it("keeps location context so the parent page still reports the same area", () => {
+    const back = similarReturnTo(
+      "/species/gbbgul?back=14&lat=30.26&lng=-81.64&dist=25&loc=Jacksonville&returnTo=%2F",
+    );
+    expect(back).toContain("lat=30.26");
+    expect(back).toContain("loc=Jacksonville");
+    expect(back).not.toContain("returnTo");
+  });
+
+  it("A->B->C cannot accumulate an unbounded URL — each hop is one level", () => {
+    // The trap this guards: passing the full current URL (which already
+    // embeds a returnTo) would nest deeper on every comparison hop.
+    const a = "/species/gbbgul?back=14&returnTo=%2Fspecies";
+    const bLink = similarReturnTo(a);
+    const b = `/species/lbbgul?back=14&returnTo=${encodeURIComponent(bLink)}`;
+    const cLink = similarReturnTo(b);
+    expect(cLink).toBe("/species/lbbgul?back=14");
+    // Third hop is the same length as the first — no growth.
+    expect(cLink.length).toBe(bLink.length);
+  });
+});
