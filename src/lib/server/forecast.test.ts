@@ -795,11 +795,17 @@ describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
   // (far, most findable). Coordinates/labels come from the mocked regions
   // table; frequency rows from the mocked teaser query.
   const HOME = { lat: 30.3, lon: -81.7 }; // Jacksonville
+  // Real eBird extents (fetched 2026-08-31) so containment is exercised,
+  // not simulated: JAX sits inside Florida's box and outside Bornholm's.
   const REGION_ROWS = [
-    { code: "US", name: "United States", level: "country", parent_code: null, lat: 37.1, lon: -95.7 },
-    { code: "US-FL", name: "Florida", level: "subnational1", parent_code: "US", lat: 28.6, lon: -82.4 },
-    { code: "DK", name: "Denmark", level: "country", parent_code: null, lat: 56.0, lon: 10.0 },
-    { code: "DK-05", name: "Bornholm", level: "subnational1", parent_code: "DK", lat: 55.1, lon: 14.9 },
+    { code: "US", name: "United States", level: "country", parent_code: null, lat: 37.1, lon: -95.7,
+      min_lat: 24.5, max_lat: 49.4, min_lon: -125.0, max_lon: -66.9 },
+    { code: "US-FL", name: "Florida", level: "subnational1", parent_code: "US", lat: 27.76, lon: -83.68,
+      min_lat: 24.520417, max_lat: 31.00211, min_lon: -87.637231, max_lon: -79.72264 },
+    { code: "DK", name: "Denmark", level: "country", parent_code: null, lat: 56.0, lon: 10.0,
+      min_lat: 54.5, max_lat: 57.8, min_lon: 8.0, max_lon: 15.2 },
+    { code: "DK-05", name: "Bornholm", level: "subnational1", parent_code: "DK", lat: 55.15, lon: 14.94,
+      min_lat: 54.987, max_lat: 55.325, min_lon: 14.685, max_lon: 15.193 },
   ];
   const sizes = Array(48).fill(100);
   function freqRows(locCode: string, locName: string, freq: number) {
@@ -831,8 +837,13 @@ describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
     expect(t?.defaultLocCode).toBe("US-FL");
     expect(t?.poolSize).toBe(2);
     // A closest peer ALWAYS carries a distance (AGY edge case: never null).
-    expect(t?.peers[0].distanceKm).toBeGreaterThan(0);
-    expect(t?.peers[0].distanceKm).toBeLessThan(300);
+    // Home is INSIDE Florida, so the closest peer measures zero and says so
+    // rather than printing a meaningless distance to your own state
+    // (td-a4a3bf — the prod bug that made Georgia beat Florida).
+    expect(t?.peers[0].distanceKm).toBe(0);
+    expect(t?.peers[0].containsHome).toBe(true);
+    expect(t?.peers[1].containsHome).toBe(false);
+    expect(t?.peers[1].distanceKm).toBeGreaterThan(1000);
     // Each peer carries its own chart data — switching needs no round trip.
     expect(t?.peers[1].curve).toHaveLength(12);
     expect(t?.peers[1].weeks).toHaveLength(48);
@@ -853,7 +864,9 @@ describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
     mockDb(freqRows("US-FL", "Florida", 0.4));
     const t = await pickSpeciesTeaserState("gbbgul", { home: HOME });
     expect(t?.peers.map((p) => p.kind)).toEqual(["both"]);
-    expect(t?.peers[0].distanceKm).toBeGreaterThan(0);
+    // Only region in the pool is the one home sits inside → zero, flagged.
+    expect(t?.peers[0].distanceKm).toBe(0);
+    expect(t?.peers[0].containsHome).toBe(true);
     expect(t?.poolSize).toBe(1);
   });
 

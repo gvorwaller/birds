@@ -447,8 +447,10 @@
               <span class="peer-kind">{peerKindLabel(peer.kind, ft.poolSize)}</span>
               <span class="peer-name">{peer.label}</span>
               <span class="peer-meta">
-                {#if peer.kind === "closest" && peer.distanceKm != null}
-                  ~{formatDistance(peer.distanceKm, distanceUnit)} away
+                {#if peer.containsHome}
+                  you're here
+                {:else if peer.kind === "closest" && peer.distanceKm != null}
+                  ~{formatDistance(peer.distanceKm, distanceUnit)} to its edge
                 {:else if peer.peakPhrase}
                   peaks {peer.peakPhrase}
                 {:else if peer.best}
@@ -462,9 +464,12 @@
         <p class="peer-single">
           <strong>{peerKindLabel(selectedPeer.kind, ft.poolSize)}</strong>
           — {selectedPeer.label}
-          {#if selectedPeer.distanceKm != null}
+          {#if selectedPeer.containsHome}
+            <span class="muted">· you're here</span>
+          {:else if selectedPeer.distanceKm != null}
             <span class="muted"
-              >· ~{formatDistance(selectedPeer.distanceKm, distanceUnit)} away</span
+              >· ~{formatDistance(selectedPeer.distanceKm, distanceUnit)} to its
+              edge</span
             >
           {/if}
         </p>
@@ -475,6 +480,13 @@
           </p>
         {/if}
       {/if}
+      <!-- What the numbers mean (Gaylon 2026-08-31): these are WHOLE-REGION
+           figures — a distance to a state's edge, and a frequency averaged
+           over all of it. The county/hotspot drill is the precision path. -->
+      <p class="peer-scope muted">
+        Whole-region figures — distances are to the region itself, and
+        frequencies average all of it.
+      </p>
       <!-- The chart, its caption, AND the "Where should I go?" link live
            inside the tabpanel: the link target follows the selection, and
            outside aria-controls a screen-reader user would never be told it
@@ -947,6 +959,10 @@
   }
   .peer-season {
     margin: 0 0 6px;
+  }
+  .peer-scope {
+    margin: 0 0 8px;
+    font-size: 0.85rem;
   }
   .sub,
   .muted {

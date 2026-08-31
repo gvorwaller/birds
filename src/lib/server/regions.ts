@@ -20,6 +20,7 @@
  */
 import { query } from '$lib/db';
 import { parseRegionCode } from '$lib/region-code';
+import type { RegionBox } from '$lib/geo';
 
 export interface Region {
 	code: string;
@@ -28,6 +29,12 @@ export interface Region {
 	parent: string | null;
 	lat: number;
 	lon: number;
+	/**
+	 * The region's extent (0047). Null for codes eBird gives no usable box
+	 * for — those degrade to centroid distance rather than carry an invented
+	 * one (td-a4a3bf). `minLon > maxLon` is a legal antimeridian wrap.
+	 */
+	box: RegionBox | null;
 }
 
 interface RegionIndex {
@@ -45,7 +52,15 @@ async function load(): Promise<RegionIndex> {
 		parent_code: string | null;
 		lat: number;
 		lon: number;
-	}>('SELECT code, name, level, parent_code, lat, lon FROM regions');
+		min_lat: number | null;
+		max_lat: number | null;
+		min_lon: number | null;
+		max_lon: number | null;
+	}>(
+		`SELECT code, name, level, parent_code, lat, lon,
+		        min_lat, max_lat, min_lon, max_lon
+		   FROM regions`
+	);
 	// A successful zero-row read is not a valid reference snapshot. This can
 	// happen when a process starts after 0043 creates the table but before 0044
 	// seeds it (most plausibly in local/manual startup). Treat it like a failed
@@ -62,7 +77,17 @@ async function load(): Promise<RegionIndex> {
 			level: row.level,
 			parent: row.parent_code,
 			lat: Number(row.lat),
-			lon: Number(row.lon)
+			lon: Number(row.lon),
+			// All four or none (0047 CHECK); a partial row cannot exist.
+			box:
+				row.min_lat != null && row.max_lat != null && row.min_lon != null && row.max_lon != null
+					? {
+							minLat: Number(row.min_lat),
+							maxLat: Number(row.max_lat),
+							minLon: Number(row.min_lon),
+							maxLon: Number(row.max_lon)
+						}
+					: null
 		});
 	}
 	const byName = (a: Region, b: Region) =>
@@ -143,15 +168,22 @@ export async function regionCoords(code: string): Promise<{ lat: number; lon: nu
 	return r ? { lat: r.lat, lon: r.lon } : null;
 }
 
-/** Coordinates for many codes at once — the shape the proximity pickers consume. */
+/**
+ * Centroid AND extent for many codes — the shape the proximity pickers
+ * consume. Carrying the box lets callers measure to a region's edge (zero
+ * inside it) instead of to its centre, which is what "closest" means to a
+ * birder standing in a large state (td-a4a3bf).
+ */
+export type RegionPoint = { lat: number; lon: number; box: RegionBox | null };
+
 export async function regionCoordsFor(
 	codes: readonly string[]
-): Promise<Map<string, { lat: number; lon: number }>> {
+): Promise<Map<string, RegionPoint>> {
 	const idx = await regionIndex();
-	const out = new Map<string, { lat: number; lon: number }>();
+	const out = new Map<string, RegionPoint>();
 	for (const code of new Set(codes)) {
 		const r = idx.byCode.get(code);
-		if (r) out.set(code, { lat: r.lat, lon: r.lon });
+		if (r) out.set(code, { lat: r.lat, lon: r.lon, box: r.box });
 	}
 	return out;
 }

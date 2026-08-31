@@ -101,6 +101,8 @@ describe('regionCoordsFor', () => {
 	it('returns coordinates for known codes only, deduplicating input', async () => {
 		const m = await regionCoordsFor(['US-FL', 'US-FL', 'DK-05', 'ZZ']);
 		expect(m.size).toBe(2);
-		expect(m.get('US-FL')).toEqual({ lat: 28.6, lon: -82.4 });
+		// Carries the extent too (null here — these fixtures predate 0047),
+		// which is what lets callers measure to a region's edge.
+		expect(m.get('US-FL')).toEqual({ lat: 28.6, lon: -82.4, box: null });
 	});
 });

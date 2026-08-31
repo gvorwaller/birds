@@ -16,7 +16,7 @@ import { frequencyMeta, lastCompleteYear, WEEKS, type FrequencyMeta } from '$ser
 import { hotspotsNear, type EbirdHotspot } from '$server/ebird';
 import { getRegion, regionCoordsFor, regionLabel } from '$server/regions';
 import { seenSet } from '$server/needs';
-import { haversineKm } from '$lib/geo';
+import { haversineKm, isInsideRegion, regionDistanceKm, type RegionBox } from '$lib/geo';
 import { isCountry, isSubnational1, parentOf } from '$lib/region-code';
 
 /**
@@ -1186,6 +1186,9 @@ export function pickTeaserCandidate(
 export interface TeaserPeer {
 	kind: 'closest' | 'best' | 'both';
 	locCode: string;
+	/** Home falls inside this region — the card names that instead of a
+	 * meaningless distance-to-your-own-state (Gaylon 2026-08-31). */
+	containsHome: boolean;
 	/** Country-qualified display label ("Bornholm, Denmark") — the teaser can
 	 * name regions in different countries, which is the point of the pair. */
 	label: string;
@@ -1239,14 +1242,16 @@ function teaserPool(states: readonly TeaserCandidate[]): TeaserCandidate[] {
 export function pickNearestTeaserCandidate(
 	states: readonly TeaserCandidate[],
 	home: { lat: number; lon: number },
-	centroids: ReadonlyMap<string, { lat: number; lon: number }>
-): { locCode: string; locName: string; distanceKm: number } | null {
+	coords: ReadonlyMap<string, { lat: number; lon: number; box?: RegionBox | null }>
+): { locCode: string; locName: string; distanceKm: number; containsHome: boolean } | null {
 	const pool = teaserPool(states);
 	if (pool.length === 0) return null;
 	let best: { s: TeaserCandidate; d: number } | null = null;
 	for (const s of pool) {
-		const c = centroids.get(s.locCode);
-		const d = c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
+		const c = coords.get(s.locCode);
+		// Distance to the region's EXTENT — zero when home is inside it
+		// (td-a4a3bf). Falls back to the centroid when no box is known.
+		const d = c ? regionDistanceKm(home.lat, home.lon, { lat: c.lat, lon: c.lon, box: c.box ?? null }) : Infinity;
 		if (
 			!best ||
 			d < best.d ||
@@ -1264,7 +1269,10 @@ export function pickNearestTeaserCandidate(
 	return {
 		locCode: best.s.locCode,
 		locName: best.s.locName,
-		distanceKm: best.d
+		distanceKm: best.d,
+		// Drives the label: a distance to the region you are standing in is
+		// meaningless, so the card says so instead of printing a number.
+		containsHome: isInsideRegion(home.lat, home.lon, coords.get(best.s.locCode)?.box ?? null)
 	};
 }
 
@@ -1280,17 +1288,20 @@ export function pickNearestTeaserCandidate(
 export function sortByProximity<T extends { code: string; name: string }>(
 	items: readonly T[],
 	home: { lat: number; lon: number } | null,
-	centroids: ReadonlyMap<string, { lat: number; lon: number }>,
+	coords: ReadonlyMap<string, { lat: number; lon: number; box?: RegionBox | null }>,
 	pinnedCode?: string
 ): T[] {
 	const distanceOf = (code: string): number => {
 		if (!home) return 0; // irrelevant when unused below
-		const c = centroids.get(code);
-		// Unreachable by construction since Phase 5: picker lists come from the
-		// regions table itself, so every code has coordinates. Infinity remains
-		// as the type-level fallback — if it ever DID hit, last place is the
-		// only honest position for an unplaceable entry.
-		return c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : Infinity;
+		const c = coords.get(code);
+		// Distance to the region's EXTENT, so the region you are standing in
+		// sorts first (td-a4a3bf). Unreachable-by-construction fallback since
+		// Phase 5: picker lists come from the regions table itself, so every
+		// code has coordinates. Infinity remains as the type-level fallback —
+		// last place is the only honest position for an unplaceable entry.
+		return c
+			? regionDistanceKm(home.lat, home.lon, { lat: c.lat, lon: c.lon, box: c.box ?? null })
+			: Infinity;
 	};
 	return [...items].sort((a, b) => {
 		if (pinnedCode && a.code !== b.code) {
@@ -1392,6 +1403,9 @@ export async function pickSpeciesTeaserState(
 		return {
 			kind,
 			locCode,
+			containsHome: home
+				? isInsideRegion(home.lat, home.lon, coords.get(locCode)?.box ?? null)
+				: false,
 			// Qualified label ("Bornholm, Denmark") — the pair can span
 			// countries. Unknown code → never a guess: the stored loc_name.
 			label: (await regionLabel(locCode)) ?? win.candidate.locName,
@@ -1406,7 +1420,11 @@ export async function pickSpeciesTeaserState(
 	};
 	const distanceTo = (locCode: string): number | null => {
 		const c = home ? coords.get(locCode) : undefined;
-		return home && c ? haversineKm(home.lat, home.lon, c.lat, c.lon) : null;
+		// Same measure as the pick itself — a card showing one number for
+		// ranking and another for display would be lying about one of them.
+		return home && c
+			? regionDistanceKm(home.lat, home.lon, { lat: c.lat, lon: c.lon, box: c.box })
+			: null;
 	};
 
 	let peers: TeaserPeer[];
