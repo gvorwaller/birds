@@ -282,10 +282,11 @@ async function locIdsDueForLookup(
   return new Set(r.rows.map((row) => row.loc_id));
 }
 
+/** @returns how many lookups were actually attempted. */
 async function resolveMissingGooglePlaceIds(
   locations: EbirdLocationPlace[],
   limit: number,
-): Promise<void> {
+): Promise<number> {
   const due = await locIdsDueForLookup(
     locations.map((loc) => loc.locId),
     limit,
@@ -305,6 +306,7 @@ async function resolveMissingGooglePlaceIds(
       await setGooglePlaceResult(loc.locId, null, "lookup_failed");
     }
   }
+  return missing.length;
 }
 
 export async function hydrateEbirdLocationPlaceIds<T extends EbirdLocationRef>(
@@ -320,11 +322,16 @@ export async function hydrateEbirdLocationPlaceIds<T extends EbirdLocationRef>(
       ...loc,
       googlePlaceId: placeIds.get(loc.locId) ?? null,
     }));
-    await resolveMissingGooglePlaceIds(
+    const attempted = await resolveMissingGooglePlaceIds(
       withKnown,
       opts.lookupLimit ?? RUNTIME_LOOKUP_LIMIT,
     );
-    placeIds = await googlePlaceIdsForLocIds(unique.map((loc) => loc.locId));
+    // Re-read only when a lookup could have changed the answer. With every
+    // location already resolved (the steady state) the second SELECT returned
+    // exactly what the first one did.
+    if (attempted > 0) {
+      placeIds = await googlePlaceIdsForLocIds(unique.map((loc) => loc.locId));
+    }
   }
   return placeIds;
 }

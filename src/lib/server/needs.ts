@@ -52,8 +52,25 @@ export interface SpeciesActivity {
   lastLat: number;
   lastLng: number;
   googlePlaceId: string | null;
+  /**
+   * Distance to the species' LAST report (`lastLat`/`lastLng`) — not to its
+   * nearest place, which is `nearestDistanceKm()` over `places`. The two are
+   * different numbers and the UI must not label this one "nearest".
+   */
   distanceKm: number | null;
   photoCount: number;
+  /**
+   * True once the per-species detail feed has been merged in (td-d561a8 §1d).
+   *
+   * The base area feed (`/data/obs/geo/recent`) returns the most recent
+   * sighting of each species — ONE row per species, verified live 2026-08-31
+   * (146 rows / 146 species). So before enrichment `locationCount`,
+   * `nReports` and `totalCount` are not this species' activity in range, they
+   * are that single row, and rendering them as counts claims something the
+   * feed cannot support. The client shows the quantitative summary only for
+   * rows where this is true.
+   */
+  enriched: boolean;
 }
 
 export interface NotableEntry extends SpeciesActivity {
@@ -188,6 +205,7 @@ export function aggregate(
         googlePlaceId: o.locId ? (locationPlaceIds.get(o.locId) ?? null) : null,
         distanceKm: null,
         photoCount: photoCounts.get(o.speciesCode) ?? 0,
+        enriched: false,
       };
       bySpecies.set(o.speciesCode, agg);
       placesBySpecies.set(o.speciesCode, new Map());
@@ -289,7 +307,81 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
+/** `aggregate()`'s place identity — `locId || coords`, `||` not `??`. */
+function placeKeyOf(pl: SpeciesPlace): string {
+  return pl.locId || `${pl.lat},${pl.lng}`;
+}
+
+/**
+ * Fold a species' detail feed into its base row — a MERGE, never a replace
+ * (td-d561a8 §1d, GROK P1-1).
+ *
+ * `{ ...need, ...detailed }` used to overwrite every field, which was
+ * invisible only because enrichment finished before first paint. Streaming
+ * makes it visible, and an overwrite can make a precise number *drop* when the
+ * detail payload is non-empty but smaller (different cache generation, or a
+ * cache-skewed payload) — a shown count correcting downward is exactly the
+ * dishonest-claim pattern.
+ *
+ * Union by place identity, taking the richer record per place, guarantees the
+ * three summary numbers are monotonic: the detail feed's places are a superset
+ * in practice, and per-place counts take the max. The summary is then derived
+ * FROM the merged places, so "5 locations" always describes the same list the
+ * "Show all 5 places" toggle opens — the two cannot disagree.
+ *
+ * The `{ lastObsDt, lastLat, lastLng, googlePlaceId, distanceKm }` tuple moves
+ * together, from whichever feed saw the newer observation. Freezing the
+ * coordinates at their base values (the plan's first phrasing) would pin a pin
+ * to one report while displaying another report's timestamp beside it; map
+ * viewport stability is handled where it belongs, by ObsMap's `fitKey`.
+ */
+function mergeEnrichedNeed<T extends SpeciesActivity>(
+  base: T,
+  detailed: SpeciesActivity,
+  home: { lat: number; lon: number } | null,
+): T {
+  const byKey = new Map<string, SpeciesPlace>();
+  for (const pl of base.places) byKey.set(placeKeyOf(pl), pl);
+  for (const pl of detailed.places) {
+    const key = placeKeyOf(pl);
+    const prev = byKey.get(key);
+    if (prev && prev.nReports > pl.nReports) continue;
+    byKey.set(key, {
+      ...pl,
+      googlePlaceId: pl.googlePlaceId ?? prev?.googlePlaceId ?? null,
+      isHotspot: pl.isHotspot || (prev?.isHotspot ?? false),
+    });
+  }
+  const places = [...byKey.values()].sort((a, b) =>
+    home
+      ? (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9)
+      : b.lastObsDt.localeCompare(a.lastObsDt),
+  );
+
+  const newest = detailed.lastObsDt > base.lastObsDt ? detailed : base;
+  const locations = [...base.locations];
+  for (const name of detailed.locations) {
+    if (locations.length >= 3) break;
+    if (name && !locations.includes(name)) locations.push(name);
+  }
+
+  return {
+    ...base,
+    places,
+    locationCount: places.length,
+    nReports: places.reduce((n, pl) => n + pl.nReports, 0),
+    totalCount: places.reduce((n, pl) => n + pl.totalCount, 0),
+    lastObsDt: newest.lastObsDt,
+    lastLat: newest.lastLat,
+    lastLng: newest.lastLng,
+    googlePlaceId: newest.googlePlaceId,
+    distanceKm: newest.distanceKm,
+    locations,
+    enriched: true,
+  };
+}
+
+export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   needs: T[],
   apiKey: string,
   origin: { lat: number; lon: number },
@@ -297,20 +389,30 @@ async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   back: number,
   photoCounts: Map<string, number>,
   hotspotLocIds: Set<string> = new Set(),
-): Promise<{ needs: T[]; stale: boolean; partial: boolean }> {
-  if (needs.length === 0) return { needs, stale: false, partial: false };
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ needs: T[]; partial: boolean }> {
+  if (needs.length === 0) return { needs, partial: false };
 
   const dist = Math.min(Math.max(distKm, 1), 50);
-  let stale = false;
-  // A per-species detail call that fails leaves that need with only its base
-  // locations. The view is then incomplete in a way `stale` does not capture,
-  // so it is reported separately — UI built on `places[]` must not claim a
-  // place is absent when the request for it simply failed.
+  // A per-species detail call that fails (or is skipped after an abort) leaves
+  // that need with only its base locations. The view is then incomplete in a
+  // way `stale` does not capture, so it is reported separately — UI built on
+  // `places[]` must not claim a place is absent when the request for it simply
+  // never happened.
   let partial = false;
-  const enriched = await mapWithConcurrency(
+
+  // Phase 1 — fetch. `signal` is checked before each call rather than passed
+  // into it: a superseded navigation should stop SCHEDULING the remaining
+  // species (the expensive part), while a request already in flight may finish
+  // and populate the cache for whoever asks next.
+  const fetched = await mapWithConcurrency(
     needs,
     SPECIES_DETAIL_CONCURRENCY,
     async (need) => {
+      if (opts.signal?.aborted) {
+        partial = true;
+        return null;
+      }
       try {
         const result = await recentNearbySpeciesObs(
           apiKey,
@@ -320,47 +422,76 @@ async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
           dist,
           back,
         );
-        stale = stale || result.stale;
-        const detailedPlaceIds = await hydrateEbirdLocationPlaceIds(
-          result.data,
-          { resolveMissing: false },
-        );
-        const detailed = aggregate(
-          result.data,
-          origin,
-          photoCounts,
-          detailedPlaceIds,
-          hotspotLocIds,
-        ).get(need.speciesCode);
-        if (!detailed) {
-          // The call succeeded but returned nothing for this species (empty or
-          // cache-skewed payload). The need keeps only its base locations, so
-          // the view is just as incomplete as on a thrown failure.
-          partial = true;
-          return need;
-        }
-        return { ...need, ...detailed } as T;
+        return result.data;
       } catch {
         partial = true;
-        return need;
+        return null;
       }
     },
   );
 
-  return { needs: enriched, stale, partial };
+  // Phase 2 — ONE hydrate for the union instead of one per species (54 queries
+  // → 2). Keyed by locId, so a single union pass is equivalent to the
+  // per-species passes it replaces. `resolveMissing: false`: Google lookups are
+  // serial with a 5 s deadline each, and letting up to five of them gate this
+  // promise would decide when place details appear — they run detached below.
+  //
+  // Isolated: a failed batch must not reject the whole streamed section. The
+  // observations were already fetched, and aggregating them with an empty
+  // placeIds map keeps every lat/lng MapLink working — only the Google deep
+  // links degrade.
+  const allObs = fetched.flatMap((rows) => rows ?? []);
+  let placeIds = new Map<string, string>();
+  try {
+    placeIds = await hydrateEbirdLocationPlaceIds(allObs, {
+      resolveMissing: false,
+    });
+  } catch {
+    partial = true;
+  }
+
+  const enriched = needs.map((need, i) => {
+    const rows = fetched[i];
+    if (!rows) return need;
+    const detailed = aggregate(
+      rows,
+      origin,
+      photoCounts,
+      placeIds,
+      hotspotLocIds,
+    ).get(need.speciesCode);
+    if (!detailed) {
+      // The call succeeded but returned nothing for this species (empty or
+      // cache-skewed payload). The need keeps only its base locations, so the
+      // view is just as incomplete as on a thrown failure.
+      partial = true;
+      return need;
+    }
+    return mergeEnrichedNeed(need, detailed, origin);
+  });
+
+  // Detached follow-up (td-d561a8 §1b): resolve Google place IDs for locations
+  // seen here so the NEXT load has them, without any request waiting on it.
+  // Bounded by RUNTIME_LOOKUP_LIMIT and by the per-locId retry policy in
+  // location-placeids.ts, so repeat loads do not re-attempt the same misses.
+  if (allObs.length > 0 && !opts.signal?.aborted) {
+    void hydrateEbirdLocationPlaceIds(allObs, { resolveMissing: true }).catch(
+      () => {},
+    );
+  }
+
+  return { needs: enriched, partial };
 }
 
-async function buildView(
-  userId: number,
+function buildView(
+  seen: Set<string>,
   recent: CachedResult<EbirdObs[]>,
   notable: CachedResult<EbirdObs[]>,
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number>,
   locationPlaceIds: Map<string, string> = new Map(),
   hotspotLocIds: Set<string> = new Set(),
-): Promise<TargetsView> {
-  const seen = await seenSet(userId);
-
+): TargetsView {
   const recentAgg = aggregate(
     recent.data,
     home,
@@ -410,50 +541,72 @@ export async function regionTargets(
   home: { lat: number; lon: number } | null,
   photoCounts: Map<string, number> = new Map(),
 ): Promise<TargetsView> {
-  const [recent, notable] = await Promise.all([
+  const [recent, notable, seen] = await Promise.all([
     recentObs(apiKey, regionCode, back),
     notableObs(apiKey, regionCode, back),
+    seenSet(userId),
   ]);
   const locationPlaceIds = await hydrateEbirdLocationPlaceIds([
     ...recent.data,
     ...notable.data,
   ]);
-  return buildView(
-    userId,
-    recent,
-    notable,
-    home,
-    photoCounts,
-    locationPlaceIds,
-  );
+  return buildView(seen, recent, notable, home, photoCounts, locationPlaceIds);
+}
+
+/** The enriched half of a geo view — resolved behind a streamed boundary. */
+export interface GeoEnrichment {
+  needs: SpeciesActivity[];
+  /** Some needs carry only their base locations. See `TargetsView.enrichPartial`. */
+  partial: boolean;
+  /** Enrichment was deliberately not attempted (never-synced life list). */
+  skipped: boolean;
+}
+
+export interface GeoBase {
+  /** Complete and renderable on its own — every above-the-fold section. */
+  view: TargetsView;
+  /**
+   * The per-species fan-out, deferred. 27 eBird calls and ~108 queries in the
+   * measured case, feeding `places[]` and the place-search index — none of
+   * which renders at first paint.
+   */
+  enrich: (opts?: { signal?: AbortSignal }) => Promise<GeoEnrichment>;
 }
 
 /**
- * Targets for an arbitrary location (geo endpoints — no region code needed).
- * Distances are measured from the search center. eBird caps geo dist at 50 km.
+ * Targets for an arbitrary location (geo endpoints — no region code needed),
+ * split at the enrichment seam (td-d561a8 §1).
+ *
+ * The awaited half is the three area calls that buy data currency; the
+ * returned `enrich()` is the per-species fan-out that used to run inline and
+ * hold the whole page for ~2 s. Distances are measured from the search center.
+ * eBird caps geo dist at 50 km.
  */
-export async function geoTargets(
-  userId: number,
+export async function geoTargetsBase(
+  seen: Set<string>,
   apiKey: string,
   lat: number,
   lng: number,
   distKm: number,
   back: number,
   photoCounts: Map<string, number> = new Map(),
-): Promise<TargetsView> {
+): Promise<GeoBase> {
   const dist = Math.min(Math.max(distKm, 1), 50);
   const origin = { lat, lon: lng };
-  const [recent, notable] = await Promise.all([
+  const [recent, notable, hotspots] = await Promise.all([
     recentNearbyObs(apiKey, lat, lng, dist, back),
     notableNearbyObs(apiKey, lat, lng, dist, back),
+    verifiedHotspotLocIds(apiKey, lat, lng, dist),
   ]);
-  const hotspots = await verifiedHotspotLocIds(apiKey, lat, lng, dist);
-  const locationPlaceIds = await hydrateEbirdLocationPlaceIds([
-    ...recent.data,
-    ...notable.data,
-  ]);
-  const view = await buildView(
-    userId,
+  // `resolveMissing: false` — the base hydrate used to run up to five SERIAL
+  // Google Text Search lookups at a 5 s deadline each (~25 s worst case) on
+  // the critical path. Resolution now happens detached, inside enrich().
+  const locationPlaceIds = await hydrateEbirdLocationPlaceIds(
+    [...recent.data, ...notable.data],
+    { resolveMissing: false },
+  );
+  const view = buildView(
+    seen,
     recent,
     notable,
     origin,
@@ -461,20 +614,31 @@ export async function geoTargets(
     locationPlaceIds,
     hotspots.locIds,
   );
-  const enriched = await enrichNeedsWithSpeciesReports(
-    view.needs,
-    apiKey,
-    origin,
-    dist,
-    back,
-    photoCounts,
-    hotspots.locIds,
-  );
   return {
-    ...view,
-    needs: enriched.needs.sort(sortNeedsByActivity),
-    stale: view.stale || enriched.stale || hotspots.stale,
-    enrichPartial: enriched.partial,
+    // Hotspot staleness is part of what this shell shows, so it must reach the
+    // badge at FIRST paint — it used to be ORed in only after enrichment.
+    view: { ...view, stale: view.stale || hotspots.stale },
+    enrich: async (opts = {}) => {
+      const enriched = await enrichNeedsWithSpeciesReports(
+        view.needs,
+        apiKey,
+        origin,
+        dist,
+        back,
+        photoCounts,
+        hotspots.locIds,
+        opts,
+      );
+      return {
+        // Option (a), owner's call 2026-08-31: the enriched activity rank is
+        // the meaningful one, so the list re-sorts once when it lands. Base
+        // order cannot substitute — the area feed is one row per species, so
+        // sorting it by "activity" ranks on a single observation.
+        needs: enriched.needs.sort(sortNeedsByActivity),
+        partial: enriched.partial,
+        skipped: false,
+      };
+    },
   };
 }
 

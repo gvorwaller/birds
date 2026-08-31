@@ -42,6 +42,17 @@ export async function ownerGalleryUrl(ownerId: number): Promise<string | null> {
 export async function galleryContext(
 	ownerId: number
 ): Promise<{ hasGallery: boolean; photoCounts: Map<string, number> }> {
-	const hasGallery = (await ownerGalleryUrl(ownerId)) != null;
+	return galleryContextFrom(await ownerGalleryUrl(ownerId));
+}
+
+/**
+ * Same, for a caller that has already read `users.gallery_url` as part of a
+ * wider select — the Home loader reads that row anyway, so going through
+ * `galleryContext` cost it a duplicate SELECT of the same column (td-d561a8 §5).
+ */
+export async function galleryContextFrom(
+	galleryUrl: string | null
+): Promise<{ hasGallery: boolean; photoCounts: Map<string, number> }> {
+	const hasGallery = galleryUrl != null;
 	return { hasGallery, photoCounts: hasGallery ? await photoCountsBySpecies() : new Map() };
 }

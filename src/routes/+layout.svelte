@@ -75,6 +75,25 @@
 				: [...primaryItems, ...drawerOnlyItems, ...ownerMenuItems]
 	);
 
+	/**
+	 * Home opts out of hover preloading (td-d561a8 §7).
+	 *
+	 * `app.html` sets `preload-data="hover"` for the whole app, and a preload of
+	 * a STREAMED route starts its deferred server work immediately — a discarded
+	 * preload does not abort it. So once Home streams its per-species fan-out, a
+	 * hover that never becomes a click would still spend 27 eBird calls. "tap"
+	 * (mousedown/touchstart) keeps the head start on real presses; a cancelled
+	 * press still costs one load, which the cachedFetch single-flight coalesces
+	 * with the real one.
+	 *
+	 * Applied via this helper rather than inline so every nav that renders
+	 * `primaryItems` gets it from one place — see nav-preload.test.ts, which
+	 * fails if a new Home link appears without it.
+	 */
+	function preloadFor(href: string): 'tap' | undefined {
+		return href === '/' ? 'tap' : undefined;
+	}
+
 	function isActive(href: string, path: string): boolean {
 		if (href === '/') return path === '/';
 		if (href === '/species') return isFieldGuideActive(path);
@@ -103,10 +122,14 @@
 		>
 			<span></span><span></span><span></span>
 		</button>
-		<a class="brand" href="/"><span>🪶</span> birds</a>
+		<a class="brand" href="/" data-sveltekit-preload-data="tap"><span>🪶</span> birds</a>
 		<div class="links">
 			{#each primaryItems as item (item.href)}
-				<a href={item.href} class:active={isActive(item.href, $page.url.pathname)}>{item.label}</a>
+				<a
+					href={item.href}
+					data-sveltekit-preload-data={preloadFor(item.href)}
+					class:active={isActive(item.href, $page.url.pathname)}>{item.label}</a
+				>
 			{/each}
 		</div>
 		<div class="spacer"></div>
@@ -131,6 +154,7 @@
 				{#each drawerItems as item (item.href)}
 					<a
 						href={item.href}
+						data-sveltekit-preload-data={preloadFor(item.href)}
 						class:active={isActive(item.href, $page.url.pathname)}
 						onclick={() => (menuOpen = false)}
 					>
@@ -177,7 +201,11 @@
 {#if data.user}
 	<nav class="bottom-nav">
 		{#each primaryItems as item (item.href)}
-			<a href={item.href} class:active={isActive(item.href, $page.url.pathname)}>
+			<a
+				href={item.href}
+				data-sveltekit-preload-data={preloadFor(item.href)}
+				class:active={isActive(item.href, $page.url.pathname)}
+			>
 				<span class="ico">{item.ico}</span>{item.label}
 			</a>
 		{/each}

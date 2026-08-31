@@ -1,9 +1,15 @@
 import type { PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { getEbirdApiKey, EbirdError } from "$server/ebird";
-import { geoTargets, type TargetsView } from "$server/needs";
+import { decodeEbirdApiKey, EbirdError } from "$server/ebird";
+import {
+  geoTargetsBase,
+  seenSet,
+  type GeoEnrichment,
+  type TargetsView,
+} from "$server/needs";
 import { geocodePlace } from "$server/geocode";
-import { galleryContext } from "$server/access";
+import { galleryContextFrom } from "$server/access";
+import { streamed, type Streamed } from "$lib/streamed";
 import {
   BACK_OPTIONS,
   DEFAULT_BACK_DAYS,
@@ -41,42 +47,49 @@ const PLACE_SUGGESTIONS = [
  * `page.url` for exactly this reason; it used to be built here from
  * `url.search`, which is what forced the re-run.
  */
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, request }) => {
   const userId = locals.scopeId!; // the data owner this account reads
   const place = (url.searchParams.get("place") ?? "").trim();
   const back = parseBackDays(url.searchParams.get("back"), DEFAULT_BACK_DAYS);
 
-  // Independent work: the user row, gallery, key, at-a-glance reads and the
-  // geocode all run together. Only the eBird fan-out below depends on them.
-  const [userRow, gallery, apiKey, seenCountRow, ebirdState, geo] =
-    await Promise.all([
-      query<{
-        home_lat: number | null;
-        home_lon: number | null;
-        home_label: string | null;
-        near_me_radius_km: number | null;
-      }>(
-        "SELECT home_lat, home_lon, home_label, near_me_radius_km FROM users WHERE id = $1",
-        [userId],
-      ),
-      galleryContext(userId),
-      getEbirdApiKey(userId),
-      query<{ n: string }>(
-        "SELECT COUNT(*) AS n FROM seen_species WHERE user_id = $1",
-        [userId],
-      ),
-      query<{
-        life_list_synced_at: string | null;
-        life_list_status: string | null;
-      }>(
-        "SELECT life_list_synced_at, life_list_status FROM user_ebird WHERE user_id = $1",
-        [userId],
-      ),
-      place ? geocodePlace(place) : Promise.resolve(null),
-    ]);
+  // Independent work: the user row, the eBird row, the life list and the
+  // geocode all run together. Only the eBird calls below depend on them.
+  //
+  // One SELECT per table (td-d561a8 §5): `gallery_url` rides the users row
+  // instead of `galleryContext` re-reading it, and `api_key_enc` rides the
+  // user_ebird row instead of `getEbirdApiKey` re-reading that. The life list
+  // is loaded as a Set, not a COUNT — `seen.size` answers the at-a-glance
+  // number in EVERY state, and the same Set is what the needs diff needs, so
+  // the two can never disagree.
+  const [userRow, ebirdState, seen, geo] = await Promise.all([
+    query<{
+      home_lat: number | null;
+      home_lon: number | null;
+      home_label: string | null;
+      near_me_radius_km: number | null;
+      gallery_url: string | null;
+    }>(
+      "SELECT home_lat, home_lon, home_label, near_me_radius_km, gallery_url FROM users WHERE id = $1",
+      [userId],
+    ),
+    query<{
+      api_key_enc: string | null;
+      life_list_synced_at: string | null;
+      life_list_status: string | null;
+    }>(
+      "SELECT api_key_enc, life_list_synced_at, life_list_status FROM user_ebird WHERE user_id = $1",
+      [userId],
+    ),
+    seenSet(userId),
+    place ? geocodePlace(place) : Promise.resolve(null),
+  ]);
 
-  const { hasGallery, photoCounts } = gallery;
   const u = userRow.rows[0];
+  const apiKey = decodeEbirdApiKey(ebirdState.rows[0]?.api_key_enc ?? null);
+  const lifeListSyncedAt = ebirdState.rows[0]?.life_list_synced_at ?? null;
+  const { hasGallery, photoCounts } = await galleryContextFrom(
+    u?.gallery_url ?? null,
+  );
   const savedRadiusKm = normalizeNearMeRadiusKm(u?.near_me_radius_km);
   // Absent or invalid `dist` falls back to the saved radius — never to a
   // hard-coded 50 km, which is what the old Targets route did.
@@ -104,17 +117,42 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // under a "Couldn't find …" banner.
   if (!location && !place && home) location = home;
 
+  // The awaited base view is the whole page above the fold. `enrichment` is
+  // the per-species fan-out, streamed: it fills in `places[]` (the place
+  // search, the per-species place lists) and re-ranks the needs list, and
+  // nothing rendered at first paint waits on it.
   let view: TargetsView | null = null;
+  let enrichment: Promise<Streamed<GeoEnrichment>> | null = null;
   if (location && apiKey) {
     try {
-      view = await geoTargets(
-        userId,
+      const base = await geoTargetsBase(
+        seen,
         apiKey,
         location.lat,
         location.lng,
         distKm,
         back,
         photoCounts,
+      );
+      view = base.view;
+      const label = location.label;
+      enrichment = streamed(
+        // A life list that has NEVER synced makes every species in the feed a
+        // "need" — ~150 eBird calls and ~600 queries for a place breakdown
+        // that describes an unfiltered feed. Keyed on `life_list_synced_at IS
+        // NULL` rather than an empty seen set, because a successful import can
+        // legitimately match zero species.
+        lifeListSyncedAt == null
+          ? Promise.resolve<GeoEnrichment>({
+              needs: base.view.needs,
+              partial: true,
+              skipped: true,
+            })
+          : base.enrich({ signal: request.signal }),
+        (err) =>
+          err instanceof EbirdError
+            ? err.message
+            : `Could not load place details for ${label}.`,
       );
     } catch (err) {
       error =
@@ -141,17 +179,18 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     backOptions: BACK_OPTIONS,
     suggestions: PLACE_SUGGESTIONS,
     view,
+    enrichment,
     error,
     needsLocation: !location,
     hasApiKey: !!apiKey,
     hasGallery,
     // One authoritative life-list count for every state. `view.seenCount` is
     // deliberately not surfaced separately so the two cannot disagree.
-    seenCount: Number(seenCountRow.rows[0]?.n ?? 0),
+    seenCount: seen.size,
     photoCount: hasGallery
       ? [...photoCounts.values()].reduce((a, b) => a + b, 0)
       : 0,
-    lifeListSyncedAt: ebirdState.rows[0]?.life_list_synced_at ?? null,
+    lifeListSyncedAt,
     lifeListStatus: ebirdState.rows[0]?.life_list_status ?? null,
   };
 };

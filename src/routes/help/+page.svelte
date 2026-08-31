@@ -387,6 +387,14 @@
 						gallery configured).
 					</li>
 					<li>
+						<strong>Two-stage loading.</strong> The needs and rare lists appear as soon
+						as the area reports arrive, then fill in a second or two later with each
+						species' full place breakdown — the “Show all N places” lists, the place
+						search, and the per-species counts. Until that lands, a row shows where
+						its <em>latest</em> report was rather than a location or report count,
+						because the area feed carries only that one sighting per species.
+					</li>
+					<li>
 						Older <code>/targets</code> links and bookmarks still work; they land on Home
 						with their search intact.
 					</li>

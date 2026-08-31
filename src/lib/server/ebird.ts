@@ -49,7 +49,15 @@ export async function getEbirdApiKey(userId: number): Promise<string | null> {
 		'SELECT api_key_enc FROM user_ebird WHERE user_id = $1',
 		[userId]
 	);
-	const enc = r.rows[0]?.api_key_enc;
+	return decodeEbirdApiKey(r.rows[0]?.api_key_enc ?? null);
+}
+
+/**
+ * Decrypt an already-fetched `user_ebird.api_key_enc`. Lets a caller that
+ * needs other columns of that row (the Home loader wants `life_list_*` too)
+ * read the row ONCE instead of paying a second SELECT for the key alone.
+ */
+export function decodeEbirdApiKey(enc: string | null): string | null {
 	return enc ? decryptSecret(enc) : null;
 }
 
@@ -138,10 +146,45 @@ async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal)
 }
 
 /**
+ * Per-process coalescing of concurrent reads of the same cache key
+ * (td-d561a8 §2), the same shape as `enrichOneNowCoalesced` in
+ * species-enrichment.ts.
+ *
+ * Motivated by the Home split: with the shell returning in ~400 ms instead of
+ * ~2.3 s, a user can now change radius/window three or four times while the
+ * first per-species fan-out is still running, and every overlapping COLD miss
+ * used to become its own upstream call. Coalescing makes concurrent callers
+ * share one HTTP request, which is the cs.md rate-limit rule ("cache first,
+ * respect rate limits") applied to the in-flight window the DB cache cannot
+ * cover. Cross-process duplication (a second PM2 worker) is still possible and
+ * stays on td-3bf3a2 — this covers the same-user overlap the fast shell
+ * invents.
+ *
+ * Callers share the resolved object, including its `data` array. Nothing in
+ * this codebase mutates an observation payload (aggregate/rankPlaces read it;
+ * attachGooglePlaceIds maps to new objects), so the shared reference is safe.
+ */
+const inFlight = new Map<string, Promise<CachedResult<unknown>>>();
+
+async function cachedFetch<T>(
+	cacheKey: string,
+	ttlMinutes: number,
+	fetcher: () => Promise<T>
+): Promise<CachedResult<T>> {
+	const existing = inFlight.get(cacheKey) as Promise<CachedResult<T>> | undefined;
+	if (existing) return existing;
+	const p = cachedFetchUncoalesced(cacheKey, ttlMinutes, fetcher).finally(() =>
+		inFlight.delete(cacheKey)
+	);
+	inFlight.set(cacheKey, p as Promise<CachedResult<unknown>>);
+	return p;
+}
+
+/**
  * TTL cache over the ebird_cache table. On fetch failure, falls back to a
  * stale cached payload when one exists (stale: true) instead of throwing.
  */
-async function cachedFetch<T>(
+async function cachedFetchUncoalesced<T>(
 	cacheKey: string,
 	ttlMinutes: number,
 	fetcher: () => Promise<T>

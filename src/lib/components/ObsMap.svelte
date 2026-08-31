@@ -26,8 +26,23 @@
   let {
     points = [],
     center = null,
-  }: { points?: ObsPoint[]; center?: { lat: number; lng: number } | null } =
-    $props();
+    fitKey = null,
+  }: {
+    points?: ObsPoint[];
+    center?: { lat: number; lng: number } | null;
+    /**
+     * Opt-in viewport stability. Without it the map refits its bounds on every
+     * `points` change — right for a caller whose points only ever change when
+     * the user asks for something different.
+     *
+     * Pass a key that changes ONLY on a deliberate view change and the map
+     * refits just for those, leaving the viewport alone when points arrive for
+     * another reason (a streamed section landing behind the page). Panning or
+     * zooming also suspends refitting until the key next changes, so the map
+     * never yanks itself out from under a hand mid-gesture.
+     */
+    fitKey?: string | null;
+  } = $props();
 
   const API_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const MAP_ID = env.PUBLIC_GOOGLE_MAPS_MAP_ID ?? "";
@@ -67,6 +82,8 @@
   /* eslint-enable @typescript-eslint/no-explicit-any */
   let satellite = $state(false);
   let mapReady = $state(false);
+  // `undefined` (not null) so the very first draw always counts as a change.
+  let lastFitKey: string | null | undefined = undefined;
   function toggleSatellite() {
     satellite = !satellite;
     map?.setMapTypeId(satellite ? "hybrid" : "roadmap");
@@ -90,7 +107,7 @@
   // ready and again whenever `points` changes (e.g. the species search filters
   // the list), so the map always mirrors what's shown — including every place
   // of a searched species.
-  function renderMarkers() {
+  function renderMarkers(opts: { forceFit?: boolean } = {}) {
     if (!map) return;
     for (const m of markers) m.map = null;
     markers = [];
@@ -139,8 +156,16 @@
 
     const start = center ?? pts[0] ?? { lat: 39.5, lng: -98.35 };
     const total = pts.length + (center ? 1 : 0);
-    if (total >= 2) map.fitBounds(bounds, 56);
-    else {
+    // `fitKey === null` keeps the original behavior for callers that don't opt
+    // in: refit on every render. With a key, refit only when it changes (and
+    // on the first draw) — so markers still update for every other reason, the
+    // viewport just stays where the user left it.
+    const keyChanged = fitKey !== lastFitKey;
+    lastFitKey = fitKey;
+    const mayFit = fitKey === null || keyChanged || !!opts.forceFit;
+    if (total >= 2) {
+      if (mayFit) map.fitBounds(bounds, 56);
+    } else if (mayFit) {
       map.setCenter({ lat: start.lat, lng: start.lng });
       map.setZoom(pts.length ? 11 : 6);
     }
@@ -182,7 +207,10 @@
       const io = new IntersectionObserver((entries) => {
         if (entries.some((e) => e.isIntersecting)) {
           gmaps.event.trigger(map, "resize");
-          renderMarkers();
+          // Forced: this nudge exists because the canvas can composite blank,
+          // and the resize it follows can change the viewport — it must refit
+          // even for a caller that otherwise pins the viewport by `fitKey`.
+          renderMarkers({ forceFit: true });
           io.disconnect();
         }
       });

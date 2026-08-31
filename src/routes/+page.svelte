@@ -67,7 +67,65 @@
   }
 
   let notableAll = $derived(data.view?.notable ?? []);
-  let needsAll = $derived(data.view?.needs ?? []);
+
+  // --- Streamed enrichment (td-d561a8) --------------------------------------
+  // The awaited base view renders immediately; the per-species fan-out lands
+  // behind it and swaps in a needs list with real place data and the enriched
+  // activity rank.
+  //
+  // Deliberately NOT forecast's retained pattern verbatim: there, a key change
+  // blanks the section to a skeleton, because there the streamed section IS
+  // the content. Here the awaited base is the content, so a key change must
+  // render the NEW base at once — waiting ~2 s to redraw birds we already have
+  // would give back the whole win. Only a same-key refresh (a jobsPoll
+  // invalidateAll) keeps the last enriched value, so a background poll never
+  // drops a populated list back to base rows.
+  type EnrichRes = Awaited<NonNullable<typeof data.enrichment>>;
+  let enrichView = $state<{ key: string; res: EnrichRes } | null>(null);
+  const enrichKey = $derived(
+    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}`,
+  );
+  $effect(() => {
+    const key = enrichKey;
+    const pr = data.enrichment;
+    if (!pr) {
+      enrichView = null;
+      return;
+    }
+    let alive = true;
+    void pr.then((res) => {
+      if (alive) enrichView = { key, res };
+    });
+    // Guards against a promise that resolves after this page (or this key) is
+    // gone writing its result into the live view.
+    return () => {
+      alive = false;
+    };
+  });
+  let enrichment = $derived(
+    enrichView?.key === enrichKey ? enrichView.res : null,
+  );
+  /** Requested but not yet settled — the place index is still two-phase. */
+  let needsPending = $derived(data.enrichment != null && enrichment == null);
+  let enrichError = $derived(
+    enrichment && !enrichment.ok ? enrichment.error : null,
+  );
+  /** Skipped on purpose (never-synced life list) — not a failure. */
+  let enrichSkipped = $derived(
+    enrichment?.ok ? enrichment.data.skipped : false,
+  );
+  // Places may be missing because a call failed, because enrichment was
+  // skipped, or because it simply hasn't landed yet. All three mean the same
+  // thing to place-based UI: absence is not proof.
+  let enrichPartial = $derived(
+    needsPending ||
+      !!enrichError ||
+      (enrichment?.ok ? enrichment.data.partial : false),
+  );
+
+  let needsAll = $derived(
+    (enrichment?.ok ? enrichment.data.needs : null) ?? data.view?.needs ?? [],
+  );
 
   // No species may render in both the Notable and Needs lists (item 2 of
   // 2026-08-11-forecast-ux-suggestions.md #7): a species that is both notable
@@ -129,7 +187,14 @@
   // meant a stale `loc` survived forever in exactly the states that have no
   // index at all (eBird error, no key, no home — `view` is null). Idempotent
   // because the repair drops `loc` from `page.url`, making this condition false.
+  //
+  // Frozen while enrichment is in flight (td-d561a8 §1g): the index is built
+  // in two phases now, so a place the user just tapped can be absent from the
+  // base half and present in the enriched half. Repairing on the base half
+  // would silently clear a live focus ~2 s after paint. A key that is still
+  // missing once the stream settles is genuinely gone, and repairs then.
   $effect(() => {
+    if (needsPending) return;
     if (focusKey && !focused) focusPlace(null, true);
   });
 
@@ -238,6 +303,13 @@
       : data.location
         ? { lat: data.location.lat, lng: data.location.lng }
         : null,
+  );
+  // Refit the viewport only on a deliberate change of what the map is showing
+  // — location, radius, window, focus, or the search text. Enrichment landing
+  // changes `points` too, and without this the map would snap back to a fitted
+  // viewport ~2 s after paint, mid-pan (td-d561a8 §1h).
+  let mapFitKey = $derived(
+    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}|${focusKey ?? ""}|${searching ? ql : ""}`,
   );
   // The map mirrors the visible lists: a pin per shown species by default, or
   // every place of each matched species while searching.
@@ -466,7 +538,7 @@
        passes a null center (see its comment) and the map must stay rendered. -->
   {#if data.view && data.location}
     <section class="card map-card">
-      <ObsMap points={mapPoints} center={mapCenter} />
+      <ObsMap points={mapPoints} center={mapCenter} fitKey={mapFitKey} />
       <p class="legend">
         {#if focused}
           <!-- Must track the marker kind emitted above, which goes notable
@@ -533,10 +605,17 @@
         <span class="focus-chip">
           📍 {focused.locName}
         </span>
-        {#if data.view?.enrichPartial}
-          <!-- Absence of a species here is not proof it isn't there: some
-               per-species detail calls failed. Said where focus is visible,
-               since the collapsed Places list may not be showing it. -->
+        <!-- Absence of a species here is not proof it isn't there: the
+             per-species detail may still be loading, have been skipped, or
+             have failed. Said where focus is visible, since the collapsed
+             Places list may not be showing it. -->
+        {#if needsPending}
+          <span class="muted partial-note">checking all places…</span>
+        {:else if enrichSkipped}
+          <span class="muted partial-note">
+            area-level reports (sync life list for full breakdown)
+          </span>
+        {:else if enrichPartial}
           <span class="muted partial-note">some locations may be missing</span>
         {/if}
         <button
@@ -555,7 +634,7 @@
         query={q}
         focusedKey={focusKey}
         {distanceUnit}
-        partial={data.view.enrichPartial}
+        partial={enrichPartial}
         onfocusplace={(p) => focusPlace(p.key)}
       />
       <!-- Shown even while focused: the typed text deliberately survives
@@ -566,9 +645,18 @@
       {#if placeHits.length === 0}
         <section class="card">
           <p class="muted">
-            No place in the loaded reports matches “{q}”{data.view.enrichPartial
-              ? " (and some locations may be missing)"
-              : ""} —
+            <!-- While the per-species places are still streaming, a definitive
+                 "no place matches" would be contradicted a second later by a
+                 place that was simply not loaded yet. The geocode escape hatch
+                 stays offered either way: blocking it during the wait is worse
+                 than the wait itself for someone typing a city name. -->
+            {#if needsPending}
+              Checking all places in range…
+            {:else}
+              No place in the loaded reports matches “{q}”{enrichPartial
+                ? " (and some locations may be missing)"
+                : ""}
+            {/if} —
             <a href={geocodeHref}>search it as a location instead →</a>
           </p>
         </section>
@@ -697,9 +785,7 @@
               data.back,
             )}
           {:else}
-            {data.view.needs.length} needs reported here — {windowPhrase(
-              data.back,
-            )}
+            {needsAll.length} needs reported here — {windowPhrase(data.back)}
           {/if}
           {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
           {#if data.view.fetchedAt}
@@ -716,11 +802,29 @@
           </label>
         {/if}
       </div>
-      {#if data.seenCount === 0}
+      <!-- Mutually exclusive: a never-synced account satisfies BOTH conditions
+           (no sync timestamp, and an empty list), and rendering both notes
+           would say two different things about the same state. Never-synced
+           wins, because it is the actionable one. -->
+      {#if !data.lifeListSyncedAt}
+        <p class="muted">
+          {#if isViewer}
+            Life list not synced. Showing area-level needs.
+          {:else}
+            Your life list is not synced yet, so every species counts as a need
+            and place breakdowns stay area-level.
+            <a href="/settings">Sync it in Settings →</a>
+          {/if}
+        </p>
+      {:else if data.seenCount === 0}
         <p class="muted">
           Your life list is empty, so every species counts as a need.
           {#if !isViewer}Sync it in <a href="/settings">Settings</a>.{/if}
         </p>
+      {:else if enrichError}
+        <!-- Honest about scope: the needs themselves are real (they come from
+             the area feed); only the per-place detail is missing. -->
+        <p class="muted">{enrichError} Place details are unavailable.</p>
       {/if}
       {#if (searching || focused) && needsMatched.length === 0}
         <p class="muted">
@@ -733,6 +837,8 @@
         </p>
       {/if}
       {#each needsShown as n (n.speciesCode)}
+        {@const nearestKm = nearestDistanceKm(n)}
+        {@const rowKm = n.enriched ? (nearestKm ?? n.distanceKm) : n.distanceKm}
         <div class="obs">
           <div class="grow">
             <div class="name">
@@ -743,20 +849,38 @@
                   label="Notable"
                 />{/if}
             </div>
+            <!-- The counts are claimed only for enriched rows (td-d561a8 §1d).
+                 The area feed carries ONE row per species, so before the
+                 per-species detail lands "3 locations · 9 birds · 4 reports"
+                 would be "1 · n · 1" for every bird on the page — a precise
+                 number that corrects itself upward seconds later. Until then
+                 the row shows what the feed does support: where the latest
+                 report was, and how far away it was. "nearest" likewise means
+                 the nearest of the known places, so it waits for them. -->
             <div class="meta">
-              <strong
-                >{n.locationCount}
-                {n.locationCount === 1 ? "location" : "locations"}</strong
-              >
-              ·
-              <strong
-                >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
-              >
-              · {n.nReports} report{n.nReports === 1 ? "" : "s"}
-              {#if n.distanceKm != null}
-                · nearest {formatDistance(n.distanceKm, distanceUnit)}{/if}
-              ·
-              {n.locations.join(" · ")}
+              {#if n.enriched}
+                <strong
+                  >{n.locationCount}
+                  {n.locationCount === 1 ? "location" : "locations"}</strong
+                >
+                ·
+                <strong
+                  >{n.totalCount}
+                  {n.totalCount === 1 ? "bird" : "birds"}</strong
+                >
+                · {n.nReports} report{n.nReports === 1 ? "" : "s"}
+                {#if nearestKm != null}
+                  · nearest {formatDistance(nearestKm, distanceUnit)}{/if}
+                ·
+                {n.locations.join(" · ")}
+              {:else}
+                {n.locations.join(" · ")}
+                {#if n.distanceKm != null}
+                  · last report {formatDistance(
+                    n.distanceKm,
+                    distanceUnit,
+                  )}{/if}
+              {/if}
               {#if data.hasGallery && n.photoCount === 0}
                 · 📷 no photo yet{/if}
             </div>
@@ -804,14 +928,19 @@
             {/if}
           </div>
           <div class="right">
-            {#if (needsSort === "nearest" ? nearestDistanceKm(n) : n.distanceKm) !=
-              null}<div class="dist">
-                {formatDistance(
-                  (needsSort === "nearest"
-                    ? nearestDistanceKm(n)
-                    : n.distanceKm)!,
-                  distanceUnit,
-                )}
+            <!-- One distance per row, whatever the sort. This used to switch
+                 between `nearestDistanceKm` and `distanceKm` with the sort
+                 control, so the same bird showed two different numbers — both
+                 read as "nearest" beside the meta line. Enriched rows show the
+                 nearest known place; un-enriched rows show the one report the
+                 area feed carries, labelled as such in the meta. -->
+            {#if rowKm != null}<div
+                class="dist"
+                title={n.enriched
+                  ? "Nearest place this bird was reported"
+                  : "Distance to the latest area report"}
+              >
+                {formatDistance(rowKm, distanceUnit)}
               </div>{/if}
             <div class="when">{n.lastObsDt}</div>
           </div>
