@@ -166,3 +166,85 @@ export function mapsRouteUrl(
     .join("|");
   return `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&waypoints=${waypoints}&travelmode=driving`;
 }
+
+/**
+ * A region's extent as eBird reports it (td-a4a3bf). All four edges or none.
+ * `minLon > maxLon` is LEGAL and means the box crosses the antimeridian
+ * (Fiji, Chukotka, the Aleutians) — callers must not "fix" it by swapping.
+ */
+export interface RegionBox {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+}
+
+/** Signed shortest angular difference a→b in degrees, in (-180, 180]. */
+function lonDelta(a: number, b: number): number {
+  return ((((b - a) % 360) + 540) % 360) - 180;
+}
+
+/** Is `lon` within the box's longitude span, honoring antimeridian wrap? */
+function lonInBox(lon: number, box: RegionBox): boolean {
+  return box.minLon <= box.maxLon
+    ? lon >= box.minLon && lon <= box.maxLon
+    : lon >= box.minLon || lon <= box.maxLon; // wrapped span
+}
+
+/**
+ * Great-circle distance from a point to the NEAREST POINT OF a bounding box —
+ * zero when the point is inside it.
+ *
+ * Why this exists (td-a4a3bf, measured on prod): ranking regions by centroid
+ * distance made a Jacksonville home 191 mi from Georgia and 212 mi from
+ * FLORIDA — the state it is actually in — because Florida's centroid sits far
+ * down the peninsula. Distance-to-extent puts the region you are standing in
+ * at zero, which is the answer a birder means by "closest".
+ *
+ * A bounding box is a coarse stand-in for a real boundary (boxes overlap for
+ * irregular shapes), so this is a better heuristic, not containment truth.
+ */
+export function distanceToBoxKm(
+  lat: number,
+  lon: number,
+  box: RegionBox,
+): number {
+  const nearestLat = Math.min(Math.max(lat, box.minLat), box.maxLat);
+  let nearestLon: number;
+  if (lonInBox(lon, box)) {
+    nearestLon = lon;
+  } else {
+    // Outside the span: clamp to whichever meridian edge is angularly nearer,
+    // which is what makes the wrapped case work without special-casing it.
+    const toMin = Math.abs(lonDelta(lon, box.minLon));
+    const toMax = Math.abs(lonDelta(lon, box.maxLon));
+    nearestLon = toMin <= toMax ? box.minLon : box.maxLon;
+  }
+  return haversineKm(lat, lon, nearestLat, nearestLon);
+}
+
+/**
+ * How far a region is from a point: to its extent when bounds are known,
+ * else to its centroid. The fallback is deliberate — eBird has no usable box
+ * for every code, and a missing box must degrade honestly rather than be
+ * invented (cs.md).
+ */
+export function regionDistanceKm(
+  lat: number,
+  lon: number,
+  region: { lat: number; lon: number; box?: RegionBox | null },
+): number {
+  return region.box
+    ? distanceToBoxKm(lat, lon, region.box)
+    : haversineKm(lat, lon, region.lat, region.lon);
+}
+
+/** True when the point falls inside the region's known extent. */
+export function isInsideRegion(
+  lat: number,
+  lon: number,
+  box: RegionBox | null | undefined,
+): boolean {
+  if (!box) return false;
+  return lat >= box.minLat && lat <= box.maxLat && lonInBox(lon, box);
+}
