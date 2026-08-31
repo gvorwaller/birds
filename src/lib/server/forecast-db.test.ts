@@ -37,6 +37,63 @@ for (const k of ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]) {
 process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 
 const { query } = await import("$lib/db");
+const pg = (await import("pg")).default;
+
+/** Fixture regions must exist for frequency fixtures to satisfy the 0045
+ * invariant — and `regions` is read-only for birds_app BY DESIGN, so they are
+ * seeded through the owner role (the same privilege migrations use). Codes
+ * live in the user-assigned ISO range (QZ, ZZ) that eBird never issues. */
+const FIXTURE_REGIONS: [string, string, string | null][] = [
+  ["QZ", "country", null],
+  ["QZ-A", "subnational1", "QZ"],
+  ["QZ-B", "subnational1", "QZ"],
+  ["QZ-C", "subnational1", "QZ"],
+  ["QZ-NN", "subnational1", "QZ"],
+  ["QZ-BAD", "subnational1", "QZ"],
+  ["QZ-DEL", "subnational1", "QZ"],
+  ["QZ-ST", "subnational1", "QZ"],
+  ["QZ-BND", "subnational1", "QZ"],
+  ["ZZ", "country", null],
+  ["ZZ-A", "subnational1", "ZZ"],
+  ["ZZ-ABC", "subnational1", "ZZ"],
+  ["US-QQ", "subnational1", "US"],
+];
+
+async function withOwner(fn: (c: InstanceType<typeof pg.Client>) => Promise<void>) {
+  const c = new pg.Client({
+    host: envTest.PGHOST ?? "127.0.0.1",
+    port: Number(envTest.PGPORT ?? 15436),
+    database: envTest.PGDATABASE ?? "birds_test",
+    user: envTest.MIGRATION_PGUSER ?? "birds_owner",
+    password: envTest.MIGRATION_PGPASSWORD,
+  });
+  await c.connect();
+  try {
+    await fn(c);
+  } finally {
+    await c.end();
+  }
+}
+
+async function seedFixtureRegions() {
+  await withOwner(async (c) => {
+    for (const [code, level, parent] of FIXTURE_REGIONS) {
+      await c.query(
+        `INSERT INTO regions (code, name, level, parent_code, lat, lon, source_at)
+         VALUES ($1, $2, $3, $4, 1, 1, '2026-01-01')
+         ON CONFLICT (code) DO NOTHING`,
+        [code, `Fixture ${code}`, level, parent],
+      );
+    }
+  });
+}
+
+async function dropFixtureRegions() {
+  await withOwner(async (c) => {
+    // Children before parents; frequency rows are already cleaned up.
+    await c.query("DELETE FROM regions WHERE code LIKE 'QZ%' OR code LIKE 'ZZ%' OR code = 'US-QQ'");
+  });
+}
 const { rankLocsForSpeciesMonth, rankCountiesForNeeds, MIN_MONTH_N } =
   await import("./forecast");
 const { normalizeMatchedBarchart, storeFrequencies, WEEKS } =
@@ -76,11 +133,11 @@ async function insertFreq(code: string, week: number, freq: number) {
 }
 
 const cleanup = async () => {
-  await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'TESTX-%'");
+  await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'QZ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'US-QQ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'ZZ%'");
   await query(
-    "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'TESTX-%'",
+    "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'QZ-%'",
   );
   await query(
     "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'US-QQ-%'",
@@ -91,31 +148,35 @@ const cleanup = async () => {
 
 describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
   beforeAll(async () => {
+    await seedFixtureRegions();
     await cleanup();
     // A: Jan weeks n = 10, 1000, 0, 0; reported 100% of wk1, 30% of wk2.
-    await insertLoc("TESTX-A", janSamples(10, 1000, 0, 0));
-    await insertFreq("TESTX-A", 1, 1.0);
-    await insertFreq("TESTX-A", 2, 0.3);
+    await insertLoc("QZ-A", janSamples(10, 1000, 0, 0));
+    await insertFreq("QZ-A", 1, 1.0);
+    await insertFreq("QZ-A", 2, 0.3);
     // B: Jan weeks n = 100 each; reported only wk1 at 40% — absent sparse
     // weeks must still count their checklists in the denominator.
-    await insertLoc("TESTX-B", janSamples(100, 100, 100, 100));
-    await insertFreq("TESTX-B", 1, 0.4);
+    await insertLoc("QZ-B", janSamples(100, 100, 100, 100));
+    await insertFreq("QZ-B", 1, 0.4);
     // C: tiny sample (n=13 total) at 100% — must flag lowSample, sort last.
-    await insertLoc("TESTX-C", janSamples(13, 0, 0, 0));
-    await insertFreq("TESTX-C", 1, 1.0);
+    await insertLoc("QZ-C", janSamples(13, 0, 0, 0));
+    await insertFreq("QZ-C", 1, 1.0);
   });
-  afterAll(cleanup);
+  afterAll(async () => {
+    await cleanup();
+    await dropFixtureRegions();
+  });
 
   it("computes checklist-weighted month frequency in SQL (sparse-safe)", async () => {
     const ranked = await rankLocsForSpeciesMonth(
-      ["TESTX-A", "TESTX-B", "TESTX-C"],
+      ["QZ-A", "QZ-B", "QZ-C"],
       "testsp",
       1,
     );
     expect(ranked.map((r) => r.code)).toEqual([
-      "TESTX-A",
-      "TESTX-B",
-      "TESTX-C",
+      "QZ-A",
+      "QZ-B",
+      "QZ-C",
     ]);
     // A: (1.0·10 + 0.3·1000) / 1010 — NOT the unweighted (1.0+0.3)/4.
     expect(ranked[0].freq).toBeCloseTo(310 / 1010, 6);
@@ -131,32 +192,32 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
   });
 
   it("returns [] for unknown locations and respects month boundaries", async () => {
-    expect(await rankLocsForSpeciesMonth(["TESTX-NONE"], "testsp", 1)).toEqual(
+    expect(await rankLocsForSpeciesMonth(["QZ-NN"], "testsp", 1)).toEqual(
       [],
     );
     // December: none of the fixtures have week 45-48 checklists → n = 0.
-    const dec = await rankLocsForSpeciesMonth(["TESTX-A"], "testsp", 12);
+    const dec = await rankLocsForSpeciesMonth(["QZ-A"], "testsp", 12);
     expect(dec[0].n).toBe(0);
     expect(dec[0].freq).toBe(0);
   });
 
   it("migration CHECKs reject bad rows; delete cascades", async () => {
-    await expect(insertFreq("TESTX-A", 49, 0.5)).rejects.toThrow(/check/i);
-    await expect(insertFreq("TESTX-A", 3, 1.5)).rejects.toThrow(/check/i);
+    await expect(insertFreq("QZ-A", 49, 0.5)).rejects.toThrow(/check/i);
+    await expect(insertFreq("QZ-A", 3, 1.5)).rejects.toThrow(/check/i);
     await expect(
       query(
         `INSERT INTO frequency_fetch
            (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species)
-         VALUES ('TESTX-BAD', 'region', 'Bad', 2016, 2025, $1, 1)`,
+         VALUES ('QZ-BAD', 'region', 'Bad', 2016, 2025, $1, 1)`,
         [Array(47).fill(1)],
       ),
     ).rejects.toThrow(/check/i);
 
-    await insertLoc("TESTX-DEL", janSamples(50, 50, 50, 50));
-    await insertFreq("TESTX-DEL", 1, 0.2);
-    await query("DELETE FROM frequency_fetch WHERE loc_code = 'TESTX-DEL'");
+    await insertLoc("QZ-DEL", janSamples(50, 50, 50, 50));
+    await insertFreq("QZ-DEL", 1, 0.2);
+    await query("DELETE FROM frequency_fetch WHERE loc_code = 'QZ-DEL'");
     const orphans = await query(
-      "SELECT 1 FROM species_frequency WHERE loc_code = 'TESTX-DEL'",
+      "SELECT 1 FROM species_frequency WHERE loc_code = 'QZ-DEL'",
     );
     expect(orphans.rows).toHaveLength(0);
   });
@@ -215,7 +276,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       collisions: 0,
     };
     await storeFrequencies({
-      locCode: "TESTX-STORE",
+      locCode: "QZ-ST",
       locKind: "region",
       locName: "Store fixture",
       beginYear: 2016,
@@ -224,12 +285,12 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       matched: good,
     });
     const stored = await query(
-      "SELECT n_species, unmatched_names FROM frequency_fetch WHERE loc_code = 'TESTX-STORE'",
+      "SELECT n_species, unmatched_names FROM frequency_fetch WHERE loc_code = 'QZ-ST'",
     );
     expect(Number(stored.rows[0].n_species)).toBe(1);
     expect(stored.rows[0].unmatched_names).toEqual(["spuh sp."]);
     const attempts = await query(
-      "SELECT status FROM frequency_fetch_attempts WHERE loc_code = 'TESTX-STORE'",
+      "SELECT status FROM frequency_fetch_attempts WHERE loc_code = 'QZ-ST'",
     );
     expect(attempts.rows[0].status).toBe("ok");
 
@@ -246,7 +307,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     bad.bySpecies.set("testsp", [1.7, ...Array(WEEKS - 1).fill(0)]);
     await expect(
       storeFrequencies({
-        locCode: "TESTX-STORE",
+        locCode: "QZ-ST",
         locKind: "region",
         locName: "Store fixture",
         beginYear: 2016,
@@ -256,11 +317,11 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       }),
     ).rejects.toThrow();
     const after = await query(
-      "SELECT freq FROM species_frequency WHERE loc_code = 'TESTX-STORE' AND week = 1",
+      "SELECT freq FROM species_frequency WHERE loc_code = 'QZ-ST' AND week = 1",
     );
     expect(Number(after.rows[0].freq)).toBeCloseTo(0.5, 6);
     const sizesAfter = await query(
-      "SELECT sample_sizes[1] AS w1 FROM frequency_fetch WHERE loc_code = 'TESTX-STORE'",
+      "SELECT sample_sizes[1] AS w1 FROM frequency_fetch WHERE loc_code = 'QZ-ST'",
     );
     expect(Number(sizesAfter.rows[0].w1)).toBe(100);
   });
@@ -278,7 +339,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     const normalized = normalizeMatchedBarchart(parsed, source);
 
     await storeFrequencies({
-      locCode: "TESTX-BOUND",
+      locCode: "QZ-BND",
       locKind: "region",
       locName: "Bounded fixture",
       beginYear: 2016,
@@ -290,23 +351,23 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
 
     const stored = await query(
       `SELECT freq FROM species_frequency
-        WHERE loc_code = 'TESTX-BOUND' AND species_code = 'testsp' AND week = 4`,
+        WHERE loc_code = 'QZ-BND' AND species_code = 'testsp' AND week = 4`,
     );
     expect(Number(stored.rows[0].freq)).toBe(1);
     const anomaly = await query(
       `SELECT week, original_freq, stored_freq, sample_size
          FROM frequency_anomalies
-        WHERE loc_code = 'TESTX-BOUND' AND species_code = 'testsp'`,
+        WHERE loc_code = 'QZ-BND' AND species_code = 'testsp'`,
     );
     expect(anomaly.rows).toEqual([
       expect.objectContaining({ week: 4, sample_size: 3 }),
     ]);
     expect(Number(anomaly.rows[0].original_freq)).toBeCloseTo(1.3333333, 7);
     expect(Number(anomaly.rows[0].stored_freq)).toBe(1);
-    await expect(insertFreq("TESTX-BOUND", 5, 1.01)).rejects.toThrow(/check/i);
+    await expect(insertFreq("QZ-BND", 5, 1.01)).rejects.toThrow(/check/i);
 
     await storeFrequencies({
-      locCode: "TESTX-BOUND",
+      locCode: "QZ-BND",
       locKind: "region",
       locName: "Bounded fixture",
       beginYear: 2016,
@@ -321,7 +382,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       },
     });
     const staleAnomalies = await query(
-      "SELECT 1 FROM frequency_anomalies WHERE loc_code = 'TESTX-BOUND'",
+      "SELECT 1 FROM frequency_anomalies WHERE loc_code = 'QZ-BND'",
     );
     expect(staleAnomalies.rows).toHaveLength(0);
   });

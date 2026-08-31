@@ -39,7 +39,7 @@ try {
     await query("SELECT 1");
     dbUp = true;
     const n = await query<{ n: string }>("SELECT count(*) AS n FROM regions");
-    seeded = Number(n.rows[0].n) >= 4000;
+    seeded = Number(n.rows[0].n) >= 3500;
     const fk = await query<{ ok: boolean }>(
       `SELECT EXISTS (SELECT 1 FROM pg_constraint
          WHERE conname = 'frequency_fetch_region_fk') AS ok`,
@@ -68,7 +68,10 @@ describe.skipIf(!dbUp || !seeded)("regions seed shape (0043/0044)", () => {
         FROM regions`);
     const row = r.rows[0];
     expect(Number(row.countries)).toBeGreaterThanOrEqual(240);
-    expect(Number(row.sub1)).toBeGreaterThanOrEqual(3500);
+    // 3,621 seeded of 3,922 listed: 301 codes eBird has never geocoded are
+    // excluded (backend/db/regions-excluded-codes.txt) — the count reflects
+    // the honest seed, not the raw list.
+    expect(Number(row.sub1)).toBeGreaterThanOrEqual(3300);
     expect(Number(row.orphans)).toBe(0);
     expect(Number(row.null_coords)).toBe(0); // NOT NULL, belt and braces
     expect(Number(row.bad_codes)).toBe(0);
@@ -136,9 +139,9 @@ describe.skipIf(!dbUp || !seeded || !fkApplied)(
     const insert = (locCode: string, kind: string) =>
       query(
         `INSERT INTO frequency_fetch
-           (loc_code, loc_kind, loc_name, sample_sizes, begin_year, end_year)
-         VALUES ($1, $2, 'FK test', $3, 2020, 2025)`,
-        [locCode, kind, JSON.stringify(Array(48).fill(1))],
+           (loc_code, loc_kind, loc_name, sample_sizes, begin_year, end_year, n_species)
+         VALUES ($1, $2, 'FK test', $3, 2020, 2025, 0)`,
+        [locCode, kind, Array(48).fill(1)],
       );
 
     it("rejects a region with no seeded reference (SQLSTATE 23503)", async () => {

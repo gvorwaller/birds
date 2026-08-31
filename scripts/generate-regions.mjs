@@ -198,15 +198,29 @@ async function ebirdGet(pathname) {
   }
 }
 
+/** Strip a legacy CODE annotation ("Stockholms län [SE-01]") — never a
+ * bracketed alternate name ("… [Bangkok]"). Applied on fetch AND on cache
+ * read, since the checkpoint may hold pre-normalization names. */
+const cleanName = (name) => String(name).replace(/\s*\[[A-Z]{2}-[A-Z0-9]+\]$/, "").trim();
+
 async function regionList(level, parent) {
   const key = `${level}:${parent}`;
-  if (cache.lists[key]) return cache.lists[key];
+  if (cache.lists[key])
+    return cache.lists[key].map((r) => ({ code: r.code, name: cleanName(r.name) }));
   const { body } = await ebirdGet(`/ref/region/list/${level}/${parent}?fmt=json`);
   if (!Array.isArray(body)) {
     console.error(`Region list ${key} did not return an array.`);
     process.exit(1);
   }
-  const rows = body.map((r) => ({ code: String(r.code), name: String(r.name) }));
+  // eBird's own list names sometimes carry a legacy CODE annotation —
+  // "Stockholms län [SE-01]" (Sweden ships 21 of these). Strip exactly that
+  // shape; bracketed ALTERNATE NAMES ("Krung Thep Maha Nakhon [Bangkok]",
+  // Laos's romanization variants) are useful and kept (measured 2026-08-30:
+  // 36 bracketed names across 7 countries, only Sweden's are code-shaped).
+  const rows = body.map((r) => ({
+    code: String(r.code),
+    name: cleanName(r.name),
+  }));
   cache.lists[key] = rows;
   saveCache();
   return rows;
@@ -284,16 +298,26 @@ for (const [cc, expected] of Object.entries(EXPECT_SUB1)) {
   const got = [...regionsByCode.values()].filter((r) => r.parent === cc).length;
   if (got !== expected) failures.push(`sub1 count for ${cc}: ${got}, expected ${expected}`);
 }
-if (missingCoords.length > 0) {
-  failures.push(
-    `codes with no usable coordinate — an owner decision, never a fabricated value (cs.md):\n` +
-      missingCoords.map((m) => `    ${m}`).join("\n"),
+// Codes eBird itself has never geocoded (latitude/longitude 0,0 — verified
+// live 2026-08-30: XX "High Seas" plus ~300 micro-subdivisions, half of them
+// Latvian municipalities and Maltese councils). They cannot be seeded under
+// lat/lon NOT NULL without fabricating a value (cs.md), so they are EXCLUDED
+// and recorded in a committed, reviewable file; a future re-run picks any
+// that eBird geocodes back up as delta additions. Fatal only if a
+// prod-required code is affected — that would break the 0045 FK.
+const EXCLUDED_PATH = "backend/db/regions-excluded-codes.txt";
+const excludedCodes = infoTargets.filter((code) => cache.info[code]?.missing);
+for (const code of excludedCodes) regionsByCode.delete(code);
+if (excludedCodes.length > 0) {
+  console.warn(
+    `WARNING: excluding ${excludedCodes.length} code(s) with no usable eBird coordinates ` +
+      `(written to ${EXCLUDED_PATH}).`,
   );
 }
 for (const [code, r] of regionsByCode) {
   if (!CODE_RE.test(code)) failures.push(`code fails the 0043/0045 grammar: ${code}`);
   if (!r.name || !r.name.trim()) failures.push(`empty name for ${code}`);
-  if (/\[[A-Z]{2}-[A-Z0-9]+\]/.test(r.name)) failures.push(`barchart-style bracket suffix in name: ${code} "${r.name}"`);
+  if (/\[[A-Z]{2}-[A-Z0-9]+\]/.test(r.name)) failures.push(`code-shaped bracket suffix survived normalization: ${code} "${r.name}"`);
   if (r.parent && !regionsByCode.has(r.parent)) failures.push(`orphan: ${code} parent ${r.parent} not in set`);
   if (r.parent && regionsByCode.get(r.parent)?.level !== "country") failures.push(`${code} parent ${r.parent} is not a country`);
 }
@@ -314,7 +338,7 @@ for (const [code, expect] of Object.entries(SPOT)) {
 try {
   const required = fs.readFileSync(REQUIRED_CODES_PATH, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
   const absent = required.filter((code) => !regionsByCode.has(code));
-  if (absent.length) failures.push(`required prod codes missing from eBird lists: ${absent.join(", ")}`);
+  if (absent.length) failures.push(`required prod codes missing or coordinate-less: ${absent.join(", ")}`);
 } catch {
   failures.push(`${REQUIRED_CODES_PATH} unreadable — regenerate it from prod first`);
 }
@@ -361,6 +385,11 @@ if (previous && changed.length === 0) {
   process.exit(0);
 }
 
+// Seed/delta migrations must sort BEFORE 0045 (the FK that references the
+// seeded rows) on a fresh cluster and before any future schema change that
+// depends on them — max+1 is correct for DELTAS; the first full seed was
+// hand-renamed to 0044 for exactly this ordering. Deltas after 0045 are fine:
+// they only ever ADD/UPDATE rows, never remove ones the FK references.
 const nn = (() => {
   const nums = fs.readdirSync(MIGRATIONS_DIR).map((f) => Number(f.slice(0, 4))).filter(Number.isFinite);
   return String(Math.max(...nums) + 1).padStart(4, "0");
@@ -398,6 +427,14 @@ if (args.dryRun) {
   console.log(`DRY RUN: would write ${outSql} (${emitRows.length} rows) and update ${MANIFEST_PATH}`);
   process.exit(0);
 }
+fs.writeFileSync(
+  EXCLUDED_PATH,
+  `# Regions eBird lists but has never geocoded (lat/lon 0,0) — excluded from\n` +
+    `# the seed because coordinates are NOT NULL and fabricating one is\n` +
+    `# forbidden (cs.md). Regenerated by scripts/generate-regions.mjs.\n` +
+    excludedCodes.sort().join("\n") +
+    "\n",
+);
 fs.writeFileSync(outSql, header + chunks.join("\n\n") + "\n");
 fs.writeFileSync(
   MANIFEST_PATH,
