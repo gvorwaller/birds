@@ -424,53 +424,64 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // (which only ever nests subnational2).
   const countyNames = new Map<string, string>(); // subnational2 (or, for a
   // country group's children, subnational1) code -> display name.
-  {
-    await Promise.all(
-      allGroups.map(async (g) => {
-        const childLvl = childLevel(g.level);
-        if (!childLvl || (childLvl === "subnational2" && !apiKey)) {
-          g.countyTotal = null;
-          g.countyRemaining = null;
-          return;
-        }
-        try {
-          // A country group's children come from the LOCAL reference set
-          // (works without an eBird key); subnational2 county lists stay
-          // live-from-eBird by design (plan decision 2).
-          const list =
-            childLvl === "subnational1"
-              ? (await subnational1Of(g.stateCode)).map((r) => ({ code: r.code, name: r.name }))
-              : (await subregions(apiKey!, g.stateCode, "subnational2")).data;
-          g.countyTotal = list.length;
-          for (const c of list) countyNames.set(c.code, c.name);
-          // Blocks created from hotspots alone get their county's real name.
-          for (const b of g.countyBlocks) {
-            if (!b.county) b.countyName = countyNames.get(b.countyCode) ?? b.countyCode;
-          }
-          g.countyBlocks.sort((a, b) =>
-            a.countyName.localeCompare(b.countyName),
-          );
-          g.countiesLoaded =
-            g.level === "country"
-              ? list.filter((c) => groups.get(c.code)?.state != null).length
-              : g.countyBlocks.filter((b) => b.county).length;
-          const codes = list.map((c) => c.code);
-          const [meta, attempts] = await Promise.all([
-            frequencyMeta(codes),
-            attemptMeta(codes),
-          ]);
-          g.countyRemaining = coverageFromMeta(
-            codes,
-            meta,
-            recentFailures(attempts, new Date()),
-            lastCompleteYear(),
-          ).remaining;
-        } catch {
-          g.countyTotal = null;
-          g.countyRemaining = null;
-        }
-      }),
-    );
+  //
+  // BATCHED (td-3bf3a2). This used to call frequencyMeta + attemptMeta INSIDE
+  // a per-group Promise.all — two queries per group, the bulk of the 463 this
+  // page issued per load, all contending for a pool of 10. Both helpers take a
+  // code list and return a Map, so ONE call over the union of every group's
+  // children answers all of them; per-group coverage is then computed in
+  // memory from the shared maps.
+  const childLists = new Map<string, { code: string; name: string }[]>();
+  await Promise.all(
+    allGroups.map(async (g) => {
+      const childLvl = childLevel(g.level);
+      if (!childLvl || (childLvl === "subnational2" && !apiKey)) return;
+      try {
+        // A country group's children come from the LOCAL reference set (works
+        // without an eBird key); subnational2 county lists stay
+        // live-from-eBird by design (plan decision 2), cache-first.
+        const list =
+          childLvl === "subnational1"
+            ? (await subnational1Of(g.stateCode)).map((r) => ({ code: r.code, name: r.name }))
+            : (await subregions(apiKey!, g.stateCode, "subnational2")).data;
+        childLists.set(g.stateCode, list);
+      } catch {
+        // Left unset — the group reports unknown totals below, as before.
+      }
+    }),
+  );
+  const allChildCodes = [
+    ...new Set([...childLists.values()].flat().map((c) => c.code)),
+  ];
+  const [childMeta, childAttempts] = await Promise.all([
+    frequencyMeta(allChildCodes),
+    attemptMeta(allChildCodes),
+  ]);
+  const childFailures = recentFailures(childAttempts, new Date());
+  for (const g of allGroups) {
+    const list = childLists.get(g.stateCode);
+    if (!list) {
+      g.countyTotal = null;
+      g.countyRemaining = null;
+      continue;
+    }
+    g.countyTotal = list.length;
+    for (const c of list) countyNames.set(c.code, c.name);
+    // Blocks created from hotspots alone get their county's real name.
+    for (const b of g.countyBlocks) {
+      if (!b.county) b.countyName = countyNames.get(b.countyCode) ?? b.countyCode;
+    }
+    g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
+    g.countiesLoaded =
+      g.level === "country"
+        ? list.filter((c) => groups.get(c.code)?.state != null).length
+        : g.countyBlocks.filter((b) => b.county).length;
+    g.countyRemaining = coverageFromMeta(
+      list.map((c) => c.code),
+      childMeta,
+      childFailures,
+      lastCompleteYear(),
+    ).remaining;
   }
   // Subnational1 groups compute countiesLoaded from their blocks even when
   // the fetch above failed or the API key is absent (unchanged behavior).
@@ -559,10 +570,26 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       .map((x) => x.code),
   );
 
+  // FETCH ON DEMAND (td-3bf3a2; Gaylon 2026-08-31). Every count above is
+  // derived from these arrays, so they are computed — but they are NOT sent.
+  // Shipping them meant ~1.2 MB of county/hotspot rows (3,459 + 4,731) on
+  // every visit to render 65 collapsed summary lines, and the client had to
+  // transfer, parse and hydrate all of it before an <input> would accept a
+  // keystroke. /api/region-detail serves a group's blocks when it is opened.
+  const stripDetail = (g: StateGroup): StateGroup => ({
+    ...g,
+    countyBlocks: [],
+    stateHotspots: [],
+  });
+
   return {
     hasHome: home != null,
-    stateGroups,
-    countrySections: sortedCountrySections,
+    stateGroups: stateGroups.map(stripDetail),
+    countrySections: sortedCountrySections.map((s) => ({
+      ...s,
+      countryHotspots: [],
+      groups: s.groups.map(stripDetail),
+    })),
     orphanHotspots,
     failed: failedRes.rows.map((r) => {
       const parsed = r.region_code ? parseRegionCode(r.region_code) : null;

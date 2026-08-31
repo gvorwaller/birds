@@ -7,7 +7,9 @@
   import { fmtNextScan } from "$lib/next-scan";
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
+  import Skeleton from "$components/Skeleton.svelte";
   import type { ActionData, PageData } from "./$types";
+  import type { HubHit } from "$server/region-detail";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -182,7 +184,16 @@
     const next = openStates.filter((c) => c !== code);
     if (open) next.push(code);
     openStates = next;
-    if (open) void loadHotspotCounts(code);
+    if (open) {
+      void loadHotspotCounts(code);
+      // Detail is fetched on expand, not shipped with the page (td-3bf3a2).
+      const g =
+        data.stateGroups.find((x) => x.stateCode === code) ??
+        data.countrySections.flatMap((x) => x.groups).find((x) => x.stateCode === code);
+      const sec = data.countrySections.find((x) => x.countryCode === code);
+      if (g) void loadGroupDetail(g.stateCode, g.stateName);
+      else if (sec) void loadGroupDetail(sec.countryCode, sec.countryName);
+    }
     if (browser) {
       try {
         localStorage.setItem(OPEN_KEY, JSON.stringify(next));
@@ -190,6 +201,36 @@
         // private mode
       }
     }
+  }
+
+  // Group detail (county blocks + their hotspots) is fetched when a group is
+  // opened, not shipped with the page (td-3bf3a2). Same shape the loader used
+  // to embed; same lazy discipline as the hotspot tallies just below.
+  type GroupDetail = {
+    countyBlocks: PageData["stateGroups"][number]["countyBlocks"];
+    stateHotspots: PageData["stateGroups"][number]["stateHotspots"];
+  };
+  let groupDetail = $state<Record<string, GroupDetail>>({});
+  const detailFetched = new Set<string>();
+  async function loadGroupDetail(code: string, name: string) {
+    if (!browser || detailFetched.has(code)) return;
+    detailFetched.add(code);
+    try {
+      const res = await fetch(
+        `/api/region-detail?region=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
+      );
+      if (!res.ok) {
+        detailFetched.delete(code); // transient — allow a retry on reopen
+        return;
+      }
+      groupDetail = { ...groupDetail, [code]: (await res.json()) as GroupDetail };
+    } catch {
+      detailFetched.delete(code);
+    }
+  }
+  /** Blocks for a group once fetched; empty until then. */
+  function detailOf(code: string): GroupDetail {
+    return groupDetail[code] ?? { countyBlocks: [], stateHotspots: [] };
   }
 
   // Hotspot tallies per county ("229 of 312 loaded · 83 to load"), fetched
@@ -214,7 +255,15 @@
   }
   // Groups restored open from localStorage need their counts too.
   $effect(() => {
-    for (const code of openStates) void loadHotspotCounts(code);
+    for (const code of openStates) {
+      void loadHotspotCounts(code);
+      const g =
+        data.stateGroups.find((x) => x.stateCode === code) ??
+        data.countrySections.flatMap((x) => x.groups).find((x) => x.stateCode === code);
+      if (g) void loadGroupDetail(g.stateCode, g.stateName);
+      const sec = data.countrySections.find((x) => x.countryCode === code);
+      if (sec) void loadGroupDetail(sec.countryCode, sec.countryName);
+    }
   });
 
   /** The running/queued sweep for one county, if any (jobTarget = area code). */
@@ -286,108 +335,48 @@
   // ---- Hub search (Phase 3): one box finds any stored state, county,
   // hotspot, or failed load by name and shows its status — hotspot hits
   // link straight to their /hotspots/[locId] workspace page.
-  interface HubHit {
-    kind: "state" | "county" | "hotspot" | "failed";
-    code: string;
-    name: string;
-    context: string;
-    row: PageData["stateGroups"][number]["stateHotspots"][number] | null;
-    error?: string | null;
-  }
-  let hubSearch = $state("");
-  const hubQuery = $derived(hubSearch.trim().toLowerCase());
+  let hubSearchText = $state("");
+  const hubQuery = $derived(hubSearchText.trim());
   // A StateGroup's own hits (state/region row, counties, hotspots) — shared
   // between the top-level US loop and each CountrySection's nested groups
   // (td-f1d6da UX restructure).
-  function pushGroupHits(out: HubHit[], g: PageData["stateGroups"][number]) {
-    if (g.state) {
-      out.push({
-        kind: "state",
-        code: g.stateCode,
-        name: g.stateName,
-        context: g.countryCode === "US" ? "statewide" : "regionwide",
-        row: g.state,
-      });
+  // Hub search runs SERVER-SIDE (td-3bf3a2). It used to filter an in-memory
+  // index built from the whole page payload — which is exactly why that
+  // payload (3,459 county + 4,731 hotspot rows, ~1.2 MB) had to be shipped
+  // and parsed before this box would accept a keystroke. Searching ~8,200
+  // rows is a trivial indexed query; shipping them to search locally was the
+  // expensive part.
+  let hubHits = $state<HubHit[]>([]);
+  let hubCapped = $state(false);
+  let hubSearching = $state(false);
+  let hubSeq = 0;
+  $effect(() => {
+    const q = hubQuery;
+    if (!browser) return;
+    if (q.trim().length < 2) {
+      hubHits = [];
+      hubCapped = false;
+      hubSearching = false;
+      return;
     }
-    for (const b of g.countyBlocks) {
-      if (b.county) {
-        out.push({
-          kind: "county",
-          code: b.countyCode,
-          name: b.countyName,
-          context: g.stateName,
-          row: b.county,
-        });
+    const seq = ++hubSeq;
+    hubSearching = true;
+    // Debounced so a fast typist issues one request, not one per keystroke.
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/hub-search?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const body = (await res.json()) as { hits: HubHit[]; capped: boolean };
+        // Out-of-order guard: only the newest query may paint.
+        if (seq !== hubSeq) return;
+        hubHits = body.hits;
+        hubCapped = body.capped;
+      } finally {
+        if (seq === hubSeq) hubSearching = false;
       }
-      for (const h of b.hotspots) {
-        out.push({
-          kind: "hotspot",
-          code: h.locCode,
-          name: h.locName,
-          context: `${b.countyName}, ${g.stateName}`,
-          row: h,
-        });
-      }
-    }
-    for (const h of g.stateHotspots) {
-      out.push({
-        kind: "hotspot",
-        code: h.locCode,
-        name: h.locName,
-        context: g.stateName,
-        row: h,
-      });
-    }
-  }
-  const hubIndex = $derived.by((): HubHit[] => {
-    const out: HubHit[] = [];
-    for (const g of data.stateGroups) pushGroupHits(out, g);
-    for (const s of data.countrySections) {
-      if (s.countrywide) {
-        out.push({
-          kind: "state",
-          code: s.countryCode,
-          name: s.countryName,
-          context: "countrywide",
-          row: s.countrywide,
-        });
-      }
-      for (const h of s.countryHotspots) {
-        out.push({
-          kind: "hotspot",
-          code: h.locCode,
-          name: h.locName,
-          context: s.countryName,
-          row: h,
-        });
-      }
-      for (const g of s.groups) pushGroupHits(out, g);
-    }
-    for (const h of data.orphanHotspots) {
-      out.push({ kind: "hotspot", code: h.locCode, name: h.locName, context: "", row: h });
-    }
-    for (const f of data.failed) {
-      out.push({
-        kind: "failed",
-        code: f.locCode,
-        name: f.locName ?? f.locCode,
-        context: f.regionName ?? "",
-        row: null,
-        error: f.error,
-      });
-    }
-    return out;
+    }, 200);
+    return () => clearTimeout(t);
   });
-  const hubHits = $derived(
-    hubQuery
-      ? hubIndex.filter(
-          (h) =>
-            h.name.toLowerCase().includes(hubQuery) ||
-            h.context.toLowerCase().includes(hubQuery) ||
-            h.code.toLowerCase() === hubQuery,
-        )
-      : [],
-  );
 
   // ---- Per-unit activity (Phase 3): the events feed the admin page already
   // uses, surfaced for everyone on this communal hub. Fetch on expand; while
@@ -670,6 +659,10 @@
          ~10 s on a phone. Render a group's table only while it is open, the
          same treatment the hotspot rows inside it already get. -->
     {#if openStates.includes(g.stateCode)}
+      {@const detail = detailOf(g.stateCode)}
+      {#if !groupDetail[g.stateCode]}
+        <Skeleton minHeight="120px" label="Loading {g.stateName}…" />
+      {/if}
       {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
         {@const missing = g.countyRemaining ?? 0}
         {@const noun = countyNoun(g)}
@@ -711,7 +704,7 @@
       {#if g.state}
         {@render dataTable(g.countryCode === "US" ? "Statewide" : "Regionwide", [g.state])}
       {/if}
-      {#if g.countyBlocks.length > 0}
+      {#if detail.countyBlocks.length > 0}
         <div class="tablewrap">
           <table>
             <thead>
@@ -724,7 +717,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each g.countyBlocks as b (b.countyCode)}
+              {#each detail.countyBlocks as b (b.countyCode)}
                 {@const open = openCounties.includes(b.countyCode)}
                 <tr>
                   <td>
@@ -780,12 +773,12 @@
           </table>
         </div>
       {/if}
-      {#if g.stateHotspots.length > 0}
+      {#if detail.stateHotspots.length > 0}
         <p class="notice">
           Hotspots below have no recorded {countyNoun(g)} — refreshing them
           (or the next area load) files them correctly.
         </p>
-        {@render dataTable("Hotspot", g.stateHotspots)}
+        {@render dataTable("Hotspot", detail.stateHotspots)}
       {/if}
     {/if}
   </details>
@@ -810,6 +803,7 @@
     <!-- Same lazy body as the state groups above: a closed <details> still
          hydrates everything inside it. -->
     {#if openStates.includes(s.countryCode)}
+      {@const cdetail = detailOf(s.countryCode)}
       {#if !data.isViewer && (s.regionRemaining ?? 0) > 0}
         {@const missing = s.regionRemaining ?? 0}
         {#if data.hasLogin}
@@ -842,12 +836,12 @@
       {#if s.countrywide}
         {@render dataTable("Countrywide", [s.countrywide])}
       {/if}
-      {#if s.countryHotspots.length > 0}
+      {#if cdetail.stateHotspots.length > 0}
         <p class="notice">
           Hotspots below have no recorded region — refreshing them (or the
           next area load) files them correctly.
         </p>
-        {@render dataTable("Hotspot", s.countryHotspots)}
+        {@render dataTable("Hotspot", cdetail.stateHotspots)}
       {/if}
       {#each s.groups as g (g.stateCode)}
         {@render regionGroup(g, true)}
@@ -876,12 +870,12 @@
       type="search"
       placeholder="Type a hotspot, county, or region name"
       aria-label="Search stored hotspots and regions"
-      bind:value={hubSearch}
+      bind:value={hubSearchText}
     />
     {#if hubQuery}
       {#if hubHits.length === 0}
         <p class="notice">
-          Nothing stored matches “{hubSearch.trim()}”. To bring a new area in,
+          Nothing stored matches “{hubSearchText.trim()}”. To bring a new area in,
           load hotspots from <a href="/forecast">Forecast</a> or a region
           below.
         </p>
