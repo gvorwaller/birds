@@ -46,6 +46,14 @@ async function load(): Promise<RegionIndex> {
 		lat: number;
 		lon: number;
 	}>('SELECT code, name, level, parent_code, lat, lon FROM regions');
+	// A successful zero-row read is not a valid reference snapshot. This can
+	// happen when a process starts after 0043 creates the table but before 0044
+	// seeds it (most plausibly in local/manual startup). Treat it like a failed
+	// bootstrap so regionIndex() clears the memo and a later call can recover;
+	// caching it would make every picker/validator empty until process restart.
+	if (r.rows.length === 0) {
+		throw new Error('regions reference table is empty');
+	}
 	const byCode = new Map<string, Region>();
 	for (const row of r.rows) {
 		byCode.set(row.code, {

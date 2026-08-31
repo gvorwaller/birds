@@ -32,11 +32,14 @@
  * Usage:
  *   EBIRD_API_KEY=... node scripts/generate-regions.mjs --pilot
  *   EBIRD_API_KEY=... node scripts/generate-regions.mjs
+ *   EBIRD_API_KEY=... node scripts/generate-regions.mjs --refetch  # start a later delta
+ *   EBIRD_API_KEY=... node scripts/generate-regions.mjs             # resume that delta
  * Options: --pilot [CC,CC,...]  --refetch  --dry-run
  *
  * The key is read ONLY from the environment and never printed.
  */
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
@@ -102,15 +105,53 @@ if (!apiKey) {
 
 const args = parseArgs(process.argv.slice(2));
 
+// A delta must compare a FRESH upstream snapshot with the committed
+// manifest. The fetch cache is also the resumable checkpoint, so it cannot
+// simply be ignored whenever a manifest exists: an interrupted eight-hour
+// --refetch run needs to resume. Bind each checkpoint to the exact manifest
+// it started from and mark it complete after comparison/emission. A later
+// ordinary run then refuses to reuse that completed snapshot as if it were
+// current; start the next delta explicitly with --refetch.
+const manifestHash = (() => {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(MANIFEST_PATH)).digest("hex");
+  } catch {
+    return null;
+  }
+})();
+
 // --- checkpointed, rate-aware fetching -------------------------------------
 const cache = (() => {
-  if (args.refetch) return { lists: {}, info: {} };
+  if (args.refetch) {
+    return {
+      lists: {},
+      info: {},
+      snapshot: { baseManifestHash: manifestHash, complete: false },
+    };
+  }
   try {
     return JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
   } catch {
-    return { lists: {}, info: {} };
+    return {
+      lists: {},
+      info: {},
+      snapshot: { baseManifestHash: manifestHash, complete: false },
+    };
   }
 })();
+if (
+  manifestHash &&
+  !args.pilot &&
+  (!cache.snapshot ||
+    cache.snapshot.baseManifestHash !== manifestHash ||
+    cache.snapshot.complete === true)
+) {
+  console.error(
+    "The regions checkpoint is not an in-progress snapshot of the current manifest. " +
+      "Start a fresh delta with --refetch; after interruption, re-run without --refetch to resume it.",
+  );
+  process.exit(1);
+}
 let cacheDirty = 0;
 function saveCache(force = false) {
   cacheDirty += 1;
@@ -381,6 +422,8 @@ if (retired.length) {
   );
 }
 if (previous && changed.length === 0) {
+  cache.snapshot = { baseManifestHash: manifestHash, complete: true };
+  saveCache(true);
   console.log("No changes vs the committed manifest — nothing to emit.");
   process.exit(0);
 }
@@ -447,4 +490,6 @@ fs.writeFileSync(
     0,
   ) + "\n",
 );
+cache.snapshot = { baseManifestHash: manifestHash, complete: true };
+saveCache(true);
 console.log(`Wrote ${outSql} (${emitRows.length} rows) and ${MANIFEST_PATH} (${rows.length} regions).`);

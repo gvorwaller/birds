@@ -91,6 +91,10 @@ export async function meteredAiCall<T>(opts: MeteredAiCallOpts<T>): Promise<AiAt
 			envelope
 		};
 	} catch (err) {
+		// Failed/aborted provider calls are often the slowest calls worth
+		// diagnosing. Count them exactly once just like successful calls; the
+		// usage-ledger write below is a separate DB bucket operation.
+		recordTiming('ai', Date.now() - started);
 		const envelope = envelopeOf(err);
 		await record(
 			opts,

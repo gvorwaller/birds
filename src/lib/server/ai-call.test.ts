@@ -16,6 +16,7 @@ vi.mock("./app-config", () => ({ getConfig: mocks.getConfig }));
 vi.mock("./ai-usage", () => ({ recordUsage: mocks.recordUsage }));
 
 import { meteredAiCall } from "./ai-call";
+import { newTimingBag, runWithTiming } from "./request-timing";
 
 const attempt = (over: Partial<CallEnvelope> = {}): CallEnvelope => ({
   attemptIndex: 0,
@@ -135,6 +136,20 @@ describe("meteredAiCall — success", () => {
 });
 
 describe("meteredAiCall — failure", () => {
+  it("includes a failed provider call in request timing exactly once", async () => {
+    const bag = newTimingBag();
+    await runWithTiming(bag, () =>
+      meteredAiCall({
+        ...baseOpts,
+        run: async () => {
+          throw new Error("provider down");
+        },
+      }),
+    ).catch(() => {});
+    expect(bag.buckets.ai.n).toBe(1);
+    expect(bag.buckets.ai.ms).toBeGreaterThanOrEqual(0);
+  });
+
   it("PINNED (kitmur): a post-200 throw with an envelope records the failure WITH its tokens and stop_reason, then rethrows", async () => {
     const err = Object.assign(new Error("annotation JSON truncated"), {
       envelope: okEnvelope([attempt({ stopReason: "max_tokens" })]),

@@ -1271,10 +1271,11 @@ export function pickNearestTeaserCandidate(
 /**
  * Pure proximity sort for picker lists (country/region dropdowns, Gaylon
  * 2026-08-29 follow-up to the species-page teaser): nearest-to-home first,
- * unknown-distance entries (centroid not yet cached) fall to the end,
- * tie-broken alphabetically. With no home,
- * this degrades to a plain alphabetical sort — the pre-existing behavior for
- * users who haven't set one.
+ * tie-broken alphabetically. Coordinates come from the regions reference
+ * table, so every picker entry has one; an entry somehow absent from the
+ * map sorts last (defensive type-level fallback only — CODEX1 P3,
+ * 2026-08-31). With no home, this degrades to a plain alphabetical sort —
+ * the pre-existing behavior for users who haven't set one.
  */
 export function sortByProximity<T extends { code: string; name: string }>(
 	items: readonly T[],

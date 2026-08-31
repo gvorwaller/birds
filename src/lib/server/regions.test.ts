@@ -71,6 +71,13 @@ describe('index behavior', () => {
 		expect(dbMock.query).toHaveBeenCalledTimes(2);
 	});
 
+	it('an empty pre-seed load is NOT cached — the next call can recover after seeding', async () => {
+		dbMock.query.mockResolvedValueOnce({ rows: [] });
+		await expect(countriesList()).rejects.toThrow('regions reference table is empty');
+		expect((await countriesList()).length).toBeGreaterThan(0);
+		expect(dbMock.query).toHaveBeenCalledTimes(2);
+	});
+
 	it('sorts with localeCompare so Å/Ö names order among the letters, not after Z', async () => {
 		const names = (await subnational1Of('SE')).map((r) => r.name);
 		expect(names).toEqual(['Gotlands län', 'Östergötlands län', 'Stockholms län']);
