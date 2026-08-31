@@ -9,6 +9,7 @@
   } from "$lib/job-poll-core";
   import { meterDollars } from "$lib/ai-meter";
   import type { AdminLiveStatus } from "$server/admin-status";
+  import CollapsibleCard from "$components/CollapsibleCard.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -263,8 +264,7 @@
   </div>
 
   {#if activeTab === "status"}
-  <section class="card">
-    <h2>Worker</h2>
+  <CollapsibleCard id="worker" title="Worker">
     {#if data.startupsLastHour > 3}
       <p class="error">
         ⚠ {data.startupsLastHour} worker startups in the last hour — likely a
@@ -382,10 +382,9 @@
         </table>
       </div>
     </details>
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Jobs ({liveJobs.length})</h2>
+  <CollapsibleCard id="jobs" title="Jobs" badge={liveJobs.length}>
     <ul class="jobs">
       {#each liveJobs as j (j.id)}
         {@const ev = openEvents[j.id]}
@@ -436,10 +435,9 @@
         </li>
       {/each}
     </ul>
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Recent fetch attempts ({data.attempts.length})</h2>
+  <CollapsibleCard id="attempts" title="Recent fetch attempts" badge={data.attempts.length}>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Location</th><th>Status</th><th>Error</th><th>When</th></tr></thead>
@@ -460,10 +458,9 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Caches</h2>
+  <CollapsibleCard id="caches" title="Caches">
     <div class="tablewrap">
       <table>
         <thead><tr><th>Namespace</th><th>Entries</th><th>Oldest</th><th>Newest</th></tr></thead>
@@ -492,10 +489,9 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </CollapsibleCard>
   {:else}
-  <section class="card">
-    <h2>Usage meter</h2>
+  <CollapsibleCard id="usage" title="Usage meter">
     <p class="muted">
       The live status above updates worker state only — Refresh reloads this
       meter.
@@ -552,10 +548,9 @@
         </table>
       </div>
     {/if}
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Model choice</h2>
+  <CollapsibleCard id="model" title="Model choice">
     <p class="muted">
       Applies to future calls only — nothing already generated is
       regenerated.
@@ -592,10 +587,9 @@
         </div>
       </div>
     {/each}
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Compare Lab</h2>
+  <CollapsibleCard id="compare" title="Compare Lab">
     <p class="muted">
       Task-level apples-to-apples (same prompt, schema, answer budget;
       request params differ per model). Real spend — included in the meter
@@ -705,10 +699,9 @@
         <p class="error" role="alert">{form.error}</p>
       {/if}
     {/if}
-  </section>
+  </CollapsibleCard>
 
-  <section class="card">
-    <h2>Recent calls</h2>
+  <CollapsibleCard id="calls" title="Recent calls">
     {#if data.ai.usage.stopReasons.length > 0 || data.ai.usage.errors.length > 0}
       <div class="chipsrow">
         {#each data.ai.usage.stopReasons as sr (sr.key ?? "null")}
@@ -774,7 +767,7 @@
         </table>
       </div>
     {/if}
-  </section>
+  </CollapsibleCard>
   {/if}
 </div>
 
@@ -849,17 +842,6 @@
   h1 {
     font-size: 1.35rem;
     margin: 0;
-  }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-  h2 {
-    font-size: 1.05rem;
-    margin: 0 0 10px;
   }
   .tablewrap {
     overflow-x: auto;
