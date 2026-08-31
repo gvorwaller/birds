@@ -6,6 +6,7 @@ import { geocodePlace } from "$server/geocode";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
+import { streamed } from "$lib/streamed";
 import {
   calendarMonth,
   forecastNeedsNear,
@@ -78,9 +79,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       ? { lat: u.home_lat, lng: u.home_lon, label: u.home_label ?? "Home" }
       : null;
 
+  // Shell-level error: a typed place that could not be geocoded. Distinct
+  // from the streamed analysis's own error channel.
+  let error: string | null = null;
   let location: { lat: number; lng: number; label: string } | null = null;
   let originKind: "place" | "pin" | "home" | null = null;
-  let error: string | null = null;
   if (place) {
     if (geo) {
       location = { lat: geo.lat, lng: geo.lng, label: geo.name };
@@ -101,41 +104,52 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     originKind = "home";
   }
 
-  let view: ForecastNeedsView | null = null;
   let countyNeeds: (CountyNeedsRank & {
     seat: string | null;
     mapQuery: string;
   })[] = [];
-  if (location && apiKey) {
-    try {
-      const seen = await seenSet(userId);
-      view = await forecastNeedsNear(
-        userId,
-        apiKey,
-        location.lat,
-        location.lng,
-        distKm,
-        month,
-        seen,
-      );
-      if (view.regionCode) {
-        // Seat + county-outlining Maps query per county (td-01ddb6).
-        const stateName = view.regionName ?? view.regionCode;
-        countyNeeds = (
-          await rankCountiesForNeeds(userId, view.regionCode, month, seen)
-        ).map((c) => ({
-          ...c,
-          seat: countySeat(c.code),
-          mapQuery: countyMapQuery(c.code, c.name, stateName),
-        }));
-      }
-    } catch (err) {
-      error =
-        err instanceof EbirdError
-          ? err.message
-          : `Could not load hotspots for ${location.label}.`;
-    }
-  }
+  // STREAMED (Gaylon 2026-08-31: the page took 7.3 s on prod with no loading
+  // indicator, because a full document load has no client-side navigation for
+  // the nav bar to hook — so the fix is to return the shell immediately and
+  // let this fill in behind a skeleton). Resolves to a discriminated result
+  // and never rejects; see $lib/streamed.
+  const analysis =
+    location && apiKey
+      ? streamed(
+          (async () => {
+            const seen = await seenSet(userId);
+            const v = await forecastNeedsNear(
+              userId,
+              apiKey,
+              location.lat,
+              location.lng,
+              distKm,
+              month,
+              seen,
+            );
+            let counties: (CountyNeedsRank & {
+              seat: string | null;
+              mapQuery: string;
+            })[] = [];
+            if (v.regionCode) {
+              // Seat + county-outlining Maps query per county (td-01ddb6).
+              const stateName = v.regionName ?? v.regionCode;
+              counties = (
+                await rankCountiesForNeeds(userId, v.regionCode, month, seen)
+              ).map((c) => ({
+                ...c,
+                seat: countySeat(c.code),
+                mapQuery: countyMapQuery(c.code, c.name, stateName),
+              }));
+            }
+            return { view: v, countyNeeds: counties };
+          })(),
+          (err) =>
+            err instanceof EbirdError
+              ? err.message
+              : `Could not load hotspots for ${location!.label}.`,
+        )
+      : null;
 
   return {
     location,
@@ -145,8 +159,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     dist: distKm,
     savedRadiusKm: normalizeNearMeRadiusKm(u?.near_me_radius_km),
     radiusOptionsKm: radiusSelectOptionsKm(distKm),
-    view,
-    countyNeeds,
+    analysis,
     error,
     needsLocation: !location,
     hasApiKey: !!apiKey,

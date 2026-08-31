@@ -677,6 +677,10 @@ export async function forecastNeedsNear(
 	let year: MonthRichness[] = richnessFromSpecies(new Map());
 	if (withData.length > 0) {
 		const [aggRes, denomRes, seenResolved] = await Promise.all([
+			// Reads the 0049 monthly rollup instead of re-aggregating 23.6 M
+			// weekly rows per request (td-3bf3a2). Same arithmetic, maintained
+			// transactionally by storeFrequencies; measured 935 ms -> 26 ms on
+			// the equivalent county query.
 			query<{
 				species_code: string;
 				com_name: string;
@@ -685,24 +689,17 @@ export async function forecastNeedsNear(
 				month: number;
 				num: number;
 			}>(
-				`SELECT sf.species_code, tc.com_name, tc.sci_name, sf.loc_code,
-				        ((sf.week - 1) / 4 + 1)::int AS month,
-				        SUM(sf.freq * ss.n)::float8 AS num
-				   FROM species_frequency sf
-				   JOIN frequency_fetch ff ON ff.loc_code = sf.loc_code
-				   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
-				     ON ss.week = sf.week
-				   JOIN taxonomy_cache tc ON tc.species_code = sf.species_code
-				  WHERE sf.loc_code = ANY($1)
-				  GROUP BY sf.species_code, tc.com_name, tc.sci_name, sf.loc_code, month`,
+				`SELECT smf.species_code, tc.com_name, tc.sci_name, smf.loc_code,
+				        smf.month::int AS month, smf.num
+				   FROM species_month_freq smf
+				   JOIN taxonomy_cache tc ON tc.species_code = smf.species_code
+				  WHERE smf.loc_code = ANY($1)`,
 				[withData]
 			),
 			query<{ loc_code: string; month: number; n: number }>(
-				`SELECT ff.loc_code, ((ss.week - 1) / 4 + 1)::int AS month, SUM(ss.n)::float8 AS n
-				   FROM frequency_fetch ff,
-				        LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
-				  WHERE ff.loc_code = ANY($1)
-				  GROUP BY ff.loc_code, month`,
+				`SELECT loc_code, month::int AS month, n
+				   FROM loc_month_samples
+				  WHERE loc_code = ANY($1)`,
 				[withData]
 			),
 			seen ?? seenSet(userId)
@@ -1025,7 +1022,6 @@ export async function rankCountiesForNeeds(
 	seen?: ReadonlySet<string>
 ): Promise<CountyNeedsRank[]> {
 	if (!isSubnational1(regionCode) && !isCountry(regionCode)) return [];
-	const { from, to } = monthWeeks(month);
 	const [countiesRaw, seenResolved] = await Promise.all([
 		query<{ loc_code: string; loc_name: string }>(
 			`SELECT loc_code, loc_name FROM frequency_fetch
@@ -1046,24 +1042,17 @@ export async function rankCountiesForNeeds(
 		freq: number | null;
 		n: number;
 	}>(
-		`SELECT ff.loc_code, sp.species_code,
-		        SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0) AS freq,
-		        SUM(ss.n)::float8 AS n
-		   FROM frequency_fetch ff
-		   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
-		     ON ss.week BETWEEN $2 AND $3
-		   JOIN (
-		        SELECT DISTINCT loc_code, species_code
-		          FROM species_frequency
-		         WHERE loc_code = ANY($1) AND week BETWEEN $2 AND $3
-		   ) sp ON sp.loc_code = ff.loc_code
-		   LEFT JOIN species_frequency sf
-		     ON sf.loc_code = ff.loc_code
-		    AND sf.species_code = sp.species_code
-		    AND sf.week = ss.week
-		  WHERE ff.loc_code = ANY($1)
-		  GROUP BY ff.loc_code, sp.species_code`,
-		[codes, from, to]
+		// 0049 rollup: one indexed read per (loc, month) instead of unnesting
+		// each location's 48-week array and left-joining it week-by-week.
+		// Measured on prod: 935 ms -> 25.8 ms, identical 13,168 rows.
+		`SELECT smf.loc_code, smf.species_code,
+		        smf.num / NULLIF(lms.n, 0) AS freq,
+		        lms.n::float8 AS n
+		   FROM species_month_freq smf
+		   JOIN loc_month_samples lms
+		     ON lms.loc_code = smf.loc_code AND lms.month = smf.month
+		  WHERE smf.loc_code = ANY($1) AND smf.month = $2`,
+		[codes, month]
 	);
 	const byLoc = new Map<
 		string,

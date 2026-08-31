@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import ForecastTabs from "$components/ForecastTabs.svelte";
+  import Skeleton from "$components/Skeleton.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
   import MapLink from "$components/MapLink.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
@@ -16,6 +17,40 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
+
+  // Streamed forecast analysis (Gaylon 2026-08-31): the shell renders at once
+  // and this fills in behind a skeleton — on a full document load there is no
+  // client-side navigation for the nav bar to hook, so the skeleton IS the
+  // loading indicator. Last resolved value is retained per query so a
+  // jobsPoll invalidateAll never blanks a populated result.
+  type AnalysisRes = Awaited<NonNullable<typeof data.analysis>>;
+  let analysisView = $state<{ key: string; res: AnalysisRes } | null>(null);
+  const analysisKey = $derived(
+    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.month}|${data.dist}`,
+  );
+  $effect(() => {
+    const key = analysisKey;
+    const pr = data.analysis;
+    if (!pr) {
+      analysisView = null;
+      return;
+    }
+    let alive = true;
+    void pr.then((res) => {
+      if (alive) analysisView = { key, res };
+    });
+    return () => {
+      alive = false;
+    };
+  });
+  const analysis = $derived(
+    analysisView?.key === analysisKey ? analysisView.res : null,
+  );
+  const view = $derived(analysis?.ok ? analysis.data.view : null);
+  const countyNeeds = $derived(analysis?.ok ? analysis.data.countyNeeds : []);
+  const analysisError = $derived(analysis && !analysis.ok ? analysis.error : null);
+  /** Analysis requested but not yet settled — render reserved space. */
+  const analysisPending = $derived(data.analysis != null && analysis == null);
   let showPicker = $state(false);
   let picked = $state<PickedLocation | null>(null);
 
@@ -68,12 +103,12 @@
   // stop shipping it — it was a dead payload). Rows in the mix get a
   // "suggested" word-chip, so the ordering is explained, not mysterious.
   const suggestedSet = $derived(
-    new Set((data.view?.suggested ?? []).map((h) => h.locId)),
+    new Set((view?.suggested ?? []).map((h) => h.locId)),
   );
   const unloadedOrdered = $derived.by(() => {
-    const list = data.view?.unloadedNearby ?? [];
+    const list = view?.unloadedNearby ?? [];
     const rank = new Map(
-      (data.view?.suggested ?? []).map((h, i) => [h.locId, i]),
+      (view?.suggested ?? []).map((h, i) => [h.locId, i]),
     );
     return [...list].sort(
       (a, b) =>
@@ -108,7 +143,7 @@
   // action validates every id against the official in-range list, and
   // ensureFrequencies refreshes non-current rows naturally (td-17d291).
   const outdatedRows = $derived(
-    data.view ? data.view.analyzed.filter((h) => !h.current) : [],
+    view ? view.analyzed.filter((h) => !h.current) : [],
   );
   const outdatedShown = $derived(
     pickQuery
@@ -119,10 +154,10 @@
   // actually queue RIGHT NOW (job-covered rows subtracted — CODEX1 Phase-2
   // #2: the CTA must never advertise N with zero selectable targets).
   const loadableCount = $derived(
-    (data.view?.unloadedNearby.length ?? 0) + outdatedRows.length,
+    (view?.unloadedNearby.length ?? 0) + outdatedRows.length,
   );
   const actionableUnloaded = $derived(
-    (data.view?.unloadedNearby ?? []).filter((h) => !coveredLocs.has(h.locId))
+    (view?.unloadedNearby ?? []).filter((h) => !coveredLocs.has(h.locId))
       .length,
   );
   const actionableOutdated = $derived(
@@ -153,7 +188,7 @@
   let manageOpen = $state(false);
   // Every loc a bulk "Load all remaining" tap can queue right now.
   const actionableIds = $derived([
-    ...(data.view?.unloadedNearby ?? []).map((h) => h.locId),
+    ...(view?.unloadedNearby ?? []).map((h) => h.locId),
     ...outdatedRows.map((h) => h.locId),
   ].filter((id) => !coveredLocs.has(id)));
 
@@ -175,7 +210,7 @@
   // so counts stay honest. Pickable = unloaded in range ∪ outdated loaded.
   $effect(() => {
     const available = new Set([
-      ...(data.view?.unloadedNearby ?? []).map((h) => h.locId),
+      ...(view?.unloadedNearby ?? []).map((h) => h.locId),
       ...outdatedRows.map((h) => h.locId),
     ]);
     if (
@@ -214,9 +249,9 @@
   ];
 
   // `analyzed` is now every loaded hotspot in range — all rows have data.
-  const covered = $derived(data.view ? data.view.analyzed.length : 0);
+  const covered = $derived(view ? view.analyzed.length : 0);
   const wellSampled = $derived(
-    data.view ? data.view.species.filter((s) => !s.lowSample) : [],
+    view ? view.species.filter((s) => !s.lowSample) : [],
   );
   const likely = $derived(wellSampled.filter((s) => s.areaFreq >= 0.2));
   const possible = $derived(
@@ -226,10 +261,10 @@
     wellSampled.filter((s) => s.areaFreq > 0 && s.areaFreq < 0.05),
   );
   const lowSampled = $derived(
-    data.view ? data.view.species.filter((s) => s.lowSample) : [],
+    view ? view.species.filter((s) => s.lowSample) : [],
   );
   const richest = $derived.by(() => {
-    const year = data.view?.year ?? [];
+    const year = view?.year ?? [];
     let best = year[0] ?? null;
     for (const m of year) {
       if (!best || m.likely > best.likely || (m.likely === best.likely && m.possible > best.possible)) {
@@ -239,18 +274,18 @@
     return best && best.likely + best.possible > 0 ? best : null;
   });
   const hotspotPoints = $derived.by((): ObsPoint[] => {
-    if (!data.view) return [];
+    if (!view) return [];
     // Green pins: loaded hotspots feeding the numbers. Gray pins: the
     // nearest unloaded candidates, so the pick list has a map to point at.
     return [
-      ...data.view.analyzed.map((h) => ({
+      ...view.analyzed.map((h) => ({
         lat: h.lat,
         lng: h.lng,
         title: h.locName,
         sub: h.fetchedAt ? `data from ${fmtDate(h.fetchedAt)}` : "loaded",
         kind: "need" as const,
       })),
-      ...data.view.unloadedNearby.slice(0, 25).map((h) => ({
+      ...view.unloadedNearby.slice(0, 25).map((h) => ({
         lat: h.lat,
         lng: h.lng,
         title: h.locName,
@@ -261,10 +296,10 @@
   });
 
   function speciesWhereHref(code: string): string | null {
-    if (!data.view?.regionCode) return null;
+    if (!view?.regionCode) return null;
     const p = new URLSearchParams();
     p.set("species", code);
-    p.set("region", data.view.regionCode);
+    p.set("region", view.regionCode);
     p.set("month", String(data.month));
     return `/forecast/species?${p.toString()}`;
   }
@@ -406,6 +441,9 @@
     {#if data.error}
       <p class="error">{data.error}</p>
     {/if}
+    {#if analysisError}
+      <p class="error">{analysisError}</p>
+    {/if}
     {#if data.needsLocation}
       <p class="notice">
         Search a place above, or set a home location in
@@ -419,8 +457,16 @@
     {/if}
   </section>
 
-  {#if data.view && data.location}
-    {@const v = data.view}
+  {#if analysisPending}
+    <!-- Streamed (Gaylon 2026-08-31): a full document load has no client-side
+         navigation for the nav bar to hook, so reserved space IS the loading
+         indicator here. Sized to the settled results section. -->
+    <section class="card">
+      <Skeleton minHeight="420px" label="Analyzing nearby hotspots…" />
+    </section>
+  {/if}
+  {#if view && data.location}
+    {@const v = view}
     <section class="card">
       <h2>
         {MONTH_NAMES[v.month - 1]} near {data.location.label}
@@ -917,7 +963,7 @@
         {/if}
       {/if}
 
-      {#if data.countyNeeds.length > 0 && v.regionName}
+      {#if countyNeeds.length > 0 && v.regionName}
         <div class="counties">
           <h3 class="band">
             Best counties in {v.regionName} for your needs —
@@ -928,7 +974,7 @@
             your needs are likely there.
           </p>
           <ol class="needs">
-            {#each data.countyNeeds.slice(0, 10) as c (c.code)}
+            {#each countyNeeds.slice(0, 10) as c (c.code)}
               <li>
                 <div class="sp">
                   <span>

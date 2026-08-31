@@ -53,6 +53,7 @@ const FIXTURE_REGIONS: [string, string, string | null][] = [
   ["QZ-DEL", "subnational1", "QZ"],
   ["QZ-ST", "subnational1", "QZ"],
   ["QZ-BND", "subnational1", "QZ"],
+  ["QZ-RU", "subnational1", "QZ"],
   ["ZZ", "country", null],
   ["ZZ-A", "subnational1", "ZZ"],
   ["ZZ-ABC", "subnational1", "ZZ"],
@@ -123,6 +124,14 @@ async function insertLoc(code: string, sizes: number[]): Promise<void> {
      VALUES ($1, 'region', $2, 2016, 2025, $3, 1)`,
     [code, `Fixture ${code}`, sizes],
   );
+}
+
+/** Fixtures write species_frequency directly, so they must rebuild the 0049
+ * rollup the same way storeFrequencies does — one shared definition, no
+ * second copy of the arithmetic to drift. */
+async function refreshRollup(code: string) {
+  const { rebuildMonthRollup } = await import("./barchart");
+  await rebuildMonthRollup(code);
 }
 
 async function insertFreq(code: string, week: number, freq: number) {
@@ -348,6 +357,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     // not 40%. Must not count as "likely".
     await insertLoc("US-QQ-001", janSamples(100, 100, 100, 100));
     await insertFreq("US-QQ-001", 1, 0.4);
+    await refreshRollup("US-QQ-001");
     const ranks = await rankCountiesForNeeds(0, "US-QQ", 1);
     expect(ranks).toHaveLength(1);
     // 10% is "possible" (5–19%), not "likely" (≥20%).
@@ -370,6 +380,7 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     await insertFreq("ZZ-ABC", 1, 0.3); // weighted: 0.3*100/400 = 7.5% -> possible
     await insertLoc("ZZ-A-01", janSamples(100, 100, 100, 100));
     await insertFreq("ZZ-A-01", 1, 1.0); // grandchild — must not appear at all
+    for (const c of ["ZZ-A", "ZZ-ABC", "ZZ-A-01"]) await refreshRollup(c);
 
     const ranks = await rankCountiesForNeeds(0, "ZZ", 1);
     expect(ranks.map((r) => r.code).sort()).toEqual(["ZZ-A", "ZZ-ABC"]);
@@ -378,6 +389,53 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     expect(byCode.get("ZZ-A")?.possible).toBe(0);
     expect(byCode.get("ZZ-ABC")?.likely).toBe(0);
     expect(byCode.get("ZZ-ABC")?.possible).toBe(1);
+  });
+
+  it("the 0049 rollup reproduces the weekly arithmetic EXACTLY, not approximately", async () => {
+    // The rollup replaced a query that unnested each location's 48-week array
+    // on every request. It is only safe if it is the same number: this
+    // recomputes monthlyStat's contract from the raw weekly rows and compares
+    // against what the derived tables hold.
+    const { rebuildMonthRollup } = await import("./barchart");
+    await insertLoc("QZ-RU", janSamples(10, 1000, 7, 0));
+    await insertFreq("QZ-RU", 1, 1.0);
+    await insertFreq("QZ-RU", 2, 0.3);
+    await insertFreq("QZ-RU", 3, 0.5);
+    await rebuildMonthRollup("QZ-RU");
+
+    const direct = await query<{ num: number; n: number }>(
+      `SELECT SUM(sf.freq * ss.n)::float8 AS num,
+              (SELECT SUM(x.n)::float8
+                 FROM frequency_fetch f2,
+                      LATERAL unnest(f2.sample_sizes) WITH ORDINALITY AS x(n, week)
+                WHERE f2.loc_code = 'QZ-RU' AND x.week BETWEEN 1 AND 4) AS n
+         FROM species_frequency sf
+         JOIN frequency_fetch ff ON ff.loc_code = sf.loc_code
+         JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+           ON ss.week = sf.week
+        WHERE sf.loc_code = 'QZ-RU' AND sf.week BETWEEN 1 AND 4`,
+    );
+    const rolled = await query<{ num: number; n: number }>(
+      `SELECT smf.num, lms.n
+         FROM species_month_freq smf
+         JOIN loc_month_samples lms USING (loc_code, month)
+        WHERE smf.loc_code = 'QZ-RU' AND smf.month = 1`,
+    );
+    expect(Number(rolled.rows[0].num)).toBeCloseTo(Number(direct.rows[0].num), 9);
+    expect(Number(rolled.rows[0].n)).toBe(Number(direct.rows[0].n));
+    // 1.0*10 + 0.3*1000 + 0.5*7 = 313.5 over 1017 checklists.
+    expect(Number(rolled.rows[0].num)).toBeCloseTo(313.5, 9);
+    expect(Number(rolled.rows[0].n)).toBe(1017);
+  });
+
+  it("a rollup rebuild REPLACES rather than accumulates (re-store must not double-count)", async () => {
+    const { rebuildMonthRollup } = await import("./barchart");
+    await rebuildMonthRollup("QZ-RU");
+    await rebuildMonthRollup("QZ-RU");
+    const r = await query<{ c: string }>(
+      "SELECT count(*) AS c FROM species_month_freq WHERE loc_code = 'QZ-RU' AND month = 1",
+    );
+    expect(Number(r.rows[0].c)).toBe(1);
   });
 
   it("rankCountiesForNeeds returns [] for a subnational2 code (never a valid target)", async () => {

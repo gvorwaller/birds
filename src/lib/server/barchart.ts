@@ -373,6 +373,47 @@ export interface StoreParams {
 }
 
 /** Atomic replace of one location's frequency data (+ 'ok' attempt record). */
+/**
+ * Rebuild the 0049 monthly rollups for ONE location from its stored weekly
+ * rows. The single definition of that arithmetic: storeFrequencies calls it
+ * inside its own transaction, and anything else that writes species_frequency
+ * directly (DB tests, future backfills) must call it too, or the derived
+ * tables drift from their source.
+ *
+ * Matches monthlyStat's contract exactly — the denominator counts EVERY
+ * checklist in the month, including weeks the species was absent, which is
+ * why it is keyed per (loc, month) rather than per species.
+ */
+export async function rebuildMonthRollup(
+	locCode: string,
+	run: (sql: string, params: unknown[]) => Promise<unknown> = (sql, params) =>
+		query(sql, params)
+): Promise<void> {
+	await run('DELETE FROM species_month_freq WHERE loc_code = $1', [locCode]);
+	await run('DELETE FROM loc_month_samples WHERE loc_code = $1', [locCode]);
+	await run(
+		`INSERT INTO species_month_freq (loc_code, species_code, month, num)
+		 SELECT sf.loc_code, sf.species_code, ((sf.week - 1) / 4 + 1)::smallint,
+		        SUM(sf.freq * ss.n)::float8
+		   FROM species_frequency sf
+		   JOIN frequency_fetch ff ON ff.loc_code = sf.loc_code
+		   JOIN LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+		     ON ss.week = sf.week
+		  WHERE sf.loc_code = $1
+		  GROUP BY 1, 2, 3`,
+		[locCode]
+	);
+	await run(
+		`INSERT INTO loc_month_samples (loc_code, month, n)
+		 SELECT ff.loc_code, ((ss.week - 1) / 4 + 1)::smallint, SUM(ss.n)::float8
+		   FROM frequency_fetch ff,
+		        LATERAL unnest(ff.sample_sizes) WITH ORDINALITY AS ss(n, week)
+		  WHERE ff.loc_code = $1
+		  GROUP BY 1, 2`,
+		[locCode]
+	);
+}
+
 export async function storeFrequencies(p: StoreParams): Promise<void> {
 	await withTransaction(async (client) => {
 		await client.query(
@@ -451,6 +492,12 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 				params
 			);
 		}
+
+		// Monthly rollups (0049), rebuilt for THIS location inside the same
+		// transaction that replaced its weekly rows — so the derived tables can
+		// never drift from their source, and no periodic refresh of a 23.6 M-row
+		// table is needed.
+		await rebuildMonthRollup(p.locCode, (sql, params) => client.query(sql, params));
 
 		await client.query(
 			`INSERT INTO frequency_fetch_attempts (loc_code, last_attempt_at, status, error)
