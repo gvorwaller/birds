@@ -115,6 +115,19 @@ export const handle: Handle = async ({ event, resolve }) => {
 };
 
 /**
+ * Count '<' bytes — every tag, opening and closing, so roughly 2x the element
+ * count. A PROXY for DOM size, not an exact node count: text containing a
+ * literal '<' inflates it slightly. Safe to scan raw bytes rather than decode,
+ * because '<' is ASCII 0x3C and UTF-8 continuation bytes are all >= 0x80, so
+ * it can never appear inside a multi-byte character.
+ */
+function countTags(chunk: Uint8Array): number {
+	let n = 0;
+	for (let i = 0; i < chunk.length; i++) if (chunk[i] === 0x3c) n++;
+	return n;
+}
+
+/**
  * Wrap the response body so one perf line hits stdout when the stream
  * finishes (close OR client cancel — a TransformStream's flush misses
  * cancel, so this pumps a reader instead). Never touches status/headers;
@@ -126,13 +139,27 @@ function withBodyCompletionLog(
 	bag: TimingBag,
 	shellMs: number
 ): Response {
+	// Document weight, the third cost hiding inside "the page is slow": server
+	// time (shell=), transfer+parse (bytes=), and hydration — which scales with
+	// DOM size, approximated by tags=. All three now read off one line instead
+	// of being guessed at. `bytes` is exact; see countTags for what tags= is.
+	let bytes = 0;
+	let tags = 0;
+	// Only HTML is worth tag-counting: JSON bodies have no DOM to hydrate, and
+	// static assets would pay the scan for nothing.
+	const isHtml = (response.headers.get('content-type') ?? '').includes('text/html');
 	let fired = false;
 	const fire = () => {
 		if (fired) return;
 		fired = true;
 		const totalMs = Date.now() - bag.startedAt;
 		if (dev || totalMs > PERF_LOG_SLOW_MS) {
-			console.log(perfLogLine(pathname, response.status, shellMs, totalMs, bag));
+			console.log(
+				perfLogLine(pathname, response.status, shellMs, totalMs, bag, {
+					bytes,
+					tags: isHtml ? tags : null
+				})
+			);
 		}
 	};
 	const body = response.body;
@@ -150,6 +177,8 @@ function withBodyCompletionLog(
 					fire();
 					return;
 				}
+				bytes += value.byteLength;
+				if (isHtml) tags += countTags(value);
 				controller.enqueue(value);
 			} catch (err) {
 				fire();

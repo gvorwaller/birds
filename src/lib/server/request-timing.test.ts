@@ -69,4 +69,20 @@ describe('request-timing', () => {
 		expect(line).toBe('perf path=/species/gbbgul status=200 shell=310ms total=2140ms ebird=2/900ms');
 		expect(line).not.toContain('?');
 	});
+
+	it('reports response weight when given it — bytes always, tags only for HTML', () => {
+		const bag = newTimingBag();
+		expect(perfLogLine('/forecast/data', 200, 180, 190, bag, { bytes: 49152, tags: 1240 })).toBe(
+			'perf path=/forecast/data status=200 shell=180ms total=190ms bytes=48KB tags=1240'
+		);
+		// A JSON response has no DOM to hydrate — bytes only.
+		expect(perfLogLine('/api/hub-search', 200, 20, 21, bag, { bytes: 900, tags: null })).toBe(
+			'perf path=/api/hub-search status=200 shell=20ms total=21ms bytes=900B'
+		);
+		// The regression this instrumentation exists to catch: a multi-megabyte
+		// document reads as MB, not an unscannable digit string.
+		expect(
+			perfLogLine('/forecast/data', 200, 1500, 1500, bag, { bytes: 1_258_291, tags: 90000 })
+		).toContain('bytes=1.2MB');
+	});
 });

@@ -76,13 +76,29 @@ export function serverTimingHeader(bag: TimingBag, shellMs: number): string {
 	return parts.join(', ');
 }
 
-/** One stdout line, emitted at body completion. Path only — never the query. */
+/** Human-readable byte size for the perf line. */
+function fmtBytes(n: number): string {
+	if (n < 1024) return `${n}B`;
+	if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/**
+ * One stdout line, emitted at body completion. Path only — never the query.
+ *
+ * `weight` carries what the response COST the client: exact bytes, and for
+ * HTML an approximate tag count as a stand-in for DOM size (hydration scales
+ * with nodes, not bytes). Together with shell=/db=/ebird= this makes all
+ * three costs of a slow page — server work, transfer, hydration — legible
+ * from one line rather than inferred.
+ */
 export function perfLogLine(
 	pathname: string,
 	status: number,
 	shellMs: number,
 	totalMs: number,
-	bag: TimingBag
+	bag: TimingBag,
+	weight?: { bytes: number; tags: number | null }
 ): string {
 	const parts = [
 		`perf path=${pathname}`,
@@ -90,6 +106,10 @@ export function perfLogLine(
 		`shell=${shellMs}ms`,
 		`total=${totalMs}ms`
 	];
+	if (weight) {
+		parts.push(`bytes=${fmtBytes(weight.bytes)}`);
+		if (weight.tags != null) parts.push(`tags=${weight.tags}`);
+	}
 	for (const [name, b] of Object.entries(bag.buckets)) {
 		if (b.n > 0) parts.push(`${name}=${b.n}/${Math.round(b.ms)}ms`);
 	}
