@@ -124,6 +124,58 @@ describe.skipIf(!dbUp || !seeded)("regions seed shape (0043/0044)", () => {
   });
 });
 
+describe.skipIf(!dbUp || !seeded)("region extents (0047/0048, td-a4a3bf)", () => {
+  it("every seeded region has a bounding box, all four edges", async () => {
+    const r = await query<{ total: string; boxed: string; partial: string }>(
+      `SELECT count(*) AS total,
+              count(*) FILTER (WHERE min_lat IS NOT NULL) AS boxed,
+              count(*) FILTER (WHERE (min_lat IS NULL) <> (max_lon IS NULL)) AS partial
+         FROM regions`,
+    );
+    // 100% coverage after the RU/AQ edge-tolerance fix; a partial box is
+    // impossible by the 0047 all-or-none CHECK, asserted anyway.
+    expect(Number(r.rows[0].boxed)).toBe(Number(r.rows[0].total));
+    expect(Number(r.rows[0].partial)).toBe(0);
+  });
+
+  it("THE BUG, on real data: the home state contains home, the neighbor is a short hop", async () => {
+    // Gaylon's Jacksonville home. Centroid ranking put Georgia (191 mi)
+    // ahead of Florida (212 mi) — the state he is standing in.
+    const r = await query<{ code: string; inside: boolean; edge_km: number }>(
+      `SELECT code,
+              (30.2630337 BETWEEN min_lat AND max_lat
+               AND -81.6371102 BETWEEN min_lon AND max_lon) AS inside,
+              6371*acos(least(1,
+                cos(radians(30.2630337))*cos(radians(greatest(min_lat,least(30.2630337,max_lat))))*
+                cos(radians(greatest(min_lon,least(-81.6371102,max_lon)))-radians(-81.6371102))+
+                sin(radians(30.2630337))*sin(radians(greatest(min_lat,least(30.2630337,max_lat)))))) AS edge_km
+         FROM regions WHERE code = ANY($1)`,
+      [["US-FL", "US-GA"]],
+    );
+    const by = new Map(r.rows.map((x) => [x.code, x]));
+    expect(by.get("US-FL")!.inside).toBe(true);
+    expect(by.get("US-GA")!.inside).toBe(false);
+    // Georgia's line is ~7 mi away — a real, actionable number, unlike the
+    // 191 mi centroid figure it replaces.
+    expect(Number(by.get("US-GA")!.edge_km)).toBeLessThan(30);
+  });
+
+  it("antimeridian-spanning regions kept their extent despite eBird's out-of-range edge", async () => {
+    // eBird reports Russia/Antarctica as minX -180.000001; rejecting that box
+    // over a millionth of a degree left them on a centroid eBird computes as
+    // ~0° longitude (the Gulf of Guinea) — strictly worse than a clamped box.
+    const r = await query<{ code: string; min_lon: number; max_lon: number }>(
+      "SELECT code, min_lon, max_lon FROM regions WHERE code = ANY($1)",
+      [["RU", "AQ"]],
+    );
+    expect(r.rows).toHaveLength(2);
+    for (const row of r.rows) {
+      expect(Number(row.min_lon)).toBeGreaterThanOrEqual(-180);
+      expect(Number(row.max_lon)).toBeLessThanOrEqual(180);
+    }
+  });
+});
+
 describe.skipIf(!dbUp || !seeded || !fkApplied)(
   "the 0045 invariant (frequency_fetch_region_fk)",
   () => {

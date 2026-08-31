@@ -270,16 +270,33 @@ async function regionList(level, parent) {
 /** eBird returns bounds alongside the centroid; a box is only usable when
  * every edge is finite and in range. minX > maxX is LEGAL (antimeridian
  * wrap) and preserved as-is for the distance code to handle. */
+const EDGE_EPSILON = 0.001; // ~100 m — a float artifact, not a real overshoot
+
+/** Clamp a hair past the coordinate limit back onto it; reject anything
+ * genuinely out of range. eBird reports whole-globe extents as
+ * minX: -180.000001 / maxX: 179.999999 (Russia, Antarctica) — discarding
+ * those boxes over a millionth of a degree cost two countries their extent
+ * and left them on a BROKEN centroid (see below), which is strictly worse. */
+function clampEdge(v, limit) {
+  if (v < -limit) return v >= -limit - EDGE_EPSILON ? -limit : null;
+  if (v > limit) return v <= limit + EDGE_EPSILON ? limit : null;
+  return v;
+}
+
 function usableBounds(b) {
   if (!b) return null;
-  const v = [b.minY, b.maxY, b.minX, b.maxX];
-  if (!v.every((x) => typeof x === "number" && Number.isFinite(x))) return null;
-  if (b.minY < -90 || b.maxY > 90 || b.minY > b.maxY) return null;
-  if (b.minX < -180 || b.maxX > 180 || b.minX < -180 || b.maxX > 180) return null;
+  const raw = [b.minY, b.maxY, b.minX, b.maxX];
+  if (!raw.every((x) => typeof x === "number" && Number.isFinite(x))) return null;
+  const minLat = clampEdge(b.minY, 90);
+  const maxLat = clampEdge(b.maxY, 90);
+  const minLon = clampEdge(b.minX, 180);
+  const maxLon = clampEdge(b.maxX, 180);
+  if ([minLat, maxLat, minLon, maxLon].some((x) => x === null)) return null;
+  if (minLat > maxLat) return null;
   // A degenerate all-zero box is the same null-island sentinel the centroid
   // check rejects, not a real extent.
-  if (v.every((x) => x === 0)) return null;
-  return { minLat: b.minY, maxLat: b.maxY, minLon: b.minX, maxLon: b.maxX };
+  if (raw.every((x) => x === 0)) return null;
+  return { minLat, maxLat, minLon, maxLon };
 }
 
 async function regionInfo(code) {
@@ -294,6 +311,13 @@ async function regionInfo(code) {
     !(lat === 0 && lon === 0); // null-island sentinel — never a real region centroid
   // Bounds are OPTIONAL (td-a4a3bf): a region with a good centroid but no
   // usable box still seeds and degrades to centroid distance. Never invented.
+  //
+  // NOTE (measured 2026-08-31): eBird's CENTROID is unreliable for any region
+  // whose extent crosses the antimeridian — it appears to average minX and
+  // maxX, so Russia, Antarctica, Alaska, Fiji and New Zealand all report a
+  // longitude of ~0, i.e. the Gulf of Guinea. The box is the trustworthy
+  // field for those; this is a further reason bounds beat centroids, and why
+  // rejecting a box over a float artifact was expensive.
   const out = ok ? { lat, lon, bounds: usableBounds(body?.bounds) } : { missing: true, status };
   cache.info[code] = out;
   saveCache();
