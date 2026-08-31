@@ -267,6 +267,21 @@ async function regionList(level, parent) {
   return rows;
 }
 
+/** eBird returns bounds alongside the centroid; a box is only usable when
+ * every edge is finite and in range. minX > maxX is LEGAL (antimeridian
+ * wrap) and preserved as-is for the distance code to handle. */
+function usableBounds(b) {
+  if (!b) return null;
+  const v = [b.minY, b.maxY, b.minX, b.maxX];
+  if (!v.every((x) => typeof x === "number" && Number.isFinite(x))) return null;
+  if (b.minY < -90 || b.maxY > 90 || b.minY > b.maxY) return null;
+  if (b.minX < -180 || b.maxX > 180 || b.minX < -180 || b.maxX > 180) return null;
+  // A degenerate all-zero box is the same null-island sentinel the centroid
+  // check rejects, not a real extent.
+  if (v.every((x) => x === 0)) return null;
+  return { minLat: b.minY, maxLat: b.maxY, minLon: b.minX, maxLon: b.maxX };
+}
+
 async function regionInfo(code) {
   if (cache.info[code]) return cache.info[code];
   const { status, body } = await ebirdGet(`/ref/region/info/${code}`);
@@ -277,7 +292,9 @@ async function regionInfo(code) {
     typeof lat === "number" && Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
     typeof lon === "number" && Number.isFinite(lon) && lon >= -180 && lon <= 180 &&
     !(lat === 0 && lon === 0); // null-island sentinel — never a real region centroid
-  const out = ok ? { lat, lon } : { missing: true, status };
+  // Bounds are OPTIONAL (td-a4a3bf): a region with a good centroid but no
+  // usable box still seeds and degrades to centroid distance. Never invented.
+  const out = ok ? { lat, lon, bounds: usableBounds(body?.bounds) } : { missing: true, status };
   cache.info[code] = out;
   saveCache();
   return out;
@@ -349,6 +366,8 @@ for (const [cc, expected] of Object.entries(EXPECT_SUB1)) {
 const EXCLUDED_PATH = "backend/db/regions-excluded-codes.txt";
 const excludedCodes = infoTargets.filter((code) => cache.info[code]?.missing);
 for (const code of excludedCodes) regionsByCode.delete(code);
+const withBounds = infoTargets.filter((c) => cache.info[c]?.bounds).length;
+console.log(`bounds captured for ${withBounds}/${infoTargets.length} codes`);
 if (excludedCodes.length > 0) {
   console.warn(
     `WARNING: excluding ${excludedCodes.length} code(s) with no usable eBird coordinates ` +
@@ -399,6 +418,7 @@ const rows = [...regionsByCode.entries()]
     parent: r.parent,
     lat: cache.info[code].lat,
     lon: cache.info[code].lon,
+    bounds: cache.info[code].bounds ?? null,
   }))
   .sort((a, b) => (a.code < b.code ? -1 : 1));
 
@@ -410,9 +430,18 @@ try {
 } catch {
   /* first run */
 }
+const boundsKey = (b) => (b ? `${b.minLat},${b.maxLat},${b.minLon},${b.maxLon}` : "");
 const changed = rows.filter((r) => {
   const p = previous?.regions?.[r.code];
-  return !p || p.name !== r.name || p.level !== r.level || p.parent !== r.parent || p.lat !== r.lat || p.lon !== r.lon;
+  return (
+    !p ||
+    p.name !== r.name ||
+    p.level !== r.level ||
+    p.parent !== r.parent ||
+    p.lat !== r.lat ||
+    p.lon !== r.lon ||
+    boundsKey(p.bounds ?? null) !== boundsKey(r.bounds)
+  );
 });
 const retired = previous ? Object.keys(previous.regions).filter((code) => !regionsByCode.has(code)) : [];
 if (retired.length) {
@@ -444,8 +473,11 @@ const q = (s) => `'${s.replaceAll("'", "''")}'`;
 const sourceAtOf = (r) => previous?.regions?.[r.code] && changed.every((c) => c.code !== r.code)
   ? previous.regions[r.code].source_at
   : today;
+const num = (x) => (x == null ? "NULL" : String(x));
 const valueRow = (r) =>
-  `(${q(r.code)}, ${q(r.name)}, ${q(r.level)}, ${r.parent ? q(r.parent) : "NULL"}, ${r.lat}, ${r.lon}, ${q(sourceAtOf(r))})`;
+  `(${q(r.code)}, ${q(r.name)}, ${q(r.level)}, ${r.parent ? q(r.parent) : "NULL"}, ${r.lat}, ${r.lon}, ` +
+  `${num(r.bounds?.minLat)}, ${num(r.bounds?.maxLat)}, ${num(r.bounds?.minLon)}, ${num(r.bounds?.maxLon)}, ` +
+  `${q(sourceAtOf(r))})`;
 
 // Countries must land before their children satisfy the parent FK; the sort
 // already guarantees it ('US' < 'US-FL'), stated here so nobody re-sorts.
@@ -453,10 +485,13 @@ const emitRows = changed;
 const chunks = [];
 for (let i = 0; i < emitRows.length; i += CHUNK_ROWS) {
   chunks.push(
-    `INSERT INTO regions (code, name, level, parent_code, lat, lon, source_at) VALUES\n` +
+    `INSERT INTO regions (code, name, level, parent_code, lat, lon,\n` +
+      `  min_lat, max_lat, min_lon, max_lon, source_at) VALUES\n` +
       emitRows.slice(i, i + CHUNK_ROWS).map(valueRow).join(",\n") +
       `\nON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, level = EXCLUDED.level,\n` +
       `  parent_code = EXCLUDED.parent_code, lat = EXCLUDED.lat, lon = EXCLUDED.lon,\n` +
+      `  min_lat = EXCLUDED.min_lat, max_lat = EXCLUDED.max_lat,\n` +
+      `  min_lon = EXCLUDED.min_lon, max_lon = EXCLUDED.max_lon,\n` +
       `  source_at = EXCLUDED.source_at;`,
   );
 }
@@ -484,7 +519,12 @@ fs.writeFileSync(
   JSON.stringify(
     {
       generated_at: today,
-      regions: Object.fromEntries(rows.map((r) => [r.code, { name: r.name, level: r.level, parent: r.parent, lat: r.lat, lon: r.lon, source_at: sourceAtOf(r) }])),
+      regions: Object.fromEntries(
+        rows.map((r) => [
+          r.code,
+          { name: r.name, level: r.level, parent: r.parent, lat: r.lat, lon: r.lon, bounds: r.bounds, source_at: sourceAtOf(r) },
+        ]),
+      ),
     },
     null,
     0,
