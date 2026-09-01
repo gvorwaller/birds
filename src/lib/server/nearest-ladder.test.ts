@@ -181,6 +181,13 @@ describe("racing the two strategies", () => {
 
     expect(res.via).toBe("nearest");
     expect(res.rows[0].lat).toBeCloseTo(30.4, 5);
+    // Winning-strategy metadata, not total work: probes may already have
+    // been spent by the losing ladder, but `via: nearest` is a global
+    // answer — UI keys off `via`, so regions:0 is the claim we can support.
+    expect(res.searched.regions).toBe(0);
+    expect(res.capped).toBe(false);
+    expect(res.proven).toBe(true);
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalled();
   });
 
   it("spends no probes at all when the direct call answers inside the head start", async () => {
@@ -460,6 +467,9 @@ describe("budgets and deadlines", () => {
     expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(1);
     expect(res.searched.regions).toBe(1);
     expect(res.capped).toBe(true);
+    // Skipped queued rungs are unresolved, not silently dropped — otherwise
+    // `proven` could claim a search that never looked at closer boxes.
+    expect(res.proven).toBe(false);
   });
 
   it("stops between waves once the ladder deadline passes", async () => {

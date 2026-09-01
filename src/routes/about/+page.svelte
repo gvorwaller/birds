@@ -134,10 +134,11 @@
 								<strong>Nearest reports that answer</strong> — asking for the
 								closest report of a common bird far from its range used to spin
 								for a minute and give up, because eBird's nearest-report search
-								cannot answer that shape of question. The app now falls back to
-								searching its own region list outward from home, and tells you
-								when it did. A search that comes up empty says how many regions
-								it covered instead of claiming the bird is nowhere.
+								cannot answer that shape of question. The app now races that
+								endpoint against a search of its own region list outward from
+								home, and tells you when the region search won. A search that
+								comes up empty says how many regions it covered instead of
+								claiming the bird is nowhere.
 							</li>
 							<li>
 								<strong>Home loads in stages</strong> — the needs and rare lists now
