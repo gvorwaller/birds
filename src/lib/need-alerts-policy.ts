@@ -13,7 +13,10 @@
  */
 import { haversineKm } from '$lib/geo';
 
-export const SCAN_INTERVAL_MS = 30 * 60_000; // = OBS_TTL_MIN — faster is waste
+// Matches NOTABLE_TTL_MIN (ebird.ts), which the rare-bird feeds deliberately
+// keep at 30 minutes while ordinary observation feeds sit at three hours —
+// scanning faster than the feed refreshes is waste.
+export const SCAN_INTERVAL_MS = 30 * 60_000;
 export const PER_SCAN_CAP = 5;
 
 export interface AlertObs {

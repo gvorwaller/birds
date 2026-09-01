@@ -203,14 +203,13 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
     partial: boolean;
     proven: boolean;
   }> => {
-    // The direct endpoint first, then the region ladder when it stalls
-    // (td-73e6f9). A 25s fast-path deadline rather than /nearest's 10s: this
-    // section is STREAMED, so waiting costs the user nothing already-rendered,
-    // and it clears the measured 23.4s structural successes instead of
-    // abandoning a call that would have answered.
+    // Two strategies raced (td-73e6f9): eBird's direct endpoint, and — if it
+    // hasn't answered within the head start — a region-by-region search
+    // running alongside it. First real answer wins.
     const res = await nearestSpeciesReports(apiKey!, code, home!, backDays, {
-      // A short head start, not a deadline: the direct endpoint answers a rare
-      // species well inside it, so those lookups never probe a region at all.
+      // A head start, NOT a deadline: nothing is abandoned when it elapses.
+      // The direct endpoint answers a rare species well inside it, so those
+      // lookups never probe a single region.
       headStartMs: 3_000,
       probeBudget: 40,
       ladderDeadlineMs: 20_000,

@@ -34,10 +34,11 @@ export interface NearestTarget {
 }
 
 /**
- * This page is AWAITED, not streamed, and auto-runs up to six species — so
- * its budgets are page-global (a shared probe gate and a shorter fast-path
- * deadline), not per species. Six independent ladders would otherwise open
- * `species × wave` sockets and stack past nginx's 60s proxy timeout.
+ * This page is AWAITED, not streamed, and auto-runs up to six species — so its
+ * limits are page-global, not per species: one shared gate that caps both the
+ * total probes AND how many run at once, plus a page-wide wall clock. Six
+ * independent searches would otherwise open `species × wave` sockets and stack
+ * past nginx's 60s proxy timeout.
  */
 async function lookupSpecies(
   apiKey: string,

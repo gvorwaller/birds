@@ -119,6 +119,22 @@ async function main(): Promise<void> {
 		bumpWorkerHeartbeat().catch(() => {});
 	}, HEARTBEAT_MS);
 
+	// Retention runs at startup AND on a daily timer. Startup alone was enough
+	// while this only trimmed job history, but it now also caps `ebird_cache`
+	// (td-73e6f9): the ladder's per-region payloads can reach a megabyte, and a
+	// worker that stays up for weeks would never have trimmed them.
+	const RETENTION_EVERY_MS = 24 * 60 * 60 * 1000;
+	const retention = setInterval(() => {
+		pruneHistory().catch((err) => {
+			console.error(
+				'[birds-worker] retention prune failed:',
+				err instanceof Error ? err.message : err
+			);
+		});
+	}, RETENTION_EVERY_MS);
+	// Never let retention hold the process open at shutdown.
+	retention.unref?.();
+
 	for (;;) {
 		if (draining) break;
 		const paused = await workerPauseRequested();
@@ -192,6 +208,7 @@ async function main(): Promise<void> {
 	}
 
 	clearInterval(heartbeat);
+	clearInterval(retention);
 	await setWorkerStatus(
 		{ pid: process.pid, version: VERSION, state: 'draining', currentJobId: null },
 		'shutdown'

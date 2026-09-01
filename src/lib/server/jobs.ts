@@ -563,8 +563,8 @@ export async function pruneHistory(): Promise<void> {
  * not pruned, while forgetting to EXCLUDE a new long-TTL family would delete
  * live data. The two mistakes are not equally bad.
  *
- * Listed families all hold a 30-minute or 24-hour TTL, so a 48-hour floor
- * still leaves a generous fail-soft window. Deliberately absent: `regions:`,
+ * Listed families hold TTLs from 30 minutes to 24 hours, so a 48-hour floor
+ * still leaves every one of them a fail-soft window. Deliberately absent: `regions:`,
  * `tideStations:v1` and `tidePred:` carry THIRTY-DAY TTLs — pruning them at
  * 48 hours would evict rows that are still fresh, re-download a ~2 MB NOAA
  * station list every other day, and strip the county-name fallback that
