@@ -217,6 +217,18 @@
 						a lookup. The same check lives on each need species' own page as
 						<strong>Check nearest reports</strong>.
 					</li>
+					<li>
+						<strong>How the lookup works.</strong> eBird's own nearest-report
+						search struggles with a common bird a long way from where it
+						lives — it can run for a full minute and then fail. When that
+						happens the app searches its own region list instead, working
+						outward from home a region at a time, and says so: "found by
+						searching N regions". Those distances are exact. What that
+						search can't claim is the whole world — a few places have no
+						usable boundary data — so when it finds nothing it says how many
+						regions it checked and links you to eBird's map for the species,
+						rather than telling you the bird is nowhere.
+					</li>
 				</ul>
 				<h3>Life list</h3>
 				<ul>

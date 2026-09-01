@@ -7,7 +7,15 @@ export interface SpeciesObservationDetail extends EbirdObs {
   isHotspot: boolean;
 }
 
-function obsKey(o: EbirdObs): string {
+/**
+ * Identity of one observation: species + place + timestamp.
+ *
+ * Exported because the nearest ladder (td-73e6f9) probes overlapping regions
+ * (a country probe covers its own subnational1s) and must dedupe BEFORE
+ * counting hits — five copies of one report must not look like five places.
+ * Reused rather than reimplemented so the two paths cannot disagree.
+ */
+export function obsKey(o: EbirdObs): string {
   const loc = o.locId || `${o.lat.toFixed(5)},${o.lng.toFixed(5)}`;
   return `${o.speciesCode}|${loc}|${o.obsDt}`;
 }

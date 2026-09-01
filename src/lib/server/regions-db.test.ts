@@ -232,6 +232,67 @@ describe.skipIf(!dbUp || !seeded || !fkApplied)(
   },
 );
 
+describe.skipIf(!dbUp || !seeded)("proximity candidate set (td-73e6f9)", () => {
+  it("probes a country whose subnational1 coverage has holes", async () => {
+    const { allProximityRegions } = await import("./regions");
+    const { candidates } = await allProximityRegions();
+    const codes = new Set(candidates.map((r) => r.code));
+
+    // Hungary is missing 22 counties from the seed, Latvia 112, Moldova 29
+    // (backend/db/regions-excluded-codes.txt). Probing only their seeded
+    // children would skip that territory while the UI claimed it searched.
+    for (const country of ["HU", "LV", "MD"]) {
+      expect(codes.has(country), `${country} needs a country-level probe`).toBe(
+        true,
+      );
+      // ...and its seeded children are still probed for their tighter bounds.
+      expect(candidates.some((r) => r.parent === country)).toBe(true);
+    }
+
+    // The rule must key on the EXCLUDED list, not on "a seeded code that is
+    // also excluded" — the generator deletes excluded codes from the seed, so
+    // that intersection is empty and the arm would never fire.
+    const withHoles = candidates.filter((r) => r.level === "country" && r.parent === null);
+    expect(withHoles.length).toBeGreaterThan(56); // 56 childless + the holed ones
+  });
+
+  it("omits countries whose subnational1 coverage is complete", async () => {
+    const { allProximityRegions } = await import("./regions");
+    const { candidates } = await allProximityRegions();
+    const codes = new Set(candidates.map((r) => r.code));
+    // Sweden has every county seeded, so the country probe would only
+    // duplicate its children's coverage at a looser bound.
+    expect(codes.has("SE")).toBe(false);
+    expect(candidates.some((r) => r.parent === "SE")).toBe(true);
+  });
+
+  it("keeps antimeridian regions out of the ladder entirely", async () => {
+    const { allProximityRegions } = await import("./regions");
+    const { candidates, unsafe } = await allProximityRegions();
+    const codes = new Set(candidates.map((r) => r.code));
+
+    // Their [-180,180] boxes are ~360° wide, so they have no usable lower
+    // bound: sorting on it would put them first from everywhere, and a zero
+    // bound can never be exceeded, so the search could never terminate.
+    for (const code of ["US-AK", "RU-CHU", "FJ-E", "NZ-NTL"]) {
+      expect(codes.has(code), `${code} must not be a ladder candidate`).toBe(false);
+    }
+    expect(unsafe.map((r) => r.code)).toContain("US-AK");
+    // Small and enumerable — this is a documented coverage gap, not a surprise.
+    expect(unsafe.length).toBeLessThan(20);
+  });
+
+  it("gives every candidate a usable box or none at all", async () => {
+    const { boxSupportsProximity } = await import("$lib/geo");
+    const { allProximityRegions } = await import("./regions");
+    const { candidates } = await allProximityRegions();
+    expect(candidates.length).toBeGreaterThan(3000);
+    for (const r of candidates) {
+      if (r.box) expect(boxSupportsProximity(r.box)).toBe(true);
+    }
+  });
+});
+
 it("regions DB suite ran against the live cluster (or skipped intentionally)", () => {
   // Mirrors forecast-db.test.ts's tail guard: a silent all-skip run should be
   // visible in the output, not mistaken for coverage.

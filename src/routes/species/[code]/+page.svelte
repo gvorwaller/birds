@@ -665,9 +665,26 @@
       {:else if !nearestView.current.ok}
         <p class="muted">{nearestView.current.error}</p>
       {:else if nearestView.current.data.rows.length === 0}
-        <p class="muted">
-          No reports anywhere in the last {data.backDays} days.
-        </p>
+        {#if nearestView.current.data.via === "nearest"}
+          <!-- eBird's own global lookup answered, and answered empty. -->
+          <p class="muted">
+            No reports anywhere in the last {data.backDays} days.
+          </p>
+        {:else}
+          <!-- The region search cannot see everywhere: our seeded coverage has
+               holes (regions eBird never geocoded, antimeridian regions with no
+               usable bound), and a capped search stopped early. Saying "nowhere"
+               would claim a search we did not run. -->
+          <p class="muted">
+            No reports in the {nearestView.current.data.searched.regions} regions
+            we searched.
+            <a
+              href="https://ebird.org/map/{data.taxon.species_code}"
+              target="_blank"
+              rel="noopener">See this species' map on eBird ↗</a
+            >
+          </p>
+        {/if}
       {:else}
         {#each nearestView.current.data.rows as o (o.locId + o.obsDt)}
           <div class="nrow">
@@ -715,6 +732,21 @@
             </div>
           </div>
         {/each}
+      {/if}
+      <!-- How the answer was reached, when that changes what it means. The
+           direct lookup covers eBird's whole database; the region search covers
+           the regions we hold, so it must say so rather than let the heading's
+           "any distance" imply more than it proved. -->
+      {#if nearestView.current?.ok && nearestView.current.data.via === "ladder"}
+        <p class="muted nvia">
+          {#if nearestView.current.data.rows.length > 0}
+            Found by searching {nearestView.current.data.searched.regions} regions
+            outward from home.
+          {/if}
+          {#if !nearestView.current.data.proven}
+            Some closer regions couldn't be checked.
+          {/if}
+        </p>
       {/if}
     </section>
   {/if}
@@ -1370,6 +1402,10 @@
   }
   .nrow {
     padding: 6px 0;
+  }
+  .nvia {
+    margin-top: 8px;
+    font-size: 0.82rem;
   }
   .nrow + .nrow {
     border-top: 1px solid var(--border);

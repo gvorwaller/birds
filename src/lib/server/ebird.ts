@@ -74,25 +74,34 @@ export function decodeEbirdApiKey(enc: string | null): string | null {
 export async function ebirdFetchOrNull<T>(
 	path: string,
 	apiKey: string,
-	opts: {
+	opts: EbirdFetchOpts & {
 		fetcher?: typeof fetch;
 		nullOn?: readonly number[];
-		signal?: AbortSignal;
 	} = {}
 ): Promise<T | null> {
 	const doFetch = opts.fetcher ?? fetch;
 	const nullOn = opts.nullOn ?? [404];
+	// Same ceiling as ebirdFetch — this path was equally unbounded.
+	const deadlineMs = opts.deadlineMs ?? EBIRD_DEFAULT_TIMEOUT_MS;
+	const deadline = AbortSignal.timeout(deadlineMs);
+	const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
 	let res: Response;
 	try {
 		res = await timed('ebird', () =>
 			doFetch(`${API}${path}`, {
 				headers: { 'X-eBirdApiToken': apiKey, Accept: 'application/json' },
-				signal: opts.signal
+				signal
 			})
 		);
 	} catch (err) {
 		if (opts.signal?.aborted) {
-			throw new EbirdError('eBird API request aborted (deadline).');
+			throw new EbirdError('eBird API request aborted (caller cancelled).');
+		}
+		if (deadline.aborted) {
+			throw new EbirdError(
+				`eBird did not respond within ${Math.round(deadlineMs / 1000)}s.`,
+				504
+			);
 		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
@@ -116,7 +125,43 @@ export async function ebirdFetchOrNull<T>(
 	}
 }
 
-async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
+/**
+ * Wall-clock ceiling for ONE eBird HTTP call when the caller names no policy.
+ *
+ * A guard against unbounded waits, not a performance target. Without it,
+ * undici's defaults let a stalled request run for minutes: `/data/nearest/
+ * geo/recent/{sp}` holds the connection ~60 s and then 500s whenever a species
+ * has many records and none near the search point (measured 2026-09-01 —
+ * Black-capped Chickadee from Jacksonville 500 at 60.1 s, reproducible; the
+ * same species from Seattle 0.47 s; American Robin a legitimate SUCCESS at
+ * 23.4 s). The species page inherited the whole stall as a spinner because
+ * nginx (`deploy/nginx.conf`, proxy_read_timeout 60s) cut the streamed
+ * response before any error chunk could ship.
+ *
+ * 45 s clears that measured 23.4 s success ~2x and still lands inside nginx's
+ * 60 s. Endpoints with their own cost profile pass `deadlineMs` instead.
+ *
+ * `EBIRD_TIMEOUT_MS` exists so tests can collapse it — real timers, since
+ * AbortSignal.timeout ignores fake clocks.
+ */
+const EBIRD_DEFAULT_TIMEOUT_MS = Number(process.env.EBIRD_TIMEOUT_MS ?? '') || 45_000;
+
+export interface EbirdFetchOpts {
+	/**
+	 * CALLER cancellation (a superseded navigation) — never a deadline, and
+	 * never a reason to fall back to another strategy. Callers that share work
+	 * through `cachedFetch` should use this to stop SCHEDULING rather than to
+	 * cancel a fetch another request may be awaiting (the needs.ts rule).
+	 */
+	signal?: AbortSignal;
+	/** Internal per-endpoint deadline policy. Defaults to the module ceiling. */
+	deadlineMs?: number;
+}
+
+async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts = {}): Promise<T> {
+	const deadlineMs = opts.deadlineMs ?? EBIRD_DEFAULT_TIMEOUT_MS;
+	const deadline = AbortSignal.timeout(deadlineMs);
+	const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
 	let res: Response;
 	try {
 		// Only live HTTP is timed — cachedFetch hits never reach this function,
@@ -128,8 +173,17 @@ async function ebirdFetch<T>(path: string, apiKey: string, signal?: AbortSignal)
 			})
 		);
 	} catch (err) {
-		if (signal?.aborted) {
-			throw new EbirdError('eBird API request aborted (deadline).');
+		// Order matters. Caller cancellation is not a provider fault and must
+		// not read as one; a blown deadline is distinct from "unreachable",
+		// which would misattribute a stalled upstream to the network.
+		if (opts.signal?.aborted) {
+			throw new EbirdError('eBird API request aborted (caller cancelled).');
+		}
+		if (deadline.aborted) {
+			throw new EbirdError(
+				`eBird did not respond within ${Math.round(deadlineMs / 1000)}s.`,
+				504
+			);
 		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
@@ -283,7 +337,7 @@ export async function notableNearbyObs(
 		ebirdFetch<EbirdObs[]>(
 			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
 			apiKey,
-			opts?.signal
+			{ signal: opts?.signal }
 		)
 	);
 }
@@ -381,7 +435,8 @@ export async function nearestObsOfSpecies(
 	speciesCode: string,
 	lat: number,
 	lng: number,
-	back: number
+	back: number,
+	opts: { deadlineMs?: number } = {}
 ): Promise<CachedResult<EbirdObs[]>> {
 	if (!validEbirdSpeciesCode(speciesCode)) {
 		throw new EbirdError('Unrecognized species code.', 400);
@@ -389,10 +444,65 @@ export async function nearestObsOfSpecies(
 	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
+	// `deadlineMs` is INTERNAL POLICY, built inside the fetcher closure rather
+	// than taken as a caller AbortSignal: `cachedFetch` coalesces concurrent
+	// callers of this key onto one promise, and a caller-owned signal would let
+	// whoever navigated away cancel the fetch another request is awaiting.
+	// Coalesced callers therefore share whichever policy started the call.
 	return cachedFetch(`nearestObs:${speciesCode}:${la}:${ln}:${b}`, OBS_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
 			`/data/nearest/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&back=${b}&includeProvisional=true&maxResults=5`,
-			apiKey
+			apiKey,
+			{ deadlineMs: opts.deadlineMs }
+		)
+	);
+}
+
+/**
+ * Recent observations of ONE species inside ONE region — the ladder's rung
+ * (td-73e6f9).
+ *
+ * This is the endpoint that makes "nearest, any distance" viable again.
+ * `/data/nearest/geo/recent` does a radial scan whose cost grows with the
+ * species' record volume, so a common bird far from its range never returns;
+ * this one is region-indexed and answers in the same fraction of a second
+ * whether the region is empty or huge (measured 2026-09-01: Black-capped
+ * Chickadee across all of New York, 2,071 rows, 0.45 s; European Robin across
+ * Great Britain, 4,288 rows, 0.45 s; an empty state 0.24 s / 2 bytes).
+ *
+ * Parameter choices are pinned, not defaulted:
+ * - `includeProvisional=true` matches `nearestObsOfSpecies`. This endpoint
+ *   defaults it FALSE, so omitting it would silently change which reports
+ *   count as "nearest" depending on which path answered.
+ * - `maxResults=10000` is the documented ceiling. eBird does not return rows
+ *   in distance order, so a truncated payload can hide the closest report —
+ *   callers must treat a full 10,000 as saturated rather than complete.
+ * - An 8 s deadline is built in here rather than inherited: measured rungs run
+ *   0.24–0.49 s, and a ladder that let rungs use the 45 s module ceiling could
+ *   stack past nginx's 60 s cut.
+ */
+export const REGION_PROBE_DEADLINE_MS = 8_000;
+export const REGION_PROBE_MAX_RESULTS = 10_000;
+
+export async function recentSpeciesInRegion(
+	apiKey: string,
+	regionCode: string,
+	speciesCode: string,
+	back: number
+): Promise<CachedResult<EbirdObs[]>> {
+	if (!validEbirdSpeciesCode(speciesCode)) {
+		throw new EbirdError('Unrecognized species code.', 400);
+	}
+	const region = regionCode.trim();
+	// Clamped BEFORE both the URL and the cache key, so `back=0` and `back=1`
+	// cannot occupy different keys while fetching identical data.
+	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
+	return cachedFetch(`spReg:${region}:${speciesCode}:${b}`, OBS_TTL_MIN, () =>
+		ebirdFetch<EbirdObs[]>(
+			`/data/obs/${encodeURIComponent(region)}/recent/${encodeURIComponent(speciesCode)}` +
+				`?back=${b}&includeProvisional=true&maxResults=${REGION_PROBE_MAX_RESULTS}`,
+			apiKey,
+			{ deadlineMs: REGION_PROBE_DEADLINE_MS }
 		)
 	);
 }
@@ -454,7 +564,11 @@ interface TaxonEntry {
 
 /** Full taxonomy pull (~17k rows) into taxonomy_cache. Re-run quarterly or on demand. */
 export async function syncTaxonomy(apiKey: string): Promise<number> {
-	const taxa = await ebirdFetch<TaxonEntry[]>('/ref/taxonomy/ebird?fmt=json', apiKey);
+	// Exempt from the module ceiling: this is a multi-megabyte download on the
+	// worker, not a request path, and 45 s would be far too tight.
+	const taxa = await ebirdFetch<TaxonEntry[]>('/ref/taxonomy/ebird?fmt=json', apiKey, {
+		deadlineMs: 180_000
+	});
 	if (!Array.isArray(taxa) || taxa.length === 0) {
 		throw new EbirdError('Taxonomy endpoint returned no rows — aborting sync.');
 	}

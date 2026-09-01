@@ -32,7 +32,18 @@
     {#if t.error}
       <p class="muted">{t.error}</p>
     {:else if t.rows.length === 0}
-      <p class="muted">No reports in the last {data.backDays} days.</p>
+      {#if t.via === "ladder"}
+        <!-- The region search does not cover everywhere, and a capped search
+             stopped early — "no reports" would claim a search we didn't run. -->
+        <p class="muted">
+          No reports in the {t.searched.regions} regions searched.
+          <a href="https://ebird.org/map/{t.speciesCode}" target="_blank" rel="noopener"
+            >See its map on eBird ↗</a
+          >
+        </p>
+      {:else}
+        <p class="muted">No reports in the last {data.backDays} days.</p>
+      {/if}
     {:else}
       {#each t.rows as o (o.locId + o.obsDt)}
         <div class="nrow">
@@ -62,6 +73,14 @@
           </div>
         </div>
       {/each}
+    {/if}
+    {#if !t.error && t.via === "ladder" && (t.rows.length > 0 || !t.proven)}
+      <p class="muted via">
+        {#if t.rows.length > 0}
+          Found by searching {t.searched.regions} regions outward from home.
+        {/if}
+        {#if !t.proven}Some closer regions couldn't be checked.{/if}
+      </p>
     {/if}
   </section>
 {/snippet}
@@ -225,6 +244,10 @@
   }
   .freq {
     font-weight: 400;
+  }
+  .via {
+    margin-top: 8px;
+    font-size: 0.82rem;
   }
   .searchcard form {
     display: flex;

@@ -545,6 +545,55 @@ export async function pruneHistory(): Promise<void> {
 	// Need-alert history (/alerts): half a year is plenty of lookback; the
 	// re-alert memory (need_alerts_sent) is separate and never pruned.
 	await query(`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days'`);
+	await pruneEbirdCache();
+}
+
+/**
+ * `ebird_cache` has no eviction of its own — the TTL decides FRESHNESS, and a
+ * row living past its TTL is deliberately kept as the fail-soft fallback when
+ * eBird errors (cs.md: "fall back to cached data"). Rows otherwise persist
+ * until an admin flushes the whole table.
+ *
+ * That was survivable while keys were bounded. The nearest ladder (td-73e6f9)
+ * adds `spReg:` keys keyed by species × region × window, and a single region
+ * payload can exceed a megabyte, so the family needs a ceiling.
+ *
+ * SCOPED BY KEY FAMILY, never blanket, and by an ALLOW-list rather than a
+ * deny-list: forgetting to add a new short-TTL family here means it simply is
+ * not pruned, while forgetting to EXCLUDE a new long-TTL family would delete
+ * live data. The two mistakes are not equally bad.
+ *
+ * Listed families all hold a 30-minute or 24-hour TTL, so a 48-hour floor
+ * still leaves a generous fail-soft window. Deliberately absent: `regions:`,
+ * `tideStations:v1` and `tidePred:` carry THIRTY-DAY TTLs — pruning them at
+ * 48 hours would evict rows that are still fresh, re-download a ~2 MB NOAA
+ * station list every other day, and strip the county-name fallback that
+ * hotspot pages read straight out of this table (GROK P1-3).
+ */
+const PRUNABLE_CACHE_FAMILIES = [
+	'spReg', // ladder region probes — species × region × window, up to ~1 MB each
+	'obs',
+	'notable',
+	'geo',
+	'geonote',
+	'geosp',
+	'hotspotObs2',
+	'nearestObs',
+	'hotspots',
+	'hotspotsRegion'
+] as const;
+
+export async function pruneEbirdCache(): Promise<number> {
+	const r = await query<{ n: string }>(
+		`WITH d AS (
+		   DELETE FROM ebird_cache
+		    WHERE fetched_at < NOW() - interval '48 hours'
+		      AND split_part(cache_key, ':', 1) = ANY($1::text[])
+		   RETURNING 1
+		 ) SELECT COUNT(*) AS n FROM d`,
+		[[...PRUNABLE_CACHE_FAMILIES]]
+	);
+	return Number(r.rows[0]?.n ?? 0);
 }
 
 // ---------------------------------------------------------------------------

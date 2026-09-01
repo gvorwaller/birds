@@ -846,6 +846,45 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     expect(await getJob(a.jobId)).toBeNull();
     expect(await getJob(keep.jobId)).not.toBeNull();
   });
+
+  it("prunes stale short-TTL cache families and spares the 30-day ones", async () => {
+    const put = async (key: string, ageDays: number) =>
+      query(
+        `INSERT INTO ebird_cache (cache_key, payload, fetched_at)
+         VALUES ($1, '[]'::jsonb, NOW() - ($2 || ' days')::interval)
+         ON CONFLICT (cache_key) DO UPDATE
+           SET payload = EXCLUDED.payload, fetched_at = EXCLUDED.fetched_at`,
+        [key, String(ageDays)],
+      );
+    const alive = async (key: string) =>
+      (await query("SELECT 1 FROM ebird_cache WHERE cache_key = $1", [key])).rows
+        .length > 0;
+
+    // Ladder probes are the reason this job exists: species × region × window,
+    // up to ~1 MB each, and nothing evicted them before.
+    await put("spReg:PRUNETEST-A:bkcchi:14", 3);
+    await put("geosp:PRUNETEST:30.00:-81.00:40:7", 3);
+    // Fresh enough to keep as a fail-soft fallback.
+    await put("spReg:PRUNETEST-B:bkcchi:14", 1);
+    // THIRTY-day TTLs: still fresh at a week, and hotspot pages read region
+    // names straight out of this table.
+    await put("regions:subnational2:PRUNETEST-FL", 7);
+    await put("tideStations:PRUNETEST", 7);
+    await put("tidePred:PRUNETEST:2026-09-01", 7);
+
+    try {
+      await pruneHistory();
+
+      expect(await alive("spReg:PRUNETEST-A:bkcchi:14")).toBe(false);
+      expect(await alive("geosp:PRUNETEST:30.00:-81.00:40:7")).toBe(false);
+      expect(await alive("spReg:PRUNETEST-B:bkcchi:14")).toBe(true);
+      expect(await alive("regions:subnational2:PRUNETEST-FL")).toBe(true);
+      expect(await alive("tideStations:PRUNETEST")).toBe(true);
+      expect(await alive("tidePred:PRUNETEST:2026-09-01")).toBe(true);
+    } finally {
+      await query("DELETE FROM ebird_cache WHERE cache_key LIKE '%PRUNETEST%'");
+    }
+  });
 });
 
 describe.runIf(!dbUp)("job queue DB suite", () => {

@@ -20,8 +20,8 @@ import {
   notableNearbyObs,
   recentNearbySpeciesObs,
   EbirdError,
-  nearestObsOfSpecies,
 } from "$server/ebird";
+import { nearestSpeciesReports } from "$server/nearest-ladder";
 import { ownerGalleryUrl } from "$server/access";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
@@ -39,7 +39,7 @@ import {
   SPECIES_DEFAULT_DIST_KM,
 } from "$lib/species-context";
 
-export const load: PageServerLoad = async ({ locals, params, url }) => {
+export const load: PageServerLoad = async ({ locals, params, url, request }) => {
   const userId = locals.scopeId!; // the data owner this account reads
   const code = params.code;
   const hasGallery = (await ownerGalleryUrl(userId)) != null;
@@ -197,26 +197,40 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const loadNearest = async (): Promise<{
     rows: SpeciesObservationDetail[];
     stale: boolean;
+    via: "nearest" | "ladder";
+    searched: { regions: number; boundKm: number | null };
+    capped: boolean;
+    partial: boolean;
+    proven: boolean;
   }> => {
-    const res = await nearestObsOfSpecies(
-      apiKey!,
-      code,
-      home!.lat,
-      home!.lon,
-      backDays,
-    );
+    // The direct endpoint first, then the region ladder when it stalls
+    // (td-73e6f9). A 25s fast-path deadline rather than /nearest's 10s: this
+    // section is STREAMED, so waiting costs the user nothing already-rendered,
+    // and it clears the measured 23.4s structural successes instead of
+    // abandoning a call that would have answered.
+    const res = await nearestSpeciesReports(apiKey!, code, home!, backDays, {
+      fastDeadlineMs: 25_000,
+      probeBudget: 40,
+      ladderDeadlineMs: 20_000,
+      signal: request.signal,
+    });
     // DB-only (CODEX1 P1): no Google Places fanout for unbounded rows.
-    const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
+    const placeIds = await hydrateEbirdLocationPlaceIds(res.rows, {
       resolveMissing: false,
     });
     // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
     // lookup — nearest is unbounded, links derive from the L-id shape.
     return {
-      rows: speciesObservationDetails(res.data, home!, placeIds, new Set()).slice(
+      rows: speciesObservationDetails(res.rows, home!, placeIds, new Set()).slice(
         0,
         5,
       ),
       stale: res.stale,
+      via: res.via,
+      searched: res.searched,
+      capped: res.capped,
+      partial: res.partial,
+      proven: res.proven,
     };
   };
   const nearest =

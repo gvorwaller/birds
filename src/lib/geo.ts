@@ -198,7 +198,7 @@ function lonSpan(box: RegionBox): number {
  * longitude from 51–71°N. A genuinely global polar extent (Antarctica) is
  * the one safe wide case.
  */
-function boxSupportsProximity(box: RegionBox): boolean {
+export function boxSupportsProximity(box: RegionBox): boolean {
   const span = lonSpan(box);
   const touchesPole = box.minLat <= -89.999 || box.maxLat >= 89.999;
   return span <= 180 || (touchesPole && span >= 359.999);

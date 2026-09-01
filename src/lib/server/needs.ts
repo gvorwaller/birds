@@ -4,6 +4,7 @@
  * seen/need against the same list.
  */
 import { query } from "$lib/db";
+import { mapWithConcurrency } from "$server/concurrency";
 import { haversineKm } from "$lib/geo";
 import { verifiedHotspotLocIds } from "$server/hotspots";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
@@ -286,25 +287,6 @@ function sortNeedsByActivity(a: SpeciesActivity, b: SpeciesActivity): number {
     b.nReports - a.nReports ||
     a.comName.localeCompare(b.comName)
   );
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const workerCount = Math.min(limit, items.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        results[index] = await fn(items[index]);
-      }
-    }),
-  );
-  return results;
 }
 
 /** `aggregate()`'s place identity — `locId || coords`, `||` not `??`. */

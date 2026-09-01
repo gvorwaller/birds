@@ -4,7 +4,7 @@
  *
  * The `regions` table (0043) is static reference data seeded offline by
  * scripts/generate-regions.mjs — so it is loaded ONCE per process and served
- * from memory (~4,250 rows ≈ 300 KB). Deploys restart the process right
+ * from memory (3,621 rows ≈ 300 KB). Deploys restart the process right
  * after migrating, so a new seed is picked up by the same deploy that ships
  * it; there is deliberately no TTL, because the contrast with the deleted
  * region_centroids runtime cache is the whole point of the refactor.
@@ -20,7 +20,9 @@
  */
 import { query } from '$lib/db';
 import { parseRegionCode } from '$lib/region-code';
-import type { RegionBox } from '$lib/geo';
+import { boxSupportsProximity, type RegionBox } from '$lib/geo';
+// Inlined by Vite at build time — see EXCLUDED_PARENTS below.
+import EXCLUDED_CODES_RAW from '../../../backend/db/regions-excluded-codes.txt?raw';
 
 export interface Region {
 	code: string;
@@ -161,6 +163,71 @@ export async function countriesList(): Promise<Region[]> {
 /** A country's subnational1 regions, name-sorted. Replaces `subregions(…, 'subnational1')` on read paths. */
 export async function subnational1Of(country: string): Promise<Region[]> {
 	return (await regionIndex()).sub1ByCountry.get(country) ?? [];
+}
+
+/**
+ * Countries eBird lists a subnational1 for that we could not seed — the file
+ * the generator writes when eBird has never geocoded a code (0,0 coordinates,
+ * and `lat`/`lon` are NOT NULL; fabricating one is forbidden by cs.md).
+ *
+ * Inlined at build time rather than read from disk at runtime: the deployed
+ * process must not depend on a repo path resolving relative to its cwd.
+ */
+const EXCLUDED_PARENTS: ReadonlySet<string> = new Set(
+	EXCLUDED_CODES_RAW.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0 && !line.startsWith('#'))
+		.map((code) => parseRegionCode(code)?.country)
+		.filter((country): country is string => !!country)
+);
+
+/**
+ * Candidates for a proximity SEARCH that walks outward from a point
+ * (td-73e6f9's nearest ladder), as opposed to the label/picker accessors above.
+ *
+ * Three arms, and the reasoning for each matters:
+ *
+ * 1. Every subnational1 — the tightest boxes we have, so the best bounds.
+ * 2. Countries with NO seeded subnational1 — otherwise their territory is
+ *    unreachable entirely.
+ * 3. Countries that DO have seeded subnational1s but are missing at least one
+ *    to the excluded list. Probing the country covers the hole its missing
+ *    children would leave. (Hungary is missing 22 counties, Latvia 112,
+ *    Moldova 29 — searching only the seeded children would silently skip
+ *    them while the UI claimed the area was searched.)
+ *
+ * Note arm 3 keys on the EXCLUDED list, not on "a seeded code that also
+ * appears in the excluded file" — the generator deletes excluded codes from
+ * the seed, so that intersection is empty by construction and the arm would
+ * never fire (GROK P1-2).
+ *
+ * Regions whose box cannot support proximity are omitted: an antimeridian
+ * region's conventional [-180, 180] box is ~360° wide, so it has no usable
+ * lower bound — it would sort first from everywhere and, because a zero bound
+ * can never be exceeded, would also stop a branch-and-bound search from ever
+ * terminating. They remain reachable through the direct nearest endpoint.
+ */
+export async function allProximityRegions(): Promise<{
+	candidates: Region[];
+	/** Excluded for an unusable box — surfaced so callers can be honest about coverage. */
+	unsafe: Region[];
+}> {
+	const idx = await regionIndex();
+	const candidates: Region[] = [];
+	const unsafe: Region[] = [];
+	const take = (r: Region) => {
+		// A null box is not "unsafe" — it has no bound at all, and the ladder
+		// handles it by sorting on the centroid and never pruning on it.
+		if (r.box && !boxSupportsProximity(r.box)) unsafe.push(r);
+		else candidates.push(r);
+	};
+
+	for (const country of idx.countries) {
+		const children = idx.sub1ByCountry.get(country.code) ?? [];
+		for (const child of children) take(child);
+		if (children.length === 0 || EXCLUDED_PARENTS.has(country.code)) take(country);
+	}
+	return { candidates, unsafe };
 }
 
 export async function regionCoords(code: string): Promise<{ lat: number; lon: number } | null> {

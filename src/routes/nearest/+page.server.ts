@@ -1,11 +1,11 @@
 import type { PageServerLoad } from "./$types";
 import { query } from "$lib/db";
+import { getEbirdApiKey, validEbirdSpeciesCode, EbirdError } from "$server/ebird";
 import {
-  getEbirdApiKey,
-  nearestObsOfSpecies,
-  validEbirdSpeciesCode,
-  EbirdError,
-} from "$server/ebird";
+  createProbeGate,
+  nearestSpeciesReports,
+  type ProbeGate,
+} from "$server/nearest-ladder";
 import { forecastNeedsNear } from "$server/forecast";
 import { AUTO_RUN_CAP, NEAREST_BACK_DAYS, pickAutoRunTargets } from "$server/nearest";
 import { seenSet } from "$server/needs";
@@ -24,33 +24,61 @@ export interface NearestTarget {
   rows: SpeciesObservationDetail[];
   stale: boolean;
   error: string | null;
+  /** How the answer was found — 'ladder' means our regions, not all of eBird. */
+  via: "nearest" | "ladder";
+  searched: { regions: number; boundKm: number | null };
+  /** Empty rows do NOT mean "nowhere" when this is true. */
+  capped: boolean;
+  proven: boolean;
 }
 
+/**
+ * This page is AWAITED, not streamed, and auto-runs up to six species — so
+ * its budgets are page-global (a shared probe gate and a shorter fast-path
+ * deadline), not per species. Six independent ladders would otherwise open
+ * `species × wave` sockets and stack past nginx's 60s proxy timeout.
+ */
 async function lookupSpecies(
   apiKey: string,
   code: string,
   comName: string,
   areaFreq: number | null,
   home: { lat: number; lon: number },
+  gate: ProbeGate,
+  signal?: AbortSignal,
 ): Promise<NearestTarget> {
   try {
-    const res = await nearestObsOfSpecies(
-      apiKey,
-      code,
-      home.lat,
-      home.lon,
-      NEAREST_BACK_DAYS,
-    );
+    const res = await nearestSpeciesReports(apiKey, code, home, NEAREST_BACK_DAYS, {
+      // Shorter than the species page's 25s: nothing here has rendered yet,
+      // so every second is a second of blank page.
+      fastDeadlineMs: 10_000,
+      probeBudget: 8,
+      ladderDeadlineMs: 15_000,
+      gate,
+      signal,
+    });
     // DB-only: resolveMissing would fan out live Google Places lookups for
     // every unknown loc — and nearest is UNBOUNDED, so distant locations are
     // always unknown (6 targets × 5 rows = up to 30 lookups per view —
     // CODEX1 P1). Known ids enhance MapLink; unknown fall back to coords.
-    const placeIds = await hydrateEbirdLocationPlaceIds(res.data, {
+    const placeIds = await hydrateEbirdLocationPlaceIds(res.rows, {
       resolveMissing: false,
     });
-    // Our haversine order, closest 3 (GROK pin) — never API order.
-    const rows = speciesObservationDetails(res.data, home, placeIds, new Set()).slice(0, 3);
-    return { speciesCode: code, comName, areaFreq, rows, stale: res.stale, error: null };
+    // Our haversine order, closest 3 (GROK pin) — never API order. The engine
+    // returns five for the species page; this page's three is unchanged.
+    const rows = speciesObservationDetails(res.rows, home, placeIds, new Set()).slice(0, 3);
+    return {
+      speciesCode: code,
+      comName,
+      areaFreq,
+      rows,
+      stale: res.stale,
+      error: null,
+      via: res.via,
+      searched: res.searched,
+      capped: res.capped,
+      proven: res.proven,
+    };
   } catch (err) {
     // Partial failure keeps the page alive (GROK empty-state pin).
     return {
@@ -60,11 +88,18 @@ async function lookupSpecies(
       rows: [],
       stale: false,
       error: err instanceof EbirdError ? err.message : "Lookup failed.",
+      via: "nearest",
+      searched: { regions: 0, boundKm: null },
+      capped: false,
+      proven: false,
     };
   }
 }
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, request }) => {
+  // One allowance for the whole page: a single explicit lookup may use it all,
+  // while six auto-run targets share it rather than each opening their own.
+  const probeGate = createProbeGate(24);
   const scopeId = locals.scopeId!;
   const month = calendarMonth();
 
@@ -106,7 +141,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (seen.has(pickedCode)) {
       searchedSeen = { speciesCode: pickedCode, comName: tx.com_name };
     } else if (apiKey && home) {
-      searched = await lookupSpecies(apiKey, pickedCode, tx.com_name, null, home);
+      searched = await lookupSpecies(
+        apiKey,
+        pickedCode,
+        tx.com_name,
+        null,
+        home,
+        probeGate,
+        request.signal,
+      );
     }
   } else if (q.length >= 2) {
     const like = `%${q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
@@ -145,7 +188,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       // lookupSpecies never rejects, so all() has allSettled semantics).
       targets = await Promise.all(
         picks.map((s) =>
-          lookupSpecies(apiKey, s.code, s.comName, s.areaFreq, home),
+          lookupSpecies(
+            apiKey,
+            s.code,
+            s.comName,
+            s.areaFreq,
+            home,
+            probeGate,
+            request.signal,
+          ),
         ),
       );
     } catch (err) {
