@@ -190,6 +190,42 @@ describe("racing the two strategies", () => {
     expect(ebird.recentSpeciesInRegion).toHaveBeenCalled();
   });
 
+  it("does not let an EMPTY search beat a direct answer that is moments away", async () => {
+    // The live regression this pins: Streak-backed Oriole's nearest report is
+    // in Honduras, out of the search's reach, so the search finished empty at
+    // 3.5s while the direct call returned that report at 3.6s. "First to
+    // finish" discarded a correct answer a tenth of a second away.
+    // Head start elapses at 30ms and the empty search settles just after, so
+    // the direct answer at 45ms lands inside the 30ms grace that follows.
+    ebird.nearestObsOfSpecies.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(ok([obs(46)])), 45)),
+    );
+    serve({}); // every region empty — the search finds nothing, fast
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 30,
+    });
+
+    expect(res.via).toBe("nearest");
+    expect(res.rows).toHaveLength(1);
+  });
+
+  it("keeps the honest empty when the grace expires too", async () => {
+    // A direct call that grinds for a minute must not resurrect the stall.
+    ebird.nearestObsOfSpecies.mockReturnValue(new Promise(() => {}));
+    serve({});
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 5,
+    });
+
+    expect(res.via).toBe("ladder");
+    expect(res.rows).toHaveLength(0);
+    expect(res.proven).toBe(false);
+  });
+
   it("spends no probes at all when the direct call answers inside the head start", async () => {
     ebird.nearestObsOfSpecies.mockResolvedValue(ok([obs(31.2)]));
     const res = await nearestSpeciesReports("key", SP, HOME, 14, {

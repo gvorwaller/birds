@@ -180,8 +180,8 @@
             .targets.length === 1
             ? ""
             : "s"} for {MONTH_NAMES[data.month - 1]} near
-          {data.homeLabel ?? "home"} — last {data.backDays} days, cached 3
-          hours{data.likelyCount > data.autoRunCap}
+          {data.homeLabel ?? "home"} — last {data.backDays} days, cached 3 hours{data.likelyCount >
+          data.autoRunCap
             ? ` (of ${data.likelyCount} likely this month)`
             : ""}.
         </p>

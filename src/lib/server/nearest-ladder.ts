@@ -507,7 +507,36 @@ export async function nearestSpeciesReports(
     stopLadder.abort();
     return fromFast(outcome.res);
   }
-  if (outcome.kind === "ladder") return outcome.res;
+  if (outcome.kind === "ladder") {
+    if (outcome.res.rows.length > 0) return outcome.res;
+    // AN EMPTY SEARCH IS NOT AN ANSWER, so it must not win the race.
+    //
+    // Our coverage has holes and a budget; the direct call sees all of eBird.
+    // Measured: Streak-backed Oriole's nearest report is in HONDURAS, which
+    // the region search cannot reach inside its budget — it finished empty at
+    // 3.5s while the direct call was about to return that report at 3.6s.
+    // Racing on "first to finish" threw away a correct answer that was a
+    // tenth of a second away.
+    //
+    // So when the search comes back with nothing, give the direct call one
+    // more head start's worth of grace. That reuses a number already in play
+    // rather than inventing another, and it cannot resurrect the stall this
+    // design exists to dodge: a species whose direct lookup grinds for a
+    // minute simply exhausts the grace and keeps the honest empty result.
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const grace = new Promise<{ kind: "grace" }>((resolve) => {
+      graceTimer = setTimeout(() => resolve({ kind: "grace" }), opts.headStartMs);
+    });
+    let late: FastOutcome | { kind: "grace" };
+    try {
+      late = await Promise.race([fast, grace]);
+    } finally {
+      clearTimeout(graceTimer);
+    }
+    if (late.kind === "fast") return fromFast(late.res);
+    if (late.kind === "fastErr" && isFatalUpstream(late.err)) throw late.err;
+    return outcome.res;
+  }
   // The direct call lost the race by failing. Wait for the search it was
   // already racing, which is well underway.
   if (isFatalUpstream(outcome.err)) {
