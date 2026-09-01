@@ -580,7 +580,8 @@ const PRUNABLE_CACHE_FAMILIES = [
 	'hotspotObs2',
 	'nearestObs',
 	'hotspots',
-	'hotspotsRegion'
+	'hotspotsRegion',
+	'weather'
 ] as const;
 
 export async function pruneEbirdCache(): Promise<number> {

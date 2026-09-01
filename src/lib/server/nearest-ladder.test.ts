@@ -214,6 +214,59 @@ describe("racing the two strategies", () => {
     // 6 candidates = two waves of 3, once — not twice.
     expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(6);
   });
+
+  it("stops scheduling new waves when the direct leg fails fatally after the race starts", async () => {
+    ebird.nearestObsOfSpecies.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new ebird.EbirdError("rate limit", 429)), 5),
+        ),
+    );
+    ebird.recentSpeciesInRegion.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(ok([])), 20)),
+    );
+
+    await expect(
+      nearestSpeciesReports("key", SP, HOME, 14, {
+        ...OPTS,
+        headStartMs: 1,
+      }),
+    ).rejects.toThrow("rate limit");
+    // Let the deliberately uncancelled in-flight wave settle. It may populate
+    // the shared cache, but the abort must prevent a second wave.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(3);
+  });
+
+  it("enforces one page-global probe concurrency ceiling across species", async () => {
+    ebird.nearestObsOfSpecies.mockReturnValue(new Promise(() => {}));
+    let active = 0;
+    let peak = 0;
+    ebird.recentSpeciesInRegion.mockImplementation(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active--;
+      return ok([]);
+    });
+    const gate = createProbeGate(12);
+
+    await Promise.all([
+      nearestSpeciesReports("key", SP, HOME, 14, {
+        ...OPTS,
+        probeBudget: 6,
+        gate,
+      }),
+      nearestSpeciesReports("key", "amerob", HOME, 14, {
+        ...OPTS,
+        probeBudget: 6,
+        gate,
+      }),
+    ]);
+
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(12);
+    expect(peak).toBe(3);
+  });
 });
 
 describe("top-N stop rule", () => {
@@ -386,6 +439,26 @@ describe("budgets and deadlines", () => {
       gate,
     });
     expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
+    expect(res.capped).toBe(true);
+  });
+
+  it("does not launch a queued probe after the ladder deadline", async () => {
+    let clock = 0;
+    const gate = createProbeGate(3, 1);
+    ebird.recentSpeciesInRegion.mockImplementation(async () => {
+      clock = 100;
+      return ok([]);
+    });
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      gate,
+      ladderDeadlineMs: 50,
+      now: () => clock,
+    });
+
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(1);
+    expect(res.searched.regions).toBe(1);
     expect(res.capped).toBe(true);
   });
 

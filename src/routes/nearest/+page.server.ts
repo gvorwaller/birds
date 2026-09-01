@@ -15,6 +15,7 @@ import { calendarMonth } from "$lib/forecast-calendar";
 import { normalizeNearMeRadiusKm } from "$lib/near-me-radius";
 import { error } from "@sveltejs/kit";
 
+const NEAREST_PAGE_WALL_MS = 40_000;
 
 export interface NearestTarget {
   speciesCode: string;
@@ -95,6 +96,14 @@ async function lookupSpecies(
 }
 
 export const load: PageServerLoad = async ({ locals, url, request }) => {
+  // One page-wide ceiling, started before any DB/forecast work. Queued ladder
+  // probes check this signal before they reach eBird; an already-running probe
+  // may finish under its own 8s endpoint deadline and populate the shared
+  // cache. That bounds the eBird portion to 40s + one 8s overshoot < nginx 60s.
+  const pageSignal = AbortSignal.any([
+    request.signal,
+    AbortSignal.timeout(NEAREST_PAGE_WALL_MS),
+  ]);
   // One allowance for the whole page: a single explicit lookup may use it all,
   // while six auto-run targets share it rather than each opening their own.
   const probeGate = createProbeGate(24);
@@ -146,7 +155,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
         null,
         home,
         probeGate,
-        request.signal,
+        pageSignal,
       );
     }
   } else if (q.length >= 2) {
@@ -193,7 +202,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
             s.areaFreq,
             home,
             probeGate,
-            request.signal,
+            pageSignal,
           ),
         ),
       );

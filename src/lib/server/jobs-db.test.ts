@@ -864,6 +864,7 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     // up to ~1 MB each, and nothing evicted them before.
     await put("spReg:PRUNETEST-A:bkcchi:14", 3);
     await put("geosp:PRUNETEST:30.00:-81.00:40:7", 3);
+    await put("weather:PRUNETEST:30.00:-81.00", 3);
     // Fresh enough to keep as a fail-soft fallback.
     await put("spReg:PRUNETEST-B:bkcchi:14", 1);
     // THIRTY-day TTLs: still fresh at a week, and hotspot pages read region
@@ -877,6 +878,7 @@ describe.runIf(dbUp)("listing, health, prune", () => {
 
       expect(await alive("spReg:PRUNETEST-A:bkcchi:14")).toBe(false);
       expect(await alive("geosp:PRUNETEST:30.00:-81.00:40:7")).toBe(false);
+      expect(await alive("weather:PRUNETEST:30.00:-81.00")).toBe(false);
       expect(await alive("spReg:PRUNETEST-B:bkcchi:14")).toBe(true);
       expect(await alive("regions:subnational2:PRUNETEST-FL")).toBe(true);
       expect(await alive("tideStations:PRUNETEST")).toBe(true);

@@ -123,13 +123,51 @@ export interface NearestLadderOpts {
 export interface ProbeGate {
   take(): boolean;
   remaining(): number;
+  /**
+   * Run one reserved probe under the page-global socket ceiling. A probe that
+   * was queued but whose species search has since stopped is skipped before it
+   * reaches eBird.
+   */
+  run<T>(
+    probe: () => Promise<T>,
+    shouldStart?: () => boolean,
+  ): Promise<T | undefined>;
 }
 
-export function createProbeGate(total: number): ProbeGate {
+export function createProbeGate(
+  total: number,
+  concurrency = LADDER_WAVE,
+): ProbeGate {
   let left = Math.max(0, total);
+  let active = 0;
+  const limit = Math.max(1, Math.trunc(concurrency));
+  const queued: Array<() => void> = [];
+
+  const pump = () => {
+    while (active < limit && queued.length > 0) queued.shift()!();
+  };
+
   return {
     take: () => (left > 0 ? (left--, true) : false),
     remaining: () => left,
+    run: <T>(probe: () => Promise<T>, shouldStart?: () => boolean) =>
+      new Promise<T | undefined>((resolve, reject) => {
+        queued.push(() => {
+          if (shouldStart && !shouldStart()) {
+            resolve(undefined);
+            queueMicrotask(pump);
+            return;
+          }
+          active++;
+          probe()
+            .then(resolve, reject)
+            .finally(() => {
+              active--;
+              pump();
+            });
+        });
+        pump();
+      }),
   };
 }
 
@@ -319,23 +357,46 @@ export async function nearestSpeciesReports(
         wave,
         LADDER_WAVE,
         async (c) => {
-          try {
-            const res = await recentSpeciesInRegion(
-              apiKey,
-              c.region.code,
-              speciesCode,
-              back,
-            );
-            return { c, res, err: null as unknown };
-          } catch (e) {
-            return { c, res: null, err: e };
-          }
+          const probe = async () => {
+            try {
+              const res = await recentSpeciesInRegion(
+                apiKey,
+                c.region.code,
+                speciesCode,
+                back,
+              );
+              return { c, res, err: null as unknown, skipped: false as const };
+            } catch (e) {
+              return { c, res: null, err: e, skipped: false as const };
+            }
+          };
+          const outcome = opts.gate
+            ? await opts.gate.run(
+                probe,
+                () =>
+                  !ladderSignal.aborted &&
+                  now() - startedAt < opts.ladderDeadlineMs,
+              )
+            : await probe();
+          return (
+            outcome ?? {
+              c,
+              res: null,
+              err: null,
+              skipped: true as const,
+            }
+          );
         },
       );
-      probed += wave.length;
+      probed += outcomes.filter((outcome) => !outcome.skipped).length;
 
       let breakerTripped = false;
-      for (const { c, res, err } of outcomes) {
+      for (const { c, res, err, skipped } of outcomes) {
+        if (skipped) {
+          capped = true;
+          noteUnresolved(c.bound);
+          continue;
+        }
         if (!res) {
           if (isFatalUpstream(err)) {
             // Abort the whole ladder: every remaining rung would fail
@@ -449,6 +510,12 @@ export async function nearestSpeciesReports(
   if (outcome.kind === "ladder") return outcome.res;
   // The direct call lost the race by failing. Wait for the search it was
   // already racing, which is well underway.
-  if (isFatalUpstream(outcome.err)) throw outcome.err;
+  if (isFatalUpstream(outcome.err)) {
+    // Current probes may finish and populate the shared cache, but a bad key
+    // or rate limit must prevent the abandoned ladder from scheduling waves in
+    // the background after this request has already thrown.
+    stopLadder.abort();
+    throw outcome.err;
+  }
   return (await ladderPromise).res;
 }
