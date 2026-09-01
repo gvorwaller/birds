@@ -278,7 +278,28 @@ async function cachedFetchUncoalesced<T>(
 	}
 }
 
-const OBS_TTL_MIN = 30;
+/**
+ * How long a saved observation feed counts as fresh.
+ *
+ * Three hours, not the original thirty minutes (owner's call 2026-09-01): a
+ * given area gets a handful of new checklists a day, so re-asking every half
+ * hour bought almost nothing and cost a slow page on every visit. Missing a
+ * report for a couple of hours cannot meaningfully change "which birds are
+ * around" or "how far is the nearest one".
+ */
+const OBS_TTL_MIN = 180;
+
+/**
+ * Rare-bird feeds keep the SHORT window, deliberately.
+ *
+ * This is the one place where a late report is the whole point: the alerts
+ * worker reads this same cache to decide whether to push "a rarity was just
+ * reported near you" (job-handlers.ts), and it refuses to notify from a stale
+ * row at all. Stretching this to three hours would delay a notification about
+ * a bird someone would drive out to see, which is exactly the value the
+ * feature exists to deliver.
+ */
+const NOTABLE_TTL_MIN = 30;
 
 export async function recentObs(
 	apiKey: string,
@@ -297,7 +318,7 @@ export async function notableObs(
 	back: number
 ): Promise<CachedResult<EbirdObs[]>> {
 	const region = regionCode.trim();
-	return cachedFetch(`notable:${region}:${back}`, OBS_TTL_MIN, () =>
+	return cachedFetch(`notable:${region}:${back}`, NOTABLE_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
 			`/data/obs/${encodeURIComponent(region)}/recent/notable?back=${back}&detail=simple`,
 			apiKey
@@ -333,7 +354,7 @@ export async function notableNearbyObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
-	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () =>
+	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, NOTABLE_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
 			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
 			apiKey,

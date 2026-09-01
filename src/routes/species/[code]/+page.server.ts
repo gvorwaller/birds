@@ -209,7 +209,9 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
     // and it clears the measured 23.4s structural successes instead of
     // abandoning a call that would have answered.
     const res = await nearestSpeciesReports(apiKey!, code, home!, backDays, {
-      fastDeadlineMs: 25_000,
+      // A short head start, not a deadline: the direct endpoint answers a rare
+      // species well inside it, so those lookups never probe a region at all.
+      headStartMs: 3_000,
       probeBudget: 40,
       ladderDeadlineMs: 20_000,
       signal: request.signal,

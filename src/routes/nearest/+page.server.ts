@@ -49,9 +49,7 @@ async function lookupSpecies(
 ): Promise<NearestTarget> {
   try {
     const res = await nearestSpeciesReports(apiKey, code, home, NEAREST_BACK_DAYS, {
-      // Shorter than the species page's 25s: nothing here has rendered yet,
-      // so every second is a second of blank page.
-      fastDeadlineMs: 10_000,
+      headStartMs: 3_000,
       probeBudget: 8,
       ladderDeadlineMs: 15_000,
       gate,

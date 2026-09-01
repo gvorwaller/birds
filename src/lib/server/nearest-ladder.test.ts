@@ -102,7 +102,7 @@ function serve(byRegion: Record<string, unknown[]>, opts: { stale?: string[] } =
   );
 }
 
-const OPTS = { fastDeadlineMs: 10_000, probeBudget: 40, ladderDeadlineMs: 20_000 };
+const OPTS = { headStartMs: 0, probeBudget: 40, ladderDeadlineMs: 20_000 };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -137,6 +137,82 @@ describe("fast path", () => {
       ).rejects.toThrow("nope");
       expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("racing the two strategies", () => {
+  it("does not wait out a stalling direct call before searching", async () => {
+    // The whole point of racing: the direct endpoint grinds for a minute on
+    // exactly these lookups, and the region search answers in about a second.
+    // Waiting for the stall before starting made the fixed page slower than
+    // the answer needed.
+    let released: (v: unknown) => void = () => {};
+    ebird.nearestObsOfSpecies.mockReturnValue(
+      new Promise((r) => {
+        released = r;
+      }),
+    );
+    serve({ R1: [obs(31.1), obs(31.2), obs(31.3), obs(31.4), obs(31.5)] });
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 5,
+    });
+
+    expect(res.via).toBe("ladder");
+    expect(res.rows).toHaveLength(5);
+    released(ok([])); // the abandoned call settling must not matter
+  });
+
+  it("prefers the direct answer when it wins the race", async () => {
+    // It covers all of eBird rather than our seeded regions, so when it can
+    // answer at all it is the better answer.
+    ebird.nearestObsOfSpecies.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(ok([obs(30.4)])), 15)),
+    );
+    ebird.recentSpeciesInRegion.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(ok([])), 200)),
+    );
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 1,
+    });
+
+    expect(res.via).toBe("nearest");
+    expect(res.rows[0].lat).toBeCloseTo(30.4, 5);
+  });
+
+  it("spends no probes at all when the direct call answers inside the head start", async () => {
+    ebird.nearestObsOfSpecies.mockResolvedValue(ok([obs(31.2)]));
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 50,
+    });
+    expect(res.via).toBe("nearest");
+    expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
+  });
+
+  it("runs the search only once even though both legs await it", async () => {
+    // Starting it per-leg would double every upstream call.
+    let released: (v: unknown) => void = () => {};
+    ebird.nearestObsOfSpecies.mockReturnValue(
+      new Promise((_r, reject) => {
+        released = () => reject(new Error("late failure"));
+      }),
+    );
+    serve({ R1: [obs(31.1)] });
+
+    const p = nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      headStartMs: 1,
+    });
+    setTimeout(() => released(null), 30);
+    const res = await p;
+
+    expect(res.via).toBe("ladder");
+    // 6 candidates = two waves of 3, once — not twice.
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(6);
   });
 });
 

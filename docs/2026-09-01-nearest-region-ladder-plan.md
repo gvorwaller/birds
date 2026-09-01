@@ -1,5 +1,27 @@
 # Nearest reports by region ladder — replace the dying eBird endpoint
 
+**Status:** IMPLEMENTED (2026-09-01), with two owner-directed changes after the
+first build — recorded here because they replaced plan mandates:
+
+1. **The two strategies RACE; there is no fast-path deadline.** rev 3 waited up
+   to 25 s for the direct endpoint before starting the region search, then
+   deferred a "remember what failed last time" memo to claw the time back. The
+   owner rejected that as a workaround for a design that hadn't been thought
+   through. Now the direct call gets a 3 s head start and, if it hasn't
+   answered, the region search runs alongside it; first real answer wins.
+   Deletes three tuned numbers (25 s / 10 s fast deadlines, the memo) and one
+   whole deferred item. Measured: bkcchi **25.9 s → 4.0 s**, stbori unchanged
+   at 3.5 s with zero probes, eurrob1 9.7 s → 3.8 s.
+2. **Observation cache TTL 30 min → 3 hours** (`OBS_TTL_MIN`), owner's call: an
+   area gets a handful of new checklists a day, so re-asking every half hour
+   bought nothing. **Rare-bird feeds keep 30 min** (`NOTABLE_TTL_MIN`) — the
+   alerts worker reads that same cache to decide whether to push "a rarity was
+   just reported near you", and it refuses to notify from a stale row.
+
+Original plan below (rev 3).
+
+---
+
 **Status:** rev 3 (2026-09-01). CODEX1 mechanics review folded (7 P1 / 4 P2);
 GROK hostile review folded (5 P1 / 9 P2, verdict on rev 2: "do not implement as
 written" — two of CODEX1's accepted fixes were themselves wrong and are
