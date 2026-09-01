@@ -651,8 +651,7 @@
       </h2>
       {#if !data.wantNearest || data.nearest == null}
         <p class="muted">
-          How far away is the closest current report? One eBird lookup, any
-          distance from home.
+          How far away is the closest current report? Any distance from home.
         </p>
         <!-- Preserve every existing param (location context, back, returnTo)
              — a bare ?nearest=1 clobbered the query and silently retargeted
@@ -677,7 +676,7 @@
                would claim a search we did not run. -->
           <p class="muted">
             No reports in the {nearestView.current.data.searched.regions} regions
-            we searched.
+            searched.
             <a
               href="https://ebird.org/map/{data.taxon.species_code}"
               target="_blank"
