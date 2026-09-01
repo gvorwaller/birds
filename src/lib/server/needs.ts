@@ -313,6 +313,35 @@ function placeKeyOf(pl: SpeciesPlace): string {
 }
 
 /**
+ * One place, two cache generations. Additive counts (`nReports`/`totalCount`)
+ * come from a single generation — maxing them independently manufactures a
+ * total neither feed reported (1 report/12 birds vs 5 reports/8 birds → 5/12).
+ *
+ * Prefer the fuller report list; on a tied report count, the larger bird
+ * total (CODEX1 P2-1: 1/12 vs 1/2 must not publish 2). Recency fields stay
+ * with the newer observation at this locId so a last-seen date cannot walk
+ * back. googlePlaceId / isHotspot union: those are attributes, not counts.
+ */
+function mergePlace(prev: SpeciesPlace, incoming: SpeciesPlace): SpeciesPlace {
+  const countsFrom =
+    incoming.nReports !== prev.nReports
+      ? incoming.nReports > prev.nReports
+        ? incoming
+        : prev
+      : incoming.totalCount > prev.totalCount
+        ? incoming
+        : prev;
+  const newest = incoming.lastObsDt > prev.lastObsDt ? incoming : prev;
+  return {
+    ...newest,
+    nReports: countsFrom.nReports,
+    totalCount: countsFrom.totalCount,
+    googlePlaceId: incoming.googlePlaceId ?? prev.googlePlaceId ?? null,
+    isHotspot: incoming.isHotspot || prev.isHotspot,
+  };
+}
+
+/**
  * Fold a species' detail feed into its base row — a MERGE, never a replace
  * (td-d561a8 §1d, GROK P1-1).
  *
@@ -323,11 +352,10 @@ function placeKeyOf(pl: SpeciesPlace): string {
  * cache-skewed payload) — a shown count correcting downward is exactly the
  * dishonest-claim pattern.
  *
- * Union by place identity, taking the richer record per place, guarantees the
- * three summary numbers are monotonic: the detail feed's places are a superset
- * in practice, and per-place counts take the max. The summary is then derived
- * FROM the merged places, so "5 locations" always describes the same list the
- * "Show all 5 places" toggle opens — the two cannot disagree.
+ * Union by place identity. Per place, additive counts come from one generation
+ * (see `mergePlace`); they are not maxed independently. The summary is then
+ * derived FROM the merged places, so "5 locations" always describes the same
+ * list the "Show all 5 places" toggle opens — the two cannot disagree.
  *
  * The `{ lastObsDt, lastLat, lastLng, googlePlaceId, distanceKm }` tuple moves
  * together, from whichever feed saw the newer observation. Freezing the
@@ -349,19 +377,7 @@ function mergeEnrichedNeed<T extends SpeciesActivity>(
       byKey.set(key, pl);
       continue;
     }
-    // Report count alone cannot choose the richer record: two cache
-    // generations can carry the same number of reports but different bird
-    // totals. Replacing on a tie used to let `totalCount` shrink when the
-    // stream landed. Keep the newest place metadata, but take each additive
-    // claim independently so every number remains monotonic.
-    const newest = pl.lastObsDt > prev.lastObsDt ? pl : prev;
-    byKey.set(key, {
-      ...newest,
-      nReports: Math.max(prev.nReports, pl.nReports),
-      totalCount: Math.max(prev.totalCount, pl.totalCount),
-      googlePlaceId: pl.googlePlaceId ?? prev?.googlePlaceId ?? null,
-      isHotspot: pl.isHotspot || (prev?.isHotspot ?? false),
-    });
+    byKey.set(key, mergePlace(prev, pl));
   }
   const places = [...byKey.values()].sort((a, b) =>
     home

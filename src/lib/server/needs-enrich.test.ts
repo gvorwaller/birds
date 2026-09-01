@@ -178,6 +178,41 @@ describe("enrichNeedsWithSpeciesReports", () => {
     expect(needs[0].places[0].totalCount).toBe(12);
   });
 
+  it("does not manufacture a bird total neither feed reported", async () => {
+    // Independent max(nReports) / max(totalCount) turned 1 report/12 birds
+    // and 5 reports/8 birds at the same locId into 5/12 — a number no cache
+    // generation ever produced. Additive counts must come from one feed.
+    const base = baseNeed([{ ...AREA_ROW, howMany: 12 }]);
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: [
+        { ...AREA_ROW, howMany: 2, obsDt: "2026-08-29 07:00" },
+        { ...AREA_ROW, howMany: 2, obsDt: "2026-08-28 07:00" },
+        { ...AREA_ROW, howMany: 2, obsDt: "2026-08-27 07:00" },
+        { ...AREA_ROW, howMany: 1, obsDt: "2026-08-26 07:00" },
+        { ...AREA_ROW, howMany: 1, obsDt: "2026-08-25 07:00" },
+      ],
+      stale: false,
+      fetchedAt: new Date(),
+    });
+
+    const { needs } = await enrichNeedsWithSpeciesReports(
+      [base],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(needs[0].nReports).toBe(5);
+    expect(needs[0].totalCount).toBe(8);
+    expect(needs[0].places[0].nReports).toBe(5);
+    expect(needs[0].places[0].totalCount).toBe(8);
+    // Recency still follows the newer observation (the area row).
+    expect(needs[0].lastObsDt).toBe(AREA_ROW.obsDt);
+    expect(needs[0].places[0].lastObsDt).toBe(AREA_ROW.obsDt);
+  });
+
   it("preserves stale-cache state from per-species detail calls", async () => {
     ebird.recentNearbySpeciesObs.mockResolvedValue({
       data: DETAIL_ROWS,
