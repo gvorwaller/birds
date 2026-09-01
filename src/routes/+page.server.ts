@@ -146,6 +146,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
           ? Promise.resolve<GeoEnrichment>({
               needs: base.view.needs,
               partial: true,
+              stale: false,
               skipped: true,
             })
           : base.enrich({ signal: request.signal }),

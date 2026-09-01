@@ -156,6 +156,47 @@ describe("enrichNeedsWithSpeciesReports", () => {
     expect(needs[0].places.map((p) => p.locId).sort()).toEqual(["L1", "L9"]);
   });
 
+  it("keeps bird totals monotonic when the same place has tied report counts", async () => {
+    const base = baseNeed([{ ...AREA_ROW, howMany: 12 }]);
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: [{ ...AREA_ROW, howMany: 2 }],
+      stale: false,
+      fetchedAt: new Date(),
+    });
+
+    const { needs } = await enrichNeedsWithSpeciesReports(
+      [base],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(needs[0].nReports).toBe(1);
+    expect(needs[0].totalCount).toBe(12);
+    expect(needs[0].places[0].totalCount).toBe(12);
+  });
+
+  it("preserves stale-cache state from per-species detail calls", async () => {
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: DETAIL_ROWS,
+      stale: true,
+      fetchedAt: new Date(),
+    });
+
+    const result = await enrichNeedsWithSpeciesReports(
+      [baseNeed([AREA_ROW])],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(result.stale).toBe(true);
+  });
+
   it("keeps the newer report as the row's last-report anchor", async () => {
     const base = baseNeed([AREA_ROW]);
     ebird.recentNearbySpeciesObs.mockResolvedValue({

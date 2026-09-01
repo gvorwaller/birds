@@ -345,9 +345,20 @@ function mergeEnrichedNeed<T extends SpeciesActivity>(
   for (const pl of detailed.places) {
     const key = placeKeyOf(pl);
     const prev = byKey.get(key);
-    if (prev && prev.nReports > pl.nReports) continue;
+    if (!prev) {
+      byKey.set(key, pl);
+      continue;
+    }
+    // Report count alone cannot choose the richer record: two cache
+    // generations can carry the same number of reports but different bird
+    // totals. Replacing on a tie used to let `totalCount` shrink when the
+    // stream landed. Keep the newest place metadata, but take each additive
+    // claim independently so every number remains monotonic.
+    const newest = pl.lastObsDt > prev.lastObsDt ? pl : prev;
     byKey.set(key, {
-      ...pl,
+      ...newest,
+      nReports: Math.max(prev.nReports, pl.nReports),
+      totalCount: Math.max(prev.totalCount, pl.totalCount),
       googlePlaceId: pl.googlePlaceId ?? prev?.googlePlaceId ?? null,
       isHotspot: pl.isHotspot || (prev?.isHotspot ?? false),
     });
@@ -390,8 +401,8 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   photoCounts: Map<string, number>,
   hotspotLocIds: Set<string> = new Set(),
   opts: { signal?: AbortSignal } = {},
-): Promise<{ needs: T[]; partial: boolean }> {
-  if (needs.length === 0) return { needs, partial: false };
+): Promise<{ needs: T[]; partial: boolean; stale: boolean }> {
+  if (needs.length === 0) return { needs, partial: false, stale: false };
 
   const dist = Math.min(Math.max(distKm, 1), 50);
   // A per-species detail call that fails (or is skipped after an abort) leaves
@@ -400,6 +411,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   // `places[]` must not claim a place is absent when the request for it simply
   // never happened.
   let partial = false;
+  let stale = false;
 
   // Phase 1 — fetch. `signal` is checked before each call rather than passed
   // into it: a superseded navigation should stop SCHEDULING the remaining
@@ -422,6 +434,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
           dist,
           back,
         );
+        stale = stale || result.stale;
         return result.data;
       } catch {
         partial = true;
@@ -480,7 +493,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
     );
   }
 
-  return { needs: enriched, partial };
+  return { needs: enriched, partial, stale };
 }
 
 function buildView(
@@ -558,6 +571,8 @@ export interface GeoEnrichment {
   needs: SpeciesActivity[];
   /** Some needs carry only their base locations. See `TargetsView.enrichPartial`. */
   partial: boolean;
+  /** At least one per-species detail result came from stale cache. */
+  stale: boolean;
   /** Enrichment was deliberately not attempted (never-synced life list). */
   skipped: boolean;
 }
@@ -636,6 +651,7 @@ export async function geoTargetsBase(
         // sorting it by "activity" ranks on a single observation.
         needs: enriched.needs.sort(sortNeedsByActivity),
         partial: enriched.partial,
+        stale: enriched.stale,
         skipped: false,
       };
     },

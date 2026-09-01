@@ -83,7 +83,14 @@
   type EnrichRes = Awaited<NonNullable<typeof data.enrichment>>;
   let enrichView = $state<{ key: string; res: EnrichRes } | null>(null);
   const enrichKey = $derived(
-    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}`,
+    // A same-parameter invalidate may still return a different species set.
+    // Include membership (order-independent) so the retained overlay cannot
+    // render a species that has left the newly awaited base feed. When the set
+    // is unchanged, jobsPoll refreshes still retain the populated overlay.
+    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}|${(data.view?.needs ?? [])
+      .map((n) => n.speciesCode)
+      .sort()
+      .join(",")}`,
   );
   $effect(() => {
     const key = enrichKey;
@@ -122,6 +129,16 @@
       !!enrichError ||
       (enrichment?.ok ? enrichment.data.partial : false),
   );
+  // Enrichment staleness is reported, but NOT in a section header.
+  //
+  // The header badge answers "how fresh is the feed this section is built
+  // from", and both headers are built from the three area calls — the Notable
+  // list is never enriched at all, so ORing per-species staleness into its
+  // badge would claim the notable feed was cached when it wasn't. It would
+  // also insert a badge into an <h2> a second or two after paint, popping the
+  // header layout (AGY). Surfaced in the needs card body instead, beside the
+  // other stream-state copy, where a late line is expected.
+  let enrichStale = $derived(enrichment?.ok ? enrichment.data.stale : false);
 
   let needsAll = $derived(
     (enrichment?.ok ? enrichment.data.needs : null) ?? data.view?.needs ?? [],
@@ -697,6 +714,7 @@
         </p>
       {/if}
       {#each notableShown as n (n.speciesCode)}
+        {@const notableNearestKm = nearestDistanceKm(n)}
         <div class="obs">
           <div class="grow">
             <div class="name">
@@ -717,8 +735,11 @@
                 >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
               >
               · {n.nReports} report{n.nReports === 1 ? "" : "s"}
-              {#if n.distanceKm != null}
-                · nearest {formatDistance(n.distanceKm, distanceUnit)}{/if}
+              {#if notableNearestKm != null}
+                · nearest {formatDistance(
+                  notableNearestKm,
+                  distanceUnit,
+                )}{/if}
               ·
               {n.locations.join(" · ")}
               {#if data.hasGallery && n.photoCount > 0}
@@ -821,10 +842,19 @@
           Your life list is empty, so every species counts as a need.
           {#if !isViewer}Sync it in <a href="/settings">Settings</a>.{/if}
         </p>
-      {:else if enrichError}
+      {/if}
+      <!-- A separate chain, not another `:else if` on the life-list one: a
+           synced account with an empty list would otherwise hide a failed
+           enrichment behind the empty-list note (CODEX1 P3-1) — masking an
+           error with an unrelated explanation. -->
+      {#if enrichError}
         <!-- Honest about scope: the needs themselves are real (they come from
              the area feed); only the per-place detail is missing. -->
         <p class="muted">{enrichError} Place details are unavailable.</p>
+      {:else if enrichStale}
+        <p class="muted">
+          Place details for some species came from cached reports.
+        </p>
       {/if}
       {#if (searching || focused) && needsMatched.length === 0}
         <p class="muted">
