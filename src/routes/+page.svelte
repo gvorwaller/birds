@@ -143,6 +143,17 @@
   let needsAll = $derived(
     (enrichment?.ok ? enrichment.data.needs : null) ?? data.view?.needs ?? [],
   );
+  // Every per-species call failed. The stream still resolved `ok`, so without
+  // this the page would sit on base rows indefinitely, indistinguishable from
+  // a first paint that is about to fill in (GROK P3-c). Skipped enrichment has
+  // its own copy and is not a failure.
+  let enrichNoneLanded = $derived(
+    !!enrichment?.ok &&
+      !enrichment.data.skipped &&
+      enrichment.data.partial &&
+      needsAll.length > 0 &&
+      needsAll.every((n) => !n.enriched),
+  );
 
   // No species may render in both the Notable and Needs lists (item 2 of
   // 2026-08-11-forecast-ux-suggestions.md #7): a species that is both notable
@@ -669,6 +680,9 @@
                  than the wait itself for someone typing a city name. -->
             {#if needsPending}
               Checking all places in range…
+            {:else if enrichSkipped}
+              No place in the loaded reports matches “{q}” — the place
+              breakdown stays limited until your life list is synced
             {:else}
               No place in the loaded reports matches “{q}”{enrichPartial
                 ? " (and some locations may be missing)"
@@ -851,6 +865,11 @@
         <!-- Honest about scope: the needs themselves are real (they come from
              the area feed); only the per-place detail is missing. -->
         <p class="muted">{enrichError} Place details are unavailable.</p>
+      {:else if enrichNoneLanded}
+        <p class="muted">
+          Place details couldn't be loaded for these species — the birds and
+          dates below are from the area reports.
+        </p>
       {:else if enrichStale}
         <p class="muted">
           Place details for some species came from cached reports.

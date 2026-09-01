@@ -37,9 +37,12 @@
      *
      * Pass a key that changes ONLY on a deliberate view change and the map
      * refits just for those, leaving the viewport alone when points arrive for
-     * another reason (a streamed section landing behind the page). Panning or
-     * zooming also suspends refitting until the key next changes, so the map
-     * never yanks itself out from under a hand mid-gesture.
+     * another reason (a streamed section landing behind the page).
+     *
+     * There is no separate pan/zoom suspension: an earlier draft tracked
+     * gestures, but a key change resets that state before every fit, so the
+     * flag could never actually block one. The key alone is what keeps the
+     * viewport still while a stream lands mid-gesture.
      */
     fitKey?: string | null;
   } = $props();

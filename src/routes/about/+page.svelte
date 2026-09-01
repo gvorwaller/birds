@@ -135,8 +135,8 @@
 								appear as soon as the area reports arrive instead of waiting on a
 								per-species lookup for every bird on the page; the place
 								breakdowns, place search and per-species counts fill in behind
-								them. Rows no longer show a location or report count until the
-								data that supports it has actually arrived, so a number never
+								them. Needs rows no longer show a location or report count until
+								the data that supports it has actually arrived, so a number never
 								corrects itself upward a second after you read it.
 							</li>
 							<li>
