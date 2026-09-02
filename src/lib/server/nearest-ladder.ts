@@ -492,6 +492,7 @@ export async function nearestSpeciesReports(
 
   // Started ONCE and shared by both branches below: awaiting it twice would
   // be free, but starting it twice would double the upstream calls.
+  const ladderStartedAt = now();
   const ladderPromise = runLadder().then((res) => ({
     kind: "ladder" as const,
     res,
@@ -518,14 +519,26 @@ export async function nearestSpeciesReports(
     // Racing on "first to finish" threw away a correct answer that was a
     // tenth of a second away.
     //
-    // So when the search comes back with nothing, give the direct call one
-    // more head start's worth of grace. That reuses a number already in play
-    // rather than inventing another, and it cannot resurrect the stall this
-    // design exists to dodge: a species whose direct lookup grinds for a
-    // minute simply exhausts the grace and keeps the honest empty result.
+    // So when the search comes back with nothing, keep waiting for the direct
+    // call — but only for the search phase's REMAINING time budget, not a
+    // number of its own. `ladderDeadlineMs` is already this section's patience;
+    // a search that finished early simply hands the rest of it to the call
+    // that might still answer.
+    //
+    // Sizing this off the head start (3s) was too mean, and fitted to one
+    // example: Mountain Bluebird's nearest report is ~2,000 km away in New
+    // Mexico, far past any sane probe budget from Florida, and eBird's direct
+    // call answers it in 17.8s. The search gave up empty at ~4s and we
+    // abandoned a call that was eleven seconds from being right (td-37c962).
+    //
+    // Self-limiting in the other direction too: a species whose search burns
+    // the full deadline before coming up empty gets no grace at all, so a
+    // genuinely-nothing answer never becomes a slow one.
+    const graceMs = Math.max(0, opts.ladderDeadlineMs - (now() - ladderStartedAt));
+    if (graceMs === 0) return outcome.res;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const grace = new Promise<{ kind: "grace" }>((resolve) => {
-      graceTimer = setTimeout(() => resolve({ kind: "grace" }), opts.headStartMs);
+      graceTimer = setTimeout(() => resolve({ kind: "grace" }), graceMs);
     });
     let late: FastOutcome | { kind: "grace" };
     try {

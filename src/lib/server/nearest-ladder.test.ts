@@ -219,6 +219,7 @@ describe("racing the two strategies", () => {
     const res = await nearestSpeciesReports("key", SP, HOME, 14, {
       ...OPTS,
       headStartMs: 5,
+      ladderDeadlineMs: 80,
     });
 
     expect(res.via).toBe("ladder");
@@ -293,18 +294,14 @@ describe("racing the two strategies", () => {
       return ok([]);
     });
     const gate = createProbeGate(12);
+    // Short deadline: both searches end empty, and the empty-result grace is
+    // whatever remains of it — without this the never-resolving direct call
+    // above would hold each one for the full 20s budget.
+    const opts = { ...OPTS, probeBudget: 6, ladderDeadlineMs: 60, gate };
 
     await Promise.all([
-      nearestSpeciesReports("key", SP, HOME, 14, {
-        ...OPTS,
-        probeBudget: 6,
-        gate,
-      }),
-      nearestSpeciesReports("key", "amerob", HOME, 14, {
-        ...OPTS,
-        probeBudget: 6,
-        gate,
-      }),
+      nearestSpeciesReports("key", SP, HOME, 14, opts),
+      nearestSpeciesReports("key", "amerob", HOME, 14, opts),
     ]);
 
     expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(12);
