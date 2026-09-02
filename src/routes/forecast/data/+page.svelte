@@ -20,11 +20,9 @@
     data.countries.find((c) => c.code === data.selectedCountry)?.name ??
       data.selectedCountry,
   );
-  // US pinned first with its own <optgroup> so a ~250-country list doesn't
-  // read as unsorted (GROK UX review #2).
-  // Typing narrows both optgroups so reaching Norway doesn't mean scrolling
-  // ~250 entries (GBV 2026-08-24). The current selection always survives the
-  // filter — a <select> whose value has no matching option renders blank.
+  // The loader removes fully-loaded countries and sorts the remainder
+  // alphabetically. The current selection survives the text filter so the
+  // select never renders blank while the user searches.
   let countryFilter = $state("");
   const countryMatches = $derived((c: { code: string; name: string }) => {
     const q = countryFilter.trim().toLowerCase();
@@ -35,12 +33,7 @@
       c.code.toLowerCase().startsWith(q)
     );
   });
-  const usCountry = $derived(
-    data.countries.find((c) => c.code === "US" && countryMatches(c)) ?? null,
-  );
-  const otherCountries = $derived(
-    data.countries.filter((c) => c.code !== "US" && countryMatches(c)),
-  );
+  const filteredCountries = $derived(data.countries.filter(countryMatches));
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     void goto(`?country=${e.currentTarget.value}`, {
       keepFocus: true,
@@ -1094,13 +1087,8 @@
               value={data.selectedCountry}
               onchange={onCountryChange}
             >
-              {#if usCountry}
-                <optgroup label="United States">
-                  <option value={usCountry.code}>{usCountry.name}</option>
-                </optgroup>
-              {/if}
-              <optgroup label={data.hasHome ? "All countries (nearest known first)" : "All countries"}>
-                {#each otherCountries as c (c.code)}
+              <optgroup label="Countries not fully loaded (alphabetical)">
+                {#each filteredCountries as c (c.code)}
                   <option value={c.code}>{c.name}</option>
                 {/each}
               </optgroup>
@@ -1109,7 +1097,12 @@
         {/if}
         <!-- Region lists are local reference data (Phase 3) — the old
              list-fetch error state no longer exists. -->
-        {#if nothingLeftToLoad}
+        {#if data.countries.length === 0}
+          <p class="notice">
+            Every available country and region is loaded. Refresh existing data below when a
+            newer complete year becomes available.
+          </p>
+        {:else if nothingLeftToLoad}
           <!-- Every region of this country (and its countrywide export) is
                already loaded — an empty <select> holding only the placeholder
                reads as a broken picker (GBV 2026-08-24, Norway). -->

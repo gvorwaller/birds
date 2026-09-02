@@ -160,6 +160,37 @@ export async function countriesList(): Promise<Region[]> {
 	return (await regionIndex()).countries;
 }
 
+/**
+ * Countries where the load hub can still add frequency data.
+ *
+ * Non-US countries require a countrywide row plus every seeded subnational1
+ * row. The US is complete once its states are loaded because a countrywide US
+ * export is intentionally never offered. Older stored rows still count as
+ * loaded; refreshing them is a separate workflow.
+ */
+export function filterCountriesNeedingFrequencyLoad(
+	countries: readonly Region[],
+	sub1ByCountry: ReadonlyMap<string, readonly Pick<Region, 'code'>[]>,
+	loadedRegionCodes: ReadonlySet<string>
+): Region[] {
+	return [...countries]
+		.filter((country) => {
+			const children = sub1ByCountry.get(country.code) ?? [];
+			const childrenComplete = children.every((child) => loadedRegionCodes.has(child.code));
+			const countrywideComplete = country.code === 'US' || loadedRegionCodes.has(country.code);
+			return !childrenComplete || !countrywideComplete;
+		})
+		.sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
+}
+
+/** World country list reduced to unfinished frequency-load work, name-sorted. */
+export async function countriesNeedingFrequencyLoad(
+	loadedRegionCodes: ReadonlySet<string>
+): Promise<Region[]> {
+	const idx = await regionIndex();
+	return filterCountriesNeedingFrequencyLoad(idx.countries, idx.sub1ByCountry, loadedRegionCodes);
+}
+
 /** A country's subnational1 regions, name-sorted. Replaces `subregions(…, 'subnational1')` on read paths. */
 export async function subnational1Of(country: string): Promise<Region[]> {
 	return (await regionIndex()).sub1ByCountry.get(country) ?? [];

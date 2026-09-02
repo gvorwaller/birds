@@ -151,9 +151,12 @@
 							</li>
 							<li>
 								<strong>Faster, key-free region pickers</strong> — country and
-								region lists (nearest-first with a saved home) now come from
+								region lists now come from
 								built-in reference data instead of live eBird lookups, so they
-								load instantly and work even before an eBird API key is set.
+								load instantly and work even before an eBird API key is set. The
+								data-loading country picker is now an alphabetical to-do list:
+								fully loaded countries disappear, while forecast browsing remains
+								nearest-first when a home is saved.
 							</li>
 							<li>
 								<strong>Breadcrumb out of the species forecast</strong> — following

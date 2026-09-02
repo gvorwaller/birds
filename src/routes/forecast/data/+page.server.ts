@@ -8,6 +8,7 @@ import {
 } from "$server/ebird";
 import {
   countriesList,
+  countriesNeedingFrequencyLoad,
   regionCoordsFor,
   regionLabels,
   subnational1Of,
@@ -220,20 +221,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       ? { lat: homeRow.rows[0].home_lat, lon: homeRow.rows[0].home_lon }
       : null;
 
-  // Countries: drives the picker + display names for country-level groups
-  // and non-US region labels — local reference data (regions table, Phase 3).
-  // Works without an eBird API key.
+  // The complete country list supplies display names for loaded groups. The
+  // picker itself is reduced below to countries with unfinished work.
   const countryList: { code: string; name: string }[] = (await countriesList()).map(
     (r) => ({ code: r.code, name: r.name }),
   );
   const countryName = new Map(countryList.map((c) => [c.code, c.name]));
 
+  // A stored row counts as loaded even when old: stale data belongs in the
+  // Refresh workflow, not back in the new-load picker.
+  const loadedRegionCodes = new Set(
+    loadedRes.rows.filter((r) => r.loc_kind === "region").map((r) => r.loc_code),
+  );
+  const countryOptions = (await countriesNeedingFrequencyLoad(loadedRegionCodes)).map(
+    (r) => ({ code: r.code, name: r.name }),
+  );
+  const countryOptionCodes = new Set(countryOptions.map((c) => c.code));
+
   const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
-  let selectedCountry = DEFAULT_COUNTRY;
-  if (
-    isCountry(countryParam) &&
-    (countryList.length === 0 || countryName.has(countryParam))
-  ) {
+  // Default to the first alphabetical unfinished country. US is only a
+  // harmless display fallback for the eventual all-done state.
+  let selectedCountry = countryOptions[0]?.code ?? DEFAULT_COUNTRY;
+  if (isCountry(countryParam) && countryOptionCodes.has(countryParam)) {
     selectedCountry = countryParam;
   }
 
@@ -398,8 +407,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     home,
     await regionCoordsFor(selectedCountryRegionsRaw.map((s) => s.code)),
   );
-  const countryCentroids = await regionCoordsFor(countryList.map((c) => c.code));
-
   for (const g of groups.values()) {
     g.countyBlocks.sort((a, b) => a.countyName.localeCompare(b.countyName));
     for (const b of g.countyBlocks) {
@@ -490,9 +497,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       g.countiesLoaded = g.countyBlocks.filter((b) => b.county).length;
     }
   }
-  const loadedRegionCodes = new Set(
-    allGroups.filter((g) => g.state).map((g) => g.stateCode),
-  );
   const wholeCountryLoaded =
     groups.get(selectedCountry)?.level === "country" &&
     groups.get(selectedCountry)?.state != null;
@@ -548,17 +552,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   }
   const sortedCountrySections = [...countrySections.values()].sort((a, b) =>
     a.countryName.localeCompare(b.countryName),
-  );
-
-  // US pinned first (AGY-accepted pin 2 — the template also pulls US into
-  // its own optgroup regardless of array position, so this only orders
-  // "All countries"); everything else nearest-home-first when home is known
-  // (Gaylon 2026-08-29), else the original alphabetical fallback.
-  const sortedCountries = sortByProximity(
-    countryList,
-    home,
-    countryCentroids,
-    DEFAULT_COUNTRY,
   );
 
   // Country-qualified labels for the failed-loads list (rev 3: it mixes
@@ -628,7 +621,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       sampleSize: Number(r.sample_size),
       detectedAt: r.detected_at,
     })),
-    countries: sortedCountries,
+    countries: countryOptions,
     selectedCountry,
     states: selectedCountryRegions.filter((s) => !loadedRegionCodes.has(s.code)),
     wholeCountryLoaded,
