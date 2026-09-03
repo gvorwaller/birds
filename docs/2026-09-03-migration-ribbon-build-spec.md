@@ -14,7 +14,7 @@ Nothing in `src/` has changed.
 
 | # | Finding | Fix |
 |---|---|---|
-| CODEX1 P1 (post-rev-2) | The antimeridian CASE tested `min_lon > max_lon`, but the seed never encodes a wrap that way: eBird returns a conventional near-global envelope and the generator preserves it (US-AK min_lon −179.15, max_lon 179.77; 0 seeded rows use min>max, 11 have a >180° envelope). The CASE never fired; US-AK stayed EAST; the committed test invented a min>max box. | Wrap = `min_lon > max_lon OR max_lon − min_lon > 180`; lon_eff = complementary-arc midpoint (US-AK → −179.69). Only subnational1 rows of US/CA/MX split; country rows never (`west=false`). Test pinned to the real encoding. Verified on live rows: AK/HI/ND/YT/BC/SON west; NE/NJ/YUC east; US/CA/MX country rows false. |
+| CODEX1 P1 (post-rev-2) | The antimeridian CASE tested `min_lon > max_lon`, but the seed never encodes a wrap that way: eBird returns a conventional near-global envelope and the generator preserves it (US-AK min_lon −179.15, max_lon 179.77; 0 seeded rows use min>max, 12 have a >180° envelope). The CASE never fired; US-AK stayed EAST; the committed test invented a min>max box. | Wrap = `min_lon > max_lon OR max_lon − min_lon > 180`; lon_eff = complementary-arc midpoint (US-AK → −179.69). Only subnational1 rows of US/CA/MX split; country rows never (`west=false`). Test pinned to the real encoding. Verified on live rows: AK/HI/ND/YT/BC/SON west; NE/NJ/YUC east; US/CA/MX country rows false. |
 | CODEX1 gate P2-1 | `/api/health` only proves a fresh heartbeat; it cannot tell the new paused worker from the old one. | Before resuming: authenticated `/api/admin/status` must show `alive=true`, `version=<deployed SHA>`, `state=paused`, `currentJobId=null`, `pauseRequested=true`. Never resume the OLD worker against 0050. If deploy aborts after 0050 is recorded, leave the worker paused and roll forward or use 0051. |
 | CODEX1 gate P3-1 | "≤1.5 M rows at world coverage" was a ceiling with no evidence. | Stated as a projection: ~1.8 M by straight-line scaling of 425,820 at 793 contributors. |
 | CODEX1 gate P3-2 | The reconciliation test does EXCEPTs against live tables, not the temp-schema copy the spec described. | Acceptance wording matches the test as built; the migration-vs-rebuild agreement is additionally proven by GROK's empirical run at deploy gate. |
@@ -249,7 +249,7 @@ ANALYZE band_locs; ANALYZE band_month_samples; ANALYZE species_band_month_freq;
 rather than a min>max wrap (US-AK: min_lon −179.150558, max_lon 179.773408).
 ```sql
 -- effective longitude: the complementary-arc midpoint when the box wraps by
--- EITHER encoding (0 seeded rows use min>max; 11 use a >180° envelope)
+-- EITHER encoding (0 seeded rows use min>max; 12 use a >180° envelope)
 CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
      THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
      ELSE r.lon END AS lon_eff

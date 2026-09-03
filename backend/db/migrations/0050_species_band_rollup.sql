@@ -63,7 +63,7 @@
 -- committed seed preserves eBird's CONVENTIONAL NEAR-GLOBAL ENVELOPE for
 -- those regions (US-AK: min_lon -179.150558, max_lon 179.773408), NOT the
 -- min_lon > max_lon wrap that 0047's note allows. Zero seeded rows use
--- min>max; eleven have an envelope wider than 180°. So the wrap test below
+-- min>max; twelve have an envelope wider than 180°. So the wrap test below
 -- is (min_lon > max_lon OR max_lon - min_lon > 180), and lon_eff is the
 -- midpoint of the complementary arc through 180° (US-AK -> -179.69). Only
 -- SUBNATIONAL1 rows of US/CA/MX split at 100°W; a country row never does.
