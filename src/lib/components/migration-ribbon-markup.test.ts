@@ -93,4 +93,20 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).not.toContain('setPointerCapture');
 		expect(markup).toContain('moved >= 8');
 	});
+
+	it('every svelte-ignore is justified by a comment immediately above it (CC1 P2-2)', () => {
+		const ignoreLines = markup
+			.split('\n')
+			.map((line, i) => ({ line, i }))
+			.filter(({ line }) => line.includes('<!-- svelte-ignore'));
+		expect(ignoreLines.length).toBeGreaterThan(0);
+		const lines = markup.split('\n');
+		for (const { i } of ignoreLines) {
+			// The line directly above a svelte-ignore comment must itself close a
+			// (justification) HTML comment — never blank, never the element itself.
+			const above = lines[i - 1]?.trim() ?? '';
+			expect(above.endsWith('-->')).toBe(true);
+			expect(above).not.toBe('-->'); // the comment must carry actual prose, not stand alone
+		}
+	});
 });

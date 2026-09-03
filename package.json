@@ -21,7 +21,9 @@
 		"test:db:migrate": "./scripts/test-db-migrate.sh",
 		"format": "prettier --write .",
 		"lint": "prettier --check .",
-		"worker:dev:test": "node scripts/build-worker.mjs && BIRDS_ENV=test node --env-file=.env.test build/worker.js"
+		"worker:dev:test": "node scripts/build-worker.mjs && BIRDS_ENV=test node --env-file=.env.test build/worker.js",
+		"seed:ribbon-fixture": "node --env-file=.env.test scripts/seed-ribbon-fixture.mjs",
+		"unseed:ribbon-fixture": "node --env-file=.env.test scripts/unseed-ribbon-fixture.mjs"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.2.12",

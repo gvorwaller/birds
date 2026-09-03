@@ -13,10 +13,24 @@
  *     with the SAME arithmetic as migration 0050's backfill (grouped by
  *     band/country/west), so the ribbon grid reads real numbers.
  *
- * Refuses to run unless BIRDS_ENV=test (cs.md safety convention) or --force
- * is passed.
+ * SAFETY (CC1 P2-1, 2026-09-03): `BIRDS_ENV=test` is also set on a
+ * prod-restored `birds_test` — a supported workflow here — so it cannot by
+ * itself tell "empty test cluster" from "real data, just restored". This
+ * script therefore refuses outright (exit 1) rather than upserting/deleting
+ * if ANY fixture loc_code already exists in `frequency_fetch`, if any of
+ * the three species already exists in `taxonomy_cache`, or if any OTHER
+ * loc_code already contributes to a (band, country, west) group this
+ * fixture would aggregate into (that write would silently fold real
+ * coverage into a number that is actually only this fixture's). On a
+ * prod-restored cluster, run `npm run test:db:reset && npm run test:db:up`
+ * FIRST — seeding is only safe against an empty/isolated test cluster.
+ *
+ * On success this records exactly what it wrote to `.local/ribbon-fixture-
+ * marker.json`; `unseed-ribbon-fixture.mjs` deletes only what that marker
+ * lists (never a re-derivation from this file, and never anything it did
+ * not itself create).
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import pg from "pg";
 
@@ -39,6 +53,7 @@ const SPECIES = {
 };
 const NA_SPLIT_LON = -100;
 const PRESENT = 0.005;
+const MARKER_PATH = new URL("../.local/ribbon-fixture-marker.json", import.meta.url);
 
 function bandOf(lat) {
   return Math.max(-90, Math.min(80, Math.floor(lat / 10) * 10));
@@ -66,17 +81,62 @@ async function main() {
   await client.connect();
 
   const regions = loadFixture();
-  console.log(`[seed-ribbon-fixture] ${regions.length} regions, species: ${Object.keys(SPECIES).join(", ")}`);
+  const locCodes = regions.map((r) => r.code);
+  const species = Object.keys(SPECIES);
+  const countries = [...new Set(regions.map((r) => r.country))];
+  console.log(`[seed-ribbon-fixture] ${regions.length} regions, species: ${species.join(", ")}`);
 
   try {
     await client.query("BEGIN");
 
+    // ---- Pre-flight: refuse rather than overwrite/merge into anything
+    // this script did not create (CC1 P2-1). ------------------------------
+    const existingLocs = await client.query(
+      "SELECT loc_code FROM frequency_fetch WHERE loc_code = ANY($1) ORDER BY loc_code",
+      [locCodes],
+    );
+    if (existingLocs.rows.length > 0) {
+      const sample = existingLocs.rows.slice(0, 5).map((r) => r.loc_code).join(", ");
+      throw new Error(
+        `refusing to seed: ${existingLocs.rows.length} fixture loc_code(s) already exist in ` +
+          `frequency_fetch (e.g. ${sample}) — this looks like an already-seeded or ` +
+          `prod-restored cluster. Run 'npm run unseed:ribbon-fixture' first if this is a ` +
+          `stale fixture, or 'npm run test:db:reset && npm run test:db:up' if this is a ` +
+          `prod-restored cluster, then re-seed.`,
+      );
+    }
+    const existingSpecies = await client.query(
+      "SELECT species_code FROM taxonomy_cache WHERE species_code = ANY($1) ORDER BY species_code",
+      [species],
+    );
+    if (existingSpecies.rows.length > 0) {
+      const sample = existingSpecies.rows.map((r) => r.species_code).join(", ");
+      throw new Error(
+        `refusing to seed: taxonomy_cache already has ${sample} — this looks like an ` +
+          `already-seeded or prod-restored cluster (real taxonomy would already carry these ` +
+          `codes). Reset the test cluster or unseed first.`,
+      );
+    }
+    // A DIFFERENT loc_code already contributing to a (band, country, west)
+    // group this fixture aggregates into: writing there would fold real
+    // coverage into a total that is actually only this fixture's.
+    const foreignBandLocs = await client.query(
+      "SELECT DISTINCT country FROM band_locs WHERE country = ANY($1) AND NOT (loc_code = ANY($2))",
+      [countries, locCodes],
+    );
+    if (foreignBandLocs.rows.length > 0) {
+      const sample = foreignBandLocs.rows.map((r) => r.country).join(", ");
+      throw new Error(
+        `refusing to seed: band_locs already has OTHER regions loaded for ${sample} — ` +
+          `aggregating this fixture into those (band, country, west) groups would silently ` +
+          `merge real coverage into fixture-only numbers. Reset the test cluster first.`,
+      );
+    }
+
     for (const [code, meta] of Object.entries(SPECIES)) {
       await client.query(
         `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
-         VALUES ($1, $2, $3, 'species', $4)
-         ON CONFLICT (species_code) DO UPDATE SET
-           com_name = EXCLUDED.com_name, sci_name = EXCLUDED.sci_name, family = EXCLUDED.family`,
+         VALUES ($1, $2, $3, 'species', $4)`,
         [code, meta.com_name, meta.sci_name, meta.family],
       );
     }
@@ -96,32 +156,21 @@ async function main() {
         `INSERT INTO frequency_fetch
            (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes,
             n_species, n_unmatched, unmatched_names, region_code, fetched_at)
-         VALUES ($1, 'region', $2, 2016, 2026, $3, $4, 0, '{}', $1, NOW())
-         ON CONFLICT (loc_code) DO UPDATE SET
-           loc_name = EXCLUDED.loc_name, sample_sizes = EXCLUDED.sample_sizes,
-           n_species = EXCLUDED.n_species, region_code = EXCLUDED.region_code,
-           fetched_at = NOW()`,
-        [r.code, r.name, sampleSizes, Object.keys(SPECIES).length],
+         VALUES ($1, 'region', $2, 2016, 2026, $3, $4, 0, '{}', $1, NOW())`,
+        [r.code, r.name, sampleSizes, species.length],
       );
-      await client.query("DELETE FROM species_frequency WHERE loc_code = $1 AND species_code = ANY($2)", [
-        r.code,
-        Object.keys(SPECIES),
-      ]);
-      for (const species of Object.keys(SPECIES)) {
-        const curve = r.curves[species];
-        const rows = [];
+      for (const sp of species) {
+        const curve = r.curves[sp];
         for (let m = 0; m < 12; m++) {
           const [freq] = curve[m];
           if (freq <= 0) continue;
-          for (let wk = 0; wk < 4; wk++) rows.push([m * 4 + wk + 1, freq]);
-        }
-        for (const [week, freq] of rows) {
-          await client.query(
-            `INSERT INTO species_frequency (loc_code, species_code, week, freq)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (loc_code, species_code, week) DO UPDATE SET freq = EXCLUDED.freq`,
-            [r.code, species, week, freq],
-          );
+          for (let wk = 0; wk < 4; wk++) {
+            await client.query(
+              `INSERT INTO species_frequency (loc_code, species_code, week, freq)
+               VALUES ($1, $2, $3, $4)`,
+              [r.code, sp, m * 4 + wk + 1, freq],
+            );
+          }
         }
       }
     }
@@ -139,60 +188,62 @@ async function main() {
       g.locCodes.add(r.code);
     }
 
-    await client.query("DELETE FROM species_band_month_freq WHERE species_code = ANY($1)", [
-      Object.keys(SPECIES),
-    ]);
-    // Only clear band_locs/band_month_samples rows this fixture is about to
-    // rewrite (by country), so a re-run is idempotent without touching any
-    // other seeded coverage.
-    const countries = [...new Set(regions.map((r) => r.country))];
-    await client.query("DELETE FROM band_locs WHERE country = ANY($1)", [countries]);
-    await client.query("DELETE FROM band_month_samples WHERE country = ANY($1)", [countries]);
-
     for (const g of locGroups.values()) {
       for (const locCode of g.locCodes) {
         await client.query(
-          `INSERT INTO band_locs (band, country, west, loc_code) VALUES ($1,$2,$3,$4)
-           ON CONFLICT DO NOTHING`,
+          `INSERT INTO band_locs (band, country, west, loc_code) VALUES ($1,$2,$3,$4)`,
           [g.band, g.country, g.west, locCode],
         );
       }
     }
 
     const regionsByCode = new Map(regions.map((r) => [r.code, r]));
-    for (const [key, g] of locGroups) {
+    for (const g of locGroups.values()) {
       for (let m = 0; m < 12; m++) {
         let n = 0;
         for (const locCode of g.locCodes) n += regionsByCode.get(locCode).curves.osprey[m][1];
         await client.query(
-          `INSERT INTO band_month_samples (band, country, west, month, n) VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (band, country, west, month) DO UPDATE SET n = EXCLUDED.n`,
+          `INSERT INTO band_month_samples (band, country, west, month, n) VALUES ($1,$2,$3,$4,$5)`,
           [g.band, g.country, g.west, m + 1, n],
         );
       }
-      for (const species of Object.keys(SPECIES)) {
+      for (const sp of species) {
         for (let m = 0; m < 12; m++) {
           let num = 0;
           let reached = 0;
           for (const locCode of g.locCodes) {
-            const [freq, n] = regionsByCode.get(locCode).curves[species][m];
+            const [freq, n] = regionsByCode.get(locCode).curves[sp][m];
             num += freq * n;
             if (n > 0 && freq >= PRESENT) reached++;
           }
           await client.query(
             `INSERT INTO species_band_month_freq (species_code, band, country, west, month, num, reached)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
-             ON CONFLICT (species_code, band, country, west, month)
-             DO UPDATE SET num = EXCLUDED.num, reached = EXCLUDED.reached`,
-            [species, g.band, g.country, g.west, m + 1, num, reached],
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [sp, g.band, g.country, g.west, m + 1, num, reached],
           );
         }
       }
     }
 
     await client.query("COMMIT");
+
+    mkdirSync(new URL("../.local/", import.meta.url), { recursive: true });
+    writeFileSync(
+      MARKER_PATH,
+      JSON.stringify(
+        {
+          createdAt: new Date().toISOString(),
+          locCodes,
+          species,
+          countries,
+        },
+        null,
+        2,
+      ),
+    );
     console.log(
-      `[seed-ribbon-fixture] done: ${locGroups.size} band/country/west groups, ${regions.length} regions, 3 species.`,
+      `[seed-ribbon-fixture] done: ${locGroups.size} band/country/west groups, ${regions.length} regions, ` +
+        `3 species. Marker written to ${MARKER_PATH.pathname}.`,
     );
   } catch (err) {
     await client.query("ROLLBACK");
@@ -203,6 +254,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[seed-ribbon-fixture] failed:", err);
+  console.error("[seed-ribbon-fixture] failed:", err.message ?? err);
   process.exitCode = 1;
 });

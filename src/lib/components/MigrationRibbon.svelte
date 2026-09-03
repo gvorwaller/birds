@@ -463,6 +463,10 @@
 			</div>
 		</div>
 
+		<!-- Composite widget (spec TD-C): role="group" + aria-roledescription make this a
+		     keyboard-driven custom control (arrow keys/Home/End/Enter/Space via onkeydown), not a
+		     static container — tabindex and the keydown handler are the point, not an oversight. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 		<div
 			class="ribbon"
 			tabindex="0"
@@ -488,6 +492,10 @@
 						<span class="eqmark" style="top:{geom.headH + 4 + eqIndex * geom.rowH}px">EQUATOR</span>
 					{/if}
 				</div>
+				<!-- Pointer surface for the same composite widget (spec TD-C): selection fires on
+				     pointerup after a movement threshold (cs.md + CODEX1 P1-7), so this needs the raw
+				     pointer events rather than a native interactive element's click semantics. -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="rscroll"
 					bind:this={rscrollEl}
