@@ -1,6 +1,7 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 3.2 (2026-09-03). Rev 3.2 folds CODEX1's TD-B deploy-gate
+**Status:** BUILD SPEC rev 3.3 (2026-09-03). Rev 3.3: one stale number in the TD-C geometry test
+line (44 → 48 px), caught by the TD-C implementer. Rev 3.2 folds CODEX1's TD-B deploy-gate
 REJECT (2 P1 / 3 P2 / 1 P3, each verified by CC1) — chiefly a fourth cell state, `thin`;
 see the Rev 3.2 ledger. Rev 3 fixes a P1 CODEX1 found after rev 2
 and the gate pins from its TD-A review (see "Rev 3 changes"). Rev 2: Rev 1 was
@@ -582,7 +583,7 @@ export function fillFor(cell, hatchId): string;                             // '
 - `readout` six branches: null → 'No data — nothing loaded here'; thin → 'Surveyed — too few checklists to rate' + 'N countries under 40 checklists · …'; low → '20% reporting rate · small sample'; zero → '0% — surveyed, no reports'; equal → '16% average reporting rate' + line3 'equal weight · 2 regions · 440K checklists' with title '439,972 checklists'; checklists → '24% of checklists reported it'. Never "of checklists" in the equal branch.
 - `reduce`: ArrowLeft at 1 → 12; ArrowRight at 12 → 1; ArrowUp at 80 stays; ArrowDown at -90 stays; PageDown in world view → unchanged; PageDown in single-continent mode moves `cont` and `contView`; Home/End; Space toggles playing; Enter → openDrill; unknown → null.
 - `initialState(true)` = cont/ALL/NAE; `initialState(false)` = world/NAE/null; `applyWide` no-op once `viewTouched`.
-- `geometry`: world at avail 300 → cellW 25, w 300; ALL at avail 300 → cellW 6, w 576; single on phone → rowH 44; single wide → 22; headH 34 in cont view else 20.
+- `geometry`: world at avail 300 → cellW 25, w 300; ALL at avail 300 → cellW 6, w 576; single on phone → rowH 48 (ROW_H_TOUCH; the 44 here until rev 3.3 was a stale carry-over from a mockup comment — cs.md's ≥48px rule and owner decision P1-7 govern); single wide → 22; headH 34 in cont view else 20.
 - `formatWindow([12,1,2,3])` → 'Dec–Mar'; `[1,3]` → 'Jan, Mar'.
 - `chartAria` one reported cell → contains 'reported in 1 of 18 bands, strongest 40–50°N in September at 6%'.
 
