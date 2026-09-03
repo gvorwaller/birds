@@ -1,6 +1,7 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 2 (2026-09-03, planner + CC1 + CODEX1). Rev 1 was
+**Status:** BUILD SPEC rev 3 (2026-09-03). Rev 3 fixes a P1 CODEX1 found after rev 2
+and the gate pins from its TD-A review (see "Rev 3 changes"). Rev 2: Rev 1 was
 written by the `planner` agent from the design record rev 9 and the mockup, then
 reviewed by CC1. Rev 2 folds CODEX1's unrestricted deep review: verdict on rev 1
 was NOT READY, 7 P1 + 12 P2 + 3 P3; every checkable finding was verified by CC1
@@ -8,6 +9,15 @@ against the seed, the code and the test file before folding (all CONFIRMED).
 The two owner decisions CODEX1 flagged were made 2026-09-03 and match the
 defaults written here (obey cs.md; thin countries excluded and the cell hatched).
 Nothing in `src/` has changed.
+
+## Rev 3 changes (2026-09-03, after TD-A was built)
+
+| # | Finding | Fix |
+|---|---|---|
+| CODEX1 P1 (post-rev-2) | The antimeridian CASE tested `min_lon > max_lon`, but the seed never encodes a wrap that way: eBird returns a conventional near-global envelope and the generator preserves it (US-AK min_lon −179.15, max_lon 179.77; 0 seeded rows use min>max, 11 have a >180° envelope). The CASE never fired; US-AK stayed EAST; the committed test invented a min>max box. | Wrap = `min_lon > max_lon OR max_lon − min_lon > 180`; lon_eff = complementary-arc midpoint (US-AK → −179.69). Only subnational1 rows of US/CA/MX split; country rows never (`west=false`). Test pinned to the real encoding. Verified on live rows: AK/HI/ND/YT/BC/SON west; NE/NJ/YUC east; US/CA/MX country rows false. |
+| CODEX1 gate P2-1 | `/api/health` only proves a fresh heartbeat; it cannot tell the new paused worker from the old one. | Before resuming: authenticated `/api/admin/status` must show `alive=true`, `version=<deployed SHA>`, `state=paused`, `currentJobId=null`, `pauseRequested=true`. Never resume the OLD worker against 0050. If deploy aborts after 0050 is recorded, leave the worker paused and roll forward or use 0051. |
+| CODEX1 gate P3-1 | "≤1.5 M rows at world coverage" was a ceiling with no evidence. | Stated as a projection: ~1.8 M by straight-line scaling of 425,820 at 793 contributors. |
+| CODEX1 gate P3-2 | The reconciliation test does EXCEPTs against live tables, not the temp-schema copy the spec described. | Acceptance wording matches the test as built; the migration-vs-rebuild agreement is additionally proven by GROK's empirical run at deploy gate. |
 
 ## Rev 2 change ledger (CODEX1 review, all verified)
 
@@ -234,23 +244,20 @@ ANALYZE band_locs; ANALYZE band_month_samples; ANALYZE species_band_month_freq;
 
 `JOIN regions r ON r.code = ff.loc_code` is the whole source-row rule: counties (`US-FL-001`) and hotspots (`L…`) have no `regions` row, so they never match; no regex needed. `regions` is SELECT-able by `birds_app` (`0043:37-38`).
 
-**`west` guard (CC1, found while verifying CODEX1 P1-6):** the committed seed has
-an antimeridian bug: every region whose bounding box crosses 180° has a centroid
-longitude near 0 — country rows `US` (0.31), `NZ` (0.12), `FJ` (0.01), `AQ`, and
-sub1 rows **`US-AK` (0.31)**, `NZ-NTL` (−2.02), `FJ-N`, `FJ-E`. With a naive
-`lon < -100`, Alaska lands in the EAST column. Rule:
+**`west` guard (rev 3):** eBird's centroid for any region whose extent crosses
+180° is near 0, and the seed keeps eBird's conventional near-global envelope
+rather than a min>max wrap (US-AK: min_lon −179.150558, max_lon 179.773408).
 ```sql
--- effective longitude: the bbox midpoint through 180° when the box wraps (0047: min_lon > max_lon)
-CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+-- effective longitude: the complementary-arc midpoint when the box wraps by
+-- EITHER encoding (0 seeded rows use min>max; 11 use a >180° envelope)
+CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
      THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
      ELSE r.lon END AS lon_eff
-west = (r.parent_code IN ('US','CA','MX') OR r.code IN ('US','CA','MX')) AND lon_eff < -100
+-- only subnational1 rows of US/CA/MX split; a country row never does
+west = is_sub1 AND country IN ('US','CA','MX') AND lon_eff < -100
 ```
-For `US-AK` (box ≈ 172 E … −130) this gives ≈ −159 → west. Every non-NA country
-gets `west = false`, which also removes the same-country split P1-6 describes for
-NZ/UM. Bands use `lat`, which the bug does not affect. A P3 td fixes the generator
-(`scripts/generate-regions.mjs`) and re-emits a delta seed; until then the CASE is
-the guard.
+US-AK → −179.69 → west. Bands use `lat`, which the bug does not affect.
+td-57d9fc fixes the generator; this CASE is the guard until then.
 
 **Deleting a loaded region (CODEX1 P2-5):** only `band_locs` cascades from
 `frequency_fetch`; `band_month_samples` and `species_band_month_freq` do not, so a
@@ -326,7 +333,7 @@ pass a test `columnOf`; they never assert on `unmappedCountries()`.
 - `band rollup REPLACES, never accumulates` — rebuild twice, one row.
 - `two countries in one band stay separate rows`.
 - `west is true only for US/CA/MX west of 100W` — seed a temporary `US-QQW` (45, −110) and `US-QQE` (45, −80) under the existing `US-QQ` fixture parent: west=true / false; a `QY` row at −110 stays west=false.
-- `an antimeridian-wrapping NA region is west` — seed `US-QQX` with lon 0.31 and box min_lon 172, max_lon −130 (the real Alaska shape): west=true (the CASE, not `lon`, decides).
+- `an antimeridian NA region is west, using the REAL seed encoding` — seed `US-QQX` with lon 0.311425, min_lon −179.150558, max_lon 179.773408 (copied from US-AK in 0048): west=true. A second row with the 0047 min>max encoding (min_lon 172, max_lon −130) is also west. A NZ-shaped row with the same envelope is west=false (not NA). The US country row, if country-only, is west=false.
 - `a hotspot and a county never touch band tables` — `US-QQ-001` and `L999` → zero band rows.
 - `country-only country contributes its country row` — `frequency_fetch` row `'QY'` only → `band_locs` (60, QY, false, 'QY').
 - `first subnational1 evicts the country row` — then store `QY-W45` → QY's `band_locs` is exactly `{QY-W45}`; `'QY'` gone from every table.
@@ -355,7 +362,12 @@ the rollup silently inconsistent. Procedure:
    `state=paused` and `currentJobId=null` (`src/worker/index.ts:140-148`).
 2. Deploy (migrate + reload). The migration transaction is short (~6 s measured
    for the backfill on 2026-09-03 coverage) but the pause must still span it and
-   the reload. Keep the pause through the new worker's health.
+   the reload. Before resuming, `/api/admin/status` (authenticated) must show
+   `worker.alive=true`, `worker.version` = the deployed SHA, `state=paused`,
+   `currentJobId=null`, `pauseRequested=true` — `/api/health` alone cannot tell
+   the new paused worker from the old one (CODEX1 gate P2-1). If the deploy
+   aborts after 0050 is recorded, leave the worker paused; roll forward or apply
+   0051. Never resume the old worker against 0050.
 3. Reconcile: run the contributor CTE from 0050 against `band_locs` both ways
    with `EXCEPT`, and recompute `n`/`num`/`reached` for a sample of 20 countries
    against the live rows; report row counts and the diff (not a literal 793).

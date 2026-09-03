@@ -445,7 +445,7 @@ export async function rebuildBandRollup(
 	await run(
 		`WITH sub1 AS (
 		   SELECT ff.loc_code, r.parent_code AS country,
-		          CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+		          CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
 		               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
 		               ELSE r.lon END AS lon_eff,
 		          r.lat
@@ -453,7 +453,7 @@ export async function rebuildBandRollup(
 		    WHERE ff.loc_kind = 'region' AND r.level = 'subnational1' AND r.parent_code = $1),
 		 country_only AS (
 		   SELECT ff.loc_code, r.code AS country,
-		          CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+		          CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
 		               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
 		               ELSE r.lon END AS lon_eff,
 		          r.lat
@@ -463,8 +463,10 @@ export async function rebuildBandRollup(
 		 contrib AS (
 		   SELECT loc_code, country,
 		          GREATEST(-90, LEAST(80, floor(lat / 10) * 10))::smallint AS band,
-		          (country IN ('US','CA','MX') AND lon_eff < -100) AS west
-		     FROM (SELECT * FROM sub1 UNION ALL SELECT * FROM country_only) u)
+		          (is_sub1 AND country IN ('US','CA','MX') AND lon_eff < -100) AS west
+		     FROM (SELECT loc_code, country, lon_eff, lat, TRUE  AS is_sub1 FROM sub1
+		           UNION ALL
+		           SELECT loc_code, country, lon_eff, lat, FALSE AS is_sub1 FROM country_only) u)
 		 INSERT INTO band_locs (band, country, west, loc_code)
 		 SELECT band, country, west, loc_code FROM contrib`,
 		[country]

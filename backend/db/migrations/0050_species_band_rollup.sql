@@ -44,8 +44,9 @@
 -- index for the forecast's needs; adding a species-leading index there serves
 -- only this feature and duplicates ~23.6M-source-row-derived data that these
 -- new tables already hold at ribbon grain. Building the ribbon tables instead
--- keeps the per-request read down to three tiny SELECTs against ≤1.5M rows at
--- full world coverage, with no impact on 0049's existing index shape.
+-- keeps the per-request read down to three small SELECTs against a table
+-- projected at roughly 1.8M rows at full world coverage (425,820 rows at 793
+-- contributors, scaled to ~3,400; species density may make it lower), with no impact on 0049's existing index shape.
 --
 -- MEASURED (read-only EXPLAIN ANALYZE pre-flight against prod, 2026-09-03,
 -- 788 loaded subnational1 regions + 5 country-only countries = 793 band_locs
@@ -56,15 +57,19 @@
 -- record the ACTUAL count, not a guess — coverage is still growing, so the
 -- deploy re-measures and this header is not re-edited after the fact).
 --
--- `west` guard: the committed 0044/0048 seed has an antimeridian bug — every
--- region whose bounding box crosses 180° has a centroid longitude near 0
--- (US 0.31, NZ 0.12, FJ 0.01, AQ; sub1 rows US-AK 0.31, NZ-NTL -2.02, FJ-N,
--- FJ-E). A naive `lon < -100` would put Alaska in the EAST column. The CASE
--- below computes an effective longitude from the bounding-box midpoint
--- through 180° when the box wraps (min_lon > max_lon, 0047), and restricts
--- the west split to US/CA/MX (the only countries whose regions the ribbon
--- must split at 100°W). A separate P3 td fixes the generator's centroid for
--- wrapped boxes; until then this CASE is the guard.
+-- `west` guard: eBird's centroid is unreliable for every region whose extent
+-- crosses the antimeridian — it reports a longitude near 0 (US 0.31, US-AK
+-- 0.31, NZ 0.12, NZ-NTL -2.02, FJ, FJ-E, FJ-N, AQ, RU-CHU, KI, UM) — and the
+-- committed seed preserves eBird's CONVENTIONAL NEAR-GLOBAL ENVELOPE for
+-- those regions (US-AK: min_lon -179.150558, max_lon 179.773408), NOT the
+-- min_lon > max_lon wrap that 0047's note allows. Zero seeded rows use
+-- min>max; eleven have an envelope wider than 180°. So the wrap test below
+-- is (min_lon > max_lon OR max_lon - min_lon > 180), and lon_eff is the
+-- midpoint of the complementary arc through 180° (US-AK -> -179.69). Only
+-- SUBNATIONAL1 rows of US/CA/MX split at 100°W; a country row never does.
+-- A naive `lon < -100` would have put Alaska in the EAST column (CODEX1
+-- P1, 2026-09-03). td-57d9fc fixes the generator's centroid; this is the
+-- guard until then.
 --
 -- Deleting a loaded region (CODEX1 P2-5): only band_locs cascades from
 -- frequency_fetch (ON DELETE CASCADE below); band_month_samples and
@@ -122,7 +127,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON band_locs, band_month_samples, species_b
 -- SELECT-able by birds_app (0043).
 WITH sub1 AS (
   SELECT ff.loc_code, r.parent_code AS country,
-         CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+         CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
               ELSE r.lon END AS lon_eff,
          r.lat
@@ -130,7 +135,7 @@ WITH sub1 AS (
    WHERE ff.loc_kind = 'region' AND r.level = 'subnational1'),
 country_only AS (
   SELECT ff.loc_code, r.code AS country,
-         CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+         CASE WHEN r.min_lon IS NOT NULL AND (r.min_lon > r.max_lon OR r.max_lon - r.min_lon > 180)
               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
               ELSE r.lon END AS lon_eff,
          r.lat
@@ -140,8 +145,11 @@ country_only AS (
 contrib AS (
   SELECT loc_code, country,
          GREATEST(-90, LEAST(80, floor(lat / 10) * 10))::smallint AS band,
-         (country IN ('US','CA','MX') AND lon_eff < -100) AS west
-    FROM (SELECT * FROM sub1 UNION ALL SELECT * FROM country_only) u)
+         -- Only subnational1 rows of US/CA/MX split at 100W; a country row never does.
+         (is_sub1 AND country IN ('US','CA','MX') AND lon_eff < -100) AS west
+    FROM (SELECT loc_code, country, lon_eff, lat, TRUE  AS is_sub1 FROM sub1
+          UNION ALL
+          SELECT loc_code, country, lon_eff, lat, FALSE AS is_sub1 FROM country_only) u)
 INSERT INTO band_locs (band, country, west, loc_code)
 SELECT band, country, west, loc_code FROM contrib;
 
