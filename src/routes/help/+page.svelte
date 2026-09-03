@@ -327,8 +327,10 @@
 						page. Background loads show live progress with an
 						<strong>Activity</strong> feed per load (which location just
 						loaded, which failed and why), Cancel, and recent history; below,
-						regions expand to counties, counties to their hotspots, each row
-						showing its year span, species count (with any unmatched
+						loaded data drills from geographic area to country, then from
+						state/region to smaller regions and hotspots. United States contains
+						all of its states; each level stays collapsed until opened. Each row
+						shows its year span, species count (with any unmatched
 						bar-chart rows), load date, and a Refresh; failed loads keep a
 						Retry. Load new regions and analyze counties from here too — pick
 						a <strong>Country</strong> above the region select to load

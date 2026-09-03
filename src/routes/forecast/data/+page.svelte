@@ -2,6 +2,10 @@
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
   import { goto, invalidateAll } from "$app/navigation";
+  import {
+    groupCountriesByGeographicArea,
+    type GeographicAreaGroup,
+  } from "$lib/geographic-areas";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { fmtNextScan } from "$lib/next-scan";
@@ -46,13 +50,37 @@
     data.states.length === 0 &&
       (data.selectedCountry === "US" || data.wholeCountryLoaded),
   );
-  // US state groups + one entry per non-US CountrySection — the "Loaded
-  // data (N regions)" count (td-f1d6da: countries now count as one region
-  // each, their subnational1 children nested inside rather than counted as
-  // their own top-level siblings).
-  const totalGroupCount = $derived(
-    data.stateGroups.length + data.countrySections.length,
+  type LoadedCountrySection = PageData["countrySections"][number];
+  type LoadedArea = GeographicAreaGroup<LoadedCountrySection>;
+
+  // Normalize the old US-special response shape into the same country shape
+  // used everywhere else. US states now live below United States instead of
+  // consuming 50+ top-level rows; the server shape stays backward-compatible.
+  const loadedCountries = $derived.by((): LoadedCountrySection[] => {
+    const usStates = data.stateGroups.filter((g) => g.level === "subnational1");
+    const usCountry = data.stateGroups.find((g) => g.level === "country");
+    const sections = [...data.countrySections];
+    if (usStates.length > 0 || usCountry) {
+      sections.push({
+        countryCode: "US",
+        countryName: "United States",
+        countrywide: usCountry?.state ?? null,
+        countryHotspots: [],
+        groups: usStates,
+        hotspotCount:
+          (usCountry?.hotspotCount ?? 0) +
+          usStates.reduce((sum, state) => sum + state.hotspotCount, 0),
+        regionTotal: null,
+        regionsLoaded: usStates.filter((state) => state.state).length,
+        regionRemaining: null,
+      });
+    }
+    return sections;
+  });
+  const geographicAreas = $derived(
+    groupCountriesByGeographicArea(loadedCountries),
   );
+  const totalCountryCount = $derived(loadedCountries.length);
 
   // Every StateGroup reaching this template — top-level (US) or nested
   // inside a CountrySection (everywhere else) — is level "subnational1"; a
@@ -107,6 +135,11 @@
    * country's children are never "counties"). */
   function sectionStatusText(s: PageData["countrySections"][number]): string {
     const parts: string[] = [];
+    if (s.countryCode === "US") {
+      parts.push(`${s.groups.length} state${s.groups.length === 1 ? "" : "s"}`);
+      parts.push(`${s.hotspotCount} hotspot${s.hotspotCount === 1 ? "" : "s"}`);
+      return parts.join(" · ");
+    }
     parts.push(
       s.countrywide
         ? s.countrywide.current
@@ -123,6 +156,21 @@
     }
     parts.push(`${s.hotspotCount} hotspot${s.hotspotCount === 1 ? "" : "s"}`);
     return parts.join(" · ");
+  }
+  function areaStatusText(area: LoadedArea): string {
+    const regionCount = area.countries.reduce(
+      (sum, country) => sum + country.groups.length,
+      0,
+    );
+    const hotspotCount = area.countries.reduce(
+      (sum, country) => sum + country.hotspotCount,
+      0,
+    );
+    return [
+      `${area.countries.length} countr${area.countries.length === 1 ? "y" : "ies"}`,
+      `${regionCount} region${regionCount === 1 ? "" : "s"}`,
+      `${hotspotCount} hotspot${hotspotCount === 1 ? "" : "s"}`,
+    ].join(" · ");
   }
 
   let refreshing = $state<string | null>(null);
@@ -156,6 +204,35 @@
     if (!cancelTarget) return;
     void jobsPoll.cancel(cancelTarget.id);
     cancelTarget = null;
+  }
+
+  // Geographic areas are independently remembered and lazily render their
+  // country summaries only while open. This keeps the all-world page light
+  // on phones after every country has data.
+  const OPEN_AREAS_KEY = "forecast-data-open-areas";
+  let openAreas = $state<string[]>([]);
+  $effect(() => {
+    if (!browser) return;
+    try {
+      const value = JSON.parse(localStorage.getItem(OPEN_AREAS_KEY) ?? "[]");
+      openAreas = Array.isArray(value)
+        ? value.filter((item) => typeof item === "string")
+        : [];
+    } catch {
+      openAreas = [];
+    }
+  });
+  function toggleArea(id: string, open: boolean) {
+    const next = openAreas.filter((areaId) => areaId !== id);
+    if (open) next.push(id);
+    openAreas = next;
+    if (browser) {
+      try {
+        localStorage.setItem(OPEN_AREAS_KEY, JSON.stringify(next));
+      } catch {
+        // private mode
+      }
+    }
   }
 
   // Which state sections are expanded — remembered across sessions (GBV).
@@ -778,14 +855,10 @@
 {/snippet}
 
 {#snippet countrySection(s: PageData["countrySections"][number])}
-  <!-- One top-level group per non-US country, behaving like a state group
-       (its own "Countrywide" row + "Analyze remaining regions" action)
-       with the country's subnational1 regions nested inside rather than
-       flat top-level siblings (GBV 2026-08-24: "Countries need to be
-       treated like states; regions in the countries nested under the
-       country."). -->
+  <!-- One country node inside a geographic area. US uses this same shape now,
+       with states as its nested groups and no countrywide export. -->
   <details
-    class="stategroup"
+    class="stategroup countrygroup"
     open={openStates.includes(s.countryCode)}
     ontoggle={(e) => toggleState(s.countryCode, e.currentTarget.open)}
   >
@@ -839,6 +912,28 @@
       {#each s.groups as g (g.stateCode)}
         {@render regionGroup(g, true)}
       {/each}
+    {/if}
+  </details>
+{/snippet}
+
+{#snippet geographicArea(area: LoadedArea)}
+  <details
+    class="area-group"
+    open={openAreas.includes(area.id)}
+    ontoggle={(e) => toggleArea(area.id, e.currentTarget.open)}
+  >
+    <summary>
+      <strong>{area.name}</strong>
+      <span class="groupmeta">{areaStatusText(area)}</span>
+    </summary>
+    <!-- Do not even render the country summaries while this area is closed.
+         Country and region bodies have the same lazy boundary one level down. -->
+    {#if openAreas.includes(area.id)}
+      <div class="area-countries">
+        {#each area.countries as country (country.countryCode)}
+          {@render countrySection(country)}
+        {/each}
+      </div>
     {/if}
   </details>
 {/snippet}
@@ -1161,7 +1256,7 @@
   <section class="card">
     <div class="section-head">
       <h2>
-        Loaded data ({totalGroupCount} region{totalGroupCount === 1 ? "" : "s"})
+        Loaded data ({totalCountryCount} countr{totalCountryCount === 1 ? "y" : "ies"})
       </h2>
       <button
         type="button"
@@ -1172,14 +1267,11 @@
         {reloading ? "Reloading…" : "Reload"}
       </button>
     </div>
-    {#if totalGroupCount === 0}
+    {#if totalCountryCount === 0}
       <p class="notice">Nothing loaded yet — load a region above.</p>
     {:else}
-      {#each data.stateGroups as g (g.stateCode)}
-        {@render regionGroup(g, false)}
-      {/each}
-      {#each data.countrySections as s (s.countryCode)}
-        {@render countrySection(s)}
+      {#each geographicAreas as area (area.id)}
+        {@render geographicArea(area)}
       {/each}
       {#if data.orphanHotspots.length > 0}
         <details class="stategroup">
@@ -1331,6 +1423,30 @@
     font-size: 0.82rem;
     min-height: 36px;
     padding: 4px 12px;
+  }
+  .area-group {
+    border-top: 1px solid var(--border);
+  }
+  .area-group:first-of-type {
+    border-top: none;
+  }
+  .area-group > summary {
+    cursor: pointer;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .area-group > summary:hover {
+    background: var(--bg);
+  }
+  .area-countries {
+    margin-left: 12px;
+    border-left: 2px solid var(--border);
+    padding-left: 12px;
   }
   .stategroup {
     border-top: 1px solid var(--border);

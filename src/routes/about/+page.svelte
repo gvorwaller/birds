@@ -159,6 +159,12 @@
 								nearest-first when a home is saved.
 							</li>
 							<li>
+								<strong>World data without the wall of rows</strong> — loaded data now
+								drills from geographic area to country to state or region, with all
+								U.S. states under United States. Closed levels stay out of the page
+								until opened, keeping the all-world inventory practical on a phone.
+							</li>
+							<li>
 								<strong>Breadcrumb out of the species forecast</strong> — following
 								"Where should I go?" from a species page now leaves a trail back to
 								that bird and to the field guide (or wherever the drill started).
