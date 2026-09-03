@@ -1,6 +1,10 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 3.3 (2026-09-03). Rev 3.3: one stale number in the TD-C geometry test
+**Status:** BUILD SPEC rev 3.4 (2026-09-03). Rev 3.4: CODEX1's TD-C gate (REJECT at 5fbc0d7)
+found the mockup oracle itself never carried the owner's P1-7 phone rule (rows own the
+band, the scrubber owns the month, 48px rows in every phone view) and ordered the
+readout's small-sample line before the zero line; oracle corrected, contract restated
+in the Rev 3.4 ledger. Rev 3.3: one stale number in the TD-C geometry test
 line (44 → 48 px), caught by the TD-C implementer. Rev 3.2 folds CODEX1's TD-B deploy-gate
 REJECT (2 P1 / 3 P2 / 1 P3, each verified by CC1) — chiefly a fourth cell state, `thin`;
 see the Rev 3.2 ledger. Rev 3 fixes a P1 CODEX1 found after rev 2
@@ -12,6 +16,16 @@ against the seed, the code and the test file before folding (all CONFIRMED).
 The two owner decisions CODEX1 flagged were made 2026-09-03 and match the
 defaults written here (obey cs.md; thin countries excluded and the cell hatched).
 Nothing in `src/` has changed.
+
+## Rev 3.4 changes (2026-09-03, CODEX1 deploy gate on TD-C: REJECT, all verified)
+
+| # | Finding | Fix |
+|---|---|---|
+| P1 | Under 640px the pointer surface picked band AND month with 22px rows in World/All, against the owner's P1-7 decision. The mockup oracle had the same defect. | Contract: below 640px (a `phone` flag sampled from `matchMedia('(max-width: 639px)')`, not `!wide`) rows are `ROW_H_TOUCH` in EVERY view and pointer picks are band-only: y→band, month untouched, cont = null in World / the continent under x in All / the single continent. Tablets 640-1023 keep compact rows and cell picking. `geometry(s, avail, wide, phone)`, `pickCell(s, geom, x, y, bandOnly)`. Oracle fixed the same way. |
+| P1 | The drill effect served a cached cell before bumping the request generation, so an in-flight fetch for the previous cell could land under the new heading. | Generation is bumped before the cache check; the decision lives in the pure coordinator and the in-flight-A → cached-B race is pinned. |
+| P2 | The fixture marker survived `test-db-reset.sh` and was not bound to the database, so seed → reset → prod restore → unseed would delete real rows. | Marker carries the database OID and postmaster start time; unseed refuses on mismatch and verifies in its transaction that the marker's rows are the only contributors; reset removes the marker. |
+| P2 | `readout` tested `n < LOW_N` before `f === 0`, printing "0% reporting rate · small sample" for a zero the server classifies `low: false` and the chart fills solid grey. Oracle shared the order. | Branch on the server's `low`; `{f:0,n:39}` reads "0% — surveyed, no reports" under both weightings. Oracle fixed. |
+| P2 | `drillNote` / `selectedRegionCode` survived band, continent and species changes. | Cleared whenever the drill identity (species, band, cont) changes; pinned. |
 
 ## Rev 3.2 changes (2026-09-03, CODEX1 deploy gate on TD-B: REJECT, all verified)
 
@@ -533,11 +547,11 @@ export interface RibbonState { view:'world'|'cont'; contView:'ALL'|RibbonColumn;
 export function initialState(wide: boolean): RibbonState;       // wide: cont/ALL/NAE; phone: world/NAE/null; band 40, month 7
 export function applyWide(s: RibbonState, wide: boolean): RibbonState;   // no-op when viewTouched
 export function drawnColumns(s: RibbonState): RibbonColumn[];
-export function geometry(s, availWidth: number, wide: boolean): { cont; single; cols; cellW; rowH; headH; w; h };  // mockup geom()
+export function geometry(s, availWidth: number, wide: boolean, phone: boolean): { cont; single; cols; cellW; rowH; headH; w; h };  // mockup geom(); phone → rowH ROW_H_TOUCH in every view (rev 3.4)
 export function cellAt(grid, s): RibbonCellClient | null;
 export type Key = 'ArrowLeft'|'ArrowRight'|'ArrowUp'|'ArrowDown'|'PageUp'|'PageDown'|'Home'|'End'|'Enter'|' ';
 export function reduce(s: RibbonState, key: Key): { state: RibbonState; action?: 'openDrill' } | null;  // mockup keyboard
-export function pickCell(s, geom, x: number, y: number): RibbonState | null;  // mockup pick()
+export function pickCell(s, geom, x: number, y: number, bandOnly: boolean): RibbonState | null;  // mockup pick(); bandOnly (phones) leaves month to the scrubber (rev 3.4)
 export function readout(grid, s): { line1; line2; line3; title3?; nreg: number; empty: boolean };  // mockup readout, verbatim copy
 export function chartAria(grid, s, speciesName: string): string;            // mockup chartAria
 export function scopeText(meta, weight): string;                            // mockup scope caption verbatim

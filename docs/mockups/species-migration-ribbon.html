@@ -513,7 +513,10 @@
     // World) fills the width, never below 11px (GROK P2-11). On a phone a single
     // continent's rows become 44px tap targets (CODEX1 P2-2, owner-adopted).
     const cellW = cont && !single ? Math.max(6, avail / cols) : Math.max(11, Math.min(avail / cols, 44));
-    const rowH = single && isPhone() ? 48 : ROW_H;   // 48px tap rows under 640px (cs.md)
+    // Under 640px the ROW is the tap target in EVERY view (owner decision P1-7: cells
+    // are not tap targets on phones; the scrubber owns the month, a 48px row owns
+    // the band), so rows are 48px there whatever the view (CODEX1 TD-C gate P1-1).
+    const rowH = isPhone() ? 48 : ROW_H;
     return { cont, single, conts, cols, cellW, rowH, headH: cont ? 34 : 20, w: cols * cellW };
   }
 
@@ -634,7 +637,9 @@
     let line2, line3 = '';
     if (c.empty) line2 = `<span class="r2">No data — nothing loaded here</span>`;
     else if (c.preview) { line2 = `<span class="r2">${pct(c.f)} · preview only, not eBird data</span>`; line3 = `<span class="r3">${regs}</span>`; }
-    else if (c.n < LOW_N) { line2 = `<span class="r2">${pct(c.f)} reporting rate · small sample</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
+    // Small sample only when something WAS reported: a zero with n < 40 is a zero
+    // (server classify: low never set on a zero cell; CODEX1 TD-C gate P2-2).
+    else if (c.f > 0 && c.n < LOW_N) { line2 = `<span class="r2">${pct(c.f)} reporting rate · small sample</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
     else if (state.weight === 'place' && (c.excluded || 0) > 0) {
       line2 = `<span class="r2">${pct(c.f)} average reporting rate · small sample</span>`;
       line3 = `<span class="r3">${c.excluded} countr${c.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out · ${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
@@ -840,8 +845,12 @@
     state.band = BANDS[bi];
     state.cont = g.cont ? g.conts[Math.floor(col / 12)][0] : null;
     state.drillExpanded = false; state.drillNote = '';
-    state.month = (col % 12) + 1;
-    mRange.value = state.month; mLabel.textContent = MSHORT[state.month - 1];
+    // Phones pick the BAND only: the month stays with the scrubber (owner decision
+    // P1-7; CODEX1 TD-C gate P1-1 found the oracle itself ignored this).
+    if (!isPhone()) {
+      state.month = (col % 12) + 1;
+      mRange.value = state.month; mLabel.textContent = MSHORT[state.month - 1];
+    }
     setPlaying(false); render();
   }
   // Select on RELEASE after less than 8px of travel, no pointer capture (cs.md +
