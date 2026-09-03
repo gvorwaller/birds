@@ -3,6 +3,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import NavProgress from '$components/NavProgress.svelte';
+	import { bottomNavViewportCorrection } from '$lib/bottom-nav';
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
@@ -104,27 +105,43 @@
 	}
 
 	/**
-	 * iOS can finish a visual-viewport transition while leaving a fixed bottom
-	 * element painted at its old position. Re-assigning `bottom` after WebKit's
-	 * viewport events have settled forces the bar through layout again. The
-	 * hundredth-pixel alternation is imperceptible but avoids WebKit optimizing
-	 * away an assignment of the same value.
+	 * iOS 26 installed apps can leave visualViewport at its keyboard-sized
+	 * height after the keyboard closes. WebKit then paints `bottom: 0` at that
+	 * stale boundary even though the layout viewport is full-height again.
+	 * Compensate by the measured gap in standalone mode; ordinary Safari keeps
+	 * its native browser-toolbar positioning.
 	 */
 	function stabilizeBottomNav(node: HTMLElement) {
 		const viewport = window.visualViewport;
+		const iosNavigator = navigator as Navigator & { standalone?: boolean };
+		const standalone =
+			iosNavigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
 		let firstFrame = 0;
 		let secondFrame = 0;
-		let nudged = false;
+		let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+		function applyCorrection() {
+			const correction = bottomNavViewportCorrection({
+				layoutHeight: window.innerHeight,
+				visualOffsetTop: viewport?.offsetTop ?? 0,
+				visualHeight: viewport?.height ?? window.innerHeight,
+				standalone
+			});
+			node.style.transform = correction > 0 ? `translateY(${correction}px)` : '';
+		}
 
 		function repin() {
 			cancelAnimationFrame(firstFrame);
 			cancelAnimationFrame(secondFrame);
+			if (settleTimer) clearTimeout(settleTimer);
 			firstFrame = requestAnimationFrame(() => {
 				secondFrame = requestAnimationFrame(() => {
-					nudged = !nudged;
-					node.style.bottom = nudged ? '0.01px' : '0px';
+					applyCorrection();
 				});
 			});
+			// focusout can arrive before the keyboard animation completes and some
+			// affected WebKit builds omit a final viewport event.
+			settleTimer = setTimeout(applyCorrection, 350);
 		}
 
 		viewport?.addEventListener('resize', repin, { passive: true });
@@ -139,12 +156,14 @@
 			destroy() {
 				cancelAnimationFrame(firstFrame);
 				cancelAnimationFrame(secondFrame);
+				if (settleTimer) clearTimeout(settleTimer);
 				viewport?.removeEventListener('resize', repin);
 				viewport?.removeEventListener('scroll', repin);
 				window.removeEventListener('resize', repin);
 				window.removeEventListener('orientationchange', repin);
 				window.removeEventListener('pageshow', repin);
 				document.removeEventListener('focusout', repin);
+				node.style.transform = '';
 			}
 		};
 	}

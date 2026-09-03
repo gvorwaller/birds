@@ -14,11 +14,14 @@ describe("iOS bottom navigation stability", () => {
     expect(css).not.toContain("backdrop-filter:");
   });
 
-  it("repins the bar after visual viewport transitions settle", () => {
+  it("corrects the stale standalone viewport after transitions settle", () => {
     expect(layout).toContain("use:stabilizeBottomNav");
     expect(layout).toContain("window.visualViewport");
+    expect(layout).toContain("bottomNavViewportCorrection");
+    expect(layout).toContain("display-mode: standalone");
     expect(layout).toContain("viewport?.addEventListener('resize', repin");
     expect(layout).toContain("viewport?.addEventListener('scroll', repin");
     expect(layout.match(/requestAnimationFrame/g)).toHaveLength(2);
+    expect(layout).toContain("setTimeout(applyCorrection, 350)");
   });
 });
