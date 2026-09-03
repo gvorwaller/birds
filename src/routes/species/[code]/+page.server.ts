@@ -22,6 +22,7 @@ import {
   EbirdError,
 } from "$server/ebird";
 import { nearestSpeciesReports } from "$server/nearest-ladder";
+import { speciesRibbon, type RibbonGrid } from "$server/ribbon";
 import { ownerGalleryUrl } from "$server/access";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
@@ -129,6 +130,19 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
   // reference table — pure DB, no eBird calls, works without an API key.
   // Origin rule unchanged: the searched place wins over the saved home.
   const teaserP = pickSpeciesTeaserState(code, { home: origin });
+
+  // Migration ribbon (td-59c2d0 build spec, TD-B): a discriminated result so
+  // the page can tell "nothing loaded" (ok, grid: null) from "broken"
+  // (ok: false) — never render a load failure as plain absence (CODEX1
+  // P2-10). Awaited, not streamed: the ribbon is above the fold.
+  const ribbonP: Promise<{ ok: true; grid: RibbonGrid | null } | { ok: false; error: string }> =
+    speciesRibbon(code).then(
+      (g) => ({ ok: true as const, grid: g }),
+      (e) => {
+        console.error("[species] ribbon", e);
+        return { ok: false as const, error: "ribbon" };
+      },
+    );
 
   // Nearby reports — STREAMED (refactor plan Phase 9): the eBird recent +
   // notable + hotspots + Google Places chain is the page's worst offender by
@@ -247,6 +261,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
   // its own curve so the client switches tabs with no round trip (Phase 5).
   // Rendered only when the default peer has a usable best month.
   const teaserState = await teaserP;
+  const ribbon = await ribbonP;
   const forecastTeaser =
     teaserState && teaserState.peers.some((pe) => pe.best != null) ? teaserState : null;
 
@@ -282,6 +297,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
     isAdmin: locals.user!.role === "admin",
     seen: seen.rows[0] ?? null,
     forecastTeaser,
+    ribbon,
     photos: photos.rows,
     hasGallery,
     nearby,

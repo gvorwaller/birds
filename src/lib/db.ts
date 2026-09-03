@@ -122,6 +122,34 @@ export async function withTransaction<T>(
 	}
 }
 
+/**
+ * Run `fn`'s read-only statements on ONE snapshot: `REPEATABLE READ, READ
+ * ONLY`. Plain `query()` is `pool.query` per call and `withTransaction` opens
+ * a plain READ COMMITTED transaction — neither gives a caller issuing several
+ * SELECTs a consistent view, so a concurrent writer committing between them
+ * (e.g. a country's band rollup being rebuilt) can hand back a combination
+ * that never existed at any instant (migration ribbon build spec, TD-B,
+ * CODEX1 P1-2). Never issue a write inside `fn`: READ ONLY rejects it.
+ */
+export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+	const client = await getPool().connect();
+	try {
+		await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+		const result = await fn(client);
+		await client.query('COMMIT');
+		return result;
+	} catch (err) {
+		try {
+			await client.query('ROLLBACK');
+		} catch {
+			/* ROLLBACK failure is secondary */
+		}
+		throw err;
+	} finally {
+		client.release();
+	}
+}
+
 export async function dbHealthCheck(): Promise<boolean> {
 	try {
 		const r = await query<{ one: number }>('SELECT 1 AS one');

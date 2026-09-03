@@ -11,6 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { RibbonColumn } from "./ribbon";
 
 // Parse .env.test and expose connection vars BEFORE importing $lib/db —
 // its pool reads env lazily on first query, and vitest isolates test files,
@@ -36,7 +37,7 @@ for (const k of ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]) {
 }
 process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 
-const { query } = await import("$lib/db");
+const { query, withReadSnapshot } = await import("$lib/db");
 const pg = (await import("pg")).default;
 
 /** Fixture regions must exist for frequency fixtures to satisfy the 0045
@@ -124,6 +125,7 @@ const { rankLocsForSpeciesMonth, rankCountiesForNeeds, MIN_MONTH_N } =
   await import("./forecast");
 const { normalizeMatchedBarchart, storeFrequencies, WEEKS } =
   await import("./barchart");
+const { speciesRibbon, bandIndexOf } = await import("./ribbon");
 
 let dbUp = false;
 try {
@@ -832,6 +834,104 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
          (SELECT * FROM live EXCEPT SELECT * FROM backfill)`,
       );
       expect(freqDiff.rows).toHaveLength(0);
+    });
+
+    // -----------------------------------------------------------------
+    // td-c6b113 (build spec TD-B): speciesRibbon() reads these same band
+    // tables. The Tests section names this fixture pair "QZ"/"ZZ", but QZ/ZZ
+    // are the OUTER describe's fixtures — LOADED for its whole duration and
+    // NOT reserved for band-grain testing (CODEX1 P1-5, the comment on
+    // FIXTURE_REGIONS above) — and the acceptance vector (313.5 num / 1017 n,
+    // band 40) only matches QY-W45's insert in this nested describe. QY/ZY
+    // are used here instead; both are outside continents.json (P1-1's map),
+    // so this test supplies its own `columnOf` rather than the real one.
+    // -----------------------------------------------------------------
+    it("speciesRibbon aggregates the band tables under a test columnOf (td-c6b113)", async () => {
+      await insertLoc("QY-W45", janSamples(10, 1000, 7, 0));
+      await insertFreq("QY-W45", 1, 1.0);
+      await insertFreq("QY-W45", 2, 0.3);
+      await insertFreq("QY-W45", 3, 0.5);
+      await refreshRollup("QY-W45");
+      await insertLoc("ZY-S35", janSamples(200, 0, 0, 0));
+      await insertFreq("ZY-S35", 1, 0.5);
+      await refreshRollup("ZY-S35");
+
+      const columnOf = (country: string, west: boolean): RibbonColumn | null => {
+        if (country === "QY") return west ? "NAW" : "NAE";
+        if (country === "ZY") return "SA";
+        return null;
+      };
+      const grid = await speciesRibbon("testsp", { columnOf });
+      expect(grid).not.toBeNull();
+
+      const { COLUMNS } = await import("./ribbon");
+      const b = bandIndexOf(40);
+      const c = COLUMNS.indexOf("NAE");
+      // Same vector as "reproduces Σnum / Σn exactly" above: 313.5 / 1017.
+      // QY is the only country in (band 40, NAE) here, so equal weight and
+      // checklist weight agree.
+      const expected = { f: 313.5 / 1017, n: 1017, state: "reported", low: false, excluded: 0 };
+      expect(grid!.modes.checklists.cols[b][c][0]).toEqual(expected);
+      expect(grid!.modes.equal.cols[b][c][0]).toEqual(expected);
+      expect(grid!.regionCounts[b][c]).toBe(1);
+
+      const totalRegions = await query<{ count: string }>("SELECT count(*) FROM band_locs");
+      expect(grid!.meta.regions).toBe(Number(totalRegions.rows[0].count));
+      const totalCountries = await query<{ count: string }>(
+        "SELECT count(DISTINCT country) FROM band_locs",
+      );
+      expect(grid!.meta.countries).toBe(Number(totalCountries.rows[0].count));
+
+      // January reaches PRESENT in QY-W45 (num/n = 0.308… >= 0.005), so it is
+      // never a global gap however much unrelated data is also loaded.
+      expect(grid!.gapMonths).not.toContain(1);
+    });
+
+    it("withReadSnapshot holds a REPEATABLE READ view across a concurrent commit (P1-2)", async () => {
+      await insertLoc("QY-W45", janSamples(1000, 0, 0, 0));
+      await refreshRollup("QY-W45");
+
+      const before = await query<{ n: string }>(
+        `SELECT n FROM band_month_samples
+          WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
+      );
+      expect(Number(before.rows[0].n)).toBe(1000);
+
+      let midSnapshotN: number | null = null;
+      let afterCommitSnapshotN: number | null = null;
+      await withReadSnapshot(async (client) => {
+        const first = await client.query<{ n: string }>(
+          `SELECT n FROM band_month_samples
+            WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
+        );
+        midSnapshotN = Number(first.rows[0].n);
+
+        // A second, independent connection (plain query() checks out its own
+        // pooled client) commits a rebuild that changes QY's Jan n WHILE this
+        // snapshot transaction is still open. refreshRollup must run against
+        // the NEWLY inserted loc — it rebuilds that loc's own 0049
+        // loc_month_samples row first, then rebuildBandRollup's country-grain
+        // rescan (band_month_samples joins loc_month_samples) picks up both.
+        await insertLoc("QY-E45", janSamples(2000, 0, 0, 0));
+        await refreshRollup("QY-E45"); // country grain: re-sums both locations
+
+        const second = await client.query<{ n: string }>(
+          `SELECT n FROM band_month_samples
+            WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
+        );
+        afterCommitSnapshotN = Number(second.rows[0].n);
+      });
+
+      expect(midSnapshotN).toBe(1000);
+      // REPEATABLE READ: the second read inside the SAME snapshot still sees
+      // the pre-commit value, even though the row changed underneath it.
+      expect(afterCommitSnapshotN).toBe(1000);
+
+      const liveAfter = await query<{ n: string }>(
+        `SELECT n FROM band_month_samples
+          WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
+      );
+      expect(Number(liveAfter.rows[0].n)).toBe(3000);
     });
   });
 });
