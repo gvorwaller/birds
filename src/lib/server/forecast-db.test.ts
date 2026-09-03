@@ -618,15 +618,22 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       }
     });
 
-    it("an antimeridian-wrapping NA region is west", async () => {
-      // The real Alaska shape: centroid lon 0.31 (the committed seed's bug),
-      // box crossing 180 (min_lon 172, max_lon -130). The CASE, not the raw
-      // lon, must decide — a naive `lon < -100` would put this in the east.
+    it("an antimeridian NA region is west — using the REAL seed encoding", async () => {
+      // The committed seed does NOT store wrapped boxes as min_lon > max_lon.
+      // eBird reports a conventional near-global envelope and the generator
+      // preserves it: US-AK is lon 0.311425 with min_lon -179.150558,
+      // max_lon 179.773408 (0048). Twelve seeded rows have an envelope wider
+      // than 180°; zero use min>max. The CASE must recognise BOTH encodings
+      // (CODEX1 P1 on td-8d3526, 2026-09-03): a naive `lon < -100` puts
+      // Alaska in the EAST column. A NZ-shaped row with the same envelope
+      // must stay west=false — only US/CA/MX subnational1 rows split.
       await withOwner(async (c) => {
         await c.query(
           `INSERT INTO regions
              (code, name, level, parent_code, lat, lon, min_lat, max_lat, min_lon, max_lon, source_at)
-           VALUES ('US-QQX', 'Fixture US-QQX', 'subnational1', 'US', 64, 0.31, 51, 71, 172, -130, '2026-01-01')
+           VALUES ('US-QQX', 'Fixture US-QQX (real US-AK encoding)', 'subnational1', 'US', 61.3, 0.311425, 51.20972, 71.390685, -179.150558, 179.773408, '2026-01-01'),
+                  ('US-QQY', 'Fixture US-QQY (0047 min>max encoding)', 'subnational1', 'US', 64, 0.31, 51, 71, 172, -130, '2026-01-01'),
+                  ('ZY-QQX', 'Fixture ZY-QQX (NZ-shaped envelope)', 'subnational1', 'ZY', -32.8, -2.02, -36.4, -29.2, -178.82695, 174.78389, '2026-01-01')
            ON CONFLICT (code) DO UPDATE SET
              lat = EXCLUDED.lat, lon = EXCLUDED.lon,
              min_lat = EXCLUDED.min_lat, max_lat = EXCLUDED.max_lat,
@@ -635,17 +642,24 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       });
       try {
         await insertLoc("US-QQX", janSamples(50, 0, 0, 0));
-        await refreshRollup("US-QQX");
-        const row = await query<{ west: boolean }>(
-          "SELECT west FROM band_locs WHERE loc_code = 'US-QQX'",
+        await insertLoc("US-QQY", janSamples(50, 0, 0, 0));
+        await insertLoc("ZY-QQX", janSamples(50, 0, 0, 0));
+        await refreshRollup("US-QQX"); // country grain: also covers US-QQY
+        await refreshRollup("ZY-QQX");
+        const rows = await query<{ loc_code: string; west: boolean }>(
+          "SELECT loc_code, west FROM band_locs WHERE loc_code IN ('US-QQX', 'US-QQY', 'ZY-QQX')",
         );
-        expect(row.rows[0].west).toBe(true);
+        const west = new Map(rows.rows.map((r) => [r.loc_code, r.west]));
+        expect(west.get("US-QQX"), "real US-AK encoding → west").toBe(true);
+        expect(west.get("US-QQY"), "0047 min>max encoding → west").toBe(true);
+        expect(west.get("ZY-QQX"), "same envelope outside NA → never split").toBe(false);
       } finally {
-        await query("DELETE FROM frequency_fetch WHERE loc_code = 'US-QQX'");
+        await query("DELETE FROM frequency_fetch WHERE loc_code IN ('US-QQX', 'US-QQY', 'ZY-QQX')");
         const { rebuildBandRollup } = await import("./barchart");
-        await rebuildBandRollup("US-QQX");
+        await rebuildBandRollup("US-QQX"); // re-sync 'US' now the temp fixtures are gone
+        await rebuildBandRollup("ZY-QQX");
         await withOwner(async (c) => {
-          await c.query("DELETE FROM regions WHERE code = 'US-QQX'");
+          await c.query("DELETE FROM regions WHERE code IN ('US-QQX', 'US-QQY', 'ZY-QQX')");
         });
       }
     });

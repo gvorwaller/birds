@@ -468,14 +468,14 @@ export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise
 - `equal weight excludes countries under 40 checklists and hatches` (P2-2 default): A n=1 f=1.0, B n=10,000 f=0 → f=0, excluded=1, low=true.
 - `reads share one snapshot` (P1-2, DB test): open a second client, commit a QY rebuild between the samples read and the species read inside a patched `withReadSnapshot` → the result reflects the pre-commit state for both.
 - `gapMonthsFrom` on Blackpoll region grain → `[1,2,3,12]`; NJ November (0.006 × 76,684) counts as reached, so 11 is NOT a gap.
-- **DB test** in `forecast-db.test.ts`: after the TD-A fixtures, `speciesRibbon('testsp', { columnOf })` with a test `columnOf` (QZ→NAW/NAE, ZZ→SA); assert cell (40, NAW, Jan) f=313.5/1017, `regionCounts`, `meta.regions`, `gapMonths`.
+- **DB test** in `forecast-db.test.ts`: after the TD-A fixtures, `speciesRibbon('testsp', { columnOf })` with a test `columnOf` (QY→NAW/NAE, ZY→SA — the band-grain reserved countries, not the file's long-lived QZ/ZZ; rev 3.1 typo fix); assert cell (40, NAW, Jan) f=313.5/1017, `regionCounts`, `meta.regions`, `gapMonths`.
 - **Route test** `src/routes/api/species-ribbon-regions/ribbon-regions.test.ts` in the `src/routes/species/[code]/species-media.test.ts` style: 401 without `scopeId`; 400 for missing species, band 45, cont `XX`; 200 shape `{rows,total,capped}` with `$server/ribbon` mocked.
 
 ### Acceptance
 - `speciesRibbon` issues exactly three SELECTs on ONE `withReadSnapshot` client, none against `species_frequency`/`species_month_freq`/`loc_month_samples` (assert via the mocked client call list).
 - Vectors pass to 1e-6.
 - Species page SSR payload carries `ribbon` as `{ok, grid|error}`; page renders correctly for `grid: null` and for `ok: false`.
-- SSR byte gate (CODEX1 P2-8): the serialised `ribbon` property ≤ 40 KB gzipped for Rock Pigeon (the widest species), measured in a test that runs the loader against the test DB and gzips `devalue`'s output; shell latency for `/species/osprey` on `dev:test` ≤ the pre-ribbon baseline + 50 ms.
+- SSR byte gate (CODEX1 P2-8): the serialised `ribbon` property ≤ 40 KB gzipped, measured in a test against the widest species the fixture DB can build (8 columns × 12 months; 2.2 KB gzipped as built), AND re-measured at deploy against production's widest species (Rock Pigeon) as a runbook step; shell latency for `/species/osprey` on `dev:test` ≤ the pre-ribbon baseline + 50 ms, measured manually at deploy (no recorded baseline exists to automate against).
 - Endpoint returns ≤40 rows sorted by peak with `total`; 401/400 per tests.
 - `npm run check` 0 errors.
 
