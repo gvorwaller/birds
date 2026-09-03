@@ -10,7 +10,7 @@
  * is read from .env.test, which the repo's guard scripts pin to 15436.
  */
 import { readFileSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // Parse .env.test and expose connection vars BEFORE importing $lib/db —
 // its pool reads env lazily on first query, and vitest isolates test files,
@@ -58,7 +58,31 @@ const FIXTURE_REGIONS: [string, string, string | null][] = [
   ["ZZ-A", "subnational1", "ZZ"],
   ["ZZ-ABC", "subnational1", "ZZ"],
   ["US-QQ", "subnational1", "US"],
+  // Reserved for the 0050 band-rollup tests below (td-8d3526) — QZ/ZZ stay
+  // out of that suite because they are LOADED for this whole describe and
+  // are fixture countries in `regions`, which would make "country-only" and
+  // "unmapped" assertions never true (CODEX1 P1-5). QY/ZY are a second,
+  // disjoint reserved pair; ZY-B40 exists only to put a second country in
+  // QY-W45/QY-E45's band (40) for the "two countries" test.
+  ["QY", "country", null],
+  ["QY-W45", "subnational1", "QY"],
+  ["QY-E45", "subnational1", "QY"],
+  ["ZY", "country", null],
+  ["ZY-S35", "subnational1", "ZY"],
+  ["ZY-B40", "subnational1", "ZY"],
 ];
+
+/** Real coordinates for the band-rollup fixtures above (band/west depend on
+ * lat/lon, unlike every other fixture here, which only needs to exist).
+ * Every other FIXTURE_REGIONS code keeps the harmless (1, 1) default. */
+const FIXTURE_COORDS: Record<string, [number, number]> = {
+  QY: [60, -105],
+  "QY-W45": [45, -110],
+  "QY-E45": [42.5, -80],
+  ZY: [-75, 0],
+  "ZY-S35": [-33, 20],
+  "ZY-B40": [45, 20],
+};
 
 async function withOwner(fn: (c: InstanceType<typeof pg.Client>) => Promise<void>) {
   const c = new pg.Client({
@@ -79,11 +103,12 @@ async function withOwner(fn: (c: InstanceType<typeof pg.Client>) => Promise<void
 async function seedFixtureRegions() {
   await withOwner(async (c) => {
     for (const [code, level, parent] of FIXTURE_REGIONS) {
+      const [lat, lon] = FIXTURE_COORDS[code] ?? [1, 1];
       await c.query(
         `INSERT INTO regions (code, name, level, parent_code, lat, lon, source_at)
-         VALUES ($1, $2, $3, $4, 1, 1, '2026-01-01')
-         ON CONFLICT (code) DO NOTHING`,
-        [code, `Fixture ${code}`, level, parent],
+         VALUES ($1, $2, $3, $4, $5, $6, '2026-01-01')
+         ON CONFLICT (code) DO UPDATE SET lat = EXCLUDED.lat, lon = EXCLUDED.lon`,
+        [code, `Fixture ${code}`, level, parent, lat, lon],
       );
     }
   });
@@ -127,11 +152,12 @@ async function insertLoc(code: string, sizes: number[]): Promise<void> {
 }
 
 /** Fixtures write species_frequency directly, so they must rebuild the 0049
- * rollup the same way storeFrequencies does — one shared definition, no
- * second copy of the arithmetic to drift. */
+ * AND 0050 rollups the same way storeFrequencies does — one shared
+ * definition, no second copy of the arithmetic to drift. */
 async function refreshRollup(code: string) {
-  const { rebuildMonthRollup } = await import("./barchart");
+  const { rebuildMonthRollup, rebuildBandRollup } = await import("./barchart");
   await rebuildMonthRollup(code);
+  await rebuildBandRollup(code);
 }
 
 async function insertFreq(code: string, week: number, freq: number) {
@@ -142,6 +168,16 @@ async function insertFreq(code: string, week: number, freq: number) {
 }
 
 const cleanup = async () => {
+  // Band tables (0050) FIRST: species_band_month_freq/band_month_samples
+  // key on `country`, not `loc_code`, so they do NOT cascade off the
+  // frequency_fetch deletes below — and `country` REFERENCES regions(code)
+  // with no ON DELETE CASCADE (0050), so leaving a stale row behind would
+  // make dropFixtureRegions()'s DELETE FROM regions fail with a foreign key
+  // violation the moment refreshRollup('ZZ-A') etc. populates them (it must,
+  // per td-8d3526: refreshRollup calls rebuildBandRollup too).
+  await query("DELETE FROM species_band_month_freq WHERE country IN ('QZ', 'ZZ', 'US')");
+  await query("DELETE FROM band_month_samples WHERE country IN ('QZ', 'ZZ', 'US')");
+  await query("DELETE FROM band_locs WHERE country IN ('QZ', 'ZZ', 'US')");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'QZ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'US-QQ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'ZZ%'");
@@ -440,6 +476,356 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
 
   it("rankCountiesForNeeds returns [] for a subnational2 code (never a valid target)", async () => {
     expect(await rankCountiesForNeeds(0, "US-QQ-001", 1)).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------
+  // 0050 band rollup tables (td-8d3526, migration ribbon build spec TD-A).
+  // Isolated reserved countries QY (60, -105) / ZY (-75, 0), never touched
+  // by the describe above — QZ/ZZ are LOADED for its whole duration and are
+  // fixture countries in `continents.json`'s absence sense (CODEX1 P1-5), so
+  // "country-only" and eviction assertions would never be exercised there.
+  // ---------------------------------------------------------------------
+  describe("band rollup", () => {
+    beforeEach(async () => {
+      await query("DELETE FROM species_band_month_freq WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM band_month_samples WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM band_locs WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'QY%' OR loc_code LIKE 'ZY%'");
+      await query(
+        "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'QY%' OR loc_code LIKE 'ZY%'",
+      );
+    });
+
+    afterAll(async () => {
+      await query("DELETE FROM species_band_month_freq WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM band_month_samples WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM band_locs WHERE country IN ('QY', 'ZY')");
+      await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'QY%' OR loc_code LIKE 'ZY%'");
+      await query(
+        "DELETE FROM frequency_fetch_attempts WHERE loc_code LIKE 'QY%' OR loc_code LIKE 'ZY%'",
+      );
+      await withOwner(async (c) => {
+        await c.query("DELETE FROM regions WHERE code LIKE 'QY%' OR code LIKE 'ZY%'");
+      });
+    });
+
+    it("reproduces Σnum / Σn exactly", async () => {
+      // Same vector as the 0049 QZ-RU test above: 1.0*10 + 0.3*1000 + 0.5*7
+      // over 1017 checklists = 313.5. lat 45 -> band 40; QY is not US/CA/MX
+      // so west is false regardless of longitude.
+      await insertLoc("QY-W45", janSamples(10, 1000, 7, 0));
+      await insertFreq("QY-W45", 1, 1.0);
+      await insertFreq("QY-W45", 2, 0.3);
+      await insertFreq("QY-W45", 3, 0.5);
+      await refreshRollup("QY-W45");
+
+      const freq = await query<{ num: string; reached: number }>(
+        `SELECT num, reached FROM species_band_month_freq
+          WHERE species_code = 'testsp' AND band = 40 AND country = 'QY'
+            AND west = false AND month = 1`,
+      );
+      expect(freq.rows).toHaveLength(1);
+      expect(Number(freq.rows[0].num)).toBeCloseTo(313.5, 9);
+      expect(Number(freq.rows[0].reached)).toBe(1);
+
+      const samples = await query<{ n: string }>(
+        `SELECT n FROM band_month_samples
+          WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
+      );
+      expect(Number(samples.rows[0].n)).toBe(1017);
+    });
+
+    it("REPLACES, never accumulates", async () => {
+      await insertLoc("QY-W45", janSamples(10, 1000, 7, 0));
+      await insertFreq("QY-W45", 1, 1.0);
+      await refreshRollup("QY-W45");
+      await refreshRollup("QY-W45");
+      const rows = await query(
+        `SELECT 1 FROM species_band_month_freq
+          WHERE species_code = 'testsp' AND country = 'QY' AND month = 1`,
+      );
+      expect(rows.rows).toHaveLength(1);
+      const locs = await query(
+        "SELECT 1 FROM band_locs WHERE country = 'QY' AND loc_code = 'QY-W45'",
+      );
+      expect(locs.rows).toHaveLength(1);
+    });
+
+    it("two countries in one band stay separate rows", async () => {
+      // QY-W45 (lat 45) and ZY-B40 (lat 45) both fall in band 40.
+      await insertLoc("QY-W45", janSamples(1000, 0, 0, 0));
+      await insertFreq("QY-W45", 1, 0.1);
+      await refreshRollup("QY-W45");
+      await insertLoc("ZY-B40", janSamples(1000, 0, 0, 0));
+      await insertFreq("ZY-B40", 1, 0.2);
+      await refreshRollup("ZY-B40");
+
+      const rows = await query<{ country: string; num: string }>(
+        `SELECT country, num FROM species_band_month_freq
+          WHERE species_code = 'testsp' AND band = 40 AND month = 1
+            AND country IN ('QY', 'ZY')
+          ORDER BY country`,
+      );
+      expect(rows.rows.map((r) => r.country)).toEqual(["QY", "ZY"]);
+      expect(Number(rows.rows[0].num)).toBeCloseTo(100, 6); // 0.1 * 1000
+      expect(Number(rows.rows[1].num)).toBeCloseTo(200, 6); // 0.2 * 1000
+    });
+
+    it("west is true only for US/CA/MX west of 100W", async () => {
+      await withOwner(async (c) => {
+        await c.query(
+          `INSERT INTO regions (code, name, level, parent_code, lat, lon, source_at)
+           VALUES ('US-QQW', 'Fixture US-QQW', 'subnational1', 'US', 45, -110, '2026-01-01'),
+                  ('US-QQE', 'Fixture US-QQE', 'subnational1', 'US', 45, -80, '2026-01-01')
+           ON CONFLICT (code) DO UPDATE SET lat = EXCLUDED.lat, lon = EXCLUDED.lon`,
+        );
+      });
+      try {
+        await insertLoc("US-QQW", janSamples(100, 0, 0, 0));
+        await insertLoc("US-QQE", janSamples(100, 0, 0, 0));
+        await refreshRollup("US-QQW"); // country grain: also picks up US-QQE
+        const rows = await query<{ loc_code: string; west: boolean }>(
+          "SELECT loc_code, west FROM band_locs WHERE loc_code IN ('US-QQW', 'US-QQE')",
+        );
+        const byLoc = new Map(rows.rows.map((r) => [r.loc_code, r.west]));
+        expect(byLoc.get("US-QQW")).toBe(true);
+        expect(byLoc.get("US-QQE")).toBe(false);
+
+        // A non-NA country at the same longitude stays east — the west split
+        // is restricted to US/CA/MX, not a bare lon < -100 (CODEX1 P1-6).
+        await insertLoc("QY-W45", janSamples(100, 0, 0, 0));
+        await refreshRollup("QY-W45");
+        const qy = await query<{ west: boolean }>(
+          "SELECT west FROM band_locs WHERE loc_code = 'QY-W45'",
+        );
+        expect(qy.rows[0].west).toBe(false);
+      } finally {
+        await query("DELETE FROM frequency_fetch WHERE loc_code IN ('US-QQW', 'US-QQE')");
+        const { rebuildBandRollup } = await import("./barchart");
+        await rebuildBandRollup("US-QQW"); // re-sync 'US' now the temp fixtures are gone
+        await withOwner(async (c) => {
+          await c.query("DELETE FROM regions WHERE code IN ('US-QQW', 'US-QQE')");
+        });
+      }
+    });
+
+    it("an antimeridian-wrapping NA region is west", async () => {
+      // The real Alaska shape: centroid lon 0.31 (the committed seed's bug),
+      // box crossing 180 (min_lon 172, max_lon -130). The CASE, not the raw
+      // lon, must decide — a naive `lon < -100` would put this in the east.
+      await withOwner(async (c) => {
+        await c.query(
+          `INSERT INTO regions
+             (code, name, level, parent_code, lat, lon, min_lat, max_lat, min_lon, max_lon, source_at)
+           VALUES ('US-QQX', 'Fixture US-QQX', 'subnational1', 'US', 64, 0.31, 51, 71, 172, -130, '2026-01-01')
+           ON CONFLICT (code) DO UPDATE SET
+             lat = EXCLUDED.lat, lon = EXCLUDED.lon,
+             min_lat = EXCLUDED.min_lat, max_lat = EXCLUDED.max_lat,
+             min_lon = EXCLUDED.min_lon, max_lon = EXCLUDED.max_lon`,
+        );
+      });
+      try {
+        await insertLoc("US-QQX", janSamples(50, 0, 0, 0));
+        await refreshRollup("US-QQX");
+        const row = await query<{ west: boolean }>(
+          "SELECT west FROM band_locs WHERE loc_code = 'US-QQX'",
+        );
+        expect(row.rows[0].west).toBe(true);
+      } finally {
+        await query("DELETE FROM frequency_fetch WHERE loc_code = 'US-QQX'");
+        const { rebuildBandRollup } = await import("./barchart");
+        await rebuildBandRollup("US-QQX");
+        await withOwner(async (c) => {
+          await c.query("DELETE FROM regions WHERE code = 'US-QQX'");
+        });
+      }
+    });
+
+    it("a hotspot and a county never touch band tables", async () => {
+      // "QY-W45-001" is a subnational2 shape (a county-equivalent grandchild
+      // of QY) — distinct from the pre-existing "US-QQ-001" fixture used
+      // elsewhere in this file, so it can't collide with it.
+      await insertLoc("QY-W45-001", janSamples(50, 0, 0, 0));
+      await query(
+        `INSERT INTO frequency_fetch
+           (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species)
+         VALUES ('L999', 'hotspot', 'Fixture hotspot', 2016, 2025, $1, 1)`,
+        [janSamples(50, 0, 0, 0)],
+      );
+      await refreshRollup("QY-W45-001");
+      await refreshRollup("L999");
+      const rows = await query(
+        "SELECT 1 FROM band_locs WHERE loc_code IN ('QY-W45-001', 'L999')",
+      );
+      expect(rows.rows).toHaveLength(0);
+      await query("DELETE FROM frequency_fetch WHERE loc_code IN ('QY-W45-001', 'L999')");
+    });
+
+    it("country-only country contributes its country row", async () => {
+      await insertLoc("QY", janSamples(100, 0, 0, 0));
+      await refreshRollup("QY");
+      const rows = await query<{ band: number; country: string; west: boolean; loc_code: string }>(
+        "SELECT band, country, west, loc_code FROM band_locs WHERE country = 'QY'",
+      );
+      expect(rows.rows).toEqual([
+        expect.objectContaining({ band: 60, country: "QY", west: false, loc_code: "QY" }),
+      ]);
+    });
+
+    it("first subnational1 evicts the country row", async () => {
+      await insertLoc("QY", janSamples(100, 0, 0, 0));
+      await refreshRollup("QY");
+      await insertLoc("QY-W45", janSamples(50, 0, 0, 0));
+      await refreshRollup("QY-W45");
+      const rows = await query<{ loc_code: string }>(
+        "SELECT loc_code FROM band_locs WHERE country = 'QY'",
+      );
+      expect(rows.rows.map((r) => r.loc_code)).toEqual(["QY-W45"]);
+    });
+
+    it("both loaded contributes ONLY sub1 rows", async () => {
+      await insertLoc("ZY", janSamples(100, 0, 0, 0));
+      await refreshRollup("ZY");
+      await insertLoc("ZY-S35", janSamples(50, 0, 0, 0));
+      await refreshRollup("ZY-S35");
+      const rows = await query<{ loc_code: string }>(
+        "SELECT loc_code FROM band_locs WHERE country = 'ZY'",
+      );
+      expect(rows.rows.map((r) => r.loc_code)).toEqual(["ZY-S35"]);
+    });
+
+    it("reached counts regions at region grain", async () => {
+      // Region A (QY-W45) f=0.006 >= PRESENT; region B (QY-E45) f=0.001 <
+      // PRESENT. Combined the cell reads 7/2000 = 0.0035 < PRESENT — reached
+      // must come from each region's OWN ratio, not the summed cell.
+      await insertLoc("QY-W45", janSamples(1000, 0, 0, 0));
+      await insertFreq("QY-W45", 1, 0.006);
+      await refreshRollup("QY-W45");
+      await insertLoc("QY-E45", janSamples(1000, 0, 0, 0));
+      await insertFreq("QY-E45", 1, 0.001);
+      await refreshRollup("QY-E45");
+
+      const row = await query<{ num: string; reached: number }>(
+        `SELECT num, reached FROM species_band_month_freq
+          WHERE species_code = 'testsp' AND band = 40 AND country = 'QY' AND month = 1`,
+      );
+      expect(row.rows).toHaveLength(1);
+      expect(Number(row.rows[0].num)).toBeCloseTo(7, 6);
+      expect(Number(row.rows[0].reached)).toBe(1);
+    });
+
+    it("deleting a loaded region rebuilds its country", async () => {
+      await insertLoc("QY-W45", janSamples(1000, 0, 0, 0));
+      await insertFreq("QY-W45", 1, 0.006);
+      await refreshRollup("QY-W45");
+      await insertLoc("QY-E45", janSamples(1000, 0, 0, 0));
+      await insertFreq("QY-E45", 1, 0.001);
+      await refreshRollup("QY-E45");
+
+      const { deleteFrequencyLocation } = await import("./barchart");
+      await deleteFrequencyLocation("QY-W45");
+
+      const locs = await query<{ loc_code: string }>(
+        "SELECT loc_code FROM band_locs WHERE country = 'QY'",
+      );
+      expect(locs.rows.map((r) => r.loc_code)).toEqual(["QY-E45"]);
+
+      // Not the stale 2000 sum that included the now-deleted QY-W45.
+      const samples = await query<{ n: string }>(
+        "SELECT n FROM band_month_samples WHERE band = 40 AND country = 'QY' AND month = 1",
+      );
+      expect(Number(samples.rows[0].n)).toBe(1000);
+
+      const freq = await query<{ num: string }>(
+        `SELECT num FROM species_band_month_freq
+          WHERE species_code = 'testsp' AND band = 40 AND country = 'QY' AND month = 1`,
+      );
+      expect(Number(freq.rows[0].num)).toBeCloseTo(1, 6); // 0.001 * 1000 only
+    });
+
+    it("backfill and rebuild agree (P2-7 reconciliation)", async () => {
+      await insertLoc("QY-W45", janSamples(10, 1000, 7, 0));
+      await insertFreq("QY-W45", 1, 1.0);
+      await insertFreq("QY-W45", 2, 0.3);
+      await refreshRollup("QY-W45");
+      await insertLoc("QY-E45", janSamples(500, 0, 0, 0));
+      await insertFreq("QY-E45", 1, 0.02);
+      await refreshRollup("QY-E45");
+      await insertLoc("ZY", janSamples(200, 0, 0, 0));
+      await insertFreq("ZY", 1, 0.5);
+      await refreshRollup("ZY");
+
+      // Identical arithmetic to 0050's in-migration backfill (unparameterised
+      // there; scoped here to our reserved countries only, so unrelated
+      // fixtures elsewhere in this file — which are not all rebuilt at band
+      // grain — can never produce a false mismatch).
+      const locsDiff = await query(
+        `WITH sub1 AS (
+           SELECT ff.loc_code, r.parent_code AS country,
+                  CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+                       THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
+                       ELSE r.lon END AS lon_eff,
+                  r.lat
+             FROM frequency_fetch ff JOIN regions r ON r.code = ff.loc_code
+            WHERE ff.loc_kind = 'region' AND r.level = 'subnational1'),
+         country_only AS (
+           SELECT ff.loc_code, r.code AS country,
+                  CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+                       THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
+                       ELSE r.lon END AS lon_eff,
+                  r.lat
+             FROM frequency_fetch ff JOIN regions r ON r.code = ff.loc_code
+            WHERE ff.loc_kind = 'region' AND r.level = 'country'
+              AND NOT EXISTS (SELECT 1 FROM sub1 s WHERE s.country = r.code)),
+         contrib AS (
+           SELECT loc_code, country,
+                  GREATEST(-90, LEAST(80, floor(lat / 10) * 10))::smallint AS band,
+                  (country IN ('US', 'CA', 'MX') AND lon_eff < -100) AS west
+             FROM (SELECT * FROM sub1 UNION ALL SELECT * FROM country_only) u),
+         backfill AS (
+           SELECT band, country, west, loc_code FROM contrib WHERE country IN ('QY', 'ZY')),
+         live AS (
+           SELECT band, country, west, loc_code FROM band_locs WHERE country IN ('QY', 'ZY'))
+         (SELECT * FROM backfill EXCEPT SELECT * FROM live)
+         UNION ALL
+         (SELECT * FROM live EXCEPT SELECT * FROM backfill)`,
+      );
+      expect(locsDiff.rows).toHaveLength(0);
+
+      const samplesDiff = await query(
+        `WITH backfill AS (
+           SELECT bl.band, bl.country, bl.west, lms.month, SUM(lms.n)::float8 AS n
+             FROM band_locs bl JOIN loc_month_samples lms ON lms.loc_code = bl.loc_code
+            WHERE bl.country IN ('QY', 'ZY')
+            GROUP BY 1, 2, 3, 4),
+         live AS (
+           SELECT band, country, west, month, n FROM band_month_samples
+            WHERE country IN ('QY', 'ZY'))
+         (SELECT * FROM backfill EXCEPT SELECT * FROM live)
+         UNION ALL
+         (SELECT * FROM live EXCEPT SELECT * FROM backfill)`,
+      );
+      expect(samplesDiff.rows).toHaveLength(0);
+
+      const freqDiff = await query(
+        `WITH backfill AS (
+           SELECT smf.species_code, bl.band, bl.country, bl.west, smf.month,
+                  SUM(smf.num)::float8 AS num,
+                  COUNT(*) FILTER (WHERE lms.n > 0 AND smf.num / lms.n >= 0.005)::smallint AS reached
+             FROM band_locs bl
+             JOIN species_month_freq smf ON smf.loc_code = bl.loc_code
+             JOIN loc_month_samples lms ON lms.loc_code = smf.loc_code AND lms.month = smf.month
+            WHERE bl.country IN ('QY', 'ZY')
+            GROUP BY 1, 2, 3, 4, 5),
+         live AS (
+           SELECT species_code, band, country, west, month, num, reached
+             FROM species_band_month_freq WHERE country IN ('QY', 'ZY'))
+         (SELECT * FROM backfill EXCEPT SELECT * FROM live)
+         UNION ALL
+         (SELECT * FROM live EXCEPT SELECT * FROM backfill)`,
+      );
+      expect(freqDiff.rows).toHaveLength(0);
+    });
   });
 });
 

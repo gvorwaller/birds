@@ -18,6 +18,7 @@
  * batch immediately.
  */
 import { query, withTransaction } from '$lib/db';
+import { parseRegionCode } from '$lib/region-code';
 import { buildMatcher } from '$server/species-match';
 import {
 	EbirdLoginError,
@@ -378,7 +379,10 @@ export interface StoreParams {
  * rows. The single definition of that arithmetic: storeFrequencies calls it
  * inside its own transaction, and anything else that writes species_frequency
  * directly (DB tests, future backfills) must call it too, or the derived
- * tables drift from their source.
+ * tables drift from their source. Any writer of species_frequency /
+ * frequency_fetch.sample_sizes must call `rebuildMonthRollup` AND
+ * `rebuildBandRollup` (0050) — not just the first one — or the ribbon tables
+ * drift from the tables they are derived from.
  *
  * Matches monthlyStat's contract exactly — the denominator counts EVERY
  * checklist in the month, including weeks the species was absent, which is
@@ -412,6 +416,98 @@ export async function rebuildMonthRollup(
 		  GROUP BY 1, 2`,
 		[locCode]
 	);
+}
+
+/**
+ * Rebuild the 0050 band rollups for the COUNTRY that owns `locCode`. Country
+ * grain, not location grain: a country's contribution flips from its country
+ * row to its subnational1 rows the moment the first state loads, so the only
+ * safe recompute is the whole country. No-op for counties and hotspots.
+ *
+ * Identical arithmetic to 0050's in-migration backfill, scoped to one
+ * country via `country = $1` filters rather than run unparameterised over
+ * the whole table. The `west` guard (antimeridian CASE, US/CA/MX only) is
+ * the same one the migration uses — see 0050's header for why.
+ */
+export async function rebuildBandRollup(
+	locCode: string,
+	run: (sql: string, params: unknown[]) => Promise<unknown> = (sql, params) =>
+		query(sql, params)
+): Promise<void> {
+	const p = parseRegionCode(locCode);
+	if (!p || p.level === 'subnational2') return;
+	const country = p.country;
+
+	await run('DELETE FROM species_band_month_freq WHERE country = $1', [country]);
+	await run('DELETE FROM band_month_samples WHERE country = $1', [country]);
+	await run('DELETE FROM band_locs WHERE country = $1', [country]);
+
+	await run(
+		`WITH sub1 AS (
+		   SELECT ff.loc_code, r.parent_code AS country,
+		          CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+		               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
+		               ELSE r.lon END AS lon_eff,
+		          r.lat
+		     FROM frequency_fetch ff JOIN regions r ON r.code = ff.loc_code
+		    WHERE ff.loc_kind = 'region' AND r.level = 'subnational1' AND r.parent_code = $1),
+		 country_only AS (
+		   SELECT ff.loc_code, r.code AS country,
+		          CASE WHEN r.min_lon IS NOT NULL AND r.min_lon > r.max_lon
+		               THEN ((r.min_lon + r.max_lon + 360) / 2 + 540)::numeric % 360 - 180
+		               ELSE r.lon END AS lon_eff,
+		          r.lat
+		     FROM frequency_fetch ff JOIN regions r ON r.code = ff.loc_code
+		    WHERE ff.loc_kind = 'region' AND r.level = 'country' AND r.code = $1
+		      AND NOT EXISTS (SELECT 1 FROM sub1 s WHERE s.country = r.code)),
+		 contrib AS (
+		   SELECT loc_code, country,
+		          GREATEST(-90, LEAST(80, floor(lat / 10) * 10))::smallint AS band,
+		          (country IN ('US','CA','MX') AND lon_eff < -100) AS west
+		     FROM (SELECT * FROM sub1 UNION ALL SELECT * FROM country_only) u)
+		 INSERT INTO band_locs (band, country, west, loc_code)
+		 SELECT band, country, west, loc_code FROM contrib`,
+		[country]
+	);
+
+	await run(
+		`INSERT INTO band_month_samples (band, country, west, month, n)
+		 SELECT bl.band, bl.country, bl.west, lms.month, SUM(lms.n)::float8
+		   FROM band_locs bl JOIN loc_month_samples lms ON lms.loc_code = bl.loc_code
+		  WHERE bl.country = $1
+		  GROUP BY 1, 2, 3, 4`,
+		[country]
+	);
+
+	await run(
+		`INSERT INTO species_band_month_freq (species_code, band, country, west, month, num, reached)
+		 SELECT smf.species_code, bl.band, bl.country, bl.west, smf.month,
+		        SUM(smf.num)::float8,
+		        COUNT(*) FILTER (WHERE lms.n > 0 AND smf.num / lms.n >= 0.005)::smallint
+		   FROM band_locs bl
+		   JOIN species_month_freq smf ON smf.loc_code = bl.loc_code
+		   JOIN loc_month_samples lms ON lms.loc_code = smf.loc_code AND lms.month = smf.month
+		  WHERE bl.country = $1
+		  GROUP BY 1, 2, 3, 4, 5`,
+		[country]
+	);
+}
+
+/**
+ * Delete a loaded region's stored barchart data and rebuild the derived
+ * rollups for the country it belongs to (CODEX1 P2-5). Only band_locs
+ * cascades from frequency_fetch — band_month_samples and
+ * species_band_month_freq do not — so a raw `DELETE FROM frequency_fetch`
+ * leaves those two stale. This is the only sanctioned delete path for a
+ * loaded region.
+ */
+export async function deleteFrequencyLocation(locCode: string): Promise<void> {
+	await withTransaction(async (client) => {
+		const run = (sql: string, params: unknown[]) => client.query(sql, params);
+		await run('DELETE FROM frequency_fetch WHERE loc_code = $1', [locCode]);
+		await rebuildMonthRollup(locCode, run);
+		await rebuildBandRollup(locCode, run);
+	});
 }
 
 export async function storeFrequencies(p: StoreParams): Promise<void> {
@@ -498,6 +594,10 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 		// never drift from their source, and no periodic refresh of a 23.6 M-row
 		// table is needed.
 		await rebuildMonthRollup(p.locCode, (sql, params) => client.query(sql, params));
+		// Band rollups (0050), rebuilt for the COUNTRY that owns this location,
+		// in the same transaction and reading the month rollup just rebuilt
+		// above — so it can never straddle a partial rebuild.
+		await rebuildBandRollup(p.locCode, (sql, params) => client.query(sql, params));
 
 		await client.query(
 			`INSERT INTO frequency_fetch_attempts (loc_code, last_attempt_at, status, error)

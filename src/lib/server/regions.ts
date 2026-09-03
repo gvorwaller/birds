@@ -23,6 +23,10 @@ import { parseRegionCode } from '$lib/region-code';
 import { boxSupportsProximity, type RegionBox } from '$lib/geo';
 // Inlined by Vite at build time — see EXCLUDED_PARENTS below.
 import EXCLUDED_CODES_RAW from '../../../backend/db/regions-excluded-codes.txt?raw';
+// Static country -> continent map (migration ribbon build spec, td-8d3526),
+// hand-built from the GeoNames countryInfo continent column and verified
+// against the 0044 seed (continents.test.ts). Never fetched at runtime.
+import continentsJson from './data/continents.json';
 
 export interface Region {
 	code: string;
@@ -103,6 +107,16 @@ async function load(): Promise<RegionIndex> {
 		list.push(x);
 	}
 	for (const list of sub1ByCountry.values()) list.sort(byName);
+
+	// The ribbon's continents.json is a hand-maintained static map; a seed
+	// update can add a country it doesn't yet know. Surface it (log, don't
+	// throw — this is diagnostic, not fatal) so the gap gets fixed rather
+	// than silently dropping that country's ribbon data (CODEX1 P1).
+	const unmapped = countries.map((c) => c.code).filter((code) => continentOf(code) === null);
+	if (unmapped.length > 0) {
+		console.error(`[regions] countries missing from continents.json: ${unmapped.join(', ')}`);
+	}
+
 	return { byCode, countries, sub1ByCountry };
 }
 
@@ -268,6 +282,36 @@ export async function allProximityRegions(): Promise<{
 export async function regionCoords(code: string): Promise<{ lat: number; lon: number } | null> {
 	const r = await getRegion(code);
 	return r ? { lat: r.lat, lon: r.lon } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Migration ribbon continent/column map (td-8d3526). Pure — no DB access —
+// so callers on the hot path (speciesRibbon, TD-B) never await for these.
+// ---------------------------------------------------------------------------
+
+export type Continent = 'NA' | 'SA' | 'EU' | 'AF' | 'AS' | 'OC' | 'AN';
+export type RibbonColumn = 'NAW' | 'NAE' | 'SA' | 'EU' | 'AF' | 'AS' | 'OC' | 'AN';
+/** NA splits into two ribbon columns at this longitude (band_locs.west, 0050). */
+export const NA_SPLIT_LON = -100;
+
+const CONTINENTS = continentsJson as Readonly<Record<string, Continent>>;
+
+/** null for an unmapped country — callers must surface it, never drop it silently (CODEX1 P1). */
+export function continentOf(country: string): Continent | null {
+	return CONTINENTS[country] ?? null;
+}
+
+/** Column for a (country, west) pair: NA splits at 100°W, everything else is its continent. */
+export function ribbonColumnOf(country: string, west: boolean): RibbonColumn | null {
+	const continent = continentOf(country);
+	if (continent === null) return null;
+	return continent === 'NA' ? (west ? 'NAW' : 'NAE') : continent;
+}
+
+/** Countries in `regions` (level='country') absent from continents.json. Empty on a healthy seed. */
+export async function unmappedCountries(): Promise<string[]> {
+	const idx = await regionIndex();
+	return idx.countries.map((c) => c.code).filter((code) => continentOf(code) === null);
 }
 
 /**
