@@ -103,6 +103,52 @@
 		return path.startsWith(href);
 	}
 
+	/**
+	 * iOS can finish a visual-viewport transition while leaving a fixed bottom
+	 * element painted at its old position. Re-assigning `bottom` after WebKit's
+	 * viewport events have settled forces the bar through layout again. The
+	 * hundredth-pixel alternation is imperceptible but avoids WebKit optimizing
+	 * away an assignment of the same value.
+	 */
+	function stabilizeBottomNav(node: HTMLElement) {
+		const viewport = window.visualViewport;
+		let firstFrame = 0;
+		let secondFrame = 0;
+		let nudged = false;
+
+		function repin() {
+			cancelAnimationFrame(firstFrame);
+			cancelAnimationFrame(secondFrame);
+			firstFrame = requestAnimationFrame(() => {
+				secondFrame = requestAnimationFrame(() => {
+					nudged = !nudged;
+					node.style.bottom = nudged ? '0.01px' : '0px';
+				});
+			});
+		}
+
+		viewport?.addEventListener('resize', repin, { passive: true });
+		viewport?.addEventListener('scroll', repin, { passive: true });
+		window.addEventListener('resize', repin, { passive: true });
+		window.addEventListener('orientationchange', repin, { passive: true });
+		window.addEventListener('pageshow', repin);
+		document.addEventListener('focusout', repin);
+		repin();
+
+		return {
+			destroy() {
+				cancelAnimationFrame(firstFrame);
+				cancelAnimationFrame(secondFrame);
+				viewport?.removeEventListener('resize', repin);
+				viewport?.removeEventListener('scroll', repin);
+				window.removeEventListener('resize', repin);
+				window.removeEventListener('orientationchange', repin);
+				window.removeEventListener('pageshow', repin);
+				document.removeEventListener('focusout', repin);
+			}
+		};
+	}
+
 	// Close the drawer whenever the route changes.
 	$effect(() => {
 		$page.url.pathname;
@@ -199,7 +245,7 @@
 </main>
 
 {#if data.user}
-	<nav class="bottom-nav">
+	<nav class="bottom-nav" use:stabilizeBottomNav>
 		{#each primaryItems as item (item.href)}
 			<a
 				href={item.href}
@@ -446,13 +492,8 @@
 		border-top: 1px solid var(--border);
 		display: flex;
 		padding-bottom: env(safe-area-inset-bottom);
-		/* iOS Safari intermittently detached the fixed bar during URL-bar
-		   collapse when a backdrop-filter layer was attached to it. The
-		   96%-opaque background already supplies the intended legibility, so
-		   remove that compositor trigger entirely and pin this small bar to a
-		   stable layer. */
-		-webkit-transform: translate3d(0, 0, 0);
-		transform: translate3d(0, 0, 0);
+		/* Keep the fixed element out of a promoted transform layer: WebKit can
+		   scroll that layer independently and paint it at a stale viewport edge. */
 	}
 	.bottom-nav a,
 	.more-btn {
