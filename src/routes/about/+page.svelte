@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Collapsible version history — multiple sections can be toggled or all expanded.
 	let openVersions = $state<Record<string, boolean>>({
-		'v0.1.5': true,
+		'v0.1.6': true,
+		'v0.1.5': false,
 		'v0.1.4': false,
 		'v0.1.3': false,
 		'v0.1.2': false,
@@ -102,6 +103,42 @@
 		</div>
 
 		<div class="version-list">
+			<!-- v0.1.6 -->
+			<div class="version-entry">
+				<button
+					type="button"
+					class="version-toggle"
+					class:open={openVersions['v0.1.6']}
+					aria-expanded={openVersions['v0.1.6']}
+					onclick={() => toggleVersion('v0.1.6')}
+				>
+					<span class="v-tag current">v0.1.6</span>
+					<span class="v-title">Migration Ribbon</span>
+					<span class="v-date">September 2026</span>
+					<span class="chev">{openVersions['v0.1.6'] ? '▾' : '▸'}</span>
+				</button>
+				{#if openVersions['v0.1.6']}
+					<div class="version-body">
+						<ul>
+							<li>
+								<strong>Where it is through the year</strong> — every species page
+								now carries a migration ribbon above Best time of year: latitude
+								bands by month, colored by how often the species was reported,
+								world-wide by default and switchable to any single continent or
+								all of them side by side. An equal-weight average keeps one
+								heavily-birded country from drowning out the rest; a by-checklist
+								average is one tap away. Tap any cell to see the loaded regions
+								behind it, and tap a region there to chart it in Best time of
+								year as a third pick alongside the closest and best regions. A
+								Play button steps through the year automatically (off under
+								reduced motion), and the chart works the same way on a phone as
+								on a desktop.
+							</li>
+						</ul>
+					</div>
+				{/if}
+			</div>
+
 			<!-- v0.1.5 -->
 			<div class="version-entry">
 				<button
@@ -111,7 +148,7 @@
 					aria-expanded={openVersions['v0.1.5']}
 					onclick={() => toggleVersion('v0.1.5')}
 				>
-					<span class="v-tag current">v0.1.5</span>
+					<span class="v-tag">v0.1.5</span>
 					<span class="v-title">Trip Field Sheets &amp; Sharing</span>
 					<span class="v-date">August 2026</span>
 					<span class="chev">{openVersions['v0.1.5'] ? '▾' : '▸'}</span>

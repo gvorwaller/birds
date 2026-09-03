@@ -358,6 +358,30 @@
 						trip's month.
 					</li>
 					<li>
+						A <strong>"Where it is through the year"</strong> ribbon sits above
+						Best time of year: a grid of latitude band (rows) by month
+						(columns) showing how often the species was reported — each region
+						counts in the band and column of its own centre point.
+						<strong>Equal weight</strong> counts each country once inside its
+						continent and each continent once in the world row, so one
+						heavily-birded country can't drown out the rest; regions inside a
+						country are still weighted by their own checklists. Grey means
+						birders were out looking and came up empty; a diagonal slash means
+						nothing is loaded there yet — the two are never the same thing.
+						Coverage is partial and the card names exactly what is loaded, so a
+						"no data" column reads as "not loaded," never as "absent." A note
+						below the chart names any stretch of the year where every loaded
+						region fell under 0.5% of checklists — a fixed threshold, the same
+						one the gap note always uses. Tapping a cell opens the regions
+						behind it, sorted by how often they report the bird, showing the 40
+						highest. <strong>Play</strong> advances one month every
+						three-quarters of a second and loops; it's hidden entirely when your
+						system asks for reduced motion. Because the ribbon rolls up each
+						region's whole stored history into one number, it combines whatever
+						year window that region's data covers rather than a single shared
+						span.
+					</li>
+					<li>
 						Loading data signs in to eBird as you, so each user needs their own
 						eBird login saved in Settings. Browsing loaded data never contacts
 						eBird.

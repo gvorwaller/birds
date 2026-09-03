@@ -2,6 +2,9 @@
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
+  import MigrationRibbon, {
+    type RibbonRegionRowClient,
+  } from "$components/MigrationRibbon.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
@@ -10,6 +13,8 @@
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { tick } from "svelte";
+  import { browser } from "$app/environment";
   import { sectionBlocks } from "$lib/wiki-render";
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
   import { allAboutBirdsUrl } from "$lib/species-links";
@@ -113,24 +118,40 @@
   // --- Best-time-of-year peers (plan Phase 5) -----------------------------
   // Selection is client-side only: every peer carries its own curve, so
   // switching tabs re-renders the chart with no round trip.
+  type PeerRow = NonNullable<PageData["forecastTeaser"]>["peers"][number];
+  /** A region tapped in the migration ribbon's drill panel becomes a third,
+   * client-only peer tab here (build spec td-59c2d0 TD-C, CODEX1 P1-4) —
+   * never sent to the server, reset whenever the species changes. */
+  type CardPeer = Omit<PeerRow, "kind"> & { kind: PeerRow["kind"] | "chart" };
   let selectedTeaserCode = $state<string | null>(null);
+  let chartPeer = $state<CardPeer | null>(null);
   $effect(() => {
     // Reset to the server's default when navigating between species.
     selectedTeaserCode = data.forecastTeaser?.defaultLocCode ?? null;
+    chartPeer = null;
   });
+  // Every `ft.` dereference the old single-teaser card made becomes a read
+  // of this list (or an `ft?.` fallback on `selectedPeer`) so the card still
+  // renders when there is no server teaser at all but the ribbon's drill
+  // supplied a chart peer (CODEX1 P1-4).
+  const cardPeers = $derived<CardPeer[]>(
+    chartPeer &&
+      !(data.forecastTeaser?.peers ?? []).some((p) => p.locCode === chartPeer!.locCode)
+      ? [...(data.forecastTeaser?.peers ?? []), chartPeer]
+      : (data.forecastTeaser?.peers ?? []),
+  );
   const selectedPeer = $derived(
-    data.forecastTeaser?.peers.find((p) => p.locCode === selectedTeaserCode) ??
-      data.forecastTeaser?.peers[0] ??
-      null,
+    cardPeers.find((p) => p.locCode === selectedTeaserCode) ?? cardPeers[0] ?? null,
   );
   function peerKindLabel(
-    kind: "closest" | "best" | "both",
+    kind: "closest" | "best" | "both" | "chart",
     poolSize: number,
   ): string {
     // "Best of N loaded regions": the qualifier lives in the label itself —
     // an unqualified "Best overall" across N-of-the-world regions is a false
     // claim (937bdb8 lesson; AGY review).
     if (kind === "closest") return "Closest with sightings";
+    if (kind === "chart") return "From the chart";
     if (kind === "best")
       return poolSize === 1
         ? "Only loaded region with sightings"
@@ -142,7 +163,7 @@
   function onPeerTabKeydown(e: KeyboardEvent) {
     // Arrow-key navigation with roving tabindex (ARIA tabs pattern).
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    const peers = data.forecastTeaser?.peers ?? [];
+    const peers = cardPeers;
     if (peers.length < 2) return;
     e.preventDefault();
     const i = peers.findIndex((p) => p.locCode === selectedTeaserCode);
@@ -150,6 +171,38 @@
       peers[(i + (e.key === "ArrowRight" ? 1 : peers.length - 1)) % peers.length];
     selectedTeaserCode = next.locCode;
     document.getElementById(`peer-tab-${next.locCode}`)?.focus();
+  }
+
+  // Local to this page (build spec td-59c2d0 TD-C) — nothing named `reduced`
+  // exists here; the ribbon component samples its own copy independently.
+  const reducedMotion = $derived(
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+
+  /** A region tapped in the migration ribbon's drill panel (build spec TD-C):
+   * build a third "From the chart" peer, select it, and scroll the
+   * Best-time-of-year card into view. `tick()` first because the card may
+   * not exist yet — with no server teaser at all, `chartPeer` is what makes
+   * it render (CODEX1 P1-4). */
+  async function onChartRegion(r: RibbonRegionRowClient) {
+    chartPeer = {
+      kind: "chart",
+      locCode: r.locCode,
+      containsHome: false,
+      label: r.label,
+      distanceKm: null,
+      curve: r.curve,
+      weeks: r.weeks,
+      migration: r.migration,
+      best: r.best,
+      peakPhrase: r.peakPhrase,
+      good: r.good,
+    };
+    selectedTeaserCode = r.locCode;
+    await tick();
+    document
+      .getElementById("besth")
+      ?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
   }
 
   function forecastHref(regionCode: string): string {
@@ -438,17 +491,42 @@
     </section>
   {/if}
 
-  {#if data.forecastTeaser && selectedPeer}
+  <!-- Migration ribbon (build spec td-59c2d0 TD-C): a discriminated loader
+       result, never rendered as plain absence (CODEX1 P2-10) — `ok, grid:
+       null` (nothing loaded yet) renders nothing, `ok: false` renders a
+       one-line failure, and only `ok, grid` renders the chart. -->
+  {#if data.ribbon.ok && data.ribbon.grid}
+    <section class="card" aria-labelledby="ribh">
+      <h2 id="ribh">Where it is through the year</h2>
+      <MigrationRibbon
+        grid={data.ribbon.grid}
+        speciesCode={data.taxon.species_code}
+        speciesName={data.taxon.com_name}
+        onchartregion={onChartRegion}
+      />
+    </section>
+  {:else if !data.ribbon.ok}
+    <section class="card">
+      <h2>Where it is through the year</h2>
+      <p class="muted">The migration chart could not be loaded.</p>
+    </section>
+  {/if}
+
+  {#if selectedPeer}
     {@const ft = data.forecastTeaser}
     <section class="card">
-      <h2>Best time of year</h2>
+      <h2 id="besth">Best time of year</h2>
       <!-- Both picks as equal peers (plan Phase 5; AGY: a TABLIST, not a
            radiogroup — this selects which region's data a panel displays).
            The honesty qualifier lives IN the row label ("Best of N loaded
-           regions"), where the claim is made (937bdb8 lesson). -->
-      {#if ft.peers.length > 1}
+           regions"), where the claim is made (937bdb8 lesson). A region
+           tapped in the migration ribbon's drill panel becomes a third
+           "From the chart" tab (build spec td-59c2d0 TD-C, CODEX1 P1-4) —
+           `cardPeers`/`ft?.` everywhere the card used to assume a server
+           teaser existed. -->
+      {#if cardPeers.length > 1}
         <div class="peer-tabs" role="tablist" aria-label="Region to chart">
-          {#each ft.peers as peer (peer.locCode)}
+          {#each cardPeers as peer (peer.locCode)}
             {@const active = peer.locCode === selectedTeaserCode}
             <button
               type="button"
@@ -461,7 +539,7 @@
               onclick={() => (selectedTeaserCode = peer.locCode)}
               onkeydown={onPeerTabKeydown}
             >
-              <span class="peer-kind">{peerKindLabel(peer.kind, ft.poolSize)}</span>
+              <span class="peer-kind">{peerKindLabel(peer.kind, ft?.poolSize ?? 0)}</span>
               <span class="peer-name">{peer.label}</span>
               <span class="peer-meta">
                 {#if peer.containsHome}
@@ -479,7 +557,7 @@
         </div>
       {:else}
         <p class="peer-single">
-          <strong>{peerKindLabel(selectedPeer.kind, ft.poolSize)}</strong>
+          <strong>{peerKindLabel(selectedPeer.kind, ft?.poolSize ?? 0)}</strong>
           — {selectedPeer.label}
           {#if selectedPeer.containsHome}
             <span class="muted">· you're here</span>
@@ -490,7 +568,7 @@
             >
           {/if}
         </p>
-        {#if !ft.hasOrigin}
+        {#if ft && !ft.hasOrigin}
           <p class="muted">
             Set a home location in <a href="/settings">Settings</a> to see the
             closest region with sightings.
@@ -510,8 +588,8 @@
            changed (AGY review). -->
       <div
         id="teaser-panel"
-        role={ft.peers.length > 1 ? "tabpanel" : null}
-        aria-labelledby={ft.peers.length > 1
+        role={cardPeers.length > 1 ? "tabpanel" : null}
+        aria-labelledby={cardPeers.length > 1
           ? `peer-tab-${selectedTeaserCode}`
           : null}
       >
@@ -520,6 +598,8 @@
             peaks {selectedPeer.peakPhrase}
           {:else if selectedPeer.best}
             peak {MONTH_NAMES[selectedPeer.best.month - 1]}
+          {:else}
+            not reported in any month
           {/if}
           {#if selectedPeer.good.length > 1}
             · good {formatMonthWindow(selectedPeer.good)}
