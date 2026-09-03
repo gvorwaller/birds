@@ -48,6 +48,27 @@ describe("GET /api/species-ribbon-regions", () => {
     expect(mockedRibbonRegions).not.toHaveBeenCalled();
   });
 
+  it("400s for a missing band param (CODEX1 P2-1 — Number('') is 0, a valid band)", async () => {
+    await expect(
+      GET(req("/api/species-ribbon-regions?species=osprey&cont=NAE")),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockedRibbonRegions).not.toHaveBeenCalled();
+  });
+
+  it("400s for a blank band param", async () => {
+    await expect(
+      GET(req("/api/species-ribbon-regions?species=osprey&band=&cont=NAE")),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockedRibbonRegions).not.toHaveBeenCalled();
+  });
+
+  it("400s for a whitespace-only band param", async () => {
+    await expect(
+      GET(req("/api/species-ribbon-regions?species=osprey&band=%20&cont=NAE")),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockedRibbonRegions).not.toHaveBeenCalled();
+  });
+
   it("400s for cont XX", async () => {
     await expect(
       GET(req("/api/species-ribbon-regions?species=osprey&band=40&cont=XX")),

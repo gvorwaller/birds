@@ -210,6 +210,60 @@ describe("equal weight excludes countries under 40 checklists and hatches (P2-2 
   });
 });
 
+describe("all-thin cells are 'thin', never null (CODEX1 P1-1 deploy-gate fix)", () => {
+  it("all-thin column, underlying data 'reported'-shaped -> state 'thin', f is a 0 placeholder", () => {
+    const rows: CountryCellInput[] = [
+      { country: "A", column: "EU", num: 5, n: 10 },
+      { country: "B", column: "EU", num: 3, n: 20 },
+    ];
+    const cell = equalWeightCell(rows)!;
+    expect(cell).not.toBeNull();
+    expect(cell.state).toBe("thin");
+    expect(cell.f).toBe(0);
+    expect(cell.n).toBe(30); // Σn over every surveyed (thin) country
+    expect(cell.excluded).toBe(2);
+    expect(cell.low).toBe(true);
+  });
+
+  it("all-thin column, underlying data 'zero'-shaped -> still 'thin', never 'zero'", () => {
+    const rows: CountryCellInput[] = [
+      { country: "A", column: "EU", num: 0, n: 10 },
+      { country: "B", column: "EU", num: 0, n: 20 },
+    ];
+    const cell = equalWeightCell(rows)!;
+    expect(cell.state).toBe("thin");
+    expect(cell.f).toBe(0);
+    expect(cell.n).toBe(30);
+    expect(cell.excluded).toBe(2);
+  });
+
+  it("all-thin world (worldEqualCell): no continent has a qualifying country -> 'thin'", () => {
+    const rows: CountryCellInput[] = [
+      { country: "A", column: "NAE", num: 5, n: 10 },
+      { country: "B", column: "EU", num: 2, n: 15 },
+    ];
+    const cell = worldEqualCell(rows)!;
+    expect(cell.state).toBe("thin");
+    expect(cell.f).toBe(0);
+    expect(cell.n).toBe(25);
+    expect(cell.excluded).toBe(2);
+    expect(cell.low).toBe(true);
+  });
+
+  it("mixed: one eligible + one thin -> normal f from the eligible country only, excluded=1", () => {
+    const rows: CountryCellInput[] = [
+      { country: "A", column: "EU", num: 20, n: 50 }, // eligible: f = 0.4
+      { country: "B", column: "EU", num: 1, n: 5 }, // thin: n < LOW_N
+    ];
+    const cell = equalWeightCell(rows)!;
+    expect(cell.state).toBe("reported");
+    expect(cell.f).toBeCloseTo(0.4, 9);
+    expect(cell.n).toBe(50); // only the eligible country's n
+    expect(cell.excluded).toBe(1);
+    expect(cell.low).toBe(true);
+  });
+});
+
 describe("gapMonthsFrom", () => {
   it("Blackpoll region grain -> [1,2,3,12]; NJ November counts as reached", () => {
     const samples: { month: number; n: number }[] = [];

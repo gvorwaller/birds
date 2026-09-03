@@ -16,7 +16,12 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     throw error(400, "species is required and must be a valid species code");
   }
 
-  const bandParam = url.searchParams.get("band") ?? "";
+  // `Number("")` is 0, and 0 is itself a valid band (the equator row), so a
+  // missing/blank param must be rejected BEFORE Number() ever sees it
+  // (CODEX1 P2-1 deploy-gate finding) — otherwise it silently reaches
+  // ribbonRegions as band 0 instead of 400ing.
+  const bandParam = (url.searchParams.get("band") ?? "").trim();
+  if (!bandParam) throw error(400, "band is required");
   const band = Number(bandParam);
   if (!Number.isInteger(band) || !(BANDS as readonly number[]).includes(band)) {
     throw error(400, "band must be one of the ribbon's bands");

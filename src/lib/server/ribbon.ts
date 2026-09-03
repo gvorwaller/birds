@@ -59,17 +59,32 @@ export const PRESENT = 0.005;
 
 export type Weighting = 'equal' | 'checklists';
 
+/**
+ * 'thin': at least one coalesced country was surveyed (n > 0) that month but
+ * NONE reached LOW_N under equal weight — a real, surveyed cell, never the
+ * "nothing loaded" null (CODEX1 P1-1 deploy-gate finding on td-c6b113). Only
+ * `equalWeightCell`/`worldEqualCell` ever produce it; `checklistCell` never
+ * excludes a country (summed-n rule), so it never returns 'thin'.
+ */
+export type RibbonCellState = 'reported' | 'zero' | 'thin';
 export interface RibbonCell {
+	/**
+	 * When `state === 'thin'` this is a PLACEHOLDER (always 0) — MUST NOT be
+	 * read as a reporting rate. TD-C draws a 'thin' cell as a hatch with no
+	 * colour bin ("surveyed, too few checklists to rate"), never a %.
+	 */
 	f: number;
+	/** For 'thin', the summed n of every excluded (surveyed-but-thin) country. */
 	n: number;
-	state: 'reported' | 'zero';
-	/** Hatched: an aggregate with a country excluded (equal weight) or a thin
-	 * sample under the summed-n rule (checklists). */
+	state: RibbonCellState;
+	/** Hatched: an aggregate with a country excluded (equal weight, includes
+	 * every 'thin' cell) or a thin sample under the summed-n rule (checklists). */
 	low: boolean;
 	/** Countries left out of an equal-weight average for n < LOW_N. */
 	excluded: number;
 }
-/** null = nothing loaded, or no checklists that month (the mockup's `empty`). */
+/** null = nothing loaded, or no checklists at all that month (the mockup's
+ * `empty`) — distinct from 'thin', which IS loaded/surveyed data. */
 export type RibbonCellOrNull = RibbonCell | null;
 
 export interface RibbonMode {
@@ -154,7 +169,9 @@ export function classify(f: number, n: number): RibbonCell {
 /**
  * One column: mean over countries of num/n (n>0 only). A country whose
  * coalesced n < LOW_N does not vote (owner decision, CODEX1 P2-2); if any
- * country was excluded the cell is hatched (`low: true`).
+ * country was excluded the cell is hatched (`low: true`). When EVERY
+ * coalesced country is thin (surveyed but none reached LOW_N), the cell is
+ * 'thin' — never null (CODEX1 P1-1): null is reserved for nothing loaded.
  */
 export function equalWeightCell(rows: CountryCellInput[]): RibbonCellOrNull {
 	const byCountry = coalesceByCountry(rows);
@@ -170,7 +187,11 @@ export function equalWeightCell(rows: CountryCellInput[]): RibbonCellOrNull {
 		fs.push(e.num / e.n);
 		n += e.n;
 	}
-	if (fs.length === 0) return null;
+	if (fs.length === 0) {
+		let thinN = 0;
+		for (const e of byCountry.values()) thinN += e.n;
+		return { f: 0, n: thinN, state: 'thin', low: true, excluded };
+	}
 	const f = fs.reduce((a, b) => a + b, 0) / fs.length;
 	return { f, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
 }
@@ -193,7 +214,9 @@ export function checklistCell(rows: CountryCellInput[]): RibbonCellOrNull {
  * the world row, so a column layout must never change the world number.
  * Group by base continent, take each country's checklist-weighted mean
  * (countries under LOW_N do not vote), average countries inside a
- * continent, then average continents.
+ * continent, then average continents. When NO continent has a qualifying
+ * country (every coalesced country everywhere is thin), the cell is 'thin'
+ * — never null (CODEX1 P1-1).
  */
 export function worldEqualCell(rows: CountryCellInput[]): RibbonCellOrNull {
 	const byBase = new Map<string, Map<string, { num: number; n: number }>>();
@@ -223,7 +246,11 @@ export function worldEqualCell(rows: CountryCellInput[]): RibbonCellOrNull {
 		}
 		if (fs.length > 0) contMeans.push(fs.reduce((a, b) => a + b, 0) / fs.length);
 	}
-	if (contMeans.length === 0) return null;
+	if (contMeans.length === 0) {
+		let thinN = 0;
+		for (const bc of byBase.values()) for (const e of bc.values()) thinN += e.n;
+		return { f: 0, n: thinN, state: 'thin', low: true, excluded };
+	}
 	const f = contMeans.reduce((a, b) => a + b, 0) / contMeans.length;
 	return { f, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
 }
@@ -435,8 +462,13 @@ export async function speciesRibbon(
 /**
  * The regions inside one band/column cell (or the whole band for 'ALL'),
  * each carrying the same month/week curve shape the Best-time-of-year card
- * uses. Reads `band_locs` then a teaser-shaped query restricted to those
- * loc codes, both on ONE `withReadSnapshot` client (CODEX1 P1-2).
+ * uses. The two MUTABLE reads — `band_locs` then the teaser-shaped frequency
+ * query restricted to those loc codes — run on ONE `withReadSnapshot` client
+ * (CODEX1 P1-2), so a country rebuild can never straddle them. Region LABELS
+ * are resolved afterward, outside that snapshot, via `regionLabel()`, which
+ * reads the process-wide `regions` cache — static reference data seeded
+ * offline and reloaded only on redeploy, not the mutable pair the snapshot
+ * protects (CODEX1 P2-2: deliberately not moved inside the transaction).
  */
 export async function ribbonRegions(
 	speciesCode: string,

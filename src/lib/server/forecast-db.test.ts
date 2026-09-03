@@ -125,7 +125,7 @@ const { rankLocsForSpeciesMonth, rankCountiesForNeeds, MIN_MONTH_N } =
   await import("./forecast");
 const { normalizeMatchedBarchart, storeFrequencies, WEEKS } =
   await import("./barchart");
-const { speciesRibbon, bandIndexOf } = await import("./ribbon");
+const { speciesRibbon, ribbonRegions, bandIndexOf, COLUMNS } = await import("./ribbon");
 
 let dbUp = false;
 try {
@@ -878,7 +878,6 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
       const grid = await speciesRibbon("testsp", { columnOf });
       expect(grid).not.toBeNull();
 
-      const { COLUMNS } = await import("./ribbon");
       const b = bandIndexOf(40);
       const c = COLUMNS.indexOf("NAE");
       // Same vector as "reproduces Σnum / Σn exactly" above: 313.5 / 1017.
@@ -946,6 +945,158 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
           WHERE band = 40 AND country = 'QY' AND west = false AND month = 1`,
       );
       expect(Number(liveAfter.rows[0].n)).toBe(3000);
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // ribbonRegions (td-c6b113, CODEX1 P3 deploy-gate follow-up): the drill
+  // query itself, not mocked. ribbonRegions calls the REAL ribbonColumnOf
+  // (no test hook, unlike speciesRibbon's `columnOf` dep), and QY/ZY are
+  // deliberately outside continents.json, so a real, continent-mapped
+  // country is required. Reuses the same temporary-child-of-a-real-country
+  // pattern the "west is true only for US/CA/MX" test above uses: insert
+  // throwaway subnational1 codes under 'US', exercise them, then delete and
+  // re-sync 'US' in a `finally` block. Codes are fresh (not US-QQW/E/X, not
+  // US-CA/US-NY) since this cluster is shared with other work right now.
+  // -----------------------------------------------------------------
+  describe("ribbonRegions (td-c6b113, CODEX1 P3)", () => {
+    async function seedUsChildren(rows: { code: string; lat: number; lon: number }[]) {
+      await withOwner(async (c) => {
+        for (const r of rows) {
+          await c.query(
+            `INSERT INTO regions (code, name, level, parent_code, lat, lon, source_at)
+             VALUES ($1, $2, 'subnational1', 'US', $3, $4, '2026-01-01')
+             ON CONFLICT (code) DO UPDATE SET lat = EXCLUDED.lat, lon = EXCLUDED.lon`,
+            [r.code, `Fixture ${r.code}`, r.lat, r.lon],
+          );
+        }
+      });
+    }
+    async function cleanupUsChildren(codes: string[]) {
+      await query("DELETE FROM frequency_fetch WHERE loc_code = ANY($1)", [codes]);
+      const { rebuildBandRollup } = await import("./barchart");
+      await rebuildBandRollup("US"); // re-sync 'US' now the temp fixtures are gone
+      await withOwner(async (c) => {
+        await c.query("DELETE FROM regions WHERE code = ANY($1)", [codes]);
+      });
+    }
+
+    it("filters by band+column, drops n=0 curves, 'ALL' spans columns, and matches makePeer's shape", async () => {
+      const CODES = ["US-B1W", "US-B1E"];
+      await seedUsChildren([
+        { code: "US-B1W", lat: 45, lon: -110 }, // west -> NAW
+        { code: "US-B1E", lat: 45, lon: -80 }, // east -> NAE
+      ]);
+      try {
+        const freqByWeek = new Map([
+          [1, 1.0],
+          [2, 0.3],
+        ]);
+        const sampleSizes = janSamples(10, 1000, 7, 0);
+        await insertLoc("US-B1W", sampleSizes);
+        await insertFreq("US-B1W", 1, 1.0);
+        await insertFreq("US-B1W", 2, 0.3);
+        await refreshRollup("US-B1W");
+        // Loaded but every week n=0 -> monthCurve is all n=0 -> dropped
+        // entirely from ribbonRegions' output (never a stray empty row).
+        await query(
+          `INSERT INTO frequency_fetch
+             (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species)
+           VALUES ('US-B1E', 'region', 'Fixture US-B1E', 2016, 2025, $1, 1)`,
+          [Array(48).fill(0)],
+        );
+        await refreshRollup("US-B1E");
+
+        const naw = await ribbonRegions("testsp", 40, "NAW");
+        expect(naw.rows.map((r) => r.locCode)).toEqual(["US-B1W"]);
+        expect(naw.total).toBe(1);
+        expect(naw.capped).toBe(false);
+
+        const nae = await ribbonRegions("testsp", 40, "NAE");
+        expect(nae.rows).toEqual([]); // US-B1E dropped (n=0 everywhere)
+        expect(nae.total).toBe(0);
+
+        const all = await ribbonRegions("testsp", 40, "ALL");
+        expect(all.rows.map((r) => r.locCode)).toEqual(["US-B1W"]);
+
+        const row = naw.rows[0];
+        expect(row.country).toBe("US");
+        expect(row.column).toBe("NAW");
+        expect(row.band).toBe(40);
+
+        // Parity with makePeer (forecast.ts ~1384-1409): identical helpers,
+        // identical inputs, identical outputs — the two cards never disagree
+        // on "best month" for the same location.
+        const {
+          monthCurve,
+          weekCurve,
+          bestMonth,
+          goodMonths,
+          migrationSentence,
+        } = await import("./forecast");
+        const curve = monthCurve(freqByWeek, sampleSizes);
+        const weeks = weekCurve(freqByWeek, sampleSizes);
+        expect(row.curve).toEqual(curve);
+        expect(row.weeks).toEqual(weeks);
+        expect(row.best).toEqual(bestMonth(curve));
+        expect(row.good).toEqual(goodMonths(curve));
+        expect(row.migration).toBe(migrationSentence(weeks));
+        expect(row.peak).toBeCloseTo(Math.max(...curve.map((s) => s.freq)), 9);
+      } finally {
+        await cleanupUsChildren(CODES);
+      }
+    });
+
+    it("sorts by peak desc, then locCode ascending on a tie", async () => {
+      const CODES = ["US-S2A", "US-S2B", "US-S2C"];
+      // All west (NAW) — same column, so only peak/locCode decide order.
+      await seedUsChildren([
+        { code: "US-S2A", lat: 45, lon: -105 },
+        { code: "US-S2B", lat: 45, lon: -105 },
+        { code: "US-S2C", lat: 45, lon: -105 },
+      ]);
+      try {
+        await insertLoc("US-S2A", janSamples(1000, 0, 0, 0));
+        await insertFreq("US-S2A", 1, 0.5); // tied peak with B
+        await refreshRollup("US-S2A");
+        await insertLoc("US-S2B", janSamples(1000, 0, 0, 0));
+        await insertFreq("US-S2B", 1, 0.5); // tied peak with A
+        await refreshRollup("US-S2B");
+        await insertLoc("US-S2C", janSamples(1000, 0, 0, 0));
+        await insertFreq("US-S2C", 1, 0.2); // lowest peak, sorts last
+        await refreshRollup("US-S2C");
+
+        const naw = await ribbonRegions("testsp", 40, "NAW");
+        expect(naw.rows.map((r) => r.locCode)).toEqual(["US-S2A", "US-S2B", "US-S2C"]);
+      } finally {
+        await cleanupUsChildren(CODES);
+      }
+    });
+
+    it("caps at 40 rows, sorted, with total and capped set", async () => {
+      const CODES = Array.from({ length: 41 }, (_, i) => `US-C${String(i + 1).padStart(2, "0")}`);
+      await seedUsChildren(CODES.map((code) => ({ code, lat: 45, lon: -105 })));
+      try {
+        for (const code of CODES) {
+          await insertLoc(code, janSamples(1000, 0, 0, 0));
+          await insertFreq(code, 1, 0.3); // uniform peak -> pure locCode tiebreak
+        }
+        // One country-grain rebuild after every location has loaded its own
+        // 0049 rollup (refreshRollup per loc would rescan 'US' 41 times).
+        const { rebuildMonthRollup, rebuildBandRollup } = await import("./barchart");
+        for (const code of CODES) await rebuildMonthRollup(code);
+        await rebuildBandRollup(CODES[0]);
+
+        const naw = await ribbonRegions("testsp", 40, "NAW");
+        expect(naw.total).toBe(41);
+        expect(naw.capped).toBe(true);
+        expect(naw.rows).toHaveLength(40);
+        expect(naw.rows.map((r) => r.locCode)).toEqual(
+          [...CODES].sort((a, b) => a.localeCompare(b)).slice(0, 40),
+        );
+      } finally {
+        await cleanupUsChildren(CODES);
+      }
     });
   });
 });
