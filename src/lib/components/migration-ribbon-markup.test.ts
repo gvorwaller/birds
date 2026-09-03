@@ -133,4 +133,17 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toContain('not yet assigned to a');
 		expect(markup).toContain('{grid.meta.unmappedCountries.join(');
 	});
+
+	// CODEX1 P2-2: the tap hint must not describe whole-cell picking on a
+	// phone, where a tap only ever picks a band (P1-1) — the month comes
+	// from the slider. Two variants, both driven by the same `phone` flag.
+	it('the tap hint has a phone variant (band + slider) and a non-phone variant (whole cell)', () => {
+		expect(markup).toContain('{#if phone}');
+		expect(markup).toContain(
+			"Choose a month with the slider, then tap a latitude row to see its reporting rate and the"
+		);
+		expect(markup).toContain(
+			"Tap a square to see that month's reporting rate and the regions behind it; darker green means"
+		);
+	});
 });

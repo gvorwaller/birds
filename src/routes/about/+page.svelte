@@ -132,8 +132,9 @@
 								Pick a band and month to see the loaded regions behind them, and
 								tap a region there to chart it in Best time of year as a third
 								pick alongside the closest and best regions. A Play button steps
-								through the year automatically (off under reduced motion), and the
-								chart works the same way on a phone as on a desktop.
+								through the year automatically (off under reduced motion). On a
+								phone, tap a latitude row and choose the month with the slider; on
+								larger screens tap any square.
 							</li>
 						</ul>
 					</div>

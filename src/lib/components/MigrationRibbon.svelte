@@ -412,10 +412,20 @@
 	Share of eBird checklists reporting it, by latitude band and month. North at the top, so a
 	diagonal sweep means the bird moves with the seasons and a flat band means it stays put.
 </p>
-<p class="sub hint" style="margin-bottom:10px">
-	Tap a square to see that month's reporting rate and the regions behind it; darker green means it
-	was reported more often.
-</p>
+<!-- Two variants driven by the same `phone` flag (CODEX1 P2-2): below
+     640px a tap only ever picks a band (P1-1) — the month comes from the
+     slider — so the hint must say that, not describe whole-cell picking. -->
+{#if phone}
+	<p class="sub hint" style="margin-bottom:10px">
+		Choose a month with the slider, then tap a latitude row to see its reporting rate and the
+		regions behind it; darker green means it was reported more often.
+	</p>
+{:else}
+	<p class="sub hint" style="margin-bottom:10px">
+		Tap a square to see that month's reporting rate and the regions behind it; darker green means
+		it was reported more often.
+	</p>
+{/if}
 
 <div class="rlayout">
 	<div class="readout" id="rbreadout">

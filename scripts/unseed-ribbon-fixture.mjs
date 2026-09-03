@@ -13,7 +13,7 @@
  * where there is nothing this script ever created to remove; reset the
  * test cluster instead (`npm run test:db:reset && npm run test:db:up`).
  *
- * Two independent guards before anything is deleted:
+ * Three independent guards before anything is deleted:
  *  1. DATABASE IDENTITY: the marker's `pg_database.oid` and
  *     `pg_postmaster_start_time()` must match the CURRENT database exactly.
  *     `test-db-reset.sh` DROPs and CREATEs `birds_test`, which gets a new
@@ -22,7 +22,22 @@
  *     rather than trust it. (`test-db-reset.sh` also deletes the marker
  *     file on success, so this is belt-and-suspenders against a marker
  *     that survives some OTHER reset path.)
- *  2. CONTENT RE-VERIFICATION (in the same transaction, before any DELETE):
+ *  2. TABLE LOCK (CODEX1 P2-1, 2026-09-03): the content re-verification
+ *     below and the DELETEs that follow it are otherwise a check-then-act
+ *     race under READ COMMITTED — nothing stops a concurrent writer (the
+ *     worker's `storeFrequencies` transaction rebuilding a country's
+ *     rollup, another seed/unseed run) from committing a new contributor
+ *     between the validation SELECTs and the DELETEs, which would then
+ *     delete a row the validation never saw. Immediately after `BEGIN`,
+ *     `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` on every table this
+ *     script reads-then-deletes: that mode conflicts with every other
+ *     writer's lock (INSERT/UPDATE/DELETE all take ROW EXCLUSIVE or
+ *     stronger) while still allowing plain readers (e.g. the app serving
+ *     GETs), so once it's acquired no writer can commit a change until
+ *     this transaction ends — making the validate-then-delete atomic with
+ *     respect to every table it touches. A 5s `lock_timeout` means a busy
+ *     cluster fails closed (refuse, roll back, exit 1) rather than hang.
+ *  3. CONTENT RE-VERIFICATION (inside that lock, before any DELETE):
  *     `frequency_fetch` must hold EXACTLY the marker's loc_codes for the
  *     marker's countries (no more, no fewer — an in-place `pg_restore`
  *     that never dropped the database would still change this), and
@@ -112,8 +127,38 @@ async function main() {
 
     await client.query("BEGIN");
 
-    // Content re-verification, in the same transaction, before any DELETE
-    // (CC1 P2-1): even a matching database identity doesn't rule out an
+    // Lock every table this script reads-then-deletes, BEFORE the first
+    // validation query (CODEX1 P2-1): SHARE ROW EXCLUSIVE conflicts with
+    // every other writer (a frequency rebuild's storeFrequencies
+    // transaction, another seed/unseed run) while still allowing plain
+    // readers, so nothing can commit a new contributor between the
+    // validation SELECTs below and the DELETEs that follow — the
+    // check-then-act race CODEX1 flagged is closed for the duration of
+    // this transaction. Fails closed: a 5s lock_timeout means a busy
+    // cluster refuses rather than blocks indefinitely.
+    try {
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query(
+        `LOCK TABLE frequency_fetch, species_frequency, species_month_freq, loc_month_samples,
+                  band_locs, band_month_samples, species_band_month_freq, taxonomy_cache
+           IN SHARE ROW EXCLUSIVE MODE`,
+      );
+    } catch (lockErr) {
+      await client.query("ROLLBACK").catch(() => {});
+      if (lockErr && lockErr.code === "55P03") {
+        console.error(
+          "[unseed-ribbon-fixture] refusing: could not acquire SHARE ROW EXCLUSIVE on the ribbon " +
+            "tables within 5s — a concurrent writer (a frequency rebuild via storeFrequencies, the " +
+            "worker, or another seed/unseed run) is holding a conflicting lock on at least one of " +
+            "them. Nothing checked or deleted. Try again once it finishes.",
+        );
+        process.exit(1);
+      }
+      throw lockErr;
+    }
+
+    // Content re-verification, inside that lock, before any DELETE (CC1
+    // P2-1): even a matching database identity doesn't rule out an
     // in-place restore that never dropped the database.
     const heldLocs = await client.query(
       `SELECT ff.loc_code
