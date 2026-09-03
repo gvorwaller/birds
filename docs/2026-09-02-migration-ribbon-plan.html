@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration ribbon plan — td-59c2d0</title>
+<style>
+:root{--bg:#f8f9fa;--card:#fff;--border:#e9ecef;--text:#212529;--muted:#495057;--accent:#0a5940;--accent-soft:#e3f3ec;--link:#084298}
+*{box-sizing:border-box} html{font-size:18px}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+main{max-width:940px;margin:0 auto;padding:24px 16px 64px}
+article{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px}
+h1{font-size:1.5rem;margin:0 0 12px} h2{font-size:1.15rem;margin:28px 0 8px;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:4px} h3{font-size:1rem;margin:20px 0 6px}
+p,li{font-size:0.95rem} code{font-size:0.85em;background:var(--accent-soft);padding:1px 4px;border-radius:4px}
+pre{background:#f1f3f5;padding:12px;border-radius:8px;overflow-x:auto} pre code{background:none;padding:0}
+a{color:var(--link)}
+table{border-collapse:collapse;font-size:0.86rem;margin:10px 0;display:block;overflow-x:auto}
+td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{background:var(--bg);text-align:left}
+.src{color:var(--muted);font-size:0.8rem;margin-top:24px}
+</style></head><body><main><article><h1>Migration ribbon (species page) — td-59c2d0</h1>
+<p><strong>Status:</strong> PLAN rev 9 (2026-09-03, CC1). Rev 9 adopts CODEX1 P2-2 with the
+owner's generalisation (one continent picker everywhere, "All" default on wide
+screens) and makes the regions list collapsible. Rev 8 folded CODEX1's usability pass. Rev 8 folds CODEX1's second pass,
+usability only, requested by the owner. Rev 7 recorded the four GROK decisions. Rev 7 records the owner's answers to
+the four GROK decisions and the North America east/west split they produce.
+Rev 6 folded GROK's hostile pass. Rev 6 folds GROK's hostile pass:
+four P1s where a number or sentence on screen was false, all fixed and verified.
+Rev 5 measured the rollup. Rev 5 replaces blocking item 1 after
+measuring the rollup on production: the answer is a materialised ribbon table,
+not a wider query. Rev 4 folded the CODEX1 and AGY reviews. Peer review done: CODEX1 (mechanics)
+and AGY (UX) both returned. Mockup fixes applied; four items are BLOCKING for the
+real build and are listed under "Review findings". Owner's design decisions in
+rev 3 all stand. Rev 1
+proposed one row per loaded region. The owner then committed to <strong>world-wide coverage</strong>, for education
+rather than for chasing birds, which broke that design. Rev 2 replaces it with
+fixed latitude bands and continent columns. Mockup built and verified in Safari;
+peer review (CODEX1 / AGY / GROK) still deferred until the owner has played with it.</p>
+<h2>Context</h2>
+<p>Yesterday (2026-09-01, session "Set up CC3 in claude-relay") td-59c2d0 "Visual
+species location map" was designed and then parked. Sequence: animated dot map
+chosen → rejected (one dot per state = polka dots, and the page already links
+eBird's real species map) → <strong>migration ribbon</strong> chosen (months across, regions
+by latitude down, colour = share of checklists reporting; a migrant draws a
+diagonal sweep, a resident a flat band) → parked because coverage is 10 whole
+countries and nothing else, so a Neotropical migrant's winter reads as "gone".</p>
+<p>Nothing reached the repo or tracker: td-59c2d0 still has only its one-line
+description; the research survives only in a plan file
+(<code>~/.claude/plans/ok-i-m-liking-your-expressive-sutton.md</code>).</p>
+<p>Today the owner wants to resume. Ambition: world coverage eventually. Concerns:
+AI enrichment cost for ~8,000 not-yet-loaded species, and the effort of loading
+every country. Wants the ribbon, a <strong>full-featured HTML mockup</strong> to play with
+(made-up data acceptable where it helps judge UI/UX), and then to decide whether
+to route it to AGY / GROK / Codex for review.</p>
+<p>Owner's decisions today: accept the enrichment coupling and use <strong>Haiku for the
+backlog</strong>; mockup uses <strong>real prod curves</strong> for three species; ribbon rows are
+<strong>thin per-region rows grouped by country</strong>; <strong>reviews deferred</strong> until the
+owner has read this plan and played with the mockup.</p>
+<h2>What the research settled today</h2>
+<p><strong>Loading coverage costs no money; enrichment does, and it is auto-triggered.</strong>
+One region = one <code>ebird.org/barchartData</code> GET with the user's CAS session
+(<code>src/lib/server/barchart.ts:137-140</code>), 500 ms spacing, single worker. A
+country-level <code>?/analyzeCounties</code> already enqueues every seeded sub1 of that
+country as one job (<code>src/routes/forecast/data/+page.server.ts:723-731</code>); there
+is no all-countries path (would iterate <code>countriesList()</code>,
+<code>src/lib/server/regions.ts:159</code>). All 3,369 sub1 regions are seeded with
+centroid + bbox. Enrichment scope is <code>seen_species ∪ species_frequency ∪
+photo_links</code> (<code>src/lib/server/species-enrichment.ts:524-536</code>), so every species
+a new region reports becomes AI-due within 15 min (<code>scan_enrichment</code>), gated only
+by compile-time <code>AI_STAGE_ENABLED</code> (<code>src/lib/server/job-policy.ts:43</code>).</p>
+<p><strong>Cost.</strong> Measured 2026-08-29: 3,041 species ≈ $38 on Sonnet 5 intro pricing
+(≈ $0.0125/species). For ~8,000 new species: Haiku 4.5 ≈ $50, Sonnet 5 (now
+$3/$15) ≈ $150, Opus ≈ $250. Caveat for "Haiku for backlog, Sonnet for what I
+look at": <code>app_config</code> has only two AI purposes (<code>ai.model.enrichment</code>,
+<code>ai.model.guidance</code>, both <code>claude-sonnet-5</code> on prod today). A dropdown switch
+to Haiku applies to on-demand enrichment too. Either accept that for the
+duration of the world load and switch back after, or add a third purpose
+(<code>enrichment-backlog</code>) — a small code change, deferred to the world-load td.</p>
+<p><strong>Table growth (prod, 2026-09-02).</strong> <code>species_frequency</code> = 23.8 M rows,
+2.9 GB, across 8,532 locations (196 sub1 + counties + hotspots). Average
+10,363 rows per sub1 region → the remaining 3,173 regions add ≈ 33 M rows /
+≈ 4 GB. Droplet disk: 57 GB free of 77 GB. Feasible; needs index/vacuum
+attention and a per-species-page query check (the teaser query scans every
+loaded region for one species).</p>
+<p><strong>The ribbon's data already exists.</strong> <code>pickSpeciesTeaserState</code>
+(<code>src/lib/server/forecast.ts:1309-1443</code>) computes a 12-month curve
+(<code>MonthStat {month, freq 0-1, n}</code>) for every loaded region on each species page
+load and discards all but 1–2. Latitude comes from <code>regions.lat</code> via
+<code>regionCoordsFor()</code> (<code>src/lib/server/regions.ts:246-257</code>).</p>
+<p><strong>Real data confirms the picture works.</strong> Blackpoll Warbler (bkpwar) on prod:
+spring sweep Florida (Apr) → DC (May, 21%) → Yukon/NWT (Jun); breeding peak
+Newfoundland (Jun, 22%); autumn departure only on the Atlantic coast (MA/RI/NJ
+Sep–Oct) with the interior blank — the transatlantic route; Nov–Apr blank in
+every tracked region; Costa Rica surveyed (5–20k lists/month) but 0%. Peaks are
+low (median non-zero cell 0.2%), so the colour ramp must use fixed quasi-log
+bins, not linear-to-max. Chickadee (bkcchi) and Osprey (osprey) give the
+resident and cosmopolitan contrasts. Extract is at
+<code>docs/mockups/ribbon-prod-curves.js</code> (196 regions × 3 species).</p>
+<p><strong>Chart idiom to mirror.</strong> <code>src/lib/components/FrequencyChart.svelte</code>:
+hand-rolled SVG, <code>var(--accent)</code> fills, 45° hatch pattern for n&lt;40, <code>·</code> glyph
+for n=0 (never a zero bar), 48 px segmented toggle, footnotes in <code>figcaption</code>.
+No slider or animation exists anywhere in the app today. Mockup convention
+(<code>docs/2026-08-17-species-enrichment-plan.md:27-56</code>): sibling static HTML in
+<code>docs/mockups/</code> linking <code>mockup.css</code>, nav chrome copied from
+<code>species-detail-enriched.html</code>, registered in <code>index.html</code>, reviewed in Safari at
+390×844 / 320×568 / ≥1024.</p>
+<h2>What changed in rev 2, and why</h2>
+<p>Rev 1 drew one thin row per loaded region, sorted by latitude inside each
+country. Two findings killed it.</p>
+<p><strong>Longitude was collapsed into noise.</strong> The ribbon has one spatial axis and rev 1
+spent it on latitude. Blackpoll Warbler's autumn route is Atlantic coastal, so
+at one latitude band the continent splits in half. Sorted west to east the
+September and October figures read 0, 0, 0 through Wyoming, Nebraska and Iowa,
+then 7, 4, 6, 5, 3, 6, 6 from Ohio to Rhode Island. Sorted by latitude, which is
+what rev 1 drew, the same ten numbers interleave as 0, 6, 6, 0, 6, 3, 0, 4, 7, 5
+and read as speckle.</p>
+<p><strong>It did not survive world coverage.</strong> Osprey occupies 190 of the 196 regions
+loaded today. At world coverage that is roughly 2,500 rows, a fifteen-thousand
+pixel column.</p>
+<p><strong>A continent rollup does not rescue it.</strong> Averaging all of North America into
+one Osprey row gives 3 3 5 9 8 8 9 12 9 5 3 3, against Alabama, a genuine
+resident, at 5 6 13 16 9 8 10 11 9 11 7 6. The same shape. Gulf winter birds and
+Canadian summer birds cancel, so the continent row makes the most interesting
+species look like a non-migrant.</p>
+<p><strong>Latitude bands do survive it.</strong> The same data in 10° bands:</p>
+<table>
+<thead>
+<tr>
+<th>Band</th>
+<th>Jan..Dec</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>60-70N</td>
+<td>0 0 0 2 2 1 2 3 2 0 0 0</td>
+</tr>
+<tr>
+<td>50-60N</td>
+<td>0 0 0 4 6 5 5 8 5 1 0 0</td>
+</tr>
+<tr>
+<td>40-50N</td>
+<td>0 0 2 10 9 8 11 14 9 3 0 0</td>
+</tr>
+<tr>
+<td>30-40N</td>
+<td>3 3 6 8 6 6 7 9 7 5 4 3</td>
+</tr>
+<tr>
+<td>20-30N</td>
+<td>24 22 25 25 20 19 18 18 19 20 22 22</td>
+</tr>
+<tr>
+<td>0-10N</td>
+<td>5 5 4 2 1 1 1 1 2 3 5 5</td>
+</tr>
+<tr>
+<td>20-30S</td>
+<td>8 8 7 7 7 7 7 7 7 8 8 9</td>
+</tr>
+</tbody>
+</table>
+<p>Osprey becomes a seesaw: northern bands fill April to September, the equatorial
+band does the opposite, and a subtropical band never changes. Row count is fixed
+at 13 forever, so more coverage improves each band instead of lengthening the
+chart.</p>
+<p><strong>Continents belong as columns, not rows.</strong> The flat 20-30N band above is two
+opposite populations averaged together. Split by continent in the mockup, North
+America reads <code>@@@@@####@@@</code>, a resident and wintering population, and Asia reads
+<code>*++------++*</code>, a winter visitor absent from April to October. The world row
+hides both; the column view recovers them. This is also where Blackpoll shows the
+Americas populated and every other column empty.</p>
+<p><strong>Effort weighting is a real distortion.</strong> Florida alone is 72% of all checklists
+in the 20-30N band, so a checklist-weighted world row is largely one state. The
+mockup therefore defaults to averaging <em>by place</em>: each country counts once
+inside its continent, each continent once in the world row. A <em>by effort</em> toggle
+shows the raw alternative, and the caption always says which is active.</p>
+<h2>Plan</h2>
+<h3>Step 1 — Record the research where it will be found</h3>
+<ol>
+<li><code>td comment td-59c2d0</code> with a compact version of the "What the research
+   settled" section above (coverage facts, cost, growth, decisions, pointers).
+   Do <strong>not</strong> <code>td close</code>; leave it <code>open</code> — it is now active again.</li>
+<li>Write <code>docs/2026-09-02-migration-ribbon-plan.md</code> (the artifact reviewers will
+   later read by path): context, decisions, measured facts, the mockup's UX
+   contract (Step 2), the open UX questions, and the follow-on work (Step 4).
+   Rev 1; later review passes become revs 2+ with <code>[CODEX1]</code>/<code>[AGY]</code>/<code>[GROK]</code>
+   annotations, per the established pattern.</li>
+</ol>
+<h3>Step 2 — The mockup (BUILT)</h3>
+<p><code>docs/mockups/species-migration-ribbon.html</code> plus <code>ribbon-prod-curves.js</code>,
+registered in <code>docs/mockups/index.html</code>. Real production curves for Osprey,
+Blackpoll Warbler and Black-capped Chickadee across all 196 loaded regions.</p>
+<ul>
+<li><strong>Rows:</strong> 13 fixed 10° latitude bands, 70-80°N down to 40-50°S. Never grows.</li>
+<li><strong>Columns:</strong> 12 months in the World view; 6 continents × 12 months in the
+  By continent view, which scrolls horizontally inside its own container with the
+  band labels pinned, so the page itself never scrolls sideways.</li>
+<li><strong>Averaging:</strong> By place (default) or By effort, with the caption naming which.</li>
+<li><strong>Drill:</strong> selecting a cell lists every region inside that band and continent,
+  sorted by peak, each with its own 12-month strip. Tapping one charts it in the
+  existing "Best time of year" card below.</li>
+<li><strong>Month scrubber and Play</strong>, honouring <code>prefers-reduced-motion</code>.</li>
+<li><strong>Coverage preview:</strong> hand-authored rows for Mexico, Colombia, Brazil, Senegal,
+  Kenya and South Africa, dashed and badged "PREVIEW · NOT LOADED", excluded from
+  the gap note. With it on, the Osprey seesaw completes into the tropics.</li>
+<li><strong>Honesty:</strong> no-data cells are drawn as empty dashed outlines, never as zero.
+  Continents with nothing loaded read "no data", not "absent". The scope caption
+  names what is loaded and what is not.</li>
+<li><strong>Accessibility:</strong> one tab stop, arrow keys for month and band, Page keys for
+  continent, generated <code>aria-label</code> per view, all controls at least 48px.</li>
+</ul>
+<h3>Step 3 — Hand it to the owner to play with</h3>
+<ul>
+<li>Serve <code>docs/mockups/</code> at <code>http://127.0.0.1:8431/</code> (<code>python3 -m http.server
+  8431</code> from that directory; cs.md pins that origin) and send the URL, or
+  <code>SendUserFile</code> the HTML if preferred.</li>
+<li>Owner reviews in Safari at 390×844, 320×568, and desktop, and answers the
+  open UX questions (below). Reviews by CODEX1 / AGY / GROK happen only if the
+  owner then says so; the brief pattern (direct <code>to:</code>, path + git ref,
+  findings-only banner for AGY/GROK, "no ack — first reply is the critique")
+  is ready to use, with CODEX1 → AGY → GROK sequential as the default.</li>
+</ul>
+<p>Open UX questions for the owner while playing:
+1. Country order: pure north→south, or home country first?
+2. Fixed bins, or also a "stretch to this species' peak" toggle?
+3. Should non-US groups stay expanded across species switches?
+4. 6 px rows at 320 — legible, or default 8 px and accept a taller US block?
+5. Does ribbon selection replace the "Best time" peer tabs or add a third tab?
+6. Play speed and loop-vs-stop at December.
+7. Is the coverage-preview toggle worth shipping in the real app, or mockup-only?</p>
+<h3>Step 4 — Follow-on work (separate tds, not built in this plan)</h3>
+<ul>
+<li><strong>World load td</strong> (now the owner's stated direction): switch
+  <code>ai.model.enrichment</code> to Haiku for the backlog, or add an <code>enrichment-backlog</code>
+  purpose so on-demand work stays on Sonnet; add an "all countries" job that
+  iterates <code>countriesList()</code> and enqueues one <code>analyze_counties</code> per country;
+  measure eBird's tolerance on the first few countries before committing;
+  watch <code>species_frequency</code> growth of roughly 33 M rows and 4 GB against 57 GB
+  free, and vacuum/index accordingly; then switch the model back.</li>
+<li><strong>Ribbon build td</strong>: widen <code>pickSpeciesTeaserState</code> to return all <code>built[]</code>
+  curves with <code>regions.lat</code> and <code>parent_code</code>, aggregate into bands and
+  continents server-side, and add a <code>MigrationRibbon.svelte</code> mirroring the
+  mockup in a new card above "Best time of year". A country-to-continent
+  mapping is needed; <code>regions</code> has no continent column today.</li>
+<li><strong>Open question deferred to build time</strong>: with world coverage the main
+  objection to an animated map (coverage holes that lie about absence) largely
+  dissolves. Worth re-testing the ribbon against a map once loading is done.</li>
+</ul>
+<h2>Verification (done 2026-09-02, Safari, scripted)</h2>
+<ul>
+<li>td-59c2d0 is in progress and carries the research as a comment.</li>
+<li>Mockup driven in Safari at 336, 390 and 1300 px: no page-level horizontal
+  scroll at any width, no console errors, 13 bands render, the continent view
+  scrolls inside its container with band labels pinned, and the chart sits above
+  the fold on a phone.</li>
+<li>Rendered cell colours were read back out of the DOM and matched against the
+  source data. Osprey draws the seesaw; the By continent view separates North
+  America's resident population from Asia's winter visitor in the 20-30°N band;
+  coverage preview fills the tropics; Blackpoll leaves every non-American
+  column empty.</li>
+<li><code>npm run check</code> is unaffected, static files only, but run it before committing
+  per CLAUDE.md.</li>
+</ul>
+<h2>Decided by the owner (2026-09-02 survey)</h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Band grain</td>
+<td><strong>10 degrees</strong>, 13 rows. 5-degree bands would be thin until the world is loaded; revisit after.</td>
+</tr>
+<tr>
+<td>Default view</td>
+<td><strong>World.</strong> Fits a phone with no sideways scrolling and gives the fastest read.</td>
+</tr>
+<tr>
+<td>Default averaging</td>
+<td><strong>By place.</strong> Each country counts once inside its continent, each continent once in the world row.</td>
+</tr>
+<tr>
+<td>Continent order</td>
+<td><strong>Geographic</strong>, fixed. A stable axis is what makes two species comparable.</td>
+</tr>
+<tr>
+<td>Drill panel</td>
+<td><strong>Cap at 40</strong> by peak, stating how many were left out.</td>
+</tr>
+<tr>
+<td>Play</td>
+<td><strong>750 ms per month, looping.</strong> A year in nine seconds.</td>
+</tr>
+<tr>
+<td>Coverage preview</td>
+<td><strong>Mockup only.</strong> It argues for loading the world; once that is done it has no job, and invented rows do not belong on a live page.</td>
+</tr>
+<tr>
+<td>No-data marking</td>
+<td><strong>Diagonal slash</strong> (see below).</td>
+</tr>
+</tbody>
+</table>
+<h3>The no-data fix</h3>
+<p>While quietening the unloaded cells so they stopped drowning the data, I pushed
+them too close to the "0%, surveyed but not reported" grey. White against
+<code>#eceff1</code> measures <strong>1.15:1</strong>, against a 3:1 floor for a non-text distinction,
+and in the continent view at 8px cells there was no dot either. That collapsed
+the single most important distinction in the design: "we know nothing here"
+against "this bird was looked for and not found."</p>
+<p>Fixed structurally rather than tonally: every unloaded cell now carries a thin
+diagonal slash on white, legible at any cell size and in any lighting, with a
+matching legend swatch. The three states are now:</p>
+<ul>
+<li><strong>Coloured</strong> — reported at that rate.</li>
+<li><strong>Solid light grey</strong> — regions loaded and birded, species never reported.
+  This is real evidence of absence.</li>
+<li><strong>White with a slash</strong> — nothing loaded. No claim about birds at all.</li>
+</ul>
+<p>Verified: 70-80°N and 0-10°S hold zero loaded regions of any country, so those
+rows are correctly slashed end to end. Loaded latitudes run 69.8°N to 41.5°S.</p>
+<h2>Next</h2>
+<p>Peer review is the remaining gate, and is the owner's call to trigger. The
+established pattern is CODEX1 for mechanics, then AGY for UX, then GROK as the
+hostile pass, each addressed directly by name, given
+<code>docs/2026-09-02-migration-ribbon-plan.md</code> and
+<code>docs/mockups/species-migration-ribbon.html</code> by path plus a git ref, with
+findings-only banners for AGY and GROK. After that, the two follow-on tds in
+Step 4: the world load, and the real Svelte build.</p>
+<h2>Review findings (2026-09-03)</h2>
+<p>CODEX1 (mechanics) and AGY (UX) reviewed the plan and the mockup in parallel,
+findings-only. Every claim below was independently verified before acting.</p>
+<h3>Rollup arithmetic (Gaylon asked for the math, 2026-09-03)</h3>
+<p><code>species_frequency</code> is sparse: a row exists only where frequency is above zero,
+so a month collapses four weeks only when all four weeks have a row.</p>
+<table>
+<thead>
+<tr>
+<th>Weeks backing one rollup row</th>
+<th>Rollup rows</th>
+<th>Share</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>2,287,540</td>
+<td>24.0%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>1,368,439</td>
+<td>14.3%</td>
+</tr>
+<tr>
+<td>3</td>
+<td>1,228,754</td>
+<td>12.9%</td>
+</tr>
+<tr>
+<td>4</td>
+<td>4,661,983</td>
+<td>48.8%</td>
+</tr>
+</tbody>
+</table>
+<p>Weighted out, 2,287,540 + 2,736,878 + 3,686,262 + 18,647,932 = 27,358,612, which
+is exactly the <code>species_frequency</code> row count. So real compression is 2.87:1, not
+4:1, giving 9,546,716 rollup rows. Even perfect 4:1 compression floors at 6.84 M,
+so 0049's "~364 K" claim is impossible by a factor of nineteen against the floor.
+<code>loc_month_samples</code> is 109,860 rows = 9,155 locations × 12.</p>
+<h3>Fixed in the mockup</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Who</th>
+<th>Finding</th>
+<th>Verified</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>CODEX1 P1</td>
+<td>Preview rows were averaged into cells that also held real data, then presented as eBird figures. Mixed cells existed in the fixture at 10-20°N and 20-30°N North America.</td>
+<td>CONFIRMED</td>
+<td>Real data now wins a cell outright; preview only ever fills a cell with no real data. Cells with real data are byte-identical preview on or off. The readout names any preview regions held back.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>CODEX1 P1</td>
+<td><code>bandOf</code> clamped every latitude below 50°S into the 40-50°S row. The seed already holds seven regions further south, Antarctica at -75.3 among them, all mislabelled.</td>
+<td>CONFIRMED</td>
+<td>Bands now run 80-90°N to 80-90°S, 18 fixed rows, no clamp except at the literal poles. Antarctica added as a seventh continent column.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>AGY P1</td>
+<td>The no-data slash was too faint against the 0% grey. AGY measured 1.93:1; actual is 2.07:1, against a 3:1 floor.</td>
+<td>CONFIRMED</td>
+<td>Stroke darkened to <code>#6c757d</code>, measured 4.69:1. AGY's suggested <code>#595959</code> measures 7.0:1, too heavy given how much of a world grid is unloaded.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>AGY P2</td>
+<td>On a phone the legend sat after a 40-row drill panel, pushing it off-screen.</td>
+<td>CONFIRMED</td>
+<td>Legend moved above the drill panel. Fixing this exposed a grid bug that made the drill panel overlap the chart on desktop; also fixed.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>AGY P2</td>
+<td>No cue that continent columns were clipped off-screen on a phone.</td>
+<td>CONFIRMED</td>
+<td>Right-edge fade when the grid is wider than its container.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>AGY P2/P3</td>
+<td>Copy: "lists" for checklists, "loaded band" where a birder thinks region, no reading key, no equator benchmark.</td>
+<td>Accepted</td>
+<td>Reading key added to the subtitle. Equator drawn and labelled on the grid. Copy corrected throughout.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>CODEX1 P2</td>
+<td>"By place" named an estimand it does not compute: regions inside a country are still checklist-weighted.</td>
+<td>CONFIRMED</td>
+<td>Toggle renamed <strong>Equal weight / By checklists</strong>, and the caption now states exactly what is equalised.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rejected:</strong> AGY proposed replacing "By effort" because it reads as jargon.
+"Effort" is already this app's own user-facing word — <code>FrequencyChart.svelte:256</code>
+says "checklists per week (effort)". The label was changed for CODEX1's accuracy
+reason instead, not AGY's vocabulary reason.</p>
+<h3>BLOCKING for the real build (not mockup problems)</h3>
+<ol>
+<li><strong>Materialise the grid. Do not query either table per page load.</strong>
+   (Rev 5, measured 2026-09-03 after Gaylon questioned the row count.)
+   <code>species_month_freq</code> has PK <code>(loc_code, species_code, month)</code> and one index
+   <code>(month, loc_code)</code>. There is <strong>no species-leading index</strong>, so the naive shape
+   <code>WHERE species_code = ?</code> is a Parallel Seq Scan reading 68,575 buffers
+   (~536 MB). The weekly table is better indexed for this access pattern: it has
+   <code>species_frequency_species_idx (species_code, loc_code)</code>.
+   Driving instead from the loaded-region list uses the rollup PK by nested loop
+   and avoids the scan, but is still too slow to block a page:</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>query shape</th>
+<th>Osprey</th>
+<th>Blackpoll</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rollup, region-driven</td>
+<td>120 ms</td>
+<td>365 ms</td>
+</tr>
+<tr>
+<td>weekly, same answer</td>
+<td>411 ms</td>
+<td>392 ms</td>
+</tr>
+</tbody>
+</table>
+<p>At 788 loaded regions. The world load takes that to ~3,369, roughly four times
+   the index lookups. <strong>The fix is a third rollup at the ribbon's own grain:
+   <code>(species_code, band, country, month)</code> measures 394,466 rows today, 24x
+   smaller than <code>species_month_freq</code> and keyed by species, turning a page load
+   into one short index scan.</strong> Maintain it in the same transactional path that
+   already maintains the monthly rollup, so it cannot drift. Adding a
+   species-leading index to <code>species_month_freq</code> instead would cost ~370 MB
+   (its PK is 369 MB) and would still leave a per-request aggregation.
+   (Ownership note: migration 0049 was written by a Claude session on
+   2026-08-31, commit 8b642aa. The "~364 K rollup rows" figure in its header is
+   our own estimate, made before the backfill ran and never corrected against
+   the 9.55 M rows it actually produced. Not a third party's mistake — ours.
+   I previously guessed it might have described a band grain; I could not
+   establish that and have withdrawn the guess. See td for the correction.)</p>
+<p>Original finding, still true: migration 0049 already maintains
+   <code>species_month_freq</code> and <code>loc_month_samples</code>, which is closer to the ribbon's
+   grain than the weekly table. The rev 2 plan proposed widening the weekly query in
+   <code>pickSpeciesTeaserState</code>; CODEX1 is right that it should query the rollup and
+   aggregate the fixed grid server-side instead of serialising ~2,500 curves into
+   the page shell. Measured on prod: <code>species_month_freq</code> is 9.55 M rows / 1,016 MB.
+   Note migration 0049's own header comment claims "~364 K rollup rows", which is
+   wrong by a factor of 26 — worth a separate td to correct the comment.
+2. <strong>The world loader must not be 252 independent jobs.</strong> <code>analyze_counties</code>
+   rejects a country with no seeded sub1, and 56 countries have none, so those
+   cannot load that way at all. Worse, claim order is FIFO, so ~252 country jobs
+   would put life-list sync, need alerts and enrichment behind up to ~16.8 hours
+   of first slices. Build one resumable world-load job that yields its remainder
+   to the tail, over a resolved list of sub1s plus direct country rows.
+3. <strong>A complete country-to-continent mapping is required.</strong> The mockup maps only
+   its 16 fixture countries. In production a region whose country is unmapped
+   would silently vanish from every column rather than erroring.
+4. <strong>Disclose centroid assignment, or change the geography.</strong> Each region's
+   frequency covers the whole region but is placed in one band by its centroid.
+   Measured on prod: of 788 loaded sub1 regions, <strong>228 (29%) straddle a 10-degree
+   band boundary</strong> and 37 span more than 10 degrees, the widest being Nunavut at
+   31.7 degrees. That can shift or manufacture part of a sweep. Either say so
+   plainly in the caption, or use finer geography.</p>
+<h3>Corrected in this plan</h3>
+<p>The rev 2 text said a newly loaded species becomes "AI-due within 15 minutes".
+CODEX1 flagged it and it is wrong. The lanes gate each other: wiki must land,
+then iNaturalist, and only then can the AI lane run, because <code>aiDueCodes</code>
+requires <code>wiki_status='ok'</code> and a terminal <code>inat_similar_status</code>. A new species
+therefore needs three separate scan cycles, and the similar-species notes ride in
+the same billed AI call as the tags and field craft.</p>
+<h3>Not adopted</h3>
+<p>CODEX1's shape verdict is that bands and continent columns are defensible only as
+a coarse region-centroid picture, not literal bird latitude. That is a fair
+description rather than an objection, and item 4 above is the honest response.</p>
+<h2>GROK hostile review (2026-09-03) — the third and last pass</h2>
+<p>GROK recomputed every cell independently from the fixture and drove the live
+mockup in Safari at 336, 390, 430, 1024 and 1280 px. It did not re-run CODEX1's
+or AGY's ground. Four findings were sentences or numbers that were false on
+screen. All four verified independently before fixing.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Finding</th>
+<th>Verified</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1-1</td>
+<td>The "real data wins" rule existed inside a continent but not across them, so preview-only continents leaked into world cells that already held real data. Osprey 10-20°N January went from 3.16% to 8.83% with preview on, still flagged as real. 60 such cells per species.</td>
+<td>CONFIRMED</td>
+<td>Real wins across continents too. Re-measured: <strong>0</strong> of 132 cells in real-data bands now move when preview flips, while 12 genuinely empty cells still fill.</td>
+</tr>
+<tr>
+<td>P1-2</td>
+<td>That leak also silenced the gap note when preview was on.</td>
+<td>CONFIRMED</td>
+<td>Fixed by P1-1 and by P1-3.</td>
+</tr>
+<tr>
+<td>P1-3</td>
+<td>The gap note made a region-level claim from a band average, and was false with no preview involved. Blackpoll November: the note read "not reported in any loaded region" while New Jersey had it on 0.60% of 76,684 checklists, contradicting the readout on the same screen. 37 regions reported it that month.</td>
+<td>CONFIRMED, reproduced exactly</td>
+<td>Computed at region grain over real regions only, and the sentence now states what is computed: "below 0.5% of checklists in every loaded region." Blackpoll's window correctly narrowed from Nov-Mar to Dec-Mar.</td>
+</tr>
+<tr>
+<td>P1-4</td>
+<td>Equal weight is a mean of means, but the readout labelled it "% of checklists" beside a checklist count that is not its denominator. Osprey 20-30°N January showed 16% equal-weight and 24% checklist-weighted, both captioned the same way over n=439,972.</td>
+<td>CONFIRMED, reproduced exactly</td>
+<td>Equal weight now reads "16% equal-weight mean · N checklists in the mix".</td>
+</tr>
+</tbody>
+</table>
+<p>Also fixed from GROK's P2s: the equator label was covering seven columns of North
+America at 7px cells and moved to the gutter; the World view inner-scrolled at a
+real 336px Safari width despite the plan claiming it fits, so the cell floor
+gives way to fitting; a small sample of <em>zero</em> reports was drawn with the green
+hatch, reading as faint presence, and is now the 0% grey; the drill panel listed
+regions behind a slashed cell when a preview row had no curve for that species.
+Added a caption line for GROK finding 9, that reporting frequency also tracks
+detectability, so a band can dim without the bird moving.</p>
+<h3>Owner decisions GROK raised and nobody has asked</h3>
+<p><strong>A. Intra-continent east-west smear.</strong> Accepted centroid straddling is one
+thing; this is the failure that killed rev 1, returning by another door. Blackpoll
+40-50°N North America September reads 5.25% as one cell, mixing Nova Scotia 8.49,
+Ohio 7.47 and Michigan 7.15 with Washington 0.02, Oregon 0.03 and Idaho 0.02.
+Continent columns separate Africa from the Americas, not Ohio from Wyoming. Drill
+shows the truth; the picture does not. Options: accept and disclose; split North
+America into east and west columns; or drop the continent view and keep World
+plus drill.</p>
+<p><strong>B. Should Equal weight equalise regions inside a country?</strong> Today it does not.
+In the 20-30°N North America cell only the United States is loaded, so Florida is
+93% of that cell's January checklists and equal weight is identical to checklist
+weight there. The scope copy claims heavily birded places do not dominate; at the
+continent grain they do.</p>
+<p><strong>C. World as default, reconfirm.</strong> The 20-30°N Osprey split is the demo that
+sells this feature, and the World view is exactly the average that flattens it
+(29 down to 16). The owner chose World for phone legibility before that was known.</p>
+<p><strong>D. Is this a subnational-1 product permanently?</strong> Queensland, Texas, Alaska and
+Nunavut are not ten-degree organisms. Counties, at least for the United States,
+are the real alternative to a centroid footnote.</p>
+<h2>Will the world load choke the app? (audit, 2026-09-03)</h2>
+<p>Gaylon asked whether world coverage is a fool's errand. Measured rather than
+guessed. Short answer: data volume is not the risk; seven query sites are, and
+only one of them is user-facing.</p>
+<h3>Volume</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>species_frequency</code> today</td>
+<td>27.4 M rows, 3.3 GB</td>
+</tr>
+<tr>
+<td>of which from the 788 loaded sub1 regions</td>
+<td>5.0 M (the rest is US counties and hotspots)</td>
+</tr>
+<tr>
+<td>rows per region in the countries loaded today</td>
+<td>~5,700 (earlier estimate of 10,363 was skewed by the US)</td>
+</tr>
+<tr>
+<td>remaining sub1 regions</td>
+<td>2,581, so roughly +14.7 M rows, plus ~250 country rows</td>
+</tr>
+<tr>
+<td>projected total</td>
+<td>~46 M rows, ~5.5 GB, against 57 GB free</td>
+</tr>
+<tr>
+<td>cache hit ratio, big tables</td>
+<td>96-99%</td>
+</tr>
+</tbody>
+</table>
+<p>Growth is real but ordinary. Postgres does not care.</p>
+<h3>What actually scales with loaded regions</h3>
+<p>Every non-test query touching the frequency tables was classified. Forecast,
+nearest, hotspots, region detail, species search and best-time-of-year are all
+scoped to a place the user chose and do not care how much of the world is loaded.
+Seven sites do, ranked:</p>
+<ol>
+<li><strong><code>forecast.ts:1323</code> <code>pickSpeciesTeaserState</code></strong> — every species-page load, no
+   cache, no rollup, scans every loaded country/sub1 row. <strong>The only user-facing
+   one.</strong> Already the thing the ribbon's materialised table replaces.</li>
+<li><code>/forecast/data:171</code> — the admin data hub reads the whole <code>frequency_fetch</code>
+   table and groups it in JS on every load. Payload was bounded in td-3bf3a2; the
+   server work was not.</li>
+<li><code>/forecast/data:187</code> — unbounded anomaly join with a sort, no LIMIT. Grows
+   with total loaded barcharts.</li>
+<li><code>/forecast/data:178</code> — unbounded failed-attempts scan feeding a serial label
+   loop.</li>
+<li><code>species-enrichment.ts:527</code> — worker only, no page latency, but a full
+   DISTINCT over <code>species_frequency</code> on every enrichment scan.</li>
+<li><code>region-detail.ts:187</code> hub search — on demand, leading-wildcard ILIKE forces a
+   full scan per request.</li>
+<li><code>/admin:87</code> — LIMIT 50 but sorts the whole attempts table; missing index on
+   <code>last_attempt_at</code>.</li>
+</ol>
+<p>Sites 2-4 and 7 are Gaylon's own admin tooling. Sites 5-6 are worker or
+on-demand. Site 1 is the species page and is already planned away.</p>
+<h3>The risk nobody had named: the box</h3>
+<p>The droplet has 3.9 GB RAM shared with madonnahist (~1.1 GB across its
+processes), gaylonphotos, two giftlist apps, and three Postgres 17 clusters.
+The birds cluster runs with <strong><code>shared_buffers</code> = 128 MB</strong>, the Postgres default,
+against tables already at 4.3 GB. The 96% hit ratio comes from the OS page cache
+(2 GB), not from Postgres. As tables outgrow that cache the ratio will drop and
+every query slows, world load or not. Raising <code>shared_buffers</code> to ~1 GB is a
+config change on a shared box and is Gaylon's call, not a code change.
+<code>work_mem</code> is 4 MB, which forces the ribbon aggregations to spill.</p>
+<h3>Verdict</h3>
+<p>Not a fool's errand. The world load threatens one user-facing query, which is
+already being replaced, and four admin pages that can be bounded with LIMITs and
+one index. The unaddressed risk is memory on a shared 4 GB droplet, and that
+exists with or without the world.</p>
+<h2>Decided by the owner (2026-09-03, the four GROK decisions)</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Decision</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td><strong>Split North America into east and west columns</strong> at about 100°W, labelled as such. Other continents stay whole.</td>
+<td>The Blackpoll September cell mixed Nova Scotia 8.5 and Ohio 7.5 with Washington 0.02 and Oregon 0.03 into "5%". Unlike centroid straddling, no caption repairs a number that is wrong for both halves. A one-off special case on the continent the owner reads.</td>
+</tr>
+<tr>
+<td>B</td>
+<td><strong>Equal weight stays country-level.</strong> Regions inside a country remain checklist-weighted.</td>
+<td>That is what eBird means by a region's frequency; equalising 51 states would make Wyoming count as much as Florida. The caption already says so.</td>
+</tr>
+<tr>
+<td>C</td>
+<td><strong>Responsive default: World on phones, By continent on wider screens.</strong></td>
+<td>World was chosen for phone fit before it was known that World is the average that flattens the Osprey demo (NA 29, Asia 3, World 16).</td>
+</tr>
+<tr>
+<td>D</td>
+<td><strong>Stay at subnational-1 grain with the on-screen disclosure.</strong> Revisit in td-11aeb7 (P3).</td>
+<td>Load the world and build the feature first; decide finer geography with real coverage in view. US county data already exists if that day comes.</td>
+</tr>
+</tbody>
+</table>
+<h3>Verified after the split (Safari, 2026-09-03)</h3>
+<p>Blackpoll, September, 40-50°N, equal weight — the cell GROK named:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Reads</th>
+<th>Regions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>North America, west of 100°W</td>
+<td>under 1%</td>
+<td>7</td>
+</tr>
+<tr>
+<td>North America, east of 100°W</td>
+<td>6%</td>
+<td>19</td>
+</tr>
+<tr>
+<td>World row</td>
+<td>3%</td>
+<td>26</td>
+</tr>
+</tbody>
+</table>
+<p>The single "5%" cell is gone; the coast and the interior are now separate
+numbers. Alaska (fixture longitude corrected from a bad 0.31 to -152.5) sits in
+the west column with Yukon and the Northwest Territories. The world row treats
+the two halves as one continent for equal weighting, so the split does not
+double North America's vote. Responsive default confirmed: a 1300px load opens
+By continent with the east column selected; a 390px load opens World. The page
+never scrolls sideways at either width; the eight-column view scrolls inside its
+own container on a phone.</p>
+<h2>CODEX1 usability pass (2026-09-03) — the fourth review</h2>
+<p>Owner asked for a second CODEX1 look, this time on usability. No P1s. Every
+finding was re-measured in Safari before acting; two fixes needed a second
+attempt because the first verified wrong.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Finding</th>
+<th>Measured</th>
+<th>Applied</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P2-1</td>
+<td>On a phone the tap's feedback lands off-screen: readout above, drill below.</td>
+<td>CONFIRMED. At 390px, readout bottom at -116px, drill top at 1374px in a 731px viewport.</td>
+<td>Phone order is now scrubber, ribbon, readout, "See the N regions behind this" jump, toggles, then the rest. <code>.rmain</code> is flattened with <code>display: contents</code> under 720px so its children order alongside the readout. Methodology text folded under "How these numbers are calculated", open by default on wide screens. Permanent tap instruction under the subtitle. After the fix the readout sits at 444-587px, in view.</td>
+</tr>
+<tr>
+<td>P2-3</td>
+<td>Scrubber breaks at 336px, next-arrow marooned; Play is the strongest object.</td>
+<td>CONFIRMED. Rows at 1014 / 1070 / 1126.</td>
+<td>Four fixed grid columns so the four scrubber controls never separate; Play moved to its own row as a plain button, relabelled "Play the year". Verified intact at 336.</td>
+</tr>
+<tr>
+<td>P2-4</td>
+<td>Drill handoff is ~2,000px with no feedback.</td>
+<td>CONFIRMED. 40 rows, 2,300px to the Best time heading, no scroll on tap.</td>
+<td>Eight rows, then "Show all 40 (of N)"; region tap announces "Now charting X below" and scrolls the Best time card into view, honouring reduced motion. The announcement is kept in state because the resize observer's re-render was wiping it from the DOM. Verified: heading lands at the top of the viewport.</td>
+</tr>
+<tr>
+<td>P2-5</td>
+<td>Initial view disagrees with the CSS breakpoint around 1024.</td>
+<td>CONFIRMED and worse: at 1024 and 1040 Safari's <code>innerWidth</code> counts the scrollbar and the media query does not, so the continent view opened on a stacked layout. A one-time <code>matchMedia</code> sample at parse still failed, because the scrollbar arrives after first paint.</td>
+<td>The view now <strong>follows</strong> the media query: <code>change</code> listener plus a re-sample after first paint, both suppressed once the user touches the toggle. Verified agreeing at 1024, 1040 and 1054.</td>
+</tr>
+<tr>
+<td>P3-1</td>
+<td>Readout wraps to 4 lines and puts method before result.</td>
+<td>CONFIRMED and worse: 6 lines at 390, 9 at 336 once split into three spans, because the suggested method clause is itself too long for a phone.</td>
+<td>Three lines: where, result alone ("2% average reporting rate"), then "equal weight · 50 regions · 96K checklists" with the exact count and the equal-weight definition in <code>title</code> attributes. Phone font 0.9rem.</td>
+</tr>
+<tr>
+<td>P3-2</td>
+<td>The only tap instruction was an idle hint that the default selection replaces instantly.</td>
+<td>True by construction.</td>
+<td>Permanent hint: "Tap a square to see that month's reporting rate and the regions behind it; darker green means it was reported more often."</td>
+</tr>
+</tbody>
+</table>
+<h3>Open, owner's call (CODEX1 P2-2)</h3>
+<p>The By continent view on a phone: 96 columns at 6px, continent names only at
+the top of a 430px-tall grid, so after scrolling to southern bands the user no
+longer knows which continent they are in, and a 6×22px cell is a guess to hit.
+CODEX1 proposes that below 720px "By continent" opens a picker (NA west, NA east,
+Europe, ...) and draws ONE continent's 12-month grid at full width, with each
+latitude row a 48px tap target and the scrubber owning month selection. That is
+a design change and is not built.</p>
+<h2>Decided by the owner (2026-09-03, after the usability pass)</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Decision</th>
+<th>Built as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CODEX1 P2-2</td>
+<td><strong>Adopted.</strong> On a phone, By continent must not be a 96-column grid at 6px.</td>
+<td>A continent picker. Choosing one continent draws its 12-month grid at full width; on a phone each latitude row is a 44px tap target.</td>
+</tr>
+<tr>
+<td>Owner's generalisation</td>
+<td><strong>The same picker on every screen size</strong>, with an <strong>"All continents"</strong> option that draws the eight-column grid. Default: All on wide screens, the home continent (North America, east of 100°W) on a phone.</td>
+<td>One control, one mental model. "All" on a phone is still selectable, still scrolls inside its container, just no longer the default. Page Up / Page Down step through continents when one is shown.</td>
+</tr>
+<tr>
+<td>Owner</td>
+<td><strong>The regions list under the chart is collapsible.</strong></td>
+<td>A <code>&lt;details&gt;</code> whose summary is "Inside 40-50°N, North America, east of 100°W · 19 regions". Open by default; its state survives re-renders, and the phone jump link opens it before scrolling.</td>
+</tr>
+</tbody>
+</table>
+<p class="src">Source: <code>docs/2026-09-02-migration-ribbon-plan.md</code> · rendered 2026-09-03</p></article></main></body></html>

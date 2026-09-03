@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration ribbon — phone frame — birds.gaylon.photos mockup</title>
+<style>
+  :root { --bg:#f8f9fa; --card:#fff; --border:#e9ecef; --text:#212529; --muted:#495057; --accent:#0a5c43; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { max-width: 1100px; margin: 0 auto; padding: 18px 16px 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 1.1rem; margin: 0; }
+  .note { color: var(--muted); font-size: 0.88rem; margin: 0; flex: 1 1 100%; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { min-height: 44px; padding: 8px 14px; border: none; background: var(--card); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .stage { display: flex; justify-content: center; padding: 12px 16px 40px; }
+  /* A phone-shaped frame. The iframe's viewport IS the phone width, so the
+     mockup's media queries and its responsive default view fire exactly as
+     they would on the device. Same origin, so nothing is blocked. */
+  .phone { background: #111; border-radius: 42px; padding: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  .phone iframe { display: block; border: 0; border-radius: 30px; background: #fff; width: 390px; height: 844px; }
+  .phone.w336 iframe { width: 336px; height: 740px; }
+  .phone.w430 iframe { width: 430px; height: 932px; }
+  a { color: #084298; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Migration ribbon — phone frame</h1>
+  <div class="seg" role="group" aria-label="Phone width">
+    <button type="button" data-w="w336" aria-pressed="false">336</button>
+    <button type="button" data-w="w390" aria-pressed="true">390</button>
+    <button type="button" data-w="w430" aria-pressed="false">430</button>
+  </div>
+  <p class="note">This is the same page as <a href="species-migration-ribbon.html">species-migration-ribbon.html</a>, rendered inside a phone-width viewport. Every control works; scroll inside the phone. 336 is Safari's smallest real width, 390 is a standard iPhone, 430 a Pro Max.</p>
+</header>
+<div class="stage">
+  <div class="phone w390" id="phone">
+    <iframe id="frame" src="species-migration-ribbon.html" title="Migration ribbon mockup at phone width"></iframe>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+    const ph = document.getElementById('phone');
+    ph.className = 'phone ' + b.dataset.w;
+    // Reload so the page's load-time responsive default re-evaluates at the new width.
+    const f = document.getElementById('frame'); f.src = f.src.split('?')[0] + '?w=' + Date.now();
+  }));
+</script>
+</body>
+</html>
