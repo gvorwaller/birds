@@ -1,6 +1,6 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 3.4 (2026-09-03). Rev 3.4: CODEX1's TD-C gate (REJECT at 5fbc0d7)
+**Status:** BUILD SPEC rev 3.5 (2026-09-03). Rev 3.5: two re-check P2s (unseed lock, phone hint copy) in the Rev 3.4 ledger. Rev 3.4: CODEX1's TD-C gate (REJECT at 5fbc0d7)
 found the mockup oracle itself never carried the owner's P1-7 phone rule (rows own the
 band, the scrubber owns the month, 48px rows in every phone view) and ordered the
 readout's small-sample line before the zero line; oracle corrected, contract restated
@@ -26,6 +26,8 @@ Nothing in `src/` has changed.
 | P2 | The fixture marker survived `test-db-reset.sh` and was not bound to the database, so seed → reset → prod restore → unseed would delete real rows. | Marker carries the database OID and postmaster start time; unseed refuses on mismatch and verifies in its transaction that the marker's rows are the only contributors; reset removes the marker. |
 | P2 | `readout` tested `n < LOW_N` before `f === 0`, printing "0% reporting rate · small sample" for a zero the server classifies `low: false` and the chart fills solid grey. Oracle shared the order. | Branch on the server's `low`; `{f:0,n:39}` reads "0% — surveyed, no reports" under both weightings. Oracle fixed. |
 | P2 | `drillNote` / `selectedRegionCode` survived band, continent and species changes. | Cleared whenever the drill identity (species, band, cont) changes; pinned. |
+| P2 (re-check) | `unseed` validated and then deleted under READ COMMITTED with no lock, so a concurrent rebuild could add a contributor between the check and the DELETE. | `LOCK TABLE … IN SHARE ROW EXCLUSIVE MODE` on every touched table right after BEGIN with a 5 s `lock_timeout`; the header explains why that makes check-and-delete atomic. |
+| P2 (re-check) | The tap hint still read "Tap a square to see that month's reporting rate" on phones, and About said the chart works the same way on a phone as on a desktop. | Hint has two variants on the `phone` flag — phone: "Choose a month with the slider, then tap a latitude row to see its reporting rate and the regions behind it; darker green means it was reported more often."; ≥640px: the original sentence. About names both behaviours. Oracle carries the same two variants. |
 
 ## Rev 3.2 changes (2026-09-03, CODEX1 deploy gate on TD-B: REJECT, all verified)
 
