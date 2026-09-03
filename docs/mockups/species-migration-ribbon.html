@@ -42,7 +42,7 @@
   .toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
   /* Phone: the chart is the point, so it comes right after the month scrubber;
      the view/average toggles and the legend follow it. */
-  @media (max-width: 719px) {
+  @media (max-width: 639px) {
     /* Flatten .rmain so its children order alongside the readout and drill.
        Feedback for a tap must land where the thumb is (CODEX1 P2-1): at 390px
        the readout was 116px above the viewport and the drill 640px below it. */
@@ -61,7 +61,7 @@
     .seg button { padding: 8px 10px; }
     .readout { font-size: 0.9rem; line-height: 1.4; }
   }
-  @media (min-width: 720px) { .todrill { display: none; } }
+  @media (min-width: 640px) { .todrill { display: none; } }
   .toolbar label.chk { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 8px; cursor: pointer; }
   .toolbar label.chk input { width: 22px; height: 22px; accent-color: var(--accent); }
   .toolbar select { min-height: 48px; max-width: 100%; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 1rem; }
@@ -88,7 +88,7 @@
     font-size: 0.55rem; font-weight: 700; line-height: 1;
     color: var(--muted); background: var(--card); transform: translateY(-50%);
   }
-  .rscroll svg { display: block; touch-action: pan-x; }
+  .rscroll svg { display: block; }
   .rscroll .mtext { fill: var(--muted); font-size: 11px; font-weight: 600; }
   .rscroll .mtext.on { fill: var(--text); font-weight: 800; text-decoration: underline; }
   .rscroll .ctext { fill: var(--text); font-size: 11px; font-weight: 700; }
@@ -335,6 +335,7 @@
   // For the world row's equal-weight average the two NA halves are one continent,
   // so the split does not double North America's vote.
   const WORLD_GROUPS = [['NAW', 'NAE'], ['SA'], ['EU'], ['AF'], ['AS'], ['OC'], ['AN']];
+  const baseOf = (k) => (k === 'NAW' || k === 'NAE') ? 'NA' : k;
   function contOf(country, lon) {
     const base = CONT_OF[country];
     if (base !== 'NA') return base;
@@ -364,6 +365,8 @@
   // on a stacked phone layout in a ~30px band around the breakpoint (CODEX1 P2-5).
   const wideMq = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : null;
   const isWide = () => !!(wideMq && wideMq.matches);
+  const phoneMq = window.matchMedia ? window.matchMedia('(max-width: 639px)') : null;
+  const isPhone = () => !!(phoneMq && phoneMq.matches);
   const WIDE = isWide();
 
   const state = {
@@ -461,10 +464,10 @@
     }
     const byCountry = new Map();
     for (const r of use) { if (!byCountry.has(r.country)) byCountry.set(r.country, []); byCountry.get(r.country).push(r); }
-    const vals = []; let n = 0;
-    for (const rs of byCountry.values()) { const w = weighted(rs, m); if (!w.empty) { vals.push(w.f); n += w.n; } }
+    const vals = []; let n = 0, excluded = 0;
+    for (const rs of byCountry.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } vals.push(w.f); n += w.n; }
     if (!vals.length) return { f: 0, n: 0, empty: true };
-    return { f: vals.reduce((a, b) => a + b, 0) / vals.length, n, preview: isPreview, heldBack: real.length ? prev.length : 0 };
+    return { f: vals.reduce((a, b) => a + b, 0) / vals.length, n, preview: isPreview, heldBack: real.length ? prev.length : 0, excluded };
   }
   function worldCell(band, m) {
     const all = [];
@@ -476,22 +479,24 @@
       const w = weighted(real.length ? real : prev, m);
       return w.empty ? w : { ...w, preview: isPreview, heldBack: real.length ? prev.length : 0 };
     }
-    // Real wins ACROSS continents too, not just inside one (GROK P1-1). A band
-    // holding any real data averages only its real continents; preview-only
-    // continents fill a world cell just when the whole band has nothing real.
-    const parts = []; let n = 0, held = 0;
-    for (const group of WORLD_GROUPS) {
-      const sub = [];
-      for (const k of group) {
-        const cc = contCell(band, k, m);
-        if (cc.empty) continue;
-        if (real.length && cc.preview) { held += (grid.get(band + '|' + k) || { regions: [] }).regions.length; continue; }
-        sub.push(cc.f); n += cc.n; held += cc.heldBack || 0;
-      }
-      if (sub.length) parts.push(sub.reduce((a, b) => a + b, 0) / sub.length);
+    // MERGE (build spec rev 2, CODEX1-verified): NAW+NAE are ONE continent for the
+    // world row. Group the band's regions by BASE continent, take each country's
+    // checklist-weighted mean (countries under LOW_N do not vote — owner decision
+    // 2026-09-03), average countries inside a continent, then average continents.
+    // Real wins across continents (GROK P1-1): a band with any real data uses
+    // only real regions; preview fills a world cell only when nothing real exists.
+    const use = real.length ? real : prev;
+    const held = real.length ? prev.length : 0;
+    const byBase = new Map();
+    for (const r of use) { const b = baseOf(r.cont); if (!byBase.has(b)) byBase.set(b, new Map()); const bc = byBase.get(b); if (!bc.has(r.country)) bc.set(r.country, []); bc.get(r.country).push(r); }
+    const parts = []; let n = 0, excluded = 0;
+    for (const bc of byBase.values()) {
+      const cv = [];
+      for (const rs of bc.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } cv.push(w.f); n += w.n; }
+      if (cv.length) parts.push(cv.reduce((a, b) => a + b, 0) / cv.length);
     }
     if (!parts.length) return { f: 0, n: 0, empty: true };
-    return { f: parts.reduce((a, b) => a + b, 0) / parts.length, n, preview: isPreview, heldBack: held };
+    return { f: parts.reduce((a, b) => a + b, 0) / parts.length, n, preview: isPreview, heldBack: held, excluded };
   }
   const cellAt = (band, cont, m) => (cont ? contCell(band, cont, m) : worldCell(band, m));
 
@@ -508,7 +513,7 @@
     // World) fills the width, never below 11px (GROK P2-11). On a phone a single
     // continent's rows become 44px tap targets (CODEX1 P2-2, owner-adopted).
     const cellW = cont && !single ? Math.max(6, avail / cols) : Math.max(11, Math.min(avail / cols, 44));
-    const rowH = single && !isWide() ? 44 : ROW_H;
+    const rowH = single && isPhone() ? 48 : ROW_H;   // 48px tap rows under 640px (cs.md)
     return { cont, single, conts, cols, cellW, rowH, headH: cont ? 34 : 20, w: cols * cellW };
   }
 
@@ -523,7 +528,7 @@
         `<line x1="${x + 1.5}" y1="${y + h - 2}" x2="${x + w - 2}" y2="${y + 2}" stroke="#6c757d" stroke-width="1.1"/>`;
     }
     // A small sample of ZERO reports is still zero, not faint presence (GROK P2-13).
-    const low = !c.preview && c.n > 0 && c.n < LOW_N && c.f > 0;
+    const low = !c.preview && ((c.n > 0 && c.n < LOW_N && c.f > 0) || (c.excluded || 0) > 0);
     const fill = low ? 'url(#hatch)' : binFor(c.f).color;
     const extra = c.preview ? ' stroke="#6c757d" stroke-width="1" stroke-dasharray="2 2"' : '';
     return `<rect x="${x}" y="${y}" width="${Math.max(1, w - 1)}" height="${Math.max(1, h - 1)}" fill="${fill}"${extra}/>`;
@@ -630,6 +635,10 @@
     if (c.empty) line2 = `<span class="r2">No data — nothing loaded here</span>`;
     else if (c.preview) { line2 = `<span class="r2">${pct(c.f)} · preview only, not eBird data</span>`; line3 = `<span class="r3">${regs}</span>`; }
     else if (c.n < LOW_N) { line2 = `<span class="r2">${pct(c.f)} reporting rate · small sample</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
+    else if (state.weight === 'place' && (c.excluded || 0) > 0) {
+      line2 = `<span class="r2">${pct(c.f)} average reporting rate · small sample</span>`;
+      line3 = `<span class="r3">${c.excluded} countr${c.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out · ${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
+    }
     else if (c.f === 0) { line2 = `<span class="r2">0% — surveyed, no reports</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
     else if (state.weight === 'place') {
       line2 = `<span class="r2">${pct(c.f)} average reporting rate</span>`;
@@ -819,7 +828,7 @@
   document.getElementById('mNext').addEventListener('click', () => { setPlaying(false); setMonth((state.month % 12) + 1); });
 
   // ---------- pointer ----------
-  let dragging = false;
+  let downAt = null;
   function pick(e) {
     const svg = rscroll.querySelector('svg'); if (!svg) return;
     const g = geom(), r = svg.getBoundingClientRect();
@@ -835,9 +844,11 @@
     mRange.value = state.month; mLabel.textContent = MSHORT[state.month - 1];
     setPlaying(false); render();
   }
-  rscroll.addEventListener('pointerdown', (e) => { dragging = true; try { e.target.setPointerCapture(e.pointerId); } catch (_) {} pick(e); });
-  rscroll.addEventListener('pointermove', (e) => { if (dragging) pick(e); });
-  ['pointerup', 'pointercancel'].forEach((t) => rscroll.addEventListener(t, () => { dragging = false; }));
+  // Select on RELEASE after less than 8px of travel, no pointer capture (cs.md +
+  // CODEX1 P1-7): a vertical swipe over the chart must scroll the page, never select.
+  rscroll.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+  rscroll.addEventListener('pointerup', (e) => { if (!downAt) return; const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y); downAt = null; if (moved < 8) pick(e); });
+  rscroll.addEventListener('pointercancel', () => { downAt = null; });
 
   // ---------- keyboard ----------
   document.getElementById('ribbon').addEventListener('keydown', (e) => {
