@@ -163,10 +163,13 @@ export async function countriesList(): Promise<Region[]> {
 /**
  * Countries where the load hub can still add frequency data.
  *
- * Non-US countries require a countrywide row plus every seeded subnational1
- * row. The US is complete once its states are loaded because a countrywide US
- * export is intentionally never offered. Older stored rows still count as
- * loaded; refreshing them is a separate workflow.
+ * A non-US country is complete once its countrywide row exists OR every seeded
+ * subnational1 row exists. Countrywide coverage already supplies the country's
+ * full species set; child regions add drilldown detail and individual failures
+ * must not strand an otherwise-loaded country in this to-do picker. The US is
+ * complete once its states are loaded because a countrywide US export is
+ * intentionally never offered. Older stored rows still count as loaded;
+ * refreshing them is a separate workflow.
  */
 export function filterCountriesNeedingFrequencyLoad(
 	countries: readonly Region[],
@@ -176,9 +179,10 @@ export function filterCountriesNeedingFrequencyLoad(
 	return [...countries]
 		.filter((country) => {
 			const children = sub1ByCountry.get(country.code) ?? [];
-			const childrenComplete = children.every((child) => loadedRegionCodes.has(child.code));
-			const countrywideComplete = country.code === 'US' || loadedRegionCodes.has(country.code);
-			return !childrenComplete || !countrywideComplete;
+			const childrenComplete =
+				children.length > 0 && children.every((child) => loadedRegionCodes.has(child.code));
+			if (country.code === 'US') return !childrenComplete;
+			return !loadedRegionCodes.has(country.code) && !childrenComplete;
 		})
 		.sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
 }

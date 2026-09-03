@@ -155,7 +155,8 @@
 								built-in reference data instead of live eBird lookups, so they
 								load instantly and work even before an eBird API key is set. The
 								data-loading country picker is now an alphabetical to-do list:
-								fully loaded countries disappear, while forecast browsing remains
+								countries disappear after a countrywide load or complete regional
+								coverage, while forecast browsing remains
 								nearest-first when a home is saved.
 							</li>
 							<li>

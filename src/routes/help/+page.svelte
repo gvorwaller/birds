@@ -335,7 +335,8 @@
 						Retry. Load new regions and analyze counties from here too — pick
 						a <strong>Country</strong> above the region select to load
 						anywhere eBird covers. That picker is alphabetical and only shows
-						countries that still have countrywide or regional data left to load;
+						countries that do not yet have either countrywide coverage or every
+						regional row;
 						countries with coarse or no state-level
 						divisions offer an <strong>Entire {'{Country}'}</strong> whole-country
 						load instead (not offered for the US, whose bar-chart export would

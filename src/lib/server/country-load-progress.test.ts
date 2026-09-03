@@ -27,7 +27,7 @@ describe("unfinished country picker", () => {
   ]);
 
   it("keeps partial countries and sorts them alphabetically", () => {
-    const loaded = new Set(["AA", "AA-1", "BB-1"]);
+    const loaded = new Set(["AA-1"]);
     expect(
       filterCountriesNeedingFrequencyLoad(countries, children, loaded).map(
         (c) => c.code,
@@ -35,8 +35,15 @@ describe("unfinished country picker", () => {
     ).toEqual(["AA", "BB", "CC", "US"]);
   });
 
-  it("removes a non-US country only after countrywide and every region load", () => {
-    const loaded = new Set(["AA", "AA-1", "AA-2"]);
+  it("removes a non-US country after its countrywide load despite partial child failures", () => {
+    const loaded = new Set(["AA", "AA-1"]);
+    expect(
+      filterCountriesNeedingFrequencyLoad([countries[2]], children, loaded),
+    ).toEqual([]);
+  });
+
+  it("removes a non-US country after every child region loads without a countrywide row", () => {
+    const loaded = new Set(["AA-1", "AA-2"]);
     expect(
       filterCountriesNeedingFrequencyLoad([countries[2]], children, loaded),
     ).toEqual([]);
