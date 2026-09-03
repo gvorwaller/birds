@@ -109,4 +109,28 @@ describe('MigrationRibbon.svelte markup', () => {
 			expect(above).not.toBe('-->'); // the comment must carry actual prose, not stand alone
 		}
 	});
+
+	it('resets drillNote and selectedRegionCode inside the drill effect, keyed on ' +
+		'the drill identity — before deciding cached vs. fetch (CC1 P2-3)', () => {
+		const effectStart = markup.indexOf('const species = speciesCode;');
+		expect(effectStart).toBeGreaterThan(-1);
+		const beginAt = markup.indexOf('beginDrill(', effectStart);
+		expect(beginAt).toBeGreaterThan(effectStart);
+		const body = markup.slice(effectStart, beginAt);
+		expect(body).toContain("drillNote = '';");
+		expect(body).toContain('selectedRegionCode = null;');
+		// Both resets must precede the cache/fetch decision, not follow it.
+		expect(body.indexOf("drillNote = '';")).toBeLessThan(body.indexOf('const key ='));
+		expect(body.indexOf('selectedRegionCode = null;')).toBeLessThan(body.indexOf('const key ='));
+	});
+
+	// GROK P3-2: the unmapped-countries warning (CODEX1 P2-10) is markup-only
+	// — there's no pure function to pin, since it's a plain conditional block
+	// reading `grid.meta.unmappedCountries` directly.
+	it('shows an inline warning naming unmapped countries when meta.unmappedCountries is non-empty', () => {
+		expect(markup).toContain('{#if grid.meta.unmappedCountries.length > 0}');
+		expect(markup).toContain('Data omitted for');
+		expect(markup).toContain('not yet assigned to a');
+		expect(markup).toContain('{grid.meta.unmappedCountries.join(');
+	});
 });

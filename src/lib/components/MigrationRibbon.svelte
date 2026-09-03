@@ -32,6 +32,7 @@
 		binIndex,
 		pct,
 		applyWide,
+		beginDrill,
 		chartAria,
 		drawnColumns,
 		drillCacheKey,
@@ -82,6 +83,13 @@
 	// scrollbar after this script runs), and never again once the user
 	// touches the View toggle. ------------------------------------------------
 	let wide = $state(false);
+	/** Below 640px (spec rev 3.3 TD-C, P1-1) — sampled independently from
+	 * `wide`, NOT derived as `!wide`, since 640-1023px (tablet) must keep the
+	 * compact rows and full cell picking that `wide` alone would otherwise
+	 * lump in with "phone". Drives `geometry()`'s row height and `pickCell`'s
+	 * band-only picking; never touches `ribbonState`, so it needs no
+	 * `untrack()` (unlike the `wide` effect below). */
+	let phone = $state(false);
 	let reducedMotion = $state(false);
 	let ribbonState = $state<RibbonState>(initialState(false));
 
@@ -100,6 +108,22 @@
 		const apply = (matches: boolean) => {
 			wide = matches;
 			ribbonState = applyWide(untrack(() => ribbonState), matches);
+		};
+		apply(mq.matches);
+		const onChange = (e: MediaQueryListEvent) => apply(e.matches);
+		mq.addEventListener('change', onChange);
+		const raf = requestAnimationFrame(() => apply(mq.matches));
+		return () => {
+			mq.removeEventListener('change', onChange);
+			cancelAnimationFrame(raf);
+		};
+	});
+
+	$effect(() => {
+		if (typeof window === 'undefined' || !window.matchMedia) return;
+		const mq = window.matchMedia('(max-width: 639px)');
+		const apply = (matches: boolean) => {
+			phone = matches;
 		};
 		apply(mq.matches);
 		const onChange = (e: MediaQueryListEvent) => apply(e.matches);
@@ -162,7 +186,7 @@
 	});
 
 	const drawnCols = $derived(drawnColumns(ribbonState));
-	const geom = $derived(geometry(ribbonState, availWidth, wide));
+	const geom = $derived(geometry(ribbonState, availWidth, wide, phone));
 	const clipped = $derived(geom.w > availWidth + 1);
 	const eqIndex = $derived(BANDS.indexOf(-10 as (typeof BANDS)[number]));
 
@@ -245,7 +269,7 @@
 		const svgEl = rscrollEl?.querySelector('svg');
 		if (!svgEl) return;
 		const r = svgEl.getBoundingClientRect();
-		const next = pickCell(ribbonState, geom, e.clientX - r.left, e.clientY - r.top);
+		const next = pickCell(ribbonState, geom, e.clientX - r.left, e.clientY - r.top, phone);
 		if (next) applySelection(next);
 	}
 	function onPointerCancel() {
@@ -281,7 +305,8 @@
 			cont: value === 'ALL' ? ribbonState.cont : value,
 			drillExpanded: false
 		});
-		drillNote = '';
+		// drillNote/selectedRegionCode reset happens in the drill effect,
+		// keyed on (speciesCode, band, cont) — CODEX1 P2-3.
 	}
 	function setWeight(weight: Weighting) {
 		applySelection({ ...ribbonState, weight });
@@ -319,17 +344,29 @@
 		const species = speciesCode;
 		const band = ribbonState.band;
 		const cont = ribbonState.cont ?? 'ALL';
+		// The drill identity changed: whatever was charted from a PREVIOUS
+		// cell's rows no longer applies here (CODEX1 P2-3) — "Now charting…"
+		// and the highlighted row must not survive a band/continent/species
+		// change. The page already resets its own chartPeer on species
+		// change; this clears the ribbon's own leftover feedback for every
+		// identity change, species included.
+		drillNote = '';
+		selectedRegionCode = null;
 		const key = drillCacheKey(band, cont);
-		const cached = regionsCache.get(key);
-		if (cached) {
-			drillRows = cached.rows;
-			drillTotal = cached.total;
-			drillCapped = cached.capped;
+		// `beginDrill` ALWAYS bumps the generation first, even on a cache
+		// hit (CODEX1 P1-2) — otherwise an in-flight fetch for a PREVIOUS
+		// cell could settle after this (possibly cached) one is already
+		// shown and overwrite it under the wrong heading.
+		const begin = beginDrill(key, regionsCache, fetchGeneration);
+		if (begin.kind === 'cached') {
+			drillRows = begin.regions.rows;
+			drillTotal = begin.regions.total;
+			drillCapped = begin.regions.capped;
 			drillError = null;
 			drillLoading = false;
 			return;
 		}
-		const gen = fetchGeneration.start();
+		const gen = begin.gen;
 		const controller = new AbortController();
 		drillLoading = true;
 		drillError = null;

@@ -273,17 +273,23 @@ export interface RibbonGeometry {
  * `availWidth` is the already-padding-adjusted width available to the SVG
  * (the caller passes `rscroll.clientWidth - 12`, matching the mockup's
  * `geom()`); this stays a pure function of that number so it is unit
- * testable with no DOM. `wide` selects the 48px phone tap row (cs.md,
- * owner decision, CODEX1 P1-7) vs. the compact 22px row.
+ * testable with no DOM.
+ *
+ * `phone` (below 640px, sampled independently from `wide` — spec rev 3.3
+ * TD-C, P1-1) drives row height on its own: below 640px every view gets the
+ * 48px touch row (cs.md, owner decision, CODEX1 P1-7), and everything
+ * 640px and up — tablet (`wide` false) or desktop (`wide` true) — gets the
+ * compact 22px row with full cell picking. `wide` still separately governs
+ * layout (cell width, header height) via `drawnColumns`/`cont`.
  */
-export function geometry(s: RibbonState, availWidth: number, wide: boolean): RibbonGeometry {
+export function geometry(s: RibbonState, availWidth: number, wide: boolean, phone: boolean): RibbonGeometry {
 	const avail = Math.max(120, availWidth);
 	const cont = s.view === 'cont';
 	const conts = drawnColumns(s);
 	const single = cont && conts.length === 1;
 	const cols = cont ? conts.length * 12 : 12;
 	const cellW = cont && !single ? Math.max(6, avail / cols) : Math.max(11, Math.min(avail / cols, 44));
-	const rowH = single && !wide ? ROW_H_TOUCH : ROW_H;
+	const rowH = phone ? ROW_H_TOUCH : ROW_H;
 	const headH = cont ? 34 : 20;
 	const w = cols * cellW;
 	const h = headH + BANDS.length * rowH;
@@ -390,19 +396,43 @@ export function setMonth(s: RibbonState, month: number): RibbonState {
  * outside the grid. Selection fires on `pointerup` only after < 8px of
  * pointer travel (cs.md + CODEX1 P1-7) — that threshold check happens in the
  * component; this function is the pure hit-test.
+ *
+ * `bandOnly` (spec rev 3.3 TD-C, P1-1 — the phone contract): below 640px
+ * cells are not tap targets. The scrubber owns the month, so `y` resolves
+ * the band and `s.month` passes through UNCHANGED; `x` resolves a continent
+ * only in All-continents mode (12-cell column groups, ≥72px each — an
+ * acceptable target), stays `null` in World, and is the single continent in
+ * single-continent mode. A 48px band row (`geometry(..., phone=true)`) is
+ * what makes "tap anywhere in the row" viable.
  */
 export function pickCell(
 	s: RibbonState,
 	geom: Pick<RibbonGeometry, 'cont' | 'rowH' | 'cellW' | 'headH' | 'cols'>,
 	x: number,
-	y: number
+	y: number,
+	bandOnly = false
 ): RibbonState | null {
 	const bi = Math.floor((y - geom.headH) / geom.rowH);
 	if (bi < 0 || bi >= BANDS.length) return null;
+	const band = BANDS[bi];
+	const conts = drawnColumns(s);
+
+	if (bandOnly) {
+		let cont: RibbonColumn | null = null;
+		if (geom.cont) {
+			if (conts.length === 1) {
+				cont = conts[0];
+			} else {
+				const col = Math.max(0, Math.min(geom.cols - 1, Math.floor(x / geom.cellW)));
+				const ci = Math.floor(col / 12);
+				cont = conts[ci] ?? conts[conts.length - 1] ?? null;
+			}
+		}
+		return { ...s, band, cont, playing: false, drillExpanded: false };
+	}
+
 	const col = Math.floor(x / geom.cellW);
 	if (col < 0 || col >= geom.cols) return null;
-	const conts = drawnColumns(s);
-	const band = BANDS[bi];
 	const cont = geom.cont ? (conts[Math.floor(col / 12)] ?? null) : null;
 	const month = (col % 12) + 1;
 	return { ...s, band, cont, month, playing: false, drillExpanded: false };
@@ -445,7 +475,14 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			empty: false
 		};
 	}
-	if (cell.n < LOW_N) {
+	// Branch on the SERVER's `low`, never on raw `n` (CC1 P2-2): under
+	// 'checklists', classify() sets `low` only when `f > 0 && n < LOW_N`, so
+	// a genuinely zero cell (`low` always false there) falls through to the
+	// "0% — surveyed" branch below instead of being misreported as a small
+	// sample. No `state !== 'thin'` guard needed here — TS already knows
+	// `cell.state` excludes 'thin' after the early return above (thin only
+	// ever occurs under 'equal' weighting anyway).
+	if (s.weight === 'checklists' && cell.low) {
 		return {
 			line1,
 			line2: `${pct(cell.f)} reporting rate · small sample`,
@@ -659,6 +696,31 @@ export function resolveDrillLoad(params: {
 /** `band|cont` cache key (mockup precedent: one key per drill cell). */
 export function drillCacheKey(band: number, cont: RibbonColumn | 'ALL'): string {
 	return `${band}|${cont}`;
+}
+
+export type DrillBeginResult =
+	| { kind: 'cached'; regions: RibbonRegionsClient }
+	| { kind: 'fetch'; gen: number };
+
+/**
+ * The one entry point for "the selected drill cell changed" (CODEX1 P1-2).
+ * ALWAYS bumps the generation FIRST, even on a cache hit — a cache hit
+ * still means the selection changed, so any fetch still in flight for the
+ * PREVIOUS cell must become stale immediately. Without this, returning
+ * early from a cache branch before bumping let an in-flight fetch for cell
+ * A settle (its `resolveDrillLoad` still seeing its own gen as "current")
+ * after cell B had already been served from cache, overwriting B's rows
+ * under B's heading.
+ */
+export function beginDrill(
+	key: string,
+	cache: ReadonlyMap<string, RibbonRegionsClient>,
+	generation: DrillGeneration
+): DrillBeginResult {
+	const gen = generation.start();
+	const cached = cache.get(key);
+	if (cached) return { kind: 'cached', regions: cached };
+	return { kind: 'fetch', gen };
 }
 
 /** Insert into a Map, evicting the oldest entry first once `maxSize` would be

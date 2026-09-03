@@ -16,9 +16,11 @@ import {
 	LOW_N,
 	applyWide,
 	bandLabel,
+	beginDrill,
 	binIndex,
 	chartAria,
 	compact,
+	drillCacheKey,
 	drillHeading,
 	fillFor,
 	formatWindow,
@@ -152,10 +154,10 @@ describe('readout', () => {
 		expect(r.line3).toBe('');
 	});
 
-	it('low (n<40) -> "20% reporting rate · small sample"', () => {
+	it('checklists low (server `low`, small n) -> "20% reporting rate · small sample"', () => {
 		const grid = emptyGrid();
-		grid.modes.equal.world[b][0] = { f: 0.2, n: 20, state: 'reported', low: true, excluded: 0 };
-		const r = readout(grid, state);
+		grid.modes.checklists.world[b][0] = { f: 0.2, n: 20, state: 'reported', low: true, excluded: 0 };
+		const r = readout(grid, { ...state, weight: 'checklists' });
 		expect(r.line2).toBe('20% reporting rate · small sample');
 	});
 
@@ -164,6 +166,21 @@ describe('readout', () => {
 		grid.modes.equal.world[b][0] = { f: 0, n: 500, state: 'zero', low: false, excluded: 0 };
 		const r = readout(grid, state);
 		expect(r.line2).toBe('0% — surveyed, no reports');
+	});
+
+	// CC1 P2-2: readout() used to branch on raw `n < LOW_N` BEFORE checking
+	// `f === 0`, so a surveyed zero with a thin sample (n=39) wrongly read
+	// "0% reporting rate · small sample" even though classify() (ribbon.ts,
+	// server-pinned) guarantees a zero cell's `low` is ALWAYS false. Branch
+	// on the server's `low`, never on `n`, so this reads as a plain zero
+	// under either weighting.
+	it("a surveyed zero with n<40 is a plain zero under BOTH weightings (server's `low` is always false for zero — CC1 P2-2)", () => {
+		const grid = emptyGrid();
+		const cell = { f: 0, n: 39, state: 'zero' as const, low: false, excluded: 0 };
+		grid.modes.equal.world[b][0] = cell;
+		grid.modes.checklists.world[b][0] = cell;
+		expect(readout(grid, state).line2).toBe('0% — surveyed, no reports');
+		expect(readout(grid, { ...state, weight: 'checklists' }).line2).toBe('0% — surveyed, no reports');
 	});
 
 	it('equal -> "16% average reporting rate", never "of checklists"', () => {
@@ -295,6 +312,52 @@ describe('pickCell (pointer hit-test) — a cell/row tap stops Play', () => {
 		expect(pickCell(s, geom, -5, 30)).toBeNull();
 		expect(pickCell(s, geom, 10, 5)).toBeNull();
 	});
+
+	// Spec rev 3.3 TD-C, P1-1: below 640px cells are not tap targets — the
+	// scrubber owns the month, a 48px band row owns the band.
+	describe('bandOnly (phone contract)', () => {
+		it('never returns a different month — `s.month` passes through unchanged', () => {
+			const s = baseState({ view: 'world', cont: null, month: 9, playing: true });
+			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };
+			// x lands in month-column 3 in full-picking terms, but bandOnly must
+			// ignore that entirely.
+			const res = pickCell(s, geom, 2 * 25 + 1, 20 + 2 * 48 + 1, true)!;
+			expect(res.month).toBe(9);
+			expect(res.band).toBe(BANDS[2]);
+			expect(res.playing).toBe(false);
+		});
+		it('World view: cont stays null regardless of x', () => {
+			const s = baseState({ view: 'world', cont: null });
+			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };
+			const res = pickCell(s, geom, 200, 20 + 48 + 1, true)!;
+			expect(res.cont).toBeNull();
+		});
+		it('All-continents view: cont is the continent under x (12-cell blocks)', () => {
+			const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
+			const geom = { cont: true, rowH: 48, cellW: 6, headH: 34, cols: 96 };
+			// Column block 2 (SA) spans cells [24,36) -> x in [144,216).
+			const res = pickCell(s, geom, 150, 34 + 48 + 1, true)!;
+			expect(res.cont).toBe('SA');
+		});
+		it('single-continent view: cont is that one continent regardless of x', () => {
+			const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+			const geom = { cont: true, rowH: 48, cellW: 25, headH: 34, cols: 12 };
+			const res = pickCell(s, geom, 5, 34 + 48 + 1, true)!;
+			expect(res.cont).toBe('NAE');
+		});
+		it('still resolves the band from y and clears drillExpanded', () => {
+			const s = baseState({ view: 'world', cont: null, drillExpanded: true });
+			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };
+			const res = pickCell(s, geom, 0, 20 + 3 * 48 + 1, true)!;
+			expect(res.band).toBe(BANDS[3]);
+			expect(res.drillExpanded).toBe(false);
+		});
+		it('outside the band grid vertically is still null', () => {
+			const s = baseState({ view: 'world', cont: null });
+			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };
+			expect(pickCell(s, geom, 10, 5, true)).toBeNull();
+		});
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -333,30 +396,53 @@ describe('initialState / applyWide', () => {
 describe('geometry', () => {
 	it('world at avail 300 -> cellW 25, w 300', () => {
 		const s = baseState({ view: 'world', cont: null });
-		const g = geometry(s, 300, true);
+		const g = geometry(s, 300, true, false);
 		expect(g.cellW).toBe(25);
 		expect(g.w).toBe(300);
 		expect(g.headH).toBe(20);
 	});
 	it('All continents at avail 300 -> cellW 6, w 576', () => {
 		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
-		const g = geometry(s, 300, true);
+		const g = geometry(s, 300, true, false);
 		expect(g.cellW).toBe(6);
 		expect(g.w).toBe(576);
 		expect(g.headH).toBe(34);
 	});
-	it('single continent on a phone -> a 48px tap row (cs.md >= 48px; ' +
-		'the build spec\'s own test line says 44, contradicting its own ' +
-		'ROW_H_TOUCH=48 constant and the oracle mockup\'s executable code, ' +
-		'both of which use 48 — see the implementation report)', () => {
-		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
-		const g = geometry(s, 300, false);
-		expect(g.single).toBe(true);
-		expect(g.rowH).toBe(48);
+	// cs.md >= 48px; the build spec's OWN rev-3 test line said 44 (a stale
+	// artifact CC1 confirmed and fixed in the spec after this report flagged
+	// it) — 48 was always right, and is now the pinned, spec-agreed number.
+	it('phone (< 640px): EVERY view gets the 48px touch row, sampled ' +
+		'independently of `wide` (spec rev 3.3 TD-C, P1-1)', () => {
+		const world = geometry(baseState({ view: 'world', cont: null }), 300, false, true);
+		expect(world.rowH).toBe(48);
+		const all = geometry(baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' }), 300, false, true);
+		expect(all.rowH).toBe(48);
+		const single = geometry(baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' }), 300, false, true);
+		expect(single.single).toBe(true);
+		expect(single.rowH).toBe(48);
 	});
-	it('single continent, wide -> the compact 22px row', () => {
+	it('tablet (640-1023px: not phone, not wide) keeps the compact 22px ' +
+		'row AND full cell picking in every view (P1-1, GROK) — this used ' +
+		'to wrongly get 48px band-only rows in single-continent mode because ' +
+		'rowH (and, via the component, bandOnly) was derived from `!wide`, ' +
+		'never a real phone check; tablet is neither `phone` nor `wide`', () => {
+		const world = geometry(baseState({ view: 'world', cont: null }), 300, false, false);
+		expect(world.rowH).toBe(22);
+		const all = geometry(baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' }), 300, false, false);
+		expect(all.rowH).toBe(22);
+		const single = geometry(baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' }), 300, false, false);
+		expect(single.rowH).toBe(22);
+		// Cell picking on tablet: the component passes `bandOnly: phone`, so
+		// tablet (phone=false) always gets FULL picking — a tap resolves
+		// both band and month, never band-only.
+		const s = baseState({ view: 'world', cont: null, month: 7 });
+		const geom = { cont: false, rowH: 22, cellW: 25, headH: 20, cols: 12 };
+		const picked = pickCell(s, geom, 2 * 25 + 1, 20 + 2 * 22 + 1, false)!;
+		expect(picked.month).toBe(3); // resolved from x, not left at 7 — proves full picking
+	});
+	it('desktop (wide, not phone): compact 22px row, single continent included', () => {
 		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
-		const g = geometry(s, 300, true);
+		const g = geometry(s, 300, true, false);
 		expect(g.rowH).toBe(22);
 	});
 });
@@ -499,5 +585,51 @@ describe('resolveDrillLoad / DrillGeneration', () => {
 		const gen = g.start();
 		const result = resolveDrillLoad({ gen, generation: g, aborted: false, ok: true, regions: someRegions });
 		expect(result).toEqual({ kind: 'data', regions: someRegions });
+	});
+});
+
+describe('beginDrill (CODEX1 P1-2: generation bumps BEFORE the cache check)', () => {
+	const someRegions: RibbonRegionsClient = { rows: [], total: 0, capped: false };
+
+	it('a cache hit still bumps the generation', () => {
+		const g = new DrillGeneration();
+		const cache = new Map<string, RibbonRegionsClient>();
+		cache.set(drillCacheKey(40, 'NAE'), someRegions);
+		const before = g.start(); // simulate a prior in-flight request
+		const begin = beginDrill(drillCacheKey(40, 'NAE'), cache, g);
+		expect(begin.kind).toBe('cached');
+		expect(g.isCurrent(before)).toBe(false); // bumped even though cached
+	});
+	it('a cache miss returns the freshly bumped generation', () => {
+		const g = new DrillGeneration();
+		const cache = new Map<string, RibbonRegionsClient>();
+		const begin = beginDrill(drillCacheKey(40, 'ALL'), cache, g);
+		expect(begin.kind).toBe('fetch');
+		if (begin.kind === 'fetch') expect(g.isCurrent(begin.gen)).toBe(true);
+	});
+
+	it('in-flight fetch for cell A settling AFTER cell B was served from cache is ignored (the exact P1-2 race)', () => {
+		const g = new DrillGeneration();
+		const cache = new Map<string, RibbonRegionsClient>();
+		// A is a cache miss: a real fetch begins for it.
+		const beginA = beginDrill(drillCacheKey(40, 'ALL'), cache, g);
+		expect(beginA.kind).toBe('fetch');
+		const genA = beginA.kind === 'fetch' ? beginA.gen : -1;
+		// The user moves on to B before A's fetch resolves. B is already
+		// cached (e.g. from an earlier visit) — the OLD bug returned early
+		// from the cache branch without bumping the generation, so A's late
+		// response could still pass `isCurrent` and clobber B's rows.
+		cache.set(drillCacheKey(40, 'NAE'), someRegions);
+		const beginB = beginDrill(drillCacheKey(40, 'NAE'), cache, g);
+		expect(beginB.kind).toBe('cached');
+		// A's fetch finally settles: it must be ignored, not applied over B.
+		const resultA = resolveDrillLoad({
+			gen: genA,
+			generation: g,
+			aborted: false,
+			ok: true,
+			regions: { rows: [], total: 99, capped: false }
+		});
+		expect(resultA).toEqual({ kind: 'ignore' });
 	});
 });

@@ -27,4 +27,15 @@ SELECT format('DROP DATABASE IF EXISTS %I', :'db_name') \gexec
 SELECT format('CREATE DATABASE %I OWNER %I', :'db_name', :'owner_user') \gexec
 SQL
 
+# The ribbon fixture marker (.local/ribbon-fixture-marker.json) is bound to
+# the OLD database's identity (pg_database.oid), which just changed — a
+# marker surviving this reset would describe a database that no longer
+# exists. Remove it so unseed-ribbon-fixture.mjs never trusts it (CC1 P2-1;
+# owned here, by the thing that invalidates it, not by seed/unseed).
+MARKER="$SCRIPT_DIR/../.local/ribbon-fixture-marker.json"
+if [ -f "$MARKER" ]; then
+  rm -f "$MARKER"
+  echo "Removed stale ribbon fixture marker ($MARKER)."
+fi
+
 echo "Reset complete. Run scripts/test-db-migrate.sh next."

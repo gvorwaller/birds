@@ -25,10 +25,14 @@
  * prod-restored cluster, run `npm run test:db:reset && npm run test:db:up`
  * FIRST — seeding is only safe against an empty/isolated test cluster.
  *
- * On success this records exactly what it wrote to `.local/ribbon-fixture-
- * marker.json`; `unseed-ribbon-fixture.mjs` deletes only what that marker
- * lists (never a re-derivation from this file, and never anything it did
- * not itself create).
+ * On success this records exactly what it wrote — plus the database's own
+ * identity (`pg_database.oid` + `pg_postmaster_start_time()`, CC1 P2-1) —
+ * to `.local/ribbon-fixture-marker.json`; `unseed-ribbon-fixture.mjs`
+ * refuses unless the CURRENT database matches that identity, and deletes
+ * only what the marker lists (never a re-derivation from this file, and
+ * never anything it did not itself create). A prod-restored cluster must
+ * be reset (`npm run test:db:reset && npm run test:db:up`) before seeding
+ * — that is also what invalidates a stale marker from a dropped database.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
@@ -70,6 +74,25 @@ function loadFixture() {
   return win.RIBBON_DATA;
 }
 
+/**
+ * Identity of the DATABASE this connection is talking to, not just its name
+ * (CC1 P2-1): `test-db-reset.sh` DROPs and CREATEs `birds_test`, which gets
+ * a brand-new `pg_database.oid` even though the name is unchanged — a
+ * dropped-and-recreated database is a DIFFERENT database as far as this
+ * marker is concerned. `pg_postmaster_start_time()` additionally catches a
+ * full Postgres restart. Neither alone (nor together) proves an in-place
+ * `pg_restore` never happened without a drop/recreate — that risk is why
+ * unseed ALSO re-verifies frequency_fetch/band_locs content before
+ * deleting anything, not just this identity match.
+ */
+async function getDbIdentity(client) {
+  const res = await client.query(
+    `SELECT (SELECT oid FROM pg_database WHERE datname = current_database()) AS oid,
+            pg_postmaster_start_time() AS start_time`,
+  );
+  return { oid: res.rows[0].oid, startTime: res.rows[0].start_time };
+}
+
 async function main() {
   const client = new pg.Client({
     host: process.env.PGHOST ?? "127.0.0.1",
@@ -79,6 +102,7 @@ async function main() {
     password: process.env.MIGRATION_PGPASSWORD ?? process.env.PGPASSWORD,
   });
   await client.connect();
+  const dbIdentity = await getDbIdentity(client);
 
   const regions = loadFixture();
   const locCodes = regions.map((r) => r.code);
@@ -233,6 +257,8 @@ async function main() {
       JSON.stringify(
         {
           createdAt: new Date().toISOString(),
+          dbOid: dbIdentity.oid,
+          dbPostmasterStartTime: dbIdentity.startTime,
           locCodes,
           species,
           countries,
