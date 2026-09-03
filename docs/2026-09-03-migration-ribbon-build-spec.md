@@ -185,7 +185,17 @@ CREATE INDEX species_band_month_freq_country_idx ON species_band_month_freq (cou
 GRANT SELECT, INSERT, UPDATE, DELETE ON band_locs, band_month_samples, species_band_month_freq TO birds_app;
 ```
 
-Backfill (identical arithmetic to `rebuildBandRollup`, unparameterised):
+**Prod pre-flight, measured 2026-09-03 (read-only EXPLAIN ANALYZE, 788 sub1 + 5
+country-only contributors):** the `species_band_month_freq` backfill SELECT runs in
+**5.07 s** and produces **425,820 rows** (the earlier 394,466 was the coarser
+`(species, band, country, month)` grain; the extra rows are the `west` split and the
+country-only countries); `band_month_samples` **0.20 s, 996 rows**; `band_locs`
+793. The big statement SPILLED to temp files under this cluster's 4 MB `work_mem`,
+so the migration must start with `SET LOCAL work_mem = '256MB';` (legal inside the
+wrapper transaction, scoped to it). Write the measured 425,820 into the header —
+and re-measure at deploy time, since coverage is still growing.
+
+Backfill (identical arithmetic to `rebuildBandRollup`, unparameterised; preceded by `SET LOCAL work_mem = '256MB';`):
 
 ```sql
 WITH sub1 AS (
@@ -343,7 +353,9 @@ three `INSERT…SELECT` statements, or after backfill and before reload, would l
 the rollup silently inconsistent. Procedure:
 1. Admin → pause worker (`set_worker_pause`); wait until `/api/admin/status` shows
    `state=paused` and `currentJobId=null` (`src/worker/index.ts:140-148`).
-2. Deploy (migrate + reload). Keep the pause through the new worker's health.
+2. Deploy (migrate + reload). The migration transaction is short (~6 s measured
+   for the backfill on 2026-09-03 coverage) but the pause must still span it and
+   the reload. Keep the pause through the new worker's health.
 3. Reconcile: run the contributor CTE from 0050 against `band_locs` both ways
    with `EXCEPT`, and recompute `n`/`num`/`reached` for a sample of 20 countries
    against the live rows; report row counts and the diff (not a literal 793).
