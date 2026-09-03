@@ -174,10 +174,17 @@ const cleanup = async () => {
   // with no ON DELETE CASCADE (0050), so leaving a stale row behind would
   // make dropFixtureRegions()'s DELETE FROM regions fail with a foreign key
   // violation the moment refreshRollup('ZZ-A') etc. populates them (it must,
-  // per td-8d3526: refreshRollup calls rebuildBandRollup too).
-  await query("DELETE FROM species_band_month_freq WHERE country IN ('QZ', 'ZZ', 'US')");
-  await query("DELETE FROM band_month_samples WHERE country IN ('QZ', 'ZZ', 'US')");
-  await query("DELETE FROM band_locs WHERE country IN ('QZ', 'ZZ', 'US')");
+  // per td-8d3526: refreshRollup calls rebuildBandRollup too). Scoped to
+  // QZ/ZZ only — NOT 'US': 'US' is a real seeded country, not a fixture, so
+  // wiping its band rows here without rebuilding would leave a prod-restored
+  // birds_test's real US band rows missing after this suite runs, and a
+  // later file's DB test would then see state depending on run order (the
+  // td-b29d1c class, CC1 P2 on td-8d3526). The two tests that touch 'US'
+  // scope (temporary US-QQW/US-QQE/US-QQX fixtures) each restore it via
+  // their own `finally` block instead.
+  await query("DELETE FROM species_band_month_freq WHERE country IN ('QZ', 'ZZ')");
+  await query("DELETE FROM band_month_samples WHERE country IN ('QZ', 'ZZ')");
+  await query("DELETE FROM band_locs WHERE country IN ('QZ', 'ZZ')");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'QZ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'US-QQ-%'");
   await query("DELETE FROM frequency_fetch WHERE loc_code LIKE 'ZZ%'");

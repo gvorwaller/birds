@@ -5,14 +5,17 @@
 -- (10-degree latitude band × continent-or-NA-half × month) grid. Computing
 -- that from species_month_freq / loc_month_samples (0049) at request time
 -- means joining every loaded region's monthly rollup through `regions` and
--- summing on every page load: measured against a partial load of 788 seeded
--- subnational1 regions, the three backfill SELECTs below took 120-365 ms
--- depending on cache state — too slow for a species page that already pays
--- for the forecast teaser and eBird recent-observations calls. These tables
--- precompute the band/country/month aggregate once and are maintained
--- incrementally (rebuildBandRollup, one country at a time) the same way 0049
--- is: inside storeFrequencies' transaction, scoped to the location(s) that
--- changed, so the rollup can never drift from its source.
+-- summing on every page load: measured on the design record's rev 5
+-- (docs/2026-09-02-migration-ribbon-plan.md), region-driven against that
+-- rollup at 788 loaded subnational1 regions, this took 120 ms for Osprey and
+-- 365 ms for Blackpoll Warbler — too slow for a species page that already
+-- pays for the forecast teaser and eBird recent-observations calls, and
+-- getting slower as coverage grows (world load is ~3,369 regions, ~4x the
+-- index lookups). These tables precompute the band/country/month aggregate
+-- once and are maintained incrementally (rebuildBandRollup, one country at a
+-- time) the same way 0049 is: inside storeFrequencies' transaction, scoped
+-- to the location(s) that changed, so the rollup can never drift from its
+-- source.
 --
 -- WHAT. Three tables:
 --   band_locs                membership: which frequency_fetch locations
