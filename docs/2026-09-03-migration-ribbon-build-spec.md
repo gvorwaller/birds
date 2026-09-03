@@ -1,6 +1,8 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 3 (2026-09-03). Rev 3 fixes a P1 CODEX1 found after rev 2
+**Status:** BUILD SPEC rev 3.2 (2026-09-03). Rev 3.2 folds CODEX1's TD-B deploy-gate
+REJECT (2 P1 / 3 P2 / 1 P3, each verified by CC1) — chiefly a fourth cell state, `thin`;
+see the Rev 3.2 ledger. Rev 3 fixes a P1 CODEX1 found after rev 2
 and the gate pins from its TD-A review (see "Rev 3 changes"). Rev 2: Rev 1 was
 written by the `planner` agent from the design record rev 9 and the mockup, then
 reviewed by CC1. Rev 2 folds CODEX1's unrestricted deep review: verdict on rev 1
@@ -9,6 +11,17 @@ against the seed, the code and the test file before folding (all CONFIRMED).
 The two owner decisions CODEX1 flagged were made 2026-09-03 and match the
 defaults written here (obey cs.md; thin countries excluded and the cell hatched).
 Nothing in `src/` has changed.
+
+## Rev 3.2 changes (2026-09-03, CODEX1 deploy gate on TD-B: REJECT, all verified)
+
+| # | Finding | Fix |
+|---|---|---|
+| P1 | An equal-weight cell whose every country is under 40 checklists returned `null` — the "nothing loaded" state — so a surveyed thin cell would draw as a slash. The owner's exclude-and-hatch rule did not cover the all-thin case. | Fourth state: `RibbonCell.state: 'reported' / 'zero' / 'thin'`. `thin` = surveyed but no country reached 40: `{ f: 0 (placeholder, never a rate), n: Σ, state: 'thin', low: true, excluded }`. TD-C draws the hatch with no colour bin; readout "Surveyed — too few checklists to rate" + "N countries under 40 checklists". `null` stays nothing-loaded. Under checklist weighting `thin` never occurs. Pinned: all-thin reported / zero / world / mixed. |
+| P1 | The 40 KB byte gate was measured on an 8-region fixture (2.2 KB) and cannot be inferred to production. | Measured from production source tables for Rock Pigeon 2026-09-03 (td-c6b113 comment): 455 of 1,728 grid slots occupied; grid-shaped payload raw 100,787 B / gzip 959 B with a repeated cell; fully dense worst case gzip 1,331 B. The byte test measures the widest existing species on a restored cluster instead of hard-failing. |
+| P2 | `Number("")` is 0, a valid band, so a missing `band` reached the query. | Reject empty/blank before numeric conversion; route cases for missing and blank. |
+| P2 | Region labels are read after the snapshot commits, via the process-wide regions cache. | Contract narrowed honestly: the snapshot covers the two mutable reads; labels are static reference data outside it. |
+| P2 | The byte test throws on a prod-restored cluster. | Non-destructive path: measure the widest existing species, never hard-fail. |
+| P3 | `ribbonRegions` and the loader's discriminated result were source-review-only. | Direct DB test for ribbonRegions (filter, ALL, n=0 drop, sort, cap, total/capped, makePeer parity) and a loader test. |
 
 ## Rev 3 changes (2026-09-03, after TD-A was built)
 
@@ -397,7 +410,10 @@ export const WORLD_GROUPS: RibbonColumn[][] = [['NAW','NAE'],['SA'],['EU'],['AF'
 export const LOW_N = 40; export const PRESENT = 0.005;
 export type Weighting = 'equal' | 'checklists';
 
-export interface RibbonCell { f: number; n: number; state: 'reported' | 'zero'; low: boolean }
+export interface RibbonCell { f: number; n: number; state: 'reported' | 'zero' | 'thin'; low: boolean; excluded: number }
+// 'thin' (rev 3.2): surveyed, but under equal weight no country reached LOW_N, so
+// nothing voted. f is 0 as a PLACEHOLDER and must never be read as a rate; low is
+// true; excluded counts the countries left out. Never null (null = nothing loaded).
 /** null = nothing loaded, or no checklists that month (the mockup's `empty`). */
 export type RibbonCellOrNull = RibbonCell | null;
 export interface RibbonMode {
@@ -450,6 +466,8 @@ export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise
 
 `speciesRibbon` runs three queries on one snapshot, all on the 0050 tables: `SELECT band, country, west, month, n FROM band_month_samples`; `SELECT band, country, west, month, num, reached FROM species_band_month_freq WHERE species_code = $1`; `SELECT band, country, west, count(*) FROM band_locs GROUP BY 1,2,3`. `Number()` on everything (cs.md; `count(*)` returns a string). Returns `null` when `band_locs` is empty. Each `(band, country, west)` group → `CountryCellInput` with `num` from the species row or 0, `n` from samples; groups with `n === 0` that month are skipped (mockup `weighted` requires `c.n > 0`). **Before any equal averaging, coalesce by `(band, column, country)` with Σnum/Σn** (CODEX1 P1-6): with the TD-A `west` guard only US/CA/MX can split, and their halves land in different columns, but the coalesce is still required so the invariant "one country, one vote per column" holds by construction, not by data.
 
+**All-thin cells (rev 3.2, CODEX1 gate P1):** when at least one country was surveyed that month but none reached `LOW_N`, `equalWeightCell`/`worldEqualCell` return `state: 'thin'` (see the type), never `null`.
+
 **Low-sample under equal weight (CODEX1 P2-2 — owner decided 2026-09-03):** a country whose coalesced `n < LOW_N` for that month does not vote in `equalWeightCell`/`worldEqualCell`; if at least one country was excluded, the cell carries `low: true` (hatched) and the readout says "small sample: N of M countries under 40 checklists". `checklistCell` keeps the summed-n rule. `RibbonCell` gains `excluded: number`. `cols[b][c][m]` = mode function over that column's groups; `world[b][m]` = `worldEqualCell` / `checklistCell` over all groups in the band. `gapMonths`: month m is a gap iff Σ samples.n > 0 and Σ reached = 0. Unmapped countries: excluded from cells, listed in `meta.unmappedCountries`, `console.error` once per call.
 
 `ribbonRegions`: `SELECT loc_code, country, west FROM band_locs WHERE band = $1`, filtered in TS by `ribbonColumnOf(country, west) === column` (or all for `'ALL'`); then one query in the shape of `pickSpeciesTeaserState` (`forecast.ts:1322-1327`) restricted to `ff.loc_code = ANY($2)` — `frequency_fetch.loc_name, sample_sizes` LEFT JOIN `species_frequency` (index `species_frequency_species_idx (species_code, loc_code)`, `0011:41`). Build `monthCurve`/`weekCurve`/`bestMonth`/`goodMonths`/`peakWeekPhrase`/`migrationSentence` exactly as `makePeer` does (`:1384-1409`); drop rows whose every month has n=0; sort by `peak` desc then `locCode`; `total` = rows before cap; cap 40. Label via `regionLabel(locCode) ?? loc_name`.
@@ -475,7 +493,7 @@ export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise
 - `speciesRibbon` issues exactly three SELECTs on ONE `withReadSnapshot` client, none against `species_frequency`/`species_month_freq`/`loc_month_samples` (assert via the mocked client call list).
 - Vectors pass to 1e-6.
 - Species page SSR payload carries `ribbon` as `{ok, grid|error}`; page renders correctly for `grid: null` and for `ok: false`.
-- SSR byte gate (CODEX1 P2-8): the serialised `ribbon` property ≤ 40 KB gzipped, measured in a test against the widest species the fixture DB can build (8 columns × 12 months; 2.2 KB gzipped as built), AND re-measured at deploy against production's widest species (Rock Pigeon) as a runbook step; shell latency for `/species/osprey` on `dev:test` ≤ the pre-ribbon baseline + 50 ms, measured manually at deploy (no recorded baseline exists to automate against).
+- SSR byte gate (CODEX1 P2-8, rev 3.2): the serialised `ribbon` property ≤ 40 KB gzipped. The local test measures the widest species the fixture DB holds (or, on a restored cluster, the widest existing species) and never hard-fails on pre-existing data. The PRODUCTION figure for Rock Pigeon was measured from the source tables 2026-09-03 (gzip ≈ 1 KB, see the Rev 3.2 ledger) and is re-recorded on the td at deploy; shell latency for `/species/osprey` on `dev:test` ≤ the pre-ribbon baseline + 50 ms, measured manually at deploy (no recorded baseline exists to automate against).
 - Endpoint returns ≤40 rows sorted by peak with `total`; 401/400 per tests.
 - `npm run check` 0 errors.
 
@@ -560,8 +578,8 @@ export function fillFor(cell, hatchId): string;                             // '
 **CREATE `src/lib/components/migration-ribbon.test.ts`** (`bottom-nav.test.ts` style):
 - `binIndex` (exclusive upper bounds): 0→0, 0.0099→1, 0.01→2, 0.0299→2, 0.03→3, 0.0999→3, 0.1→4, 0.2499→4, 0.25→5; and `pct(f)` for each pinned to the bin label in the same test (P2-6).
 - Event wiring (P2-11): slider `input`, ◀, ▶, cell/row tap, Home, End each set `playing=false`; Enter opens the details AND scrolls to it; a fetch returning `!res.ok` renders the inline error; an AbortError renders nothing; a late response for a stale generation is discarded.
-- `fillFor`: `{f:0.2,n:39,low:true}` → hatch url; `{f:0,n:39,low:false}` → `--rb-0`; null → slash marker.
-- `readout` five branches: null → 'No data — nothing loaded here'; low → '20% reporting rate · small sample'; zero → '0% — surveyed, no reports'; equal → '16% average reporting rate' + line3 'equal weight · 2 regions · 440K checklists' with title '439,972 checklists'; checklists → '24% of checklists reported it'. Never "of checklists" in the equal branch.
+- `fillFor`: `{f:0.2,n:39,low:true}` → hatch url; `{f:0,n:39,low:false}` → `--rb-0`; `{state:'thin'}` → hatch url with NO bin colour (binIndex never called); null → slash marker.
+- `readout` six branches: null → 'No data — nothing loaded here'; thin → 'Surveyed — too few checklists to rate' + 'N countries under 40 checklists · …'; low → '20% reporting rate · small sample'; zero → '0% — surveyed, no reports'; equal → '16% average reporting rate' + line3 'equal weight · 2 regions · 440K checklists' with title '439,972 checklists'; checklists → '24% of checklists reported it'. Never "of checklists" in the equal branch.
 - `reduce`: ArrowLeft at 1 → 12; ArrowRight at 12 → 1; ArrowUp at 80 stays; ArrowDown at -90 stays; PageDown in world view → unchanged; PageDown in single-continent mode moves `cont` and `contView`; Home/End; Space toggles playing; Enter → openDrill; unknown → null.
 - `initialState(true)` = cont/ALL/NAE; `initialState(false)` = world/NAE/null; `applyWide` no-op once `viewTouched`.
 - `geometry`: world at avail 300 → cellW 25, w 300; ALL at avail 300 → cellW 6, w 576; single on phone → rowH 44; single wide → 22; headH 34 in cont view else 20.
