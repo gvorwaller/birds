@@ -137,13 +137,42 @@ describe('MigrationRibbon.svelte markup', () => {
 	// CODEX1 P2-2: the tap hint must not describe whole-cell picking on a
 	// phone, where a tap only ever picks a band (P1-1) — the month comes
 	// from the slider. Two variants, both driven by the same `phone` flag.
-	it('the tap hint has a phone variant (band + slider) and a non-phone variant (whole cell)', () => {
-		expect(markup).toContain('{#if phone}');
-		expect(markup).toContain(
+	it('the tap hint has a phone variant (band + slider) and a non-phone variant (whole cell), ' +
+		'in the correct branch of the SAME {#if phone} block — not merely both present somewhere', () => {
+		const ifAt = markup.indexOf('{#if phone}');
+		expect(ifAt).toBeGreaterThan(-1);
+		const elseAt = markup.indexOf('{:else}', ifAt);
+		expect(elseAt).toBeGreaterThan(ifAt);
+		const endAt = markup.indexOf('{/if}', elseAt);
+		expect(endAt).toBeGreaterThan(elseAt);
+		const phoneBranch = markup.slice(ifAt, elseAt);
+		const nonPhoneBranch = markup.slice(elseAt, endAt);
+		expect(phoneBranch).toContain(
 			"Choose a month with the slider, then tap a latitude row to see its reporting rate and the"
 		);
-		expect(markup).toContain(
+		expect(phoneBranch).not.toContain("Tap a square");
+		expect(nonPhoneBranch).toContain(
 			"Tap a square to see that month's reporting rate and the regions behind it; darker green means"
 		);
+		expect(nonPhoneBranch).not.toContain('Choose a month with the slider');
+	});
+
+	// CC1 P2 (Safari drive of bbc9426, 390x731): 18 bands at the phone's
+	// 48px touch row make the World chart 884px tall, so the readout — in
+	// normal flow below the chart — sat far below the viewport after a tap.
+	// Pin it to the bottom of the viewport (above the bottom nav) inside the
+	// phone breakpoint specifically; the desktop sticky-top rule is separate
+	// and must stay untouched.
+	it('pins the readout to the bottom of the viewport in the phone breakpoint (CC1 P2)', () => {
+		const phoneStart = markup.indexOf('@media (max-width: 639px)');
+		const desktopStart = markup.indexOf('@media (min-width: 1024px)');
+		expect(phoneStart).toBeGreaterThan(-1);
+		expect(desktopStart).toBeGreaterThan(phoneStart);
+		const phoneBlock = markup.slice(phoneStart, desktopStart);
+		expect(phoneBlock).toContain('position: sticky');
+		expect(phoneBlock).toContain('bottom: calc(var(--nav-h)');
+		// The desktop sticky-TOP rule for .readout must be unaffected.
+		const desktopBlock = markup.slice(desktopStart);
+		expect(desktopBlock).toContain('top: calc(var(--nav-h)');
 	});
 });

@@ -1227,6 +1227,18 @@
 		}
 		.rlayout > .readout {
 			order: 3;
+			/* CC1 P2 (Safari drive of bbc9426, 390x731): 18 bands at the phone's
+			   48px touch row make the World chart 20 + 18*48 = 884px tall, so
+			   the readout (in normal flow, order 3, below the chart) sat ~800px
+			   below the viewport after a tap -- a real user saw nothing change,
+			   failing "readout visible after a tap on a phone". Pin it to the
+			   bottom of the viewport, above the bottom nav, while the chart
+			   scrolls; it returns to normal flow once the page scrolls past it. */
+			position: sticky;
+			bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+			z-index: 2;
+			background: var(--card);
+			box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
 		}
 		.rlayout > .todrill {
 			order: 4;
