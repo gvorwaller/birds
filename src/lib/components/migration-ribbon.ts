@@ -119,6 +119,278 @@ export function bandLabel(lo: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Geographic landmarks & biological migration summaries (td-476c32)
+// ---------------------------------------------------------------------------
+
+export const LANDMARKS: Record<string, Record<number, string>> = {
+	NAE: {
+		80: 'High Arctic / Ellesmere',
+		70: 'Arctic Archipelago / Baffin',
+		60: 'Hudson Bay / Subarctic',
+		50: 'Boreal & S. Canada',
+		40: 'Great Lakes & New England',
+		30: 'Mid-Atlantic & Midwest',
+		20: 'Gulf Coast & S. Florida',
+		10: 'Central America & Caribbean',
+		0: 'Panama & N. South America'
+	},
+	NAW: {
+		80: 'Beaufort Sea / High Arctic',
+		70: 'N. Alaska & Yukon',
+		60: 'Central Alaska & N. BC',
+		50: 'Pacific NW, S. BC & Prairies',
+		40: 'N. California & Great Basin',
+		30: 'S. California & Desert SW',
+		20: 'NW Mexico & Baja',
+		10: 'S. Mexico & Central America',
+		0: 'Costa Rica & Galapagos'
+	},
+	EU: {
+		70: 'Lapland & Arctic Norway',
+		60: 'Scandinavia, Baltic & Scotland',
+		50: 'British Isles & Central Europe',
+		40: 'Mediterranean & Iberia',
+		30: 'N. Africa Coast & Canary Is.',
+		20: 'Sahara'
+	},
+	AF: {
+		30: 'Maghreb & N. Sahara',
+		20: 'Sahara & Sahel North',
+		10: 'Sahel, W. Africa & Horn',
+		0: 'Equatorial Africa & Congo Basin',
+		[-10]: 'Miombo, Tanzania & Angola',
+		[-20]: 'Zambezi, Kalahari & Namibia',
+		[-30]: 'South Africa & Cape'
+	},
+	SA: {
+		10: 'Caribbean Coast & Venezuela',
+		0: 'Amazonia, Colombia & Ecuador',
+		[-10]: 'Central Amazon, Peru & N. Brazil',
+		[-20]: 'Pantanal, Bolivia & Highlands',
+		[-30]: 'Pampas, Uruguay & S. Brazil',
+		[-40]: 'Patagonia (Chile & Argentina)',
+		[-50]: 'Tierra del Fuego',
+		[-60]: 'Drake Passage'
+	},
+	AS: {
+		70: 'Siberian Arctic Tundra',
+		60: 'Siberian Taiga',
+		50: 'Mongolia, NE China & S. Siberia',
+		40: 'Central Asia, Beijing & Japan',
+		30: 'Himalayas, Yangtze & S. Japan',
+		20: 'India, Indochina & S. China',
+		10: 'SE Asia, Philippines & S. India',
+		0: 'Malaysia, Indonesia & Borneo'
+	},
+	OC: {
+		0: 'New Guinea & Micronesia',
+		[-10]: 'N. Australia & Coral Sea',
+		[-20]: 'Central Australia & Queensland',
+		[-30]: 'S. Australia, Sydney & N. NZ',
+		[-40]: 'Tasmania & S. Island NZ',
+		[-50]: 'Subantarctic Islands',
+		[-60]: 'Southern Ocean',
+		[-70]: 'Ross Ice Shelf'
+	},
+	AN: {
+		[-60]: 'South Shetland Islands',
+		[-70]: 'Antarctic Peninsula & Coast',
+		[-80]: 'Transantarctic Mountains',
+		[-90]: 'South Pole'
+	},
+	WORLD: {
+		80: 'High Arctic',
+		70: 'Arctic Tundra',
+		60: 'Subarctic & Boreal',
+		50: 'Temperate North',
+		40: 'Mid-Latitudes North',
+		30: 'Subtropics North',
+		20: 'Tropical North',
+		10: 'Equatorial North',
+		0: 'Equatorial Belt',
+		[-10]: 'Equatorial South',
+		[-20]: 'Tropical South',
+		[-30]: 'Subtropics South',
+		[-40]: 'Mid-Latitudes South',
+		[-50]: 'Subantarctic',
+		[-60]: 'Southern Ocean',
+		[-70]: 'Antarctic Coast',
+		[-80]: 'Antarctic Interior',
+		[-90]: 'South Pole'
+	}
+};
+
+export function landmarkFor(band: number, col: RibbonColumn | null): string | null {
+	if (col && LANDMARKS[col]?.[band]) {
+		return LANDMARKS[col][band];
+	}
+	return LANDMARKS.WORLD[band] ?? null;
+}
+
+export interface MigrationSummary {
+	hasData: boolean;
+	headline: string;
+	details: string;
+	span: string | null;
+}
+
+/**
+ * Returns the contiguous latitudinal slice of bands occupied by the species
+ * (plus 1 buffer band above and below).
+ */
+export function occupiedBands(grid: RibbonGridClient, s: RibbonState): number[] {
+	const col = s.view === 'cont' ? s.cont : null;
+	const mode = grid.modes[s.weight];
+	const reportedBands: number[] = [];
+
+	for (let bi = 0; bi < BANDS.length; bi++) {
+		const band = BANDS[bi];
+		let hasData = false;
+		for (let m = 0; m < 12; m++) {
+			if (col != null) {
+				const ci = COLUMNS.indexOf(col);
+				const cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
+				if (cell && (cell.state === 'reported' || cell.f > 0)) {
+					hasData = true;
+					break;
+				}
+			} else if (s.view === 'cont' && s.contView === 'ALL') {
+				for (let ci = 0; ci < COLUMNS.length; ci++) {
+					const cell = mode.cols[bi]?.[ci]?.[m];
+					if (cell && (cell.state === 'reported' || cell.f > 0)) {
+						hasData = true;
+						break;
+					}
+				}
+				if (hasData) break;
+			} else {
+				const cell = mode.world[bi]?.[m];
+				if (cell && (cell.state === 'reported' || cell.f > 0)) {
+					hasData = true;
+					break;
+				}
+			}
+		}
+		if (hasData) reportedBands.push(band);
+	}
+
+	if (reportedBands.length === 0) return [...BANDS];
+
+	const indices = reportedBands
+		.map((b) => (BANDS as readonly number[]).indexOf(b as (typeof BANDS)[number]))
+		.filter((i) => i >= 0);
+	const minIdx = Math.max(0, Math.min(...indices) - 1);
+	const maxIdx = Math.min(BANDS.length - 1, Math.max(...indices) + 1);
+
+	return BANDS.slice(minIdx, maxIdx + 1);
+}
+
+/**
+ * Active bands to display: all 18 if fullGlobe is true, else occupied slice.
+ */
+export function activeBands(grid: RibbonGridClient, s: RibbonState, fullGlobe?: boolean): number[] {
+	if (fullGlobe ?? s.fullGlobe) return [...BANDS];
+	return occupiedBands(grid, s);
+}
+
+/**
+ * Synthesizes a natural-language biological migration profile and seasonal phases
+ * from the frequency distribution.
+ */
+export function migrationSummary(grid: RibbonGridClient, s: RibbonState): MigrationSummary {
+	const col = s.view === 'cont' ? (s.cont ?? HOME_COLUMN) : null;
+	const mode = grid.modes[s.weight];
+
+	// Extract peak band and frequency per month
+	const monthlyPeaks: { month: number; band: number; maxF: number; avgLat: number }[] = [];
+	let totalObserved = 0;
+
+	for (let m = 0; m < 12; m++) {
+		let maxF = 0;
+		let peakBand = 40;
+		let sumLatF = 0;
+		let sumF = 0;
+
+		for (let bi = 0; bi < BANDS.length; bi++) {
+			const band = BANDS[bi];
+			let cell: RibbonCellClient | null = null;
+			if (col != null) {
+				const ci = COLUMNS.indexOf(col);
+				cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
+			} else {
+				cell = mode.world[bi]?.[m];
+			}
+			if (cell && cell.f > 0) {
+				totalObserved += cell.f;
+				sumF += cell.f;
+				sumLatF += cell.f * (band + 5); // centroid of the 10° band
+				if (cell.f > maxF) {
+					maxF = cell.f;
+					peakBand = band;
+				}
+			}
+		}
+		const avgLat = sumF > 0 ? sumLatF / sumF : peakBand + 5;
+		monthlyPeaks.push({ month: m + 1, band: peakBand, maxF, avgLat });
+	}
+
+	if (totalObserved === 0) {
+		return {
+			hasData: false,
+			headline: 'Seasonal Distribution',
+			details: 'Survey data in this region is limited or the species has zero recorded sightings.',
+			span: null
+		};
+	}
+
+	const observed = monthlyPeaks.filter((p) => p.maxF > 0);
+	if (observed.length === 0) {
+		return {
+			hasData: false,
+			headline: 'Seasonal Distribution',
+			details: 'Survey data in this region is limited or the species has zero recorded sightings.',
+			span: null
+		};
+	}
+
+	const sorted = [...observed].sort((a, b) => b.avgLat - a.avgLat);
+	const northPeak = sorted[0];
+	const southPeak = sorted[sorted.length - 1];
+	const deltaLat = northPeak.avgLat - southPeak.avgLat;
+
+	if (deltaLat < 8) {
+		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		return {
+			hasData: true,
+			headline: 'Year-Round Presence',
+			details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
+			span: 'Consistent year-round range'
+		};
+	}
+
+	// Group months near northern and southern extremes (within 5 degrees of peak avgLat)
+	const northMonths = observed
+		.filter((p) => p.avgLat >= northPeak.avgLat - 5)
+		.map((p) => p.month);
+	const southMonths = observed
+		.filter((p) => p.avgLat <= southPeak.avgLat + 5)
+		.map((p) => p.month);
+
+	const northStr = formatWindow(northMonths);
+	const southStr = formatWindow(southMonths);
+	const northLandmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+	const southLandmark = landmarkFor(southPeak.band, col) ?? bandLabel(southPeak.band);
+
+	return {
+		hasData: true,
+		headline: 'Seasonal Latitudinal Shift',
+		details: `Reported furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
+		span: `${Math.round(deltaLat)}° latitudinal shift across the year`
+	};
+}
+
+
+// ---------------------------------------------------------------------------
 // Client-duplicated data shapes (structurally equal to $server/ribbon's;
 // never imported from there — FrequencyChart.svelte precedent).
 // ---------------------------------------------------------------------------
@@ -220,6 +492,7 @@ export interface RibbonState {
 	viewTouched: boolean;
 	drillExpanded: boolean;
 	drillOpen: boolean;
+	fullGlobe?: boolean;
 }
 
 /** wide: cont/ALL/NAE (By continent, All continents, home column selected).
@@ -237,7 +510,8 @@ export function initialState(wide: boolean): RibbonState {
 		playing: false,
 		viewTouched: false,
 		drillExpanded: false,
-		drillOpen: true
+		drillOpen: true,
+		fullGlobe: false
 	};
 }
 
@@ -282,7 +556,13 @@ export interface RibbonGeometry {
  * compact 22px row with full cell picking. `wide` still separately governs
  * layout (cell width, header height) via `drawnColumns`/`cont`.
  */
-export function geometry(s: RibbonState, availWidth: number, wide: boolean, phone: boolean): RibbonGeometry {
+export function geometry(
+	s: RibbonState,
+	availWidth: number,
+	wide: boolean,
+	phone: boolean,
+	bands: readonly number[] = BANDS
+): RibbonGeometry {
 	const avail = Math.max(120, availWidth);
 	const cont = s.view === 'cont';
 	const conts = drawnColumns(s);
@@ -292,7 +572,7 @@ export function geometry(s: RibbonState, availWidth: number, wide: boolean, phon
 	const rowH = phone ? ROW_H_TOUCH : ROW_H;
 	const headH = cont ? 34 : 20;
 	const w = cols * cellW;
-	const h = headH + BANDS.length * rowH;
+	const h = headH + bands.length * rowH;
 	return { cont, single, cols, cellW, rowH, headH, w, h };
 }
 
@@ -353,17 +633,21 @@ function pageContinent(s: RibbonState, dir: 1 | -1): RibbonState {
  * call `preventDefault`); an `action: 'openDrill'` result additionally asks
  * the caller to open the drill `<details>` and scroll to it.
  */
-export function reduce(s: RibbonState, key: Key): { state: RibbonState; action?: 'openDrill' } | null {
-	const bi = Math.max(0, BANDS.indexOf(s.band as (typeof BANDS)[number]));
+export function reduce(
+	s: RibbonState,
+	key: Key,
+	bands: readonly number[] = BANDS
+): { state: RibbonState; action?: 'openDrill' } | null {
+	const bi = Math.max(0, bands.indexOf(s.band as (typeof BANDS)[number]));
 	switch (key) {
 		case 'ArrowLeft':
 			return { state: { ...s, month: s.month === 1 ? 12 : s.month - 1, playing: false } };
 		case 'ArrowRight':
 			return { state: { ...s, month: (s.month % 12) + 1, playing: false } };
 		case 'ArrowUp':
-			return { state: { ...s, band: BANDS[Math.max(0, bi - 1)] } };
+			return { state: { ...s, band: bands[Math.max(0, bi - 1)] } };
 		case 'ArrowDown':
-			return { state: { ...s, band: BANDS[Math.min(BANDS.length - 1, bi + 1)] } };
+			return { state: { ...s, band: bands[Math.min(bands.length - 1, bi + 1)] } };
 		case 'PageUp':
 			return { state: pageContinent(s, -1) };
 		case 'PageDown':
@@ -410,11 +694,12 @@ export function pickCell(
 	geom: Pick<RibbonGeometry, 'cont' | 'rowH' | 'cellW' | 'headH' | 'cols'>,
 	x: number,
 	y: number,
-	bandOnly = false
+	bandOnly = false,
+	bands: readonly number[] = BANDS
 ): RibbonState | null {
 	const bi = Math.floor((y - geom.headH) / geom.rowH);
-	if (bi < 0 || bi >= BANDS.length) return null;
-	const band = BANDS[bi];
+	if (bi < 0 || bi >= bands.length) return null;
+	const band = bands[bi];
 	const conts = drawnColumns(s);
 
 	if (bandOnly) {
@@ -450,6 +735,7 @@ export interface Readout {
 	title3?: string;
 	nreg: number;
 	empty: boolean;
+	landmark?: string | null;
 }
 
 export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
@@ -459,9 +745,10 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		MSHORT[s.month - 1]
 	}`;
 	const regs = `${nreg} region${nreg === 1 ? '' : 's'}`;
+	const landmark = landmarkFor(s.band, s.cont);
 
 	if (!cell) {
-		return { line1, line2: 'No data — nothing loaded here', line3: '', nreg, empty: true };
+		return { line1, line2: 'No data — nothing loaded here', line3: '', nreg, empty: true, landmark };
 	}
 	if (cell.state === 'thin') {
 		// Surveyed, but no country reached LOW_N under equal weight, so `f` is a
@@ -472,7 +759,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			line3: `${cell.excluded} countr${cell.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists · ${regs} · ${compact(cell.n)} checklists`,
 			title3: `${fmtN(cell.n)} checklists`,
 			nreg,
-			empty: false
+			empty: false,
+			landmark
 		};
 	}
 	// Branch on the SERVER's `low`, never on raw `n` (CC1 P2-2): under
@@ -489,7 +777,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			line3: `${regs} · ${compact(cell.n)} checklists`,
 			title3: `${fmtN(cell.n)} checklists`,
 			nreg,
-			empty: false
+			empty: false,
+			landmark
 		};
 	}
 	if (s.weight === 'equal' && cell.excluded > 0) {
@@ -499,7 +788,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			line3: `${cell.excluded} countr${cell.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out · ${regs} · ${compact(cell.n)} checklists`,
 			title3: `${fmtN(cell.n)} checklists`,
 			nreg,
-			empty: false
+			empty: false,
+			landmark
 		};
 	}
 	if (cell.f === 0) {
@@ -509,7 +799,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			line3: `${regs} · ${compact(cell.n)} checklists`,
 			title3: `${fmtN(cell.n)} checklists`,
 			nreg,
-			empty: false
+			empty: false,
+			landmark
 		};
 	}
 	if (s.weight === 'equal') {
@@ -519,7 +810,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			line3: `equal weight · ${regs} · ${compact(cell.n)} checklists`,
 			title3: `${fmtN(cell.n)} checklists`,
 			nreg,
-			empty: false
+			empty: false,
+			landmark
 		};
 	}
 	return {
@@ -528,7 +820,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		line3: `${regs} · ${compact(cell.n)} checklists`,
 		title3: `${fmtN(cell.n)} checklists`,
 		nreg,
-		empty: false
+		empty: false,
+		landmark
 	};
 }
 

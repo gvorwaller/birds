@@ -14,6 +14,7 @@ import {
 	DRILL_ERROR_MESSAGE,
 	DrillGeneration,
 	LOW_N,
+	activeBands,
 	applyWide,
 	bandLabel,
 	beginDrill,
@@ -27,6 +28,9 @@ import {
 	gapText,
 	geometry,
 	initialState,
+	landmarkFor,
+	migrationSummary,
+	occupiedBands,
 	pct,
 	pickCell,
 	readout,
@@ -633,3 +637,105 @@ describe('beginDrill (CODEX1 P1-2: generation bumps BEFORE the cache check)', ()
 		expect(resultA).toEqual({ kind: 'ignore' });
 	});
 });
+
+describe('landmarkFor', () => {
+	it('resolves specific continent landmarks', () => {
+		expect(landmarkFor(40, 'NAE')).toBe('Great Lakes & New England');
+		expect(landmarkFor(30, 'NAW')).toBe('S. California & Desert SW');
+		expect(landmarkFor(50, 'EU')).toBe('British Isles & Central Europe');
+		expect(landmarkFor(0, 'SA')).toBe('Amazonia, Colombia & Ecuador');
+	});
+
+	it('falls back to WORLD landmarks when continent has no override', () => {
+		expect(landmarkFor(40, null)).toBe('Mid-Latitudes North');
+		expect(landmarkFor(-40, 'EU')).toBe('Mid-Latitudes South');
+	});
+});
+
+describe('occupiedBands & activeBands', () => {
+	function populatedGrid(bands: number[]): RibbonGridClient {
+		const grid = emptyGrid('testsp');
+		for (const b of bands) {
+			const bi = bandIndex(b);
+			for (let m = 0; m < 12; m++) {
+				grid.modes.equal.world[bi][m] = {
+					f: 0.1,
+					n: 500,
+					state: 'reported',
+					low: false,
+					excluded: 0
+				};
+			}
+		}
+		return grid;
+	}
+
+	it('empty grid returns full BANDS', () => {
+		const grid = emptyGrid();
+		const s = baseState({ view: 'world' });
+		expect(occupiedBands(grid, s)).toEqual([...BANDS]);
+	});
+
+	it('crops to occupied bands plus 1 row padding on each side', () => {
+		// Occupied at 40 and 30 -> indices 4 and 5 in BANDS (80, 70, 60, 50, 40, 30, 20...)
+		// Padded indices: 3 (50) to 6 (20) -> [50, 40, 30, 20]
+		const grid = populatedGrid([40, 30]);
+		const s = baseState({ view: 'world' });
+		const bands = occupiedBands(grid, s);
+		expect(bands).toEqual([50, 40, 30, 20]);
+	});
+
+	it('activeBands respects fullGlobe flag', () => {
+		const grid = populatedGrid([40, 30]);
+		const s = baseState({ view: 'world' });
+		expect(activeBands(grid, s, true)).toEqual([...BANDS]);
+		expect(activeBands(grid, s, false)).toEqual([50, 40, 30, 20]);
+	});
+});
+
+describe('migrationSummary', () => {
+	it('returns hasData: false for empty grid', () => {
+		const grid = emptyGrid();
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(false);
+		expect(summary.span).toBeNull();
+		expect(summary.headline).toBe('Seasonal Distribution');
+	});
+
+	it('identifies seasonal latitudinal shift when latitudes change between seasons', () => {
+		const grid = emptyGrid();
+		// North at band 50 (June/July)
+		const b50 = bandIndex(50);
+		grid.modes.equal.world[b50][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][6] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+
+		// South at band 10 (Jan/Dec)
+		const b10 = bandIndex(10);
+		grid.modes.equal.world[b10][0] = { f: 0.3, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b10][11] = { f: 0.3, n: 1000, state: 'reported', low: false, excluded: 0 };
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Seasonal Latitudinal Shift');
+		expect(summary.span).toContain('40° latitudinal shift');
+		expect(summary.details).toContain('Jun–Jul');
+		expect(summary.details).toContain('Dec–Jan');
+	});
+
+	it('identifies resident pattern when latitude does not shift', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		for (let m = 0; m < 12; m++) {
+			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+		}
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Year-Round Presence');
+		expect(summary.span).toBe('Consistent year-round range');
+		expect(summary.details).toContain('Mid-Latitudes North');
+	});
+});
+

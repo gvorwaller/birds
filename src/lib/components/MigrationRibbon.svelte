@@ -31,6 +31,7 @@
 		bandLabel,
 		binIndex,
 		pct,
+		activeBands,
 		applyWide,
 		beginDrill,
 		chartAria,
@@ -41,6 +42,8 @@
 		gapText,
 		geometry,
 		initialState,
+		landmarkFor,
+		migrationSummary,
 		pickCell,
 		readout,
 		reduce,
@@ -92,6 +95,16 @@
 	let phone = $state(false);
 	let reducedMotion = $state(false);
 	let ribbonState = $state<RibbonState>(initialState(false));
+	let fullGlobe = $state(false);
+	const currentBands = $derived(activeBands(grid, ribbonState, fullGlobe));
+	const summary = $derived(migrationSummary(grid, ribbonState));
+
+	$effect(() => {
+		const bands = currentBands;
+		if (bands.length > 0 && !bands.includes(ribbonState.band as (typeof bands)[number])) {
+			ribbonState = { ...ribbonState, band: bands[0] as (typeof BANDS)[number] };
+		}
+	});
 
 	// `untrack` on every read of `ribbonState` here is load-bearing: this
 	// effect only WRITES `ribbonState`, on a matchMedia change or the
@@ -186,9 +199,9 @@
 	});
 
 	const drawnCols = $derived(drawnColumns(ribbonState));
-	const geom = $derived(geometry(ribbonState, availWidth, wide, phone));
+	const geom = $derived(geometry(ribbonState, availWidth, wide, phone, currentBands));
 	const clipped = $derived(geom.w > availWidth + 1);
-	const eqIndex = $derived(BANDS.indexOf(-10 as (typeof BANDS)[number]));
+	const eqIndex = $derived(currentBands.indexOf(-10 as (typeof currentBands)[number]));
 
 	const monthOverlayXs = $derived.by(() => {
 		if (!ribbonState.month) return [] as number[];
@@ -196,7 +209,7 @@
 		return blocks.map((b0) => (b0 + ribbonState.month - 1) * geom.cellW);
 	});
 	const bandOverlayY = $derived.by(() => {
-		const bi = BANDS.indexOf(ribbonState.band as (typeof BANDS)[number]);
+		const bi = currentBands.indexOf(ribbonState.band as (typeof currentBands)[number]);
 		return bi >= 0 ? geom.headH + bi * geom.rowH : null;
 	});
 	const cellOverlayX = $derived.by(() => {
@@ -240,7 +253,7 @@
 
 	// ---- Keyboard (mockup keydown handler, ported to `reduce()`). ----------
 	function onRibbonKeydown(e: KeyboardEvent) {
-		const res = reduce(ribbonState, e.key as Key);
+		const res = reduce(ribbonState, e.key as Key, currentBands);
 		if (!res) return;
 		e.preventDefault();
 		applySelection(res.state);
@@ -269,7 +282,7 @@
 		const svgEl = rscrollEl?.querySelector('svg');
 		if (!svgEl) return;
 		const r = svgEl.getBoundingClientRect();
-		const next = pickCell(ribbonState, geom, e.clientX - r.left, e.clientY - r.top, phone);
+		const next = pickCell(ribbonState, geom, e.clientX - r.left, e.clientY - r.top, phone, currentBands);
 		if (next) applySelection(next);
 	}
 	function onPointerCancel() {
@@ -427,9 +440,26 @@
 	</p>
 {/if}
 
+{#if summary.hasData}
+	<div class="mig-summary">
+		<div class="mig-header">
+			<span class="mig-badge">{summary.headline}</span>
+			{#if summary.span}
+				<span class="mig-timing">{summary.span}</span>
+			{/if}
+		</div>
+		<p class="mig-details">{summary.details}</p>
+	</div>
+{/if}
+
 <div class="rlayout">
 	<div class="readout" id="rbreadout">
-		<span class="r1">{currentReadout.line1}</span>
+		<span class="r1">
+			{currentReadout.line1}
+			{#if currentReadout.landmark}
+				<span class="rland">({currentReadout.landmark})</span>
+			{/if}
+		</span>
 		<span class="r2">{currentReadout.line2}</span>
 		{#if currentReadout.line3}
 			<span class="r3" title={currentReadout.title3}>{currentReadout.line3}</span>
@@ -496,10 +526,31 @@
 				</div>
 			{/if}
 			<div>
+				<span class="seg-label" id="rbrangeLbl">Latitudes</span>
+				<div class="seg" role="group" aria-labelledby="rbrangeLbl">
+					<button
+						type="button"
+						aria-pressed={!fullGlobe}
+						onclick={() => {
+							fullGlobe = false;
+						}}>Species range</button
+					>
+					<button
+						type="button"
+						aria-pressed={fullGlobe}
+						onclick={() => {
+							fullGlobe = true;
+						}}>Full globe</button
+					>
+				</div>
+			</div>
+			<div>
 				<span class="seg-label" id="rbwLbl">Average</span>
 				<div class="seg" role="group" aria-labelledby="rbwLbl">
-					<button type="button" aria-pressed={ribbonState.weight === 'equal'} onclick={() => setWeight('equal')}
-						>Equal weight</button
+					<button
+						type="button"
+						aria-pressed={ribbonState.weight === 'equal'}
+						onclick={() => setWeight('equal')}>Equal weight</button
 					>
 					<button
 						type="button"
@@ -530,9 +581,12 @@
 			>
 			<div class="ribwrap" class:clipped>
 				<div class="rgut" style="padding-top:{geom.headH + 4}px">
-					{#each BANDS as band (band)}
+					{#each currentBands as band (band)}
 						<div class="bl" class:on={band === ribbonState.band} style="height:{geom.rowH}px">
-							{bandLabel(band)}
+							<span class="b-deg">{bandLabel(band)}</span>
+							{#if landmarkFor(band, ribbonState.cont)}
+								<span class="b-land">{landmarkFor(band, ribbonState.cont)}</span>
+							{/if}
 						</div>
 					{/each}
 					{#if eqIndex > 0}
@@ -594,12 +648,14 @@
 							{/each}
 						{/if}
 
-						{#each BANDS as band, bi (band)}
+						{#each currentBands as band, bi (band)}
 							{@const y = geom.headH + bi * geom.rowH}
+							{@const origBi = BANDS.indexOf(band as (typeof BANDS)[number])}
 							{#if geom.cont}
 								{#each drawnCols as col, ci (col)}
+									{@const colIdx = COLUMNS.indexOf(col)}
 									{#each ML as _m, m (m)}
-										{@const cell = grid.modes[ribbonState.weight].cols[bi][COLUMNS.indexOf(col)][m]}
+										{@const cell = grid.modes[ribbonState.weight].cols[origBi][colIdx][m]}
 										{@const x = (ci * 12 + m) * geom.cellW}
 										{@const fill = fillFor(cell, hatchId)}
 										{#if fill === 'slash'}
@@ -631,7 +687,7 @@
 								{/each}
 							{:else}
 								{#each ML as _m, m (m)}
-									{@const cell = grid.modes[ribbonState.weight].world[bi][m]}
+									{@const cell = grid.modes[ribbonState.weight].world[origBi][m]}
 									{@const x = m * geom.cellW}
 									{@const fill = fillFor(cell, hatchId)}
 									{#if fill === 'slash'}
@@ -786,6 +842,48 @@
 </div>
 
 <style>
+	.mig-summary {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 12px 14px;
+		background: var(--card);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		margin-bottom: 12px;
+	}
+	.mig-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.mig-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 3px 8px;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		background: var(--accent-soft);
+		color: var(--accent);
+		border: 1px solid var(--accent);
+	}
+	.mig-timing {
+		font-size: 0.82rem;
+		color: var(--muted);
+		font-weight: 500;
+	}
+	.mig-details {
+		margin: 0;
+		font-size: 0.92rem;
+		line-height: 1.4;
+		color: var(--text);
+	}
+
 	.rlayout {
 		display: flex;
 		flex-direction: column;
@@ -812,6 +910,11 @@
 	.readout .r1 {
 		display: block;
 		font-weight: 700;
+	}
+	.readout .rland {
+		font-weight: 400;
+		color: var(--accent);
+		margin-left: 4px;
 	}
 	.readout .r2 {
 		display: block;
@@ -955,14 +1058,21 @@
 	}
 	.rgut .bl {
 		display: flex;
-		align-items: center;
-		justify-content: flex-end;
+		flex-direction: column;
+		align-items: flex-end;
+		justify-content: center;
 		padding-right: 6px;
-		font-size: 0.7rem;
 		color: var(--muted);
 		white-space: nowrap;
+		line-height: 1.15;
 	}
-	.rgut .bl.on {
+	.rgut .bl .b-deg {
+		font-size: 0.7rem;
+	}
+	.rgut .bl .b-land {
+		display: none;
+	}
+	.rgut .bl.on .b-deg {
 		color: var(--text);
 		font-weight: 700;
 	}
@@ -1081,6 +1191,21 @@
 	@media (min-width: 640px) {
 		.todrill {
 			display: none;
+		}
+		.rgut .bl .b-land {
+			display: block;
+			font-size: 0.58rem;
+			color: var(--muted);
+			opacity: 0.85;
+			max-width: 130px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.rgut .bl.on .b-land {
+			color: var(--accent);
+			opacity: 1;
+			font-weight: 600;
 		}
 	}
 	.gapnote {

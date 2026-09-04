@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Migration Ribbon UX & Birder Analysis — AGY</title>
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #1a202c;
+      --muted: #4a5568;
+      --accent: #0a5940;
+      --accent-soft: #e3f3ec;
+      --accent-light: #238b69;
+      --link: #084298;
+      --warning-bg: #fffbeb;
+      --warning-border: #fef3c7;
+      --warning-text: #92400e;
+      --spring: #10b981;
+      --summer: #f59e0b;
+      --fall: #d97706;
+      --winter: #3b82f6;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 32px 16px 64px;
+    }
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+    header.hero {
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+    }
+    .badge-tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 1.85rem;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.25;
+      margin-bottom: 8px;
+    }
+    .meta-sub {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 20px 0 10px;
+    }
+    p { margin-bottom: 14px; font-size: 0.98rem; }
+    p:last-child { margin-bottom: 0; }
+    ul, ol { margin: 0 0 16px 22px; font-size: 0.96rem; }
+    li { margin-bottom: 6px; }
+
+    /* Comparison Table */
+    .table-wrap {
+      overflow-x: auto;
+      margin: 16px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      padding: 10px 14px;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    .col-issue { font-weight: 600; width: 28%; color: #0f172a; }
+    .col-friction { color: #475569; }
+
+    /* Highlights & callouts */
+    .callout {
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 16px 0;
+      font-size: 0.95rem;
+    }
+    .callout strong { color: var(--accent); }
+
+    /* Visual Mockup Box */
+    .mockup-frame {
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 20px 0;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+    .mockup-header {
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+    }
+    .mockup-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #0f172a;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .summary-banner {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 12px 0 16px;
+    }
+    .summary-headline {
+      font-weight: 700;
+      color: #166534;
+      font-size: 1rem;
+      margin-bottom: 4px;
+    }
+    .summary-details {
+      font-size: 0.88rem;
+      color: #15803d;
+      line-height: 1.5;
+    }
+
+    /* Seasons Bar */
+    .seasons-bar {
+      display: flex;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 8px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-align: center;
+      color: #ffffff;
+      letter-spacing: 0.04em;
+    }
+    .s-win1 { background: #3b82f6; flex: 3; padding: 6px 0; }
+    .s-spr { background: #10b981; flex: 2; padding: 6px 0; }
+    .s-bre { background: #f59e0b; flex: 2; padding: 6px 0; }
+    .s-fal { background: #ea580c; flex: 2; padding: 6px 0; }
+    .s-win2 { background: #3b82f6; flex: 3; padding: 6px 0; }
+
+    /* Mock Grid */
+    .grid-container {
+      display: grid;
+      grid-template-columns: 190px repeat(12, 1fr);
+      gap: 3px;
+      margin: 12px 0;
+      font-size: 0.82rem;
+    }
+    .col-header {
+      text-align: center;
+      font-weight: 700;
+      color: #64748b;
+      padding: 4px 0;
+    }
+    .col-header.active {
+      color: #0f172a;
+      font-weight: 900;
+      background: #e2e8f0;
+      border-radius: 4px 4px 0 0;
+    }
+    .row-label {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding-right: 8px;
+      line-height: 1.25;
+    }
+    .row-band { font-weight: 700; color: #1e293b; font-size: 0.85rem; }
+    .row-landmark { font-size: 0.74rem; color: #64748b; }
+    .cell {
+      height: 38px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .c-0 { background: #f8fafc; color: #cbd5e1; }
+    .c-1 { background: #dcfce7; color: #15803d; }
+    .c-2 { background: #86efac; color: #166534; }
+    .c-3 { background: #22c55e; color: #ffffff; }
+    .c-4 { background: #15803d; color: #ffffff; }
+    .c-active { outline: 2.5px solid #0f172a; outline-offset: -1px; z-index: 1; }
+
+    /* Interactive inspector mockup */
+    .inspector-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .inspector-info h4 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 2px;
+    }
+    .inspector-info p {
+      font-size: 0.85rem;
+      color: #475569;
+      margin: 0;
+    }
+    .btn-action {
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .pill-group {
+      display: inline-flex;
+      background: #f1f5f9;
+      padding: 3px;
+      border-radius: 8px;
+      gap: 2px;
+    }
+    .pill {
+      border: none;
+      background: transparent;
+      padding: 4px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: 6px;
+      color: #64748b;
+      cursor: pointer;
+    }
+    .pill.active {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header class="hero">
+    <span class="badge-tag">UI/UX Architectural Review</span>
+    <h1>Where It Is Through the Year</h1>
+    <p class="meta-sub">
+      Avid Birder Experience &amp; UI Specification · Date: September 4, 2026 · Author: AGY
+    </p>
+  </header>
+
+  <!-- Section 1: The Diagnosis -->
+  <section class="card">
+    <h2>1. The Problem: The "Spreadsheet Disconnect"</h2>
+    <p class="lead">
+      The underlying database rollups and pipeline (0050 table maintaining 18 latitude bands across 8 continental columns) are fast and mathematically rigorous. However, <strong>the current user interface asks the user to act like a statistician decoding a matrix</strong> rather than an avid birder exploring a creature's migratory journey.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-issue">Friction Point</th>
+            <th class="col-friction">Why It Disorients the User</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="col-issue">Abstract Degrees (`40–50°N`)</td>
+            <td class="col-friction">Degrees of latitude do not exist on field maps. In Eastern North America, <code>40–50°N</code> stretches from Philadelphia/Columbus up past Toronto into rural Ontario and Newfoundland. <code>10–20°N</code> is Central America. Users are forced into constant mental translation.</td>
+          </tr>
+          <tr>
+            <td class="col-issue">Poles-to-Equator Matrix Waste</td>
+            <td class="col-friction">For a temperate bird like Baltimore Oriole, <code>60–90°N</code> (Arctic tundra and ice pack) and <code>0–90°S</code> (Southern Hemisphere) are 100% irrelevant. Yet those empty rows take up over half the card's height with hatched lines and slashes.</td>
+          </tr>
+          <tr>
+            <td class="col-issue">The "Diagonal Sweep" Rule</td>
+            <td class="col-friction">The UI caption explicitly instructs: <em>"a diagonal sweep means the bird moves with the seasons and a flat band means it stays put."</em> If a chart requires a user manual to explain that a diagonal line means movement, the metaphor fights human intuition.</td>
+          </tr>
+          <tr>
+            <td class="col-issue">5 Competing Control Dials</td>
+            <td class="col-friction">Users are greeted by: a month slider, a Play button, a detached floating stats card, World vs. Continent buttons, a Continent dropdown, and an Equal weight vs. By checklists toggle. Statistical weighting options belong in documentation, not primary UI chrome.</td>
+          </tr>
+          <tr>
+            <td class="col-issue">Static Cursor Animation</td>
+            <td class="col-friction">The 12 months are already displayed across the horizontal axis. Scrubbing the slider or pressing "Play the year" just moves a rectangular highlight box over static cells. It animates a cursor, not the actual migration of the bird.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Section 2: Birder's Mental Model -->
+  <section class="card">
+    <h2>2. How Birders Mentally Model a Bird's Year</h2>
+    <p>When an avid birder consults a field guide, their mental checklist is biological and geographic, not numerical:</p>
+    <ul>
+      <li><strong>Breeding Season (Summer):</strong> Where does it nest? (e.g. Eastern deciduous woods from the Carolinas to the Great Lakes and southern Canada).</li>
+      <li><strong>Wintering Grounds (Non-breeding):</strong> Where does it spend the winter? (e.g. canopy of Central American coffee plantations, Caribbean, south Florida).</li>
+      <li><strong>Migration Windows (Spring &amp; Fall):</strong> When does it arrive in the spring (late April)? When does it leave in the fall (late August)?</li>
+      <li><strong>Movement Strategy:</strong> Is it a Neotropical long-distance migrant, short-distance migrant, or year-round resident?</li>
+    </ul>
+
+    <div class="callout">
+      <strong>The Key Realization:</strong> A bird's year is a <em>journey</em> with dramatic arrival and departure cliffs. The visualization should immediately highlight this narrative rather than presenting a flat 2D grid.
+    </div>
+  </section>
+
+  <!-- Section 3: The Redesign Mockup -->
+  <section class="card">
+    <h2>3. Proposed Redesigned Experience (Interactive Wireframe)</h2>
+    <p>Here is how the card looks and functions with the recommended UX improvements applied:</p>
+
+    <div class="mockup-frame">
+      <div class="mockup-header">
+        <div class="mockup-title">
+          <span>Where it is through the year</span>
+          <div class="pill-group">
+            <button class="pill active">Eastern N. America</button>
+            <button class="pill">Western N. America</button>
+            <button class="pill">Global</button>
+          </div>
+        </div>
+
+        <!-- 1. The TL;DR Plain-English Summary -->
+        <div class="summary-banner">
+          <div class="summary-headline">🧭 Neotropical Migrant · High Seasonal Movement</div>
+          <div class="summary-details">
+            <strong>Breeds:</strong> Eastern US &amp; S. Canada (May–Aug) · <strong>Winters:</strong> Central America &amp; Caribbean (Oct–Mar)<br>
+            <strong>Peak Arrival:</strong> Early May · <strong>Peak Departure:</strong> Late August / Early September
+          </div>
+        </div>
+
+        <!-- 2. Biological Seasons Timeline -->
+        <div class="seasons-bar">
+          <div class="s-win1">WINTER (Non-breeding)</div>
+          <div class="s-spr">SPRING PASSAGE</div>
+          <div class="s-bre">BREEDING</div>
+          <div class="s-fal">FALL</div>
+          <div class="s-win2">WINTER</div>
+        </div>
+
+        <!-- 3. Range-Cropped Grid with Geographic Landmarks -->
+        <div class="grid-container">
+          <!-- Month Headers -->
+          <div class="col-header"></div>
+          <div class="col-header">Jan</div>
+          <div class="col-header">Feb</div>
+          <div class="col-header">Mar</div>
+          <div class="col-header">Apr</div>
+          <div class="col-header">May</div>
+          <div class="col-header">Jun</div>
+          <div class="col-header active">Jul</div>
+          <div class="col-header">Aug</div>
+          <div class="col-header">Sep</div>
+          <div class="col-header">Oct</div>
+          <div class="col-header">Nov</div>
+          <div class="col-header">Dec</div>
+
+          <!-- Row 50-60N -->
+          <div class="row-label">
+            <span class="row-band">50–60°N</span>
+            <span class="row-landmark">Boreal / S. Canada</span>
+          </div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+          <div class="cell c-0">·</div><div class="cell c-1">1%</div><div class="cell c-2">3%</div>
+          <div class="cell c-2">3%</div><div class="cell c-1">1%</div><div class="cell c-0">·</div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+
+          <!-- Row 40-50N (Selected) -->
+          <div class="row-label">
+            <span class="row-band">40–50°N</span>
+            <span class="row-landmark">Great Lakes / New Eng</span>
+          </div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+          <div class="cell c-1">1%</div><div class="cell c-3">12%</div><div class="cell c-4">15%</div>
+          <div class="cell c-3 c-active">9%</div><div class="cell c-3">8%</div><div class="cell c-1">1%</div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+
+          <!-- Row 30-40N -->
+          <div class="row-label">
+            <span class="row-band">30–40°N</span>
+            <span class="row-landmark">Mid-Atlantic / Midwest</span>
+          </div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+          <div class="cell c-2">4%</div><div class="cell c-4">14%</div><div class="cell c-3">10%</div>
+          <div class="cell c-3">8%</div><div class="cell c-2">6%</div><div class="cell c-1">1%</div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+
+          <!-- Row 20-30N -->
+          <div class="row-label">
+            <span class="row-band">20–30°N</span>
+            <span class="row-landmark">Gulf Coast / S. Florida</span>
+          </div>
+          <div class="cell c-1">1%</div><div class="cell c-1">1%</div><div class="cell c-1">1%</div>
+          <div class="cell c-3">7%</div><div class="cell c-1">1%</div><div class="cell c-0">·</div>
+          <div class="cell c-0">·</div><div class="cell c-1">1%</div><div class="cell c-2">4%</div>
+          <div class="cell c-1">1%</div><div class="cell c-1">1%</div><div class="cell c-1">1%</div>
+
+          <!-- Row 10-20N -->
+          <div class="row-label">
+            <span class="row-band">10–20°N</span>
+            <span class="row-landmark">Central America / Carib</span>
+          </div>
+          <div class="cell c-4">16%</div><div class="cell c-4">14%</div><div class="cell c-3">10%</div>
+          <div class="cell c-2">3%</div><div class="cell c-0">·</div><div class="cell c-0">·</div>
+          <div class="cell c-0">·</div><div class="cell c-0">·</div><div class="cell c-1">1%</div>
+          <div class="cell c-3">8%</div><div class="cell c-4">15%</div><div class="cell c-4">17%</div>
+        </div>
+
+        <!-- 4. Integrated Actionable Inspector -->
+        <div class="inspector-box">
+          <div class="inspector-info">
+            <h4>📍 July · 40–50°N (Great Lakes &amp; New England)</h4>
+            <p><strong>9% average reporting rate</strong> across 19 regions · Core breeding territory</p>
+            <p style="font-size: 0.8rem; color: #64748b; margin-top: 3px;">
+              Top regions: Maryland (24%) · Pennsylvania (21%) · Ontario (18%) · New York (17%)
+            </p>
+          </div>
+          <button class="btn-action">View all 19 regions in Best Time of Year ↓</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4: Implementation Roadmap -->
+  <section class="card">
+    <h2>4. Implementation Roadmap in SvelteKit</h2>
+    <p>These improvements do not require changes to the database migrations (0050) or rollup logic:</p>
+    <ol>
+      <li><strong>Landmark Dictionary (`migration-ribbon.ts`):</strong> Map continent columns + latitude bands to real-world regional names (e.g. <code>NAE + 40 -> 'Great Lakes / New England'</code>).</li>
+      <li><strong>Auto-Cropping Range:</strong> Filter out bands where a species has 0 reporting frequency, keeping only the occupied slice + 1 padding row.</li>
+      <li><strong>Seasonal Phase Banner:</strong> Render the 4-phase biological ribbon above the month row headers.</li>
+      <li><strong>Streamlined Controls:</strong> Move statistical weighting into the expandable <em>"How these numbers are calculated"</em> drawer and clean up the continent selector.</li>
+    </ol>
+  </section>
+</div>
+
+</body>
+</html>
