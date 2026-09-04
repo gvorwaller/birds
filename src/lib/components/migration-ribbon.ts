@@ -221,11 +221,18 @@ export const LANDMARKS: Record<string, Record<number, string>> = {
 };
 
 export function landmarkFor(band: number, col: RibbonColumn | null): string | null {
-	if (col && LANDMARKS[col]?.[band]) {
-		return LANDMARKS[col][band];
+	if (col) {
+		return LANDMARKS[col]?.[band] ?? null;
 	}
 	return LANDMARKS.WORLD[band] ?? null;
 }
+
+/** Band width in degrees (10° per row: 80, 70, 60...). */
+export const BAND_STEP = Math.abs(BANDS[0] - BANDS[1]);
+/** Half a band width in degrees (5°), used for band centroids. */
+export const BAND_HALF = BAND_STEP / 2;
+/** Centroid delta threshold to distinguish latitudinal migration from stationary range (8° = 80% of a band step). */
+export const SHIFT_THRESHOLD = BAND_STEP * 0.8;
 
 export interface MigrationSummary {
 	hasData: boolean;
@@ -292,7 +299,7 @@ export function activeBands(grid: RibbonGridClient, s: RibbonState, fullGlobe?: 
  * from the frequency distribution.
  */
 export function migrationSummary(grid: RibbonGridClient, s: RibbonState): MigrationSummary {
-	const col = s.view === 'cont' && s.contView !== 'ALL' ? (s.contView ?? s.cont ?? HOME_COLUMN) : null;
+	const col = s.view === 'cont' && s.contView !== 'ALL' ? s.contView : null;
 	const mode = grid.modes[s.weight];
 
 	// Extract peak band and frequency per month
@@ -301,7 +308,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	for (let m = 0; m < 12; m++) {
 		let maxF = 0;
-		let peakBand = 40;
+		let peakBand: number | null = null;
 		let sumLatF = 0;
 		let sumF = 0;
 
@@ -317,18 +324,20 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			if (cell && cell.f > 0) {
 				totalObserved += cell.f;
 				sumF += cell.f;
-				sumLatF += cell.f * (band + 5); // centroid of the 10° band
+				sumLatF += cell.f * (band + BAND_HALF); // centroid of the band
 				if (cell.f > maxF) {
 					maxF = cell.f;
 					peakBand = band;
 				}
 			}
 		}
-		const avgLat = sumF > 0 ? sumLatF / sumF : peakBand + 5;
-		monthlyPeaks.push({ month: m + 1, band: peakBand, maxF, avgLat });
+		if (sumF > 0 && peakBand !== null) {
+			const avgLat = sumLatF / sumF;
+			monthlyPeaks.push({ month: m + 1, band: peakBand, maxF, avgLat });
+		}
 	}
 
-	if (totalObserved === 0) {
+	if (totalObserved === 0 || monthlyPeaks.length === 0) {
 		return {
 			hasData: false,
 			headline: 'Seasonal Distribution',
@@ -337,15 +346,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		};
 	}
 
-	const observed = monthlyPeaks.filter((p) => p.maxF > 0);
-	if (observed.length === 0) {
-		return {
-			hasData: false,
-			headline: 'Seasonal Distribution',
-			details: 'Survey data in this region is limited or the species has zero recorded sightings.',
-			span: null
-		};
-	}
+	const observed = monthlyPeaks;
 
 	// Guard against sparse / single-month data making unsupported annual claims (CODEX1 Blocker 2)
 	if (observed.length === 1) {
@@ -377,7 +378,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	const southPeak = sorted[sorted.length - 1];
 	const deltaLat = northPeak.avgLat - southPeak.avgLat;
 
-	if (deltaLat < 8) {
+	if (deltaLat < SHIFT_THRESHOLD) {
 		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
 		if (observed.length === 12) {
 			return {
@@ -395,12 +396,12 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		};
 	}
 
-	// Group months near northern and southern extremes (within 5 degrees of peak avgLat)
+	// Group months near northern and southern extremes (within half a band of peak avgLat)
 	const northMonths = observed
-		.filter((p) => p.avgLat >= northPeak.avgLat - 5)
+		.filter((p) => p.avgLat >= northPeak.avgLat - BAND_HALF)
 		.map((p) => p.month);
 	const southMonths = observed
-		.filter((p) => p.avgLat <= southPeak.avgLat + 5)
+		.filter((p) => p.avgLat <= southPeak.avgLat + BAND_HALF)
 		.map((p) => p.month);
 
 	const northStr = formatWindow(northMonths);

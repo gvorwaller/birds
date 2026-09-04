@@ -646,9 +646,14 @@ describe('landmarkFor', () => {
 		expect(landmarkFor(0, 'SA')).toBe('Amazonia, Colombia & Ecuador');
 	});
 
-	it('falls back to WORLD landmarks when continent has no override', () => {
+	it('resolves WORLD landmarks when column is null (World view)', () => {
 		expect(landmarkFor(40, null)).toBe('Mid-Latitudes North');
-		expect(landmarkFor(-40, 'EU')).toBe('Mid-Latitudes South');
+		expect(landmarkFor(-40, null)).toBe('Mid-Latitudes South');
+	});
+
+	it('returns null when a continent does not span that latitude (no silent fallback)', () => {
+		expect(landmarkFor(-40, 'EU')).toBeNull();
+		expect(landmarkFor(-90, 'NAE')).toBeNull();
 	});
 });
 
