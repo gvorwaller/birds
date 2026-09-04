@@ -129,16 +129,21 @@
 							<li>
 								<strong>Where it is through the year</strong> — every species page
 								now carries a migration ribbon above Best time of year: latitude
-								bands by month, colored by how often the species was reported. It
-								opens to World view on a phone or tablet and to All continents
-								(starting on your home column) at desktop widths, and is
-								switchable to any single continent or all of them side by side. An
-								equal-weight average keeps one heavily-birded country from
-								drowning out the rest; a by-checklist average is one tap away.
-								Pick a band and month to see the loaded regions behind them, and
-								tap a region there to chart it in Best time of year as a third
-								pick alongside the closest and best regions. A Play button steps
-								through the year automatically (off under reduced motion). On a
+								bands by month, colored by how often the species was reported. A
+								seasonal summary card derives latitudinal shifts and geographic
+								landmarks directly from monthly reporting data, hedging when
+								observations span partial months. The chart automatically crops to
+								the species' occupied latitudinal range with a Latitudes toggle for
+								the full globe. Latitude rows feature geographic landmark anchors on
+								larger viewports and in the readout. It opens to World view on a phone
+								or tablet and to All continents (starting on your home column) at
+								desktop widths, and is switchable to any single continent or all of
+								them side by side. An equal-weight average keeps one heavily-birded
+								country from drowning out the rest; a by-checklist average is one
+								tap away. Pick a band and month to see the loaded regions behind
+								them, and tap a region there to chart it in Best time of year as a
+								third pick alongside the closest and best regions. A Play button
+								steps through the year automatically (off under reduced motion). On a
 								phone, tap a latitude row and choose the month with the slider; on
 								larger screens tap any square.
 							</li>

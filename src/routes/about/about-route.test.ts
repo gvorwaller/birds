@@ -46,4 +46,16 @@ describe("About route and navigation", () => {
 			"On a phone, tap a latitude row and choose the month with the slider; on larger screens tap any square.",
 		);
 	});
+
+	it("v0.1.6 describes seasonal summary card, auto-crop latitudes toggle, and landmarks (td-476c32)", () => {
+		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		const entry = content.slice(start, end);
+		const normalized = entry.replace(/\s+/g, " ");
+		expect(normalized).toContain("seasonal summary card");
+		expect(normalized).toContain("occupied latitudinal range");
+		expect(normalized).toContain("Latitudes toggle");
+		expect(normalized).toContain("geographic landmark anchors");
+	});
 });

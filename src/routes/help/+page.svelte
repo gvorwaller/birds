@@ -364,6 +364,17 @@
 						Best time of year: a grid of latitude band (rows) by month
 						(columns) showing how often the species was reported — each region
 						counts in the band and column of its own centre point.
+						A <strong>summary card</strong> above the chart highlights the
+						species' seasonal distribution (e.g. furthest-north vs. furthest-south
+						latitudinal shift or year-round presence) and landmarks derived directly
+						from monthly reporting rates, hedged when seasonal coverage is
+						sparse.
+						The chart automatically crops to the <strong>Species range</strong>
+						(occupied latitude bands plus one buffer row), switchable via the
+						<strong>Latitudes</strong> toggle to <strong>Full globe</strong> to view all 18
+						bands from 90°N to 90°S.
+						Latitude rows are labeled with geographic landmarks on wider screens
+						and in the readout to aid orientation.
 						<strong>Equal weight</strong> counts each country once inside its
 						continent and each continent once in the world row, so one
 						heavily-birded country can't drown out the rest; regions inside a

@@ -16,4 +16,13 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		);
 		expect(content).not.toContain("Tapping a cell opens the regions behind it");
 	});
+
+	it("describes the seasonal summary card and Latitudes toggle (td-476c32)", () => {
+		const content = readFileSync("src/routes/help/+page.svelte", "utf8");
+		const normalized = content.replace(/\s+/g, " ");
+		expect(normalized).toContain("summary card");
+		expect(normalized).toContain("Species range");
+		expect(normalized).toContain("Full globe");
+		expect(normalized).toContain("geographic landmarks");
+	});
 });

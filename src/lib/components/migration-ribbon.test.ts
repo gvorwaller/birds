@@ -685,6 +685,25 @@ describe('occupiedBands & activeBands', () => {
 		expect(bands).toEqual([50, 40, 30, 20]);
 	});
 
+	it('aggregates every drawn column in All continents mode across disjoint hemispheres (CODEX1 P1)', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		const bMinus30 = bandIndex(-30);
+		const ciNAE = COLUMNS.indexOf('NAE');
+		const ciSA = COLUMNS.indexOf('SA');
+
+		// NAE at 40° in June
+		grid.modes.equal.cols[b40][ciNAE][5] = { f: 0.3, n: 500, state: 'reported', low: false, excluded: 0 };
+		// SA at -30° in December
+		grid.modes.equal.cols[bMinus30][ciSA][11] = { f: 0.3, n: 500, state: 'reported', low: false, excluded: 0 };
+
+		// In All continents mode, s.cont is typically non-null ('NAE'), but contView is 'ALL'
+		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
+		const bands = occupiedBands(grid, s);
+		// Span covers 40° down to -30°, plus 1 buffer band above (50°) and below (-40°)
+		expect(bands).toEqual([50, 40, 30, 20, 10, 0, -10, -20, -30, -40]);
+	});
+
 	it('activeBands respects fullGlobe flag', () => {
 		const grid = populatedGrid([40, 30]);
 		const s = baseState({ view: 'world' });
@@ -724,7 +743,7 @@ describe('migrationSummary', () => {
 		expect(summary.details).toContain('Dec–Jan');
 	});
 
-	it('identifies resident pattern when latitude does not shift', () => {
+	it('identifies resident pattern when latitude does not shift across all 12 months', () => {
 		const grid = emptyGrid();
 		const b40 = bandIndex(40);
 		for (let m = 0; m < 12; m++) {
@@ -736,6 +755,39 @@ describe('migrationSummary', () => {
 		expect(summary.headline).toBe('Year-Round Presence');
 		expect(summary.span).toBe('Consistent year-round range');
 		expect(summary.details).toContain('Mid-Latitudes North');
+	});
+
+	it('handles single-month observation without claiming year-round presence (CODEX1 P1)', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		// Single June observation
+		grid.modes.equal.world[b40][5] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Sparse Seasonal Data');
+		expect(summary.span).toBe('Recorded in 1 of 12 months');
+		expect(summary.details).toContain('June');
+		expect(summary.headline).not.toContain('Year-Round');
+		expect(summary.span).not.toContain('Consistent year-round range');
+	});
+
+	it('handles partial-year observation without claiming full annual cycle (CODEX1 P1)', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		// May, June, July only
+		for (let m = 4; m <= 6; m++) {
+			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+		}
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Limited Seasonal Data');
+		expect(summary.span).toBe('Recorded in 3 of 12 months');
+		expect(summary.details).toContain('May–Jul');
+		expect(summary.headline).not.toContain('Year-Round');
 	});
 });
 

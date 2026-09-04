@@ -239,24 +239,18 @@ export interface MigrationSummary {
  * (plus 1 buffer band above and below).
  */
 export function occupiedBands(grid: RibbonGridClient, s: RibbonState): number[] {
-	const col = s.view === 'cont' ? s.cont : null;
 	const mode = grid.modes[s.weight];
+	const cols = drawnColumns(s);
 	const reportedBands: number[] = [];
 
 	for (let bi = 0; bi < BANDS.length; bi++) {
 		const band = BANDS[bi];
 		let hasData = false;
 		for (let m = 0; m < 12; m++) {
-			if (col != null) {
-				const ci = COLUMNS.indexOf(col);
-				const cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
-				if (cell && (cell.state === 'reported' || cell.f > 0)) {
-					hasData = true;
-					break;
-				}
-			} else if (s.view === 'cont' && s.contView === 'ALL') {
-				for (let ci = 0; ci < COLUMNS.length; ci++) {
-					const cell = mode.cols[bi]?.[ci]?.[m];
+			if (s.view === 'cont') {
+				for (const c of cols) {
+					const ci = COLUMNS.indexOf(c);
+					const cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
 					if (cell && (cell.state === 'reported' || cell.f > 0)) {
 						hasData = true;
 						break;
@@ -298,7 +292,7 @@ export function activeBands(grid: RibbonGridClient, s: RibbonState, fullGlobe?: 
  * from the frequency distribution.
  */
 export function migrationSummary(grid: RibbonGridClient, s: RibbonState): MigrationSummary {
-	const col = s.view === 'cont' ? (s.cont ?? HOME_COLUMN) : null;
+	const col = s.view === 'cont' && s.contView !== 'ALL' ? (s.contView ?? s.cont ?? HOME_COLUMN) : null;
 	const mode = grid.modes[s.weight];
 
 	// Extract peak band and frequency per month
@@ -353,6 +347,31 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		};
 	}
 
+	// Guard against sparse / single-month data making unsupported annual claims (CODEX1 Blocker 2)
+	if (observed.length === 1) {
+		const p = observed[0];
+		const landmark = landmarkFor(p.band, col) ?? bandLabel(p.band);
+		return {
+			hasData: true,
+			headline: 'Sparse Seasonal Data',
+			details: `Reported only in ${MONTHS[p.month - 1]}, centered around ${landmark}. Additional survey data needed to determine annual range.`,
+			span: 'Recorded in 1 of 12 months'
+		};
+	}
+
+	if (observed.length < 4) {
+		const monthsStr = formatWindow(observed.map((p) => p.month));
+		const sorted = [...observed].sort((a, b) => b.avgLat - a.avgLat);
+		const northPeak = sorted[0];
+		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		return {
+			hasData: true,
+			headline: 'Limited Seasonal Data',
+			details: `Reported in ${monthsStr}, centered near ${landmark}. Data across other months is currently insufficient to establish an annual migration pattern.`,
+			span: `Recorded in ${observed.length} of 12 months`
+		};
+	}
+
 	const sorted = [...observed].sort((a, b) => b.avgLat - a.avgLat);
 	const northPeak = sorted[0];
 	const southPeak = sorted[sorted.length - 1];
@@ -360,11 +379,19 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	if (deltaLat < 8) {
 		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		if (observed.length === 12) {
+			return {
+				hasData: true,
+				headline: 'Year-Round Presence',
+				details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
+				span: 'Consistent year-round range'
+			};
+		}
 		return {
 			hasData: true,
-			headline: 'Year-Round Presence',
-			details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
-			span: 'Consistent year-round range'
+			headline: 'Stationary Occurrence',
+			details: `Reported across ${observed.length} months with little latitudinal shift, centered around ${landmark}.`,
+			span: `Recorded in ${observed.length} of 12 months`
 		};
 	}
 
@@ -380,12 +407,16 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	const southStr = formatWindow(southMonths);
 	const northLandmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
 	const southLandmark = landmarkFor(southPeak.band, col) ?? bandLabel(southPeak.band);
+	const span =
+		observed.length === 12
+			? `${Math.round(deltaLat)}° latitudinal shift across the year`
+			: `${Math.round(deltaLat)}° latitudinal shift (${observed.length}/12 months observed)`;
 
 	return {
 		hasData: true,
 		headline: 'Seasonal Latitudinal Shift',
 		details: `Reported furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
-		span: `${Math.round(deltaLat)}° latitudinal shift across the year`
+		span
 	};
 }
 
