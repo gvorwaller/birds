@@ -188,25 +188,80 @@ export async function countriesList(): Promise<Region[]> {
 export function filterCountriesNeedingFrequencyLoad(
 	countries: readonly Region[],
 	sub1ByCountry: ReadonlyMap<string, readonly Pick<Region, 'code'>[]>,
-	loadedRegionCodes: ReadonlySet<string>
+	loadedRegionCodes: ReadonlySet<string>,
+	terminalRegionCodes: ReadonlySet<string> = new Set()
 ): Region[] {
 	return [...countries]
 		.filter((country) => {
 			const children = sub1ByCountry.get(country.code) ?? [];
 			const childrenComplete =
-				children.length > 0 && children.every((child) => loadedRegionCodes.has(child.code));
+				children.length > 0 &&
+				children.every(
+					(child) => loadedRegionCodes.has(child.code) || terminalRegionCodes.has(child.code)
+				);
 			if (country.code === 'US') return !childrenComplete;
-			return !loadedRegionCodes.has(country.code) && !childrenComplete;
+			return (
+				!loadedRegionCodes.has(country.code) &&
+				!terminalRegionCodes.has(country.code) &&
+				!childrenComplete
+			);
 		})
 		.sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
 }
 
+export interface FailedFrequencyAttemptForPicker {
+	locCode: string;
+	regionCode: string | null;
+	error: string | null;
+}
+
+const ZERO_CHECKLISTS_ERROR = 'Barchart has zero checklists in every week — nothing to store.';
+const HTTP_500_ERROR = 'eBird returned HTTP 500 for this request.';
+
+/**
+ * Failed locations that are resolved for the new-load picker even though no
+ * frequency row can exist. Zero-checklist exports are terminal immediately.
+ * A deterministic HTTP 500 is terminal only after its country job has ended
+ * failed/cancelled and no retry for that country is active. Other failures
+ * stay visible so timeouts, rate limits, and credential problems are not
+ * mistaken for completed geography.
+ */
+export function terminalFrequencyAttemptCodes(
+	attempts: readonly FailedFrequencyAttemptForPicker[],
+	terminalCountryCodes: ReadonlySet<string>,
+	activeCountryCodes: ReadonlySet<string>
+): Set<string> {
+	const terminal = new Set<string>();
+	for (const attempt of attempts) {
+		if (attempt.error === ZERO_CHECKLISTS_ERROR) {
+			terminal.add(attempt.locCode);
+			continue;
+		}
+		if (attempt.error !== HTTP_500_ERROR) continue;
+		const parsed = parseRegionCode(attempt.regionCode ?? attempt.locCode);
+		if (
+			parsed &&
+			terminalCountryCodes.has(parsed.country) &&
+			!activeCountryCodes.has(parsed.country)
+		) {
+			terminal.add(attempt.locCode);
+		}
+	}
+	return terminal;
+}
+
 /** World country list reduced to unfinished frequency-load work, name-sorted. */
 export async function countriesNeedingFrequencyLoad(
-	loadedRegionCodes: ReadonlySet<string>
+	loadedRegionCodes: ReadonlySet<string>,
+	terminalRegionCodes: ReadonlySet<string> = new Set()
 ): Promise<Region[]> {
 	const idx = await regionIndex();
-	return filterCountriesNeedingFrequencyLoad(idx.countries, idx.sub1ByCountry, loadedRegionCodes);
+	return filterCountriesNeedingFrequencyLoad(
+		idx.countries,
+		idx.sub1ByCountry,
+		loadedRegionCodes,
+		terminalRegionCodes
+	);
 }
 
 /** A country's subnational1 regions, name-sorted. Replaces `subregions(…, 'subnational1')` on read paths. */

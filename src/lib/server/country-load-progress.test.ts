@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { filterCountriesNeedingFrequencyLoad, type Region } from "./regions";
+import {
+  filterCountriesNeedingFrequencyLoad,
+  terminalFrequencyAttemptCodes,
+  type Region,
+} from "./regions";
 
 function country(code: string, name: string): Region {
   return {
@@ -67,5 +71,73 @@ describe("unfinished country picker", () => {
         new Set(["CC"]),
       ),
     ).toEqual([]);
+  });
+
+  it("removes a country when every child is loaded or terminal", () => {
+    expect(
+      filterCountriesNeedingFrequencyLoad(
+        [countries[2]],
+        children,
+        new Set(["AA-1"]),
+        new Set(["AA-2"]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("removes a childless country after its countrywide attempt is terminal", () => {
+    expect(
+      filterCountriesNeedingFrequencyLoad(
+        [countries[3]],
+        children,
+        new Set(),
+        new Set(["CC"]),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("terminal frequency attempts for the picker", () => {
+  const zeroChecklists =
+    "Barchart has zero checklists in every week — nothing to store.";
+  const http500 = "eBird returned HTTP 500 for this request.";
+
+  it("treats valid zero-checklist results as terminal", () => {
+    expect(
+      terminalFrequencyAttemptCodes(
+        [{ locCode: "AA-1", regionCode: "AA-1", error: zeroChecklists }],
+        new Set(),
+        new Set(),
+      ),
+    ).toEqual(new Set(["AA-1"]));
+  });
+
+  it("treats HTTP 500 as terminal only after the country job ends", () => {
+    const attempt = [{ locCode: "AA-2", regionCode: "AA-2", error: http500 }];
+    expect(
+      terminalFrequencyAttemptCodes(attempt, new Set(["AA"]), new Set()),
+    ).toEqual(new Set(["AA-2"]));
+    expect(
+      terminalFrequencyAttemptCodes(
+        attempt,
+        new Set(["AA"]),
+        new Set(["AA"]),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("keeps retryable failures unfinished", () => {
+    expect(
+      terminalFrequencyAttemptCodes(
+        [
+          {
+            locCode: "AA-2",
+            regionCode: "AA-2",
+            error: "eBird did not respond within 30 seconds.",
+          },
+        ],
+        new Set(["AA"]),
+        new Set(),
+      ),
+    ).toEqual(new Set());
   });
 });

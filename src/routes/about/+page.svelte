@@ -121,6 +121,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Cleaner worldwide loading</strong> — the country picker now removes
+								countries whose remaining regional locations were conclusively resolved as
+								no-data or quarantined after repeated unavailable responses, while temporary
+								failures and active retries remain visible.
+							</li>
+							<li>
 								<strong>Where it is through the year</strong> — every species page
 								now carries a migration ribbon above Best time of year: latitude
 								bands by month, colored by how often the species was reported. It

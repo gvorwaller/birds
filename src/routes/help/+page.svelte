@@ -336,7 +336,9 @@
 						a <strong>Country</strong> above the region select to load
 						anywhere eBird covers. That picker is alphabetical and only shows
 						countries that do not yet have either countrywide coverage or every
-						regional row;
+						regional location resolved. A location eBird confirms has no checklist
+						data—or a location quarantined after repeated unavailable responses—counts as
+						resolved, so it does not leave an otherwise completed country in the picker;
 						countries with coarse or no state-level
 						divisions offer an <strong>Entire {'{Country}'}</strong> whole-country
 						load instead (not offered for the US, whose bar-chart export would

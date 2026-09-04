@@ -12,6 +12,7 @@ import {
   regionCoordsFor,
   regionLabels,
   subnational1Of,
+  terminalFrequencyAttemptCodes,
   validateRegionCode,
 } from "$server/regions";
 import { sweepAreaHotspots } from "$server/hotspot-sweep";
@@ -157,13 +158,19 @@ interface CorrectionRow {
   detected_at: string;
 }
 
+interface CountryJobStateRow {
+  country_code: string;
+  active: boolean;
+  terminal: boolean;
+}
+
 // Inventory of stored barchart data. Reads Postgres (and the official-API
 // region-list cache for country/region names) — never ebird.org/barchartData.
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
 
-  const [loadedRes, failedRes, correctionsRes, apiKey] = await Promise.all([
+  const [loadedRes, failedRes, correctionsRes, countryJobStateRes, apiKey] = await Promise.all([
     query<LoadedRow>(
       `SELECT loc_code, loc_kind, loc_name, begin_year, end_year, n_species,
               n_unmatched, fetched_at, region_code,
@@ -187,6 +194,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
          JOIN frequency_fetch f ON f.loc_code = a.loc_code
          LEFT JOIN taxonomy_cache t ON t.species_code = a.species_code
         ORDER BY a.detected_at DESC, f.loc_name, t.com_name NULLS LAST, a.species_code, a.week`,
+    ),
+    query<CountryJobStateRow>(
+      `SELECT split_part(dedup_key, ':', 2) AS country_code,
+              bool_or(status IN ('pending', 'running')) AS active,
+              bool_or(status IN ('failed', 'cancelled')) AS terminal
+         FROM jobs
+        WHERE type IN ('analyze_counties', 'load_region')
+          AND dedup_key IS NOT NULL
+        GROUP BY split_part(dedup_key, ':', 2)`,
     ),
     getEbirdApiKey(userId),
   ]);
@@ -233,9 +249,24 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const loadedRegionCodes = new Set(
     loadedRes.rows.filter((r) => r.loc_kind === "region").map((r) => r.loc_code),
   );
-  const countryOptions = (await countriesNeedingFrequencyLoad(loadedRegionCodes)).map(
-    (r) => ({ code: r.code, name: r.name }),
+  const activeCountryCodes = new Set(
+    countryJobStateRes.rows.filter((r) => r.active).map((r) => r.country_code),
   );
+  const terminalCountryCodes = new Set(
+    countryJobStateRes.rows.filter((r) => r.terminal).map((r) => r.country_code),
+  );
+  const terminalRegionCodes = terminalFrequencyAttemptCodes(
+    failedRes.rows.map((r) => ({
+      locCode: r.loc_code,
+      regionCode: r.region_code,
+      error: r.error,
+    })),
+    terminalCountryCodes,
+    activeCountryCodes,
+  );
+  const countryOptions = (
+    await countriesNeedingFrequencyLoad(loadedRegionCodes, terminalRegionCodes)
+  ).map((r) => ({ code: r.code, name: r.name }));
   const countryOptionCodes = new Set(countryOptions.map((c) => c.code));
 
   const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
