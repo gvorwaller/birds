@@ -51,6 +51,10 @@
     .rlayout > .rmain > .ribbon { order: 2; }
     .rlayout > .readout { order: 3; }
     .rlayout > .todrill { order: 4; }
+    /* With 48px rows the phone chart is taller than the screen, so the result must
+       stay on screen while the chart scrolls: stick it to the viewport bottom, above
+       the app's bottom nav (CC1 Safari drive 2026-09-03, TD-C acceptance). */
+    .rlayout > .readout { position: sticky; bottom: calc(var(--nav-h, 0px) + env(safe-area-inset-bottom, 0px)); z-index: 2; background: var(--card); box-shadow: 0 -2px 8px rgba(0,0,0,.06); }
     .rlayout > .rmain > .toolbar { order: 5; }
     .rlayout > .rmain > #gapnote { order: 6; }
     .rlayout > .rmain > #prevCaption { order: 7; }
