@@ -27,12 +27,21 @@ describe("About route and navigation", () => {
 
 	// GROK P3 (td-950907): the v0.1.6 entry must describe the migration
 	// ribbon's actual phone behavior (band-only picking, P1-1), not claim it
-	// "works the same way" on a phone as on a desktop.
+	// "works the same way" on a phone as on a desktop. CODEX1 re-check:
+	// scope the assertion to the v0.1.6 entry itself (between its own
+	// `<!-- v0.1.6 -->` marker and the next `<!-- v0.1.` marker) — a plain
+	// whole-file search would pass even if this sentence leaked into a
+	// different version's entry instead.
 	it("v0.1.6 describes the phone-specific migration ribbon interaction", () => {
 		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		expect(start, "v0.1.6 entry marker not found").toBeGreaterThan(-1);
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		expect(end, "next version marker not found after v0.1.6").toBeGreaterThan(start);
+		const entry = content.slice(start, end);
 		// Source text wraps across lines; collapse whitespace the way a
 		// browser would render it before matching the full sentence.
-		const normalized = content.replace(/\s+/g, " ");
+		const normalized = entry.replace(/\s+/g, " ");
 		expect(normalized).toContain(
 			"On a phone, tap a latitude row and choose the month with the slider; on larger screens tap any square.",
 		);

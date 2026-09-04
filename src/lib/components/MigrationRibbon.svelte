@@ -1233,9 +1233,15 @@
 			   below the viewport after a tap -- a real user saw nothing change,
 			   failing "readout visible after a tap on a phone". Pin it to the
 			   bottom of the viewport, above the bottom nav, while the chart
-			   scrolls; it returns to normal flow once the page scrolls past it. */
+			   scrolls; it returns to normal flow once the page scrolls past it.
+			   CODEX1 re-check: `--nav-h` (56px) is the TOP nav; the fixed
+			   phone nav is `.bottom-nav` (+layout.svelte), sized by
+			   `--bottomnav-h` (64px, app.css) plus its own safe-area padding
+			   and z-index 1000 -- using the wrong token left the readout's
+			   bottom 8px behind the bottom nav. `--bottomnav-h` is the
+			   correct clearance. */
 			position: sticky;
-			bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+			bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom, 0px));
 			z-index: 2;
 			background: var(--card);
 			box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);

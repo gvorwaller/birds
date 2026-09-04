@@ -157,22 +157,59 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(nonPhoneBranch).not.toContain('Choose a month with the slider');
 	});
 
+	// Extracts the body of the FIRST `selector { ... }` rule found at or
+	// after `from` in `text` (simple one-level rules only — no nested
+	// braces to balance, which is all this file's CSS ever has).
+	function ruleBodyAfter(text: string, selector: string, from: number): string {
+		const at = text.indexOf(selector, from);
+		expect(at, `selector "${selector}" not found after offset ${from}`).toBeGreaterThan(-1);
+		const braceStart = text.indexOf('{', at);
+		const braceEnd = text.indexOf('}', braceStart);
+		return text.slice(braceStart + 1, braceEnd);
+	}
+
 	// CC1 P2 (Safari drive of bbc9426, 390x731): 18 bands at the phone's
 	// 48px touch row make the World chart 884px tall, so the readout — in
 	// normal flow below the chart — sat far below the viewport after a tap.
-	// Pin it to the bottom of the viewport (above the bottom nav) inside the
+	// Pin it to the bottom of the viewport, above the bottom nav, inside the
 	// phone breakpoint specifically; the desktop sticky-top rule is separate
 	// and must stay untouched.
-	it('pins the readout to the bottom of the viewport in the phone breakpoint (CC1 P2)', () => {
+	it('pins the readout to the bottom of the viewport, ABOVE THE BOTTOM NAV, in the phone ' +
+		'breakpoint (CODEX1 re-check: --nav-h is the TOP nav, --bottomnav-h is the fixed ' +
+		'phone nav that would otherwise sit on top of it)', () => {
 		const phoneStart = markup.indexOf('@media (max-width: 639px)');
 		const desktopStart = markup.indexOf('@media (min-width: 1024px)');
 		expect(phoneStart).toBeGreaterThan(-1);
 		expect(desktopStart).toBeGreaterThan(phoneStart);
-		const phoneBlock = markup.slice(phoneStart, desktopStart);
-		expect(phoneBlock).toContain('position: sticky');
-		expect(phoneBlock).toContain('bottom: calc(var(--nav-h)');
-		// The desktop sticky-TOP rule for .readout must be unaffected.
-		const desktopBlock = markup.slice(desktopStart);
-		expect(desktopBlock).toContain('top: calc(var(--nav-h)');
+
+		const stickyRuleAt = markup.indexOf('.rlayout > .readout', phoneStart);
+		const stickyBraceStart = markup.indexOf('{', stickyRuleAt);
+		const stickyBraceEnd = markup.indexOf('}', stickyBraceStart);
+		const phoneReadout = markup.slice(stickyBraceStart + 1, stickyBraceEnd);
+		expect(phoneReadout).toContain('position: sticky');
+		expect(phoneReadout).toContain(
+			'bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom, 0px));'
+		);
+		expect(phoneReadout).toContain('z-index: 2;');
+		expect(phoneReadout).toContain('background: var(--card);');
+
+		// No OTHER `.readout`-touching rule inside the phone block sets its
+		// own `bottom:` — the plain `.readout { font-size/line-height }`
+		// tweak later in the same block must stay untouched. Search from
+		// right after the sticky rule just parsed, not an unrelated brace.
+		const otherReadoutRule = ruleBodyAfter(markup, '.readout {', stickyBraceEnd + 1);
+		expect(otherReadoutRule).not.toContain('bottom:');
+		expect(markup.indexOf('.readout {', stickyBraceEnd + 1)).toBeLessThan(desktopStart);
+
+		// The base (non-media) `.readout` rule, above every breakpoint, must
+		// never itself set `bottom:` either — only the phone override does.
+		const baseReadout = ruleBodyAfter(markup, '.readout {', 0);
+		expect(baseReadout).not.toContain('bottom:');
+
+		// Desktop's sticky-TOP rule is a SEPARATE, untouched mechanism.
+		const desktopReadout = ruleBodyAfter(markup, '.rlayout > .readout', desktopStart);
+		expect(desktopReadout).toContain('position: sticky');
+		expect(desktopReadout).toContain('top: calc(var(--nav-h) + 12px);');
+		expect(desktopReadout).not.toContain('bottom:');
 	});
 });
