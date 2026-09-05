@@ -46,6 +46,7 @@
 		migrationSummary,
 		nearestBand,
 		pickCell,
+		primaryContinent,
 		readout,
 		reduce,
 		scopeText,
@@ -95,13 +96,33 @@
 	 * `untrack()` (unlike the `wide` effect below). */
 	let phone = $state(false);
 	let reducedMotion = $state(false);
+	const primaryCol = $derived(primaryContinent(grid));
 	let ribbonState = $state<RibbonState>(initialState(false));
+	let lastSpecies = $state<string | null>(null);
 	let fullGlobe = $state(false);
 	const currentBands = $derived(activeBands(grid, ribbonState, fullGlobe));
 	const summary = $derived(migrationSummary(grid, ribbonState));
 	const gutterCol = $derived<RibbonColumn | null>(
-		ribbonState.view === 'cont' && ribbonState.contView !== 'ALL' ? ribbonState.contView : null
+		ribbonState.view === 'cont' && ribbonState.contView !== 'ALL'
+			? ribbonState.contView
+			: (ribbonState.cont ?? primaryCol)
 	);
+
+	$effect(() => {
+		if (speciesCode !== lastSpecies) {
+			lastSpecies = speciesCode;
+			const col = primaryContinent(grid);
+			const current = untrack(() => ribbonState);
+			if (!current.viewTouched) {
+				ribbonState = {
+					...current,
+					view: 'cont',
+					contView: col,
+					cont: col
+				};
+			}
+		}
+	});
 
 	$effect(() => {
 		const bands = currentBands;
@@ -124,7 +145,7 @@
 		const mq = window.matchMedia('(min-width: 1024px)');
 		const apply = (matches: boolean) => {
 			wide = matches;
-			ribbonState = applyWide(untrack(() => ribbonState), matches);
+			ribbonState = applyWide(untrack(() => ribbonState), matches, untrack(() => primaryCol));
 		};
 		apply(mq.matches);
 		const onChange = (e: MediaQueryListEvent) => apply(e.matches);
@@ -286,7 +307,12 @@
 		const svgEl = rscrollEl?.querySelector('svg');
 		if (!svgEl) return;
 		const r = svgEl.getBoundingClientRect();
-		const next = pickCell(ribbonState, geom, e.clientX - r.left, e.clientY - r.top, phone, currentBands);
+		if (r.width <= 0 || r.height <= 0) return;
+		const scaleX = geom.w / r.width;
+		const scaleY = geom.h / r.height;
+		const x = (e.clientX - r.left) * scaleX;
+		const y = (e.clientY - r.top) * scaleY;
+		const next = pickCell(ribbonState, geom, x, y, false, currentBands);
 		if (next) applySelection(next);
 	}
 	function onPointerCancel() {
@@ -453,6 +479,35 @@
 			{/if}
 		</div>
 		<p class="mig-details">{summary.details}</p>
+		{#if summary.breedingRange || summary.winteringRange || summary.migrationWindows}
+			<div class="mig-cards">
+				{#if summary.breedingRange}
+					<div class="mig-card">
+						<span class="mig-card-lbl">{summary.breedingRange.label}</span>
+						<span class="mig-card-val">{summary.breedingRange.window}</span>
+						<span class="mig-card-sub">{summary.breedingRange.landmark}</span>
+					</div>
+				{/if}
+				{#if summary.winteringRange}
+					<div class="mig-card">
+						<span class="mig-card-lbl">{summary.winteringRange.label}</span>
+						<span class="mig-card-val">{summary.winteringRange.window}</span>
+						<span class="mig-card-sub">{summary.winteringRange.landmark}</span>
+					</div>
+				{/if}
+				{#if summary.migrationWindows?.northbound || summary.migrationWindows?.southbound}
+					<div class="mig-card">
+						<span class="mig-card-lbl">Migration Windows</span>
+						{#if summary.migrationWindows.northbound}
+							<span class="mig-card-trans"><strong>Northbound:</strong> {summary.migrationWindows.northbound}</span>
+						{/if}
+						{#if summary.migrationWindows.southbound}
+							<span class="mig-card-trans"><strong>Southbound:</strong> {summary.migrationWindows.southbound}</span>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -633,10 +688,23 @@
 										: col}</text
 								>
 								{#each ML as letter, m (m)}
+									{@const mx = x0 + m * geom.cellW}
+									{@const seasonColor = m === 11 || m <= 1 ? '#64748b' : m >= 2 && m <= 4 ? '#10b981' : m >= 5 && m <= 7 ? '#f59e0b' : '#ea580c'}
+									<rect
+										class="sbar"
+										class:on={m + 1 === ribbonState.month}
+										x={mx + 1}
+										y={geom.headH - 17}
+										width={Math.max(1, geom.cellW - 2)}
+										height={m + 1 === ribbonState.month ? 4 : 2}
+										rx="1"
+										fill={seasonColor}
+										opacity={m + 1 === ribbonState.month ? 1 : 0.45}
+									/>
 									<text
 										class="mtext"
 										class:on={m + 1 === ribbonState.month}
-										x={x0 + m * geom.cellW + geom.cellW / 2}
+										x={mx + geom.cellW / 2}
 										y={geom.headH - 5}
 										text-anchor="middle">{blockW >= 120 ? letter : m % 3 === 0 ? letter : ''}</text
 									>
@@ -644,10 +712,23 @@
 							{/each}
 						{:else}
 							{#each ML as letter, m (m)}
+								{@const mx = m * geom.cellW}
+								{@const seasonColor = m === 11 || m <= 1 ? '#64748b' : m >= 2 && m <= 4 ? '#10b981' : m >= 5 && m <= 7 ? '#f59e0b' : '#ea580c'}
+								<rect
+									class="sbar"
+									class:on={m + 1 === ribbonState.month}
+									x={mx + 1}
+									y={1}
+									width={Math.max(1, geom.cellW - 2)}
+									height={m + 1 === ribbonState.month ? 3 : 2}
+									rx="1"
+									fill={seasonColor}
+									opacity={m + 1 === ribbonState.month ? 1 : 0.45}
+								/>
 								<text
 									class="mtext"
 									class:on={m + 1 === ribbonState.month}
-									x={m * geom.cellW + geom.cellW / 2}
+									x={mx + geom.cellW / 2}
 									y={geom.headH - 6}
 									text-anchor="middle">{letter}</text
 								>
@@ -889,6 +970,58 @@
 		line-height: 1.4;
 		color: var(--text);
 	}
+	.mig-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+		gap: 8px;
+		margin-top: 4px;
+	}
+	.mig-card {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 8px 10px;
+		background: var(--bg-subtle, rgba(0, 0, 0, 0.03));
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+	.mig-card-lbl {
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--accent);
+	}
+	.mig-card-val {
+		font-size: 0.88rem;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.mig-card-sub {
+		font-size: 0.72rem;
+		color: var(--muted);
+		line-height: 1.2;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.mig-card-trans {
+		font-size: 0.75rem;
+		color: var(--text);
+		line-height: 1.3;
+	}
+	.mig-card-trans strong {
+		color: var(--muted);
+		font-weight: 600;
+	}
+
+	.sbar {
+		pointer-events: none;
+		transition: opacity 0.15s ease, height 0.15s ease;
+	}
+	.sbar.on {
+		opacity: 1;
+	}
 
 	.rlayout {
 		display: flex;
@@ -1077,7 +1210,18 @@
 		line-height: 1.1;
 	}
 	.rgut .bl .b-land {
-		display: none;
+		display: block;
+		font-size: 0.58rem;
+		line-height: 1.1;
+		color: var(--muted);
+		max-width: 95px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.rgut .bl.on .b-land {
+		color: var(--accent);
+		font-weight: 600;
 	}
 	.rgut .bl.on .b-deg {
 		color: var(--text);

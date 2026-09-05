@@ -35,6 +35,7 @@ import {
 	pct,
 	pickCell,
 	PRESENT,
+	primaryContinent,
 	readout,
 	reduce,
 	resolveDrillLoad,
@@ -938,6 +939,254 @@ describe('reduce & pickCell with cropped bands (P3-15)', () => {
 		// Click below cropped bands (y = 220 > headH + 4 * 48 = 212) -> null
 		const outside = pickCell(s, geom, 50, 220, false, croppedBands);
 		expect(outside).toBeNull();
+	});
+});
+
+describe('primaryContinent', () => {
+	it('identifies NAE when highest reporting frequency is in North America East', () => {
+		const grid = emptyGrid('balori');
+		// Seed high reporting in NAE
+		const bi40 = bandIndex(40);
+		const ciNAE = colIndex('NAE');
+		for (let m = 4; m < 8; m++) {
+			grid.modes.equal.cols[bi40][ciNAE][m] = {
+				f: 0.45,
+				n: 1000,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		expect(primaryContinent(grid)).toBe('NAE');
+	});
+
+	it('identifies EU when highest reporting frequency is in Europe', () => {
+		const grid = emptyGrid('erorob1');
+		const bi50 = bandIndex(50);
+		const ciEU = colIndex('EU');
+		for (let m = 0; m < 12; m++) {
+			grid.modes.equal.cols[bi50][ciEU][m] = {
+				f: 0.6,
+				n: 500,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		expect(primaryContinent(grid)).toBe('EU');
+	});
+
+	it('falls back to meta.columnsLoaded[0] or HOME_COLUMN when no frequencies recorded', () => {
+		const grid = emptyGrid('blank');
+		grid.meta.columnsLoaded = ['AF'];
+		expect(primaryContinent(grid)).toBe('AF');
+
+		grid.meta.columnsLoaded = [];
+		expect(primaryContinent(grid)).toBe('NAE');
+	});
+});
+
+describe('td-2c7a0b: iPhone heatmap cell selection hit-testing & boundaries', () => {
+	// Mobile geometry: 300px available, single continent or world (12 cols), 48px touch rows
+	const geomMobile = {
+		cont: true,
+		single: true,
+		cols: 12,
+		cellW: 25,
+		rowH: 48,
+		headH: 34,
+		w: 300,
+		h: 34 + BANDS.length * 48
+	};
+
+	it('deliberate tap at center of cell selects exact band AND month (AC 1 & AC 2)', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE', month: 1, band: 40 });
+		// Tapping month 7 (July, col index 6) at band 20 (bi = bandIndex(20)):
+		const bi20 = bandIndex(20);
+		const targetMonth = 7;
+		const colIndexTarget = targetMonth - 1; // 6
+		const cellCenterX = colIndexTarget * geomMobile.cellW + geomMobile.cellW / 2;
+		const cellCenterY = geomMobile.headH + bi20 * geomMobile.rowH + geomMobile.rowH / 2;
+
+		const picked = pickCell(s, geomMobile, cellCenterX, cellCenterY, false);
+		expect(picked).not.toBeNull();
+		expect(picked!.band).toBe(20);
+		expect(picked!.month).toBe(7);
+		expect(picked!.cont).toBe('NAE');
+		expect(picked!.playing).toBe(false);
+	});
+
+	it('hit-tests accurately near all four inner boundaries of a cell', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+		const bi30 = bandIndex(30);
+		const targetMonth = 5; // May, col index 4
+		const x0 = (targetMonth - 1) * geomMobile.cellW; // 100
+		const y0 = geomMobile.headH + bi30 * geomMobile.rowH; // 34 + bi30 * 48
+
+		// Top-left corner
+		const tl = pickCell(s, geomMobile, x0 + 0.1, y0 + 0.1, false)!;
+		expect(tl.band).toBe(30);
+		expect(tl.month).toBe(5);
+
+		// Top-right corner
+		const tr = pickCell(s, geomMobile, x0 + geomMobile.cellW - 0.1, y0 + 0.1, false)!;
+		expect(tr.band).toBe(30);
+		expect(tr.month).toBe(5);
+
+		// Bottom-left corner
+		const bl = pickCell(s, geomMobile, x0 + 0.1, y0 + geomMobile.rowH - 0.1, false)!;
+		expect(bl.band).toBe(30);
+		expect(bl.month).toBe(5);
+
+		// Bottom-right corner
+		const br = pickCell(s, geomMobile, x0 + geomMobile.cellW - 0.1, y0 + geomMobile.rowH - 0.1, false)!;
+		expect(br.band).toBe(30);
+		expect(br.month).toBe(5);
+	});
+
+	it('cross-boundary taps resolve to the next adjacent cell cleanly', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+		const bi30 = bandIndex(30);
+		const yInside = geomMobile.headH + bi30 * geomMobile.rowH + 20;
+
+		// Exact boundary between month 4 and month 5 (x = 100)
+		const month4 = pickCell(s, geomMobile, 99.9, yInside, false)!;
+		expect(month4.month).toBe(4);
+
+		const month5 = pickCell(s, geomMobile, 100.0, yInside, false)!;
+		expect(month5.month).toBe(5);
+	});
+
+	it('coordinates outside the heatmap bounds return null (AC 4)', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+		// In the header area (y < headH)
+		expect(pickCell(s, geomMobile, 100, 10, false)).toBeNull();
+
+		// Negative X
+		expect(pickCell(s, geomMobile, -5, 100, false)).toBeNull();
+
+		// Right of grid (x >= geomMobile.w)
+		expect(pickCell(s, geomMobile, 305, 100, false)).toBeNull();
+
+		// Below grid (y >= geomMobile.h)
+		expect(pickCell(s, geomMobile, 100, geomMobile.h + 5, false)).toBeNull();
+	});
+
+	it('handles responsive SVG viewBox scaling (AC 3 & AC 6)', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+		// Simulating iPhone Safari viewport where svg bounding rect is slightly scaled
+		// e.g. clientWidth = 320.5px while SVG geom.w = 300px
+		const r = { left: 10, top: 50, width: 320.5, height: 958.4 };
+		const scaleX = geomMobile.w / r.width;
+		const scaleY = geomMobile.h / r.height;
+
+		// User taps clientX/clientY targeting band 40, month 6
+		const bi40 = bandIndex(40);
+		const idealSvgX = 5 * geomMobile.cellW + 12;
+		const idealSvgY = geomMobile.headH + bi40 * geomMobile.rowH + 24;
+
+		const clientX = r.left + idealSvgX / scaleX;
+		const clientY = r.top + idealSvgY / scaleY;
+
+		// Transformation used in MigrationRibbon onPointerUp:
+		const mappedX = (clientX - r.left) * scaleX;
+		const mappedY = (clientY - r.top) * scaleY;
+
+		const picked = pickCell(s, geomMobile, mappedX, mappedY, false)!;
+		expect(picked.band).toBe(40);
+		expect(picked.month).toBe(6);
+	});
+});
+
+describe('Structured Field-Guide Seasonal Summary cards', () => {
+	it('populates structured breedingRange, winteringRange, and migrationWindows for migratory species', () => {
+		const grid = emptyGrid('balori');
+		const bi40 = bandIndex(40);
+		const bi10 = bandIndex(10);
+		const bi20 = bandIndex(20);
+
+		// May to August in Maryland/Ohio (40°N)
+		for (let m = 4; m < 8; m++) {
+			grid.modes.equal.world[bi40][m] = {
+				f: 0.5,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// Dec to Feb in Costa Rica/Panama (10°N)
+		for (const m of [11, 0, 1]) {
+			grid.modes.equal.world[bi10][m] = {
+				f: 0.4,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// March, April migration (20°N)
+		for (const m of [2, 3]) {
+			grid.modes.equal.world[bi20][m] = {
+				f: 0.3,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// Sep, Oct migration (20°N)
+		for (const m of [8, 9]) {
+			grid.modes.equal.world[bi20][m] = {
+				f: 0.3,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+
+		expect(summary.hasData).toBe(true);
+		expect(summary.breedingRange).toBeDefined();
+		expect(summary.breedingRange!.label).toBe('Breeding / Summer');
+		expect(summary.breedingRange!.window).toBe('May–Aug');
+		expect(summary.breedingRange!.band).toBe(40);
+
+		expect(summary.winteringRange).toBeDefined();
+		expect(summary.winteringRange!.label).toBe('Wintering');
+		expect(summary.winteringRange!.window).toBe('Dec–Feb');
+		expect(summary.winteringRange!.band).toBe(10);
+
+		expect(summary.migrationWindows).toBeDefined();
+		expect(summary.migrationWindows!.northbound).toBe('Mar–Apr');
+		expect(summary.migrationWindows!.southbound).toBe('Sep–Oct');
+	});
+
+	it('populates Year-Round Range for stationary species', () => {
+		const grid = emptyGrid('carcar');
+		const bi40 = bandIndex(40);
+		for (let m = 0; m < 12; m++) {
+			grid.modes.equal.world[bi40][m] = {
+				f: 0.35,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+
+		expect(summary.hasData).toBe(true);
+		expect(summary.breedingRange).toBeDefined();
+		expect(summary.breedingRange!.label).toBe('Year-Round Range');
+		expect(summary.breedingRange!.window).toBe('All Year');
+		expect(summary.winteringRange).toBeNull();
+		expect(summary.migrationWindows).toBeNull();
 	});
 });
 

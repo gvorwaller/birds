@@ -250,11 +250,55 @@ export function nearestBand(target: number, bands: readonly number[]): number {
 	return nearest;
 }
 
+export interface SeasonalRange {
+	label: string;
+	window: string;
+	landmark: string;
+	band: number;
+}
+
+export interface MigrationWindows {
+	northbound?: string | null;
+	southbound?: string | null;
+}
+
 export interface MigrationSummary {
 	hasData: boolean;
 	headline: string;
 	details: string;
 	span: string | null;
+	breedingRange?: SeasonalRange | null;
+	winteringRange?: SeasonalRange | null;
+	migrationWindows?: MigrationWindows | null;
+}
+
+/**
+ * Determines the species' primary occupied continent column based on cumulative
+ * reporting frequency across all bands and months. Defaults to HOME_COLUMN if empty.
+ */
+export function primaryContinent(grid: RibbonGridClient): RibbonColumn {
+	const mode = grid.modes.equal;
+	let bestCol: RibbonColumn = HOME_COLUMN;
+	let maxScore = -1;
+
+	for (let ci = 0; ci < COLUMNS.length; ci++) {
+		const col = COLUMNS[ci];
+		let score = 0;
+		for (let bi = 0; bi < BANDS.length; bi++) {
+			for (let m = 0; m < 12; m++) {
+				const cell = mode.cols[bi]?.[ci]?.[m];
+				if (cell && (cell.state === 'reported' || cell.f >= PRESENT)) {
+					score += cell.f;
+				}
+			}
+		}
+		if (score > maxScore) {
+			maxScore = score;
+			bestCol = col;
+		}
+	}
+
+	return maxScore > 0 ? bestCol : (grid.meta?.columnsLoaded?.[0] ?? HOME_COLUMN);
 }
 
 /**
@@ -428,19 +472,31 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	if (deltaLat < SHIFT_THRESHOLD) {
 		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		const breedingRange: SeasonalRange = {
+			label: 'Year-Round Range',
+			window: observed.length === 12 ? 'All Year' : formatWindow(observed.map((p) => p.month)),
+			landmark,
+			band: northPeak.band
+		};
 		if (observed.length === 12) {
 			return {
 				hasData: true,
 				headline: 'Year-Round Presence',
 				details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
-				span: 'Consistent year-round range'
+				span: 'Consistent year-round range',
+				breedingRange,
+				winteringRange: null,
+				migrationWindows: null
 			};
 		}
 		return {
 			hasData: true,
 			headline: 'Stationary Occurrence',
 			details: `Reported across ${observed.length} months with little latitudinal shift, centered around ${landmark}.`,
-			span: `Recorded in ${observed.length} of 12 months`
+			span: `Recorded in ${observed.length} of 12 months`,
+			breedingRange,
+			winteringRange: null,
+			migrationWindows: null
 		};
 	}
 
@@ -461,11 +517,61 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			? `${Math.round(deltaLat)}° latitudinal shift across the year`
 			: `${Math.round(deltaLat)}° latitudinal shift (${observed.length}/12 months observed)`;
 
+	const isBorealBreeder = northPeak.band >= 0 && northMonths.some((m) => m >= 5 && m <= 8);
+	const isAustralBreeder = southPeak.band < 0 && southMonths.some((m) => m >= 11 || m <= 2);
+
+	let breedingRange: SeasonalRange;
+	let winteringRange: SeasonalRange;
+
+	if (isAustralBreeder && !isBorealBreeder) {
+		breedingRange = {
+			label: 'Breeding / Summer',
+			window: southStr,
+			landmark: southLandmark,
+			band: southPeak.band
+		};
+		winteringRange = {
+			label: 'Wintering',
+			window: northStr,
+			landmark: northLandmark,
+			band: northPeak.band
+		};
+	} else {
+		breedingRange = {
+			label: 'Breeding / Summer',
+			window: northStr,
+			landmark: northLandmark,
+			band: northPeak.band
+		};
+		winteringRange = {
+			label: 'Wintering',
+			window: southStr,
+			landmark: southLandmark,
+			band: southPeak.band
+		};
+	}
+
+	const coreMonths = new Set([...northMonths, ...southMonths]);
+	const transMonths = observed.map((p) => p.month).filter((m) => !coreMonths.has(m));
+	let northbound: string | null = null;
+	let southbound: string | null = null;
+	if (transMonths.length > 0) {
+		const spring = transMonths.filter((m) => m >= 2 && m <= 6);
+		const fall = transMonths.filter((m) => m >= 7 && m <= 11);
+		if (spring.length > 0) northbound = formatWindow(spring);
+		if (fall.length > 0) southbound = formatWindow(fall);
+	}
+	const migrationWindows: MigrationWindows | null =
+		northbound || southbound ? { northbound, southbound } : null;
+
 	return {
 		hasData: true,
 		headline: 'Seasonal Latitudinal Shift',
 		details: `Range centroid shifts furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
-		span
+		span,
+		breedingRange,
+		winteringRange,
+		migrationWindows
 	};
 }
 
@@ -578,12 +684,14 @@ export interface RibbonState {
 /** wide: cont/ALL/NAE (By continent, All continents, home column selected).
  * phone: world/NAE/null (World view; NAE stays queued as the continent
  * picker's remembered value in case the user switches). Band 40, month 7
- * (owner decision C, mockup `state`). */
-export function initialState(wide: boolean): RibbonState {
+ * (owner decision C, mockup `state`). If `defaultCol` is provided, By-continent
+ * view defaults to that species' primary continent column. */
+export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonState {
+	const col = defaultCol ?? HOME_COLUMN;
 	return {
-		view: wide ? 'cont' : 'world',
-		contView: wide ? 'ALL' : HOME_COLUMN,
-		cont: wide ? HOME_COLUMN : null,
+		view: defaultCol ? 'cont' : (wide ? 'cont' : 'world'),
+		contView: defaultCol ? col : (wide ? 'ALL' : HOME_COLUMN),
+		cont: defaultCol ? col : (wide ? HOME_COLUMN : null),
 		weight: 'equal',
 		band: 40,
 		month: 7,
@@ -596,8 +704,17 @@ export function initialState(wide: boolean): RibbonState {
 }
 
 /** No-op once the user has touched the view toggle (mockup `applyWide`). */
-export function applyWide(s: RibbonState, wide: boolean): RibbonState {
+export function applyWide(s: RibbonState, wide: boolean, defaultCol?: RibbonColumn): RibbonState {
 	if (s.viewTouched) return s;
+	if (defaultCol) {
+		const col = s.cont ?? defaultCol;
+		return {
+			...s,
+			view: 'cont',
+			contView: s.contView === 'ALL' ? 'ALL' : col,
+			cont: col
+		};
+	}
 	return {
 		...s,
 		view: wide ? 'cont' : 'world',
@@ -765,13 +882,9 @@ export function setMonth(s: RibbonState, month: number): RibbonState {
  * pointer travel (cs.md + CODEX1 P1-7) — that threshold check happens in the
  * component; this function is the pure hit-test.
  *
- * `bandOnly` (spec rev 3.3 TD-C, P1-1 — the phone contract): below 640px
- * cells are not tap targets. The scrubber owns the month, so `y` resolves
- * the band and `s.month` passes through UNCHANGED; `x` resolves a continent
- * only in All-continents mode (12-cell column groups, ≥72px each — an
- * acceptable target), stays `null` in World, and is the single continent in
- * single-continent mode. A 48px band row (`geometry(..., phone=true)`) is
- * what makes "tap anywhere in the row" viable.
+ * Tapping a cell on mobile or desktop resolves both the band and the month
+ * (td-2c7a0b). `bandOnly` mode is preserved for cases where row-only selection
+ * is explicitly requested.
  */
 export function pickCell(
 	s: RibbonState,
