@@ -142,14 +142,14 @@ export const LANDMARKS: Record<string, Record<number, string>> = {
 		40: 'Pacific NW & N. California',
 		30: 'S. California & Desert SW',
 		20: 'NW Mexico & Baja',
-		10: 'Mexican Pacific & S. Mexico'
+		10: 'Mexican Pacific Coast'
 	},
 	EU: {
 		70: 'Lapland & Arctic Norway',
 		60: 'Scandinavia, Baltic & Scotland',
 		50: 'British Isles & Central Europe',
 		40: 'Mediterranean & Iberia',
-		30: 'S. Mediterranean & Iberia',
+		30: 'S. Mediterranean, Sicily & Crete',
 		20: 'Canary Islands'
 	},
 	AF: {
@@ -315,6 +315,30 @@ export function activeBands(grid: RibbonGridClient, s: RibbonState, fullGlobe?: 
  * from the frequency distribution.
  */
 export function migrationSummary(grid: RibbonGridClient, s: RibbonState): MigrationSummary {
+	const mode = grid.modes[s.weight];
+
+	// Verify the grid has observations above PRESENT or reported state
+	let hasAnyData = false;
+	for (let bi = 0; bi < BANDS.length; bi++) {
+		for (let m = 0; m < 12; m++) {
+			const cell = mode.world[bi]?.[m];
+			if (cell && (cell.state === 'reported' || cell.f >= PRESENT)) {
+				hasAnyData = true;
+				break;
+			}
+		}
+		if (hasAnyData) break;
+	}
+
+	if (!hasAnyData) {
+		return {
+			hasData: false,
+			headline: 'Seasonal Distribution',
+			details: 'Survey data in this region is limited or the species has zero recorded sightings.',
+			span: null
+		};
+	}
+
 	if (s.view === 'cont' && s.contView === 'ALL') {
 		return {
 			hasData: true,
@@ -325,7 +349,6 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	}
 
 	const col = s.view === 'cont' && s.contView !== 'ALL' ? s.contView : null;
-	const mode = grid.modes[s.weight];
 
 	// Extract peak band and frequency per month
 	const monthlyPeaks: { month: number; band: number; maxF: number; avgLat: number }[] = [];
@@ -346,7 +369,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			} else {
 				cell = mode.world[bi]?.[m];
 			}
-			if (cell && cell.f > 0) {
+			if (cell && cell.f >= PRESENT) {
 				totalObserved += cell.f;
 				sumF += cell.f;
 				sumLatF += cell.f * (band + BAND_HALF); // centroid of the band

@@ -696,7 +696,7 @@ describe('landmarkFor', () => {
 	it('grounds column landmarks to physical and continental geography (GROK review)', () => {
 		// NAW 0 has no land west of 100°W in NA; Central America is in NAE
 		expect(landmarkFor(0, 'NAW')).toBeNull();
-		expect(landmarkFor(10, 'NAW')).toBe('Mexican Pacific & S. Mexico');
+		expect(landmarkFor(10, 'NAW')).toBe('Mexican Pacific Coast');
 		expect(landmarkFor(40, 'NAW')).toBe('Pacific NW & N. California');
 		expect(landmarkFor(50, 'NAW')).toBe('British Columbia & Prairies');
 
@@ -704,9 +704,9 @@ describe('landmarkFor', () => {
 		expect(landmarkFor(0, 'NAE')).toBe('Panama & Costa Rica');
 		expect(landmarkFor(30, 'NAE')).toBe('US Southeast & Mid-Atlantic');
 
-		// EU 20 is Canary Islands (not Sahara, which is Africa); EU 30 is S. Mediterranean & Iberia
+		// EU 20 is Canary Islands (not Sahara, which is Africa); EU 30 is S. Mediterranean, Sicily & Crete
 		expect(landmarkFor(20, 'EU')).toBe('Canary Islands');
-		expect(landmarkFor(30, 'EU')).toBe('S. Mediterranean & Iberia');
+		expect(landmarkFor(30, 'EU')).toBe('S. Mediterranean, Sicily & Crete');
 	});
 
 	it('resolves WORLD landmarks when column is null (World view)', () => {
@@ -803,6 +803,12 @@ describe('migrationSummary', () => {
 		expect(summary.hasData).toBe(false);
 		expect(summary.span).toBeNull();
 		expect(summary.headline).toBe('Seasonal Distribution');
+
+		// Also returns hasData: false in All continents view when grid has no data
+		const sAll = baseState({ view: 'cont', contView: 'ALL' });
+		const summaryAll = migrationSummary(grid, sAll);
+		expect(summaryAll.hasData).toBe(false);
+		expect(summaryAll.headline).toBe('Seasonal Distribution');
 	});
 
 	it('identifies seasonal latitudinal shift when latitudes change between seasons', () => {
