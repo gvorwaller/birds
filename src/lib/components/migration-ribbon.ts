@@ -257,18 +257,13 @@ export interface SeasonalRange {
 	band: number;
 }
 
-export interface MigrationWindows {
-	northbound?: string | null;
-	southbound?: string | null;
-}
-
 export interface MigrationSummary {
 	hasData: boolean;
 	headline: string;
 	details: string;
 	span: string | null;
 	seasonalRanges?: SeasonalRange[] | null;
-	migrationWindows?: MigrationWindows | null;
+	transitionMonths?: string | null;
 }
 
 /**
@@ -486,7 +481,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 				details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
 				span: 'Consistent year-round range',
 				seasonalRanges,
-				migrationWindows: null
+				transitionMonths: null
 			};
 		}
 		return {
@@ -495,7 +490,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			details: `Reported across ${observed.length} months with little latitudinal shift, centered around ${landmark}.`,
 			span: `Recorded in ${observed.length} of 12 months`,
 			seasonalRanges,
-			migrationWindows: null
+			transitionMonths: null
 		};
 	}
 
@@ -534,16 +529,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	const coreMonths = new Set([...northMonths, ...southMonths]);
 	const transMonths = observed.map((p) => p.month).filter((m) => !coreMonths.has(m));
-	let northbound: string | null = null;
-	let southbound: string | null = null;
-	if (transMonths.length > 0) {
-		const spring = transMonths.filter((m) => m >= 2 && m <= 6);
-		const fall = transMonths.filter((m) => m >= 7 && m <= 11);
-		if (spring.length > 0) northbound = formatWindow(spring);
-		if (fall.length > 0) southbound = formatWindow(fall);
-	}
-	const migrationWindows: MigrationWindows | null =
-		northbound || southbound ? { northbound, southbound } : null;
+	const transitionMonths = transMonths.length > 0 ? formatWindow(transMonths) : null;
 
 	return {
 		hasData: true,
@@ -551,7 +537,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		details: `Range centroid shifts furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
 		span,
 		seasonalRanges,
-		migrationWindows
+		transitionMonths
 	};
 }
 

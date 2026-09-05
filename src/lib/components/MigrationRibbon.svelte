@@ -477,7 +477,7 @@
 			{/if}
 		</div>
 		<p class="mig-details">{summary.details}</p>
-		{#if summary.seasonalRanges?.length || summary.migrationWindows}
+		{#if summary.seasonalRanges?.length || summary.transitionMonths}
 			<div class="mig-cards">
 				{#each summary.seasonalRanges ?? [] as range}
 					<div class="mig-card">
@@ -486,15 +486,11 @@
 						<span class="mig-card-sub">{range.landmark}</span>
 					</div>
 				{/each}
-				{#if summary.migrationWindows?.northbound || summary.migrationWindows?.southbound}
+				{#if summary.transitionMonths}
 					<div class="mig-card">
-						<span class="mig-card-lbl">Migration Windows</span>
-						{#if summary.migrationWindows.northbound}
-							<span class="mig-card-trans"><strong>Northbound:</strong> {summary.migrationWindows.northbound}</span>
-						{/if}
-						{#if summary.migrationWindows.southbound}
-							<span class="mig-card-trans"><strong>Southbound:</strong> {summary.migrationWindows.southbound}</span>
-						{/if}
+						<span class="mig-card-lbl">Transition Months</span>
+						<span class="mig-card-val">{summary.transitionMonths}</span>
+						<span class="mig-card-sub">Between seasonal ranges</span>
 					</div>
 				{/if}
 			</div>
@@ -969,15 +965,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.mig-card-trans {
-		font-size: 0.75rem;
-		color: var(--text);
-		line-height: 1.3;
-	}
-	.mig-card-trans strong {
-		color: var(--muted);
-		font-weight: 600;
 	}
 
 	.rlayout {
