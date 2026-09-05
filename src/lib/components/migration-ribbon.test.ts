@@ -1166,7 +1166,7 @@ describe('td-2c7a0b: iPhone heatmap cell selection hit-testing & boundaries', ()
 });
 
 describe('Structured Field-Guide Seasonal Summary cards', () => {
-	it('populates structured breedingRange, winteringRange, and migrationWindows for migratory species', () => {
+	it('populates structured seasonalRanges and migrationWindows for migratory species', () => {
 		const grid = emptyGrid('balori');
 		const bi40 = bandIndex(40);
 		const bi10 = bandIndex(10);
@@ -1217,15 +1217,15 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		const summary = migrationSummary(grid, s);
 
 		expect(summary.hasData).toBe(true);
-		expect(summary.breedingRange).toBeDefined();
-		expect(summary.breedingRange!.label).toBe('Breeding / Summer');
-		expect(summary.breedingRange!.window).toBe('May–Aug');
-		expect(summary.breedingRange!.band).toBe(40);
+		expect(summary.seasonalRanges).toBeDefined();
+		expect(summary.seasonalRanges).toHaveLength(2);
+		expect(summary.seasonalRanges![0].label).toBe('Northern Range');
+		expect(summary.seasonalRanges![0].window).toBe('May–Aug');
+		expect(summary.seasonalRanges![0].band).toBe(40);
 
-		expect(summary.winteringRange).toBeDefined();
-		expect(summary.winteringRange!.label).toBe('Wintering');
-		expect(summary.winteringRange!.window).toBe('Dec–Feb');
-		expect(summary.winteringRange!.band).toBe(10);
+		expect(summary.seasonalRanges![1].label).toBe('Southern Range');
+		expect(summary.seasonalRanges![1].window).toBe('Dec–Feb');
+		expect(summary.seasonalRanges![1].band).toBe(10);
 
 		expect(summary.migrationWindows).toBeDefined();
 		expect(summary.migrationWindows!.northbound).toBe('Mar–Apr');
@@ -1249,11 +1249,82 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		const summary = migrationSummary(grid, s);
 
 		expect(summary.hasData).toBe(true);
-		expect(summary.breedingRange).toBeDefined();
-		expect(summary.breedingRange!.label).toBe('Year-Round Range');
-		expect(summary.breedingRange!.window).toBe('All Year');
-		expect(summary.winteringRange).toBeNull();
+		expect(summary.seasonalRanges).toBeDefined();
+		expect(summary.seasonalRanges).toHaveLength(1);
+		expect(summary.seasonalRanges![0].label).toBe('Year-Round Range');
+		expect(summary.seasonalRanges![0].window).toBe('All Year');
 		expect(summary.migrationWindows).toBeNull();
+	});
+
+	it('CODEX13 P1 regression: ambiguous cross-equatorial migrant (north in Jun–Jul, south in Dec–Jan) produces neutral Northern/Southern ranges without reversed biological breeding claims', () => {
+		const grid = emptyGrid('cross_eq');
+		const biNorth20 = bandIndex(20);
+		const biSouth30 = bandIndex(-30);
+		const biEq0 = bandIndex(0);
+
+		// North +20 in Jun-Jul (m = 5, 6)
+		for (const m of [5, 6]) {
+			grid.modes.equal.world[biNorth20][m] = {
+				f: 0.6,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// South -30 in Dec-Jan (m = 11, 0)
+		for (const m of [11, 0]) {
+			grid.modes.equal.world[biSouth30][m] = {
+				f: 0.6,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// Transitions Mar-Apr (m = 2, 3) at equator
+		for (const m of [2, 3]) {
+			grid.modes.equal.world[biEq0][m] = {
+				f: 0.3,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+		// Transitions Sep-Oct (m = 8, 9) at equator
+		for (const m of [8, 9]) {
+			grid.modes.equal.world[biEq0][m] = {
+				f: 0.3,
+				n: 100,
+				state: 'reported',
+				low: false,
+				excluded: 0
+			};
+		}
+
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Seasonal Latitudinal Shift');
+		expect(summary.seasonalRanges).toBeDefined();
+		expect(summary.seasonalRanges).toHaveLength(2);
+
+		// Northern range accurately records Jun-Jul at +20
+		expect(summary.seasonalRanges![0].label).toBe('Northern Range');
+		expect(summary.seasonalRanges![0].window).toBe('Jun–Jul');
+		expect(summary.seasonalRanges![0].band).toBe(20);
+
+		// Southern range accurately records Dec-Jan at -30
+		expect(summary.seasonalRanges![1].label).toBe('Southern Range');
+		expect(summary.seasonalRanges![1].window).toBe('Dec–Jan');
+		expect(summary.seasonalRanges![1].band).toBe(-30);
+
+		// Migration windows accurately reflect transitional months
+		expect(summary.migrationWindows).toBeDefined();
+		expect(summary.migrationWindows!.northbound).toBe('Mar–Apr');
+		expect(summary.migrationWindows!.southbound).toBe('Sep–Oct');
 	});
 });
 

@@ -267,8 +267,7 @@ export interface MigrationSummary {
 	headline: string;
 	details: string;
 	span: string | null;
-	breedingRange?: SeasonalRange | null;
-	winteringRange?: SeasonalRange | null;
+	seasonalRanges?: SeasonalRange[] | null;
 	migrationWindows?: MigrationWindows | null;
 }
 
@@ -472,20 +471,21 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	if (deltaLat < SHIFT_THRESHOLD) {
 		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
-		const breedingRange: SeasonalRange = {
-			label: 'Year-Round Range',
-			window: observed.length === 12 ? 'All Year' : formatWindow(observed.map((p) => p.month)),
-			landmark,
-			band: northPeak.band
-		};
+		const seasonalRanges: SeasonalRange[] = [
+			{
+				label: observed.length === 12 ? 'Year-Round Range' : 'Observed Range',
+				window: observed.length === 12 ? 'All Year' : formatWindow(observed.map((p) => p.month)),
+				landmark,
+				band: northPeak.band
+			}
+		];
 		if (observed.length === 12) {
 			return {
 				hasData: true,
 				headline: 'Year-Round Presence',
 				details: `Reported with little latitudinal shift through the year, centered around ${landmark}.`,
 				span: 'Consistent year-round range',
-				breedingRange,
-				winteringRange: null,
+				seasonalRanges,
 				migrationWindows: null
 			};
 		}
@@ -494,8 +494,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			headline: 'Stationary Occurrence',
 			details: `Reported across ${observed.length} months with little latitudinal shift, centered around ${landmark}.`,
 			span: `Recorded in ${observed.length} of 12 months`,
-			breedingRange,
-			winteringRange: null,
+			seasonalRanges,
 			migrationWindows: null
 		};
 	}
@@ -517,39 +516,21 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 			? `${Math.round(deltaLat)}° latitudinal shift across the year`
 			: `${Math.round(deltaLat)}° latitudinal shift (${observed.length}/12 months observed)`;
 
-	const isBorealBreeder = northPeak.band >= 0 && northMonths.some((m) => m >= 5 && m <= 8);
-	const isAustralBreeder = southPeak.band < 0 && southMonths.some((m) => m >= 11 || m <= 2);
-
-	let breedingRange: SeasonalRange;
-	let winteringRange: SeasonalRange;
-
-	if (isAustralBreeder && !isBorealBreeder) {
-		breedingRange = {
-			label: 'Breeding / Summer',
-			window: southStr,
-			landmark: southLandmark,
-			band: southPeak.band
-		};
-		winteringRange = {
-			label: 'Wintering',
+	// Strictly empirical, data-derived seasonal reporting ranges (CODEX13 P1)
+	const seasonalRanges: SeasonalRange[] = [
+		{
+			label: 'Northern Range',
 			window: northStr,
 			landmark: northLandmark,
 			band: northPeak.band
-		};
-	} else {
-		breedingRange = {
-			label: 'Breeding / Summer',
-			window: northStr,
-			landmark: northLandmark,
-			band: northPeak.band
-		};
-		winteringRange = {
-			label: 'Wintering',
+		},
+		{
+			label: 'Southern Range',
 			window: southStr,
 			landmark: southLandmark,
 			band: southPeak.band
-		};
-	}
+		}
+	];
 
 	const coreMonths = new Set([...northMonths, ...southMonths]);
 	const transMonths = observed.map((p) => p.month).filter((m) => !coreMonths.has(m));
@@ -569,8 +550,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		headline: 'Seasonal Latitudinal Shift',
 		details: `Range centroid shifts furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
 		span,
-		breedingRange,
-		winteringRange,
+		seasonalRanges,
 		migrationWindows
 	};
 }

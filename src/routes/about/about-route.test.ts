@@ -58,4 +58,15 @@ describe("About route and navigation", () => {
 		expect(normalized).toContain("Latitudes toggle");
 		expect(normalized).toContain("geographic landmark anchors");
 	});
+
+	it("v0.1.6 describes desktop All continents starting on species data-derived primary column (CODEX13 P2)", () => {
+		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		const entry = content.slice(start, end);
+		const normalized = entry.replace(/\s+/g, " ");
+		expect(normalized).toContain(
+			"All continents (starting on the species' data-derived primary column) at desktop widths"
+		);
+	});
 });

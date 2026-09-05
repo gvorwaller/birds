@@ -477,22 +477,15 @@
 			{/if}
 		</div>
 		<p class="mig-details">{summary.details}</p>
-		{#if summary.breedingRange || summary.winteringRange || summary.migrationWindows}
+		{#if summary.seasonalRanges?.length || summary.migrationWindows}
 			<div class="mig-cards">
-				{#if summary.breedingRange}
+				{#each summary.seasonalRanges ?? [] as range}
 					<div class="mig-card">
-						<span class="mig-card-lbl">{summary.breedingRange.label}</span>
-						<span class="mig-card-val">{summary.breedingRange.window}</span>
-						<span class="mig-card-sub">{summary.breedingRange.landmark}</span>
+						<span class="mig-card-lbl">{range.label}</span>
+						<span class="mig-card-val">{range.window}</span>
+						<span class="mig-card-sub">{range.landmark}</span>
 					</div>
-				{/if}
-				{#if summary.winteringRange}
-					<div class="mig-card">
-						<span class="mig-card-lbl">{summary.winteringRange.label}</span>
-						<span class="mig-card-val">{summary.winteringRange.window}</span>
-						<span class="mig-card-sub">{summary.winteringRange.landmark}</span>
-					</div>
-				{/if}
+				{/each}
 				{#if summary.migrationWindows?.northbound || summary.migrationWindows?.southbound}
 					<div class="mig-card">
 						<span class="mig-card-lbl">Migration Windows</span>

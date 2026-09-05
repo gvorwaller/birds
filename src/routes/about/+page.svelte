@@ -136,7 +136,7 @@
 								the species' occupied latitudinal range with a Latitudes toggle for
 								the full globe. Latitude rows feature geographic landmark anchors on
 								larger viewports and in the readout. It opens to World view on a phone
-								or tablet and to All continents (starting on your home column) at
+								or tablet and to All continents (starting on the species' data-derived primary column) at
 								desktop widths, and is switchable to any single continent or all of
 								them side by side. An equal-weight average keeps one heavily-birded
 								country from drowning out the rest; a by-checklist average is one
