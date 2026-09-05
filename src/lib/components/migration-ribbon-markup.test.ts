@@ -134,10 +134,9 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toContain('{grid.meta.unmappedCountries.join(');
 	});
 
-	// CODEX1 P2-2: the tap hint must not describe whole-cell picking on a
-	// phone, where a tap only ever picks a band (P1-1) — the month comes
-	// from the slider. Two variants, both driven by the same `phone` flag.
-	it('the tap hint has a phone variant (band + slider) and a non-phone variant (whole cell), ' +
+	// td-2c7a0b: on phone, deliberate taps select both band and month (cell picking),
+	// with the slider remaining available to scrub. Two variants, both driven by the same `phone` flag.
+	it('the tap hint has a phone variant (square + slider) and a non-phone variant (whole cell), ' +
 		'in the correct branch of the SAME {#if phone} block — not merely both present somewhere', () => {
 		const ifAt = markup.indexOf('{#if phone}');
 		expect(ifAt).toBeGreaterThan(-1);
@@ -148,13 +147,12 @@ describe('MigrationRibbon.svelte markup', () => {
 		const phoneBranch = markup.slice(ifAt, elseAt);
 		const nonPhoneBranch = markup.slice(elseAt, endAt);
 		expect(phoneBranch).toContain(
-			"Choose a month with the slider, then tap a latitude row to see its reporting rate and the"
+			"Tap a square or use the slider to see that month's reporting rate and the"
 		);
-		expect(phoneBranch).not.toContain("Tap a square");
 		expect(nonPhoneBranch).toContain(
 			"Tap a square to see that month's reporting rate and the regions behind it; darker green means"
 		);
-		expect(nonPhoneBranch).not.toContain('Choose a month with the slider');
+		expect(nonPhoneBranch).not.toContain('or use the slider');
 	});
 
 	// Extracts the body of the FIRST `selector { ... }` rule found at or

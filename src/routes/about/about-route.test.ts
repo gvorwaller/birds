@@ -43,7 +43,7 @@ describe("About route and navigation", () => {
 		// browser would render it before matching the full sentence.
 		const normalized = entry.replace(/\s+/g, " ");
 		expect(normalized).toContain(
-			"On a phone, tap a latitude row and choose the month with the slider; on larger screens tap any square.",
+			"On a phone, tap any square or use the slider; on larger screens tap any square.",
 		);
 	});
 

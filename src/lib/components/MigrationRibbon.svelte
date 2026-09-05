@@ -116,9 +116,8 @@
 			if (!current.viewTouched) {
 				ribbonState = {
 					...current,
-					view: 'cont',
-					contView: col,
-					cont: col
+					contView: current.view === 'cont' && current.contView === 'ALL' ? 'ALL' : col,
+					cont: current.view === 'cont' ? col : null
 				};
 			}
 		}
@@ -455,13 +454,13 @@
 	Share of eBird checklists reporting it, by latitude band and month. North at the top, so a
 	diagonal sweep means the bird moves with the seasons and a flat band means it stays put.
 </p>
-<!-- Two variants driven by the same `phone` flag (CODEX1 P2-2): below
-     640px a tap only ever picks a band (P1-1) — the month comes from the
-     slider — so the hint must say that, not describe whole-cell picking. -->
+<!-- Two variants driven by the same `phone` flag (td-2c7a0b): deliberate taps
+     select both band and month on all viewports, while on phones the slider
+     is also available to scrub through months. -->
 {#if phone}
 	<p class="sub hint" style="margin-bottom:10px">
-		Choose a month with the slider, then tap a latitude row to see its reporting rate and the
-		regions behind it; darker green means it was reported more often.
+		Tap a square or use the slider to see that month's reporting rate and the regions behind it;
+		darker green means it was reported more often.
 	</p>
 {:else}
 	<p class="sub hint" style="margin-bottom:10px">
@@ -688,23 +687,10 @@
 										: col}</text
 								>
 								{#each ML as letter, m (m)}
-									{@const mx = x0 + m * geom.cellW}
-									{@const seasonColor = m === 11 || m <= 1 ? '#64748b' : m >= 2 && m <= 4 ? '#10b981' : m >= 5 && m <= 7 ? '#f59e0b' : '#ea580c'}
-									<rect
-										class="sbar"
-										class:on={m + 1 === ribbonState.month}
-										x={mx + 1}
-										y={geom.headH - 17}
-										width={Math.max(1, geom.cellW - 2)}
-										height={m + 1 === ribbonState.month ? 4 : 2}
-										rx="1"
-										fill={seasonColor}
-										opacity={m + 1 === ribbonState.month ? 1 : 0.45}
-									/>
 									<text
 										class="mtext"
 										class:on={m + 1 === ribbonState.month}
-										x={mx + geom.cellW / 2}
+										x={x0 + m * geom.cellW + geom.cellW / 2}
 										y={geom.headH - 5}
 										text-anchor="middle">{blockW >= 120 ? letter : m % 3 === 0 ? letter : ''}</text
 									>
@@ -712,23 +698,10 @@
 							{/each}
 						{:else}
 							{#each ML as letter, m (m)}
-								{@const mx = m * geom.cellW}
-								{@const seasonColor = m === 11 || m <= 1 ? '#64748b' : m >= 2 && m <= 4 ? '#10b981' : m >= 5 && m <= 7 ? '#f59e0b' : '#ea580c'}
-								<rect
-									class="sbar"
-									class:on={m + 1 === ribbonState.month}
-									x={mx + 1}
-									y={1}
-									width={Math.max(1, geom.cellW - 2)}
-									height={m + 1 === ribbonState.month ? 3 : 2}
-									rx="1"
-									fill={seasonColor}
-									opacity={m + 1 === ribbonState.month ? 1 : 0.45}
-								/>
 								<text
 									class="mtext"
 									class:on={m + 1 === ribbonState.month}
-									x={mx + geom.cellW / 2}
+									x={m * geom.cellW + geom.cellW / 2}
 									y={geom.headH - 6}
 									text-anchor="middle">{letter}</text
 								>
@@ -1015,14 +988,6 @@
 		font-weight: 600;
 	}
 
-	.sbar {
-		pointer-events: none;
-		transition: opacity 0.15s ease, height 0.15s ease;
-	}
-	.sbar.on {
-		opacity: 1;
-	}
-
 	.rlayout {
 		display: flex;
 		flex-direction: column;
@@ -1210,18 +1175,7 @@
 		line-height: 1.1;
 	}
 	.rgut .bl .b-land {
-		display: block;
-		font-size: 0.58rem;
-		line-height: 1.1;
-		color: var(--muted);
-		max-width: 95px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.rgut .bl.on .b-land {
-		color: var(--accent);
-		font-weight: 600;
+		display: none;
 	}
 	.rgut .bl.on .b-deg {
 		color: var(--text);

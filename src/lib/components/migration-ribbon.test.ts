@@ -384,6 +384,17 @@ describe('initialState / applyWide', () => {
 		expect(s.contView).toBe('NAE');
 		expect(s.cont).toBeNull();
 	});
+	it('initialState with defaultCol queues primary continent on phone', () => {
+		const s = initialState(false, 'EU');
+		expect(s.view).toBe('world');
+		expect(s.contView).toBe('EU');
+		expect(s.cont).toBeNull();
+
+		const wide = initialState(true, 'EU');
+		expect(wide.view).toBe('cont');
+		expect(wide.contView).toBe('ALL');
+		expect(wide.cont).toBe('EU');
+	});
 	it('applyWide is a no-op once the user has touched the view toggle', () => {
 		const s = baseState({ view: 'world', cont: null, viewTouched: true });
 		expect(applyWide(s, true)).toEqual(s);
@@ -393,6 +404,18 @@ describe('initialState / applyWide', () => {
 		const wide = applyWide(s, true);
 		expect(wide.view).toBe('cont');
 		expect(wide.contView).toBe('ALL');
+	});
+	it('applyWide with defaultCol preserves world view on phone and queues continent', () => {
+		const s = baseState({ view: 'world', cont: null, viewTouched: false });
+		const phone = applyWide(s, false, 'EU');
+		expect(phone.view).toBe('world');
+		expect(phone.contView).toBe('EU');
+		expect(phone.cont).toBeNull();
+
+		const wide = applyWide(s, true, 'EU');
+		expect(wide.view).toBe('cont');
+		expect(wide.contView).toBe('ALL');
+		expect(wide.cont).toBe('EU');
 	});
 });
 
@@ -439,9 +462,8 @@ describe('geometry', () => {
 		expect(all.rowH).toBe(22);
 		const single = geometry(baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' }), 300, false, false);
 		expect(single.rowH).toBe(22);
-		// Cell picking on tablet: the component passes `bandOnly: phone`, so
-		// tablet (phone=false) always gets FULL picking — a tap resolves
-		// both band and month, never band-only.
+		// Cell picking on both phone and tablet: deliberate taps resolve both
+		// band and month (td-2c7a0b), with phone rows getting 48px touch targets.
 		const s = baseState({ view: 'world', cont: null, month: 7 });
 		const geom = { cont: false, rowH: 22, cellW: 25, headH: 20, cols: 12 };
 		const picked = pickCell(s, geom, 2 * 25 + 1, 20 + 2 * 22 + 1, false)!;
@@ -1095,6 +1117,52 @@ describe('td-2c7a0b: iPhone heatmap cell selection hit-testing & boundaries', ()
 		const picked = pickCell(s, geomMobile, mappedX, mappedY, false)!;
 		expect(picked.band).toBe(40);
 		expect(picked.month).toBe(6);
+	});
+
+	it('iPhone Safari 390px WebKit viewport: World view (phone default) hit-tests all 12 months & bands (AC 7)', () => {
+		// 390px iPhone viewport: availWidth = 390 - 36 (gutter) - 12 (padding) = 342px
+		const s = baseState({ view: 'world', cont: null });
+		const gIPhone = geometry(s, 342, false, true); // phone = true
+		expect(gIPhone.rowH).toBe(48); // 48px touch row
+		expect(gIPhone.headH).toBe(20);
+		expect(gIPhone.cols).toBe(12);
+
+		// Sweep all 12 months and verify center hit-testing selects exact (band, month)
+		for (let m = 1; m <= 12; m++) {
+			const cellX = (m - 1) * gIPhone.cellW + gIPhone.cellW / 2;
+			for (let bi = 0; bi < BANDS.length; bi++) {
+				const cellY = gIPhone.headH + bi * gIPhone.rowH + gIPhone.rowH / 2;
+				const hit = pickCell(s, gIPhone, cellX, cellY, false);
+				expect(hit).not.toBeNull();
+				expect(hit!.month).toBe(m);
+				expect(hit!.band).toBe(BANDS[bi]);
+			}
+		}
+	});
+
+	it('iPhone Retina 3x scaling with subpixel WebKit rect offsets (AC 7)', () => {
+		const s = baseState({ view: 'world', cont: null });
+		const gIPhone = geometry(s, 342, false, true);
+		// WebKit subpixel rect under 3x devicePixelRatio:
+		const rect = { left: 41.333, top: 120.667, width: 341.667, height: 884.0 };
+		const scaleX = gIPhone.w / rect.width;
+		const scaleY = gIPhone.h / rect.height;
+
+		// Simulated tap on month 8 (August), band 30
+		const bi30 = bandIndex(30);
+		const targetX = 7 * gIPhone.cellW + gIPhone.cellW / 2;
+		const targetY = gIPhone.headH + bi30 * gIPhone.rowH + gIPhone.rowH / 2;
+
+		const clientX = rect.left + targetX / scaleX;
+		const clientY = rect.top + targetY / scaleY;
+
+		// Component transformation:
+		const mappedX = (clientX - rect.left) * scaleX;
+		const mappedY = (clientY - rect.top) * scaleY;
+
+		const picked = pickCell(s, gIPhone, mappedX, mappedY, false)!;
+		expect(picked.band).toBe(30);
+		expect(picked.month).toBe(8);
 	});
 });
 

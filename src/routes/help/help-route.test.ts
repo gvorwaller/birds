@@ -12,7 +12,7 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		// browser would render it before matching the full sentence.
 		const normalized = content.replace(/\s+/g, " ");
 		expect(normalized).toContain(
-			"Pick a band and month — a square on larger screens, a latitude row plus the slider on a phone — to open the regions behind it, sorted by how often they report the bird, showing the 40 highest.",
+			"Pick a band and month — tap any square (or use the slider on a phone) — to open the regions behind it, sorted by how often they report the bird, showing the 40 highest.",
 		);
 		expect(content).not.toContain("Tapping a cell opens the regions behind it");
 	});

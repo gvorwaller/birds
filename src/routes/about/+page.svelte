@@ -144,8 +144,7 @@
 								them, and tap a region there to chart it in Best time of year as a
 								third pick alongside the closest and best regions. A Play button
 								steps through the year automatically (off under reduced motion). On a
-								phone, tap a latitude row and choose the month with the slider; on
-								larger screens tap any square.
+								phone, tap any square or use the slider; on larger screens tap any square.
 							</li>
 						</ul>
 					</div>

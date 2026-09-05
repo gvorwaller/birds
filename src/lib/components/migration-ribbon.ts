@@ -684,14 +684,14 @@ export interface RibbonState {
 /** wide: cont/ALL/NAE (By continent, All continents, home column selected).
  * phone: world/NAE/null (World view; NAE stays queued as the continent
  * picker's remembered value in case the user switches). Band 40, month 7
- * (owner decision C, mockup `state`). If `defaultCol` is provided, By-continent
- * view defaults to that species' primary continent column. */
+ * (owner decision C, mockup `state`). If `defaultCol` is provided, that
+ * continent is queued as the remembered continent picker value. */
 export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonState {
 	const col = defaultCol ?? HOME_COLUMN;
 	return {
-		view: defaultCol ? 'cont' : (wide ? 'cont' : 'world'),
-		contView: defaultCol ? col : (wide ? 'ALL' : HOME_COLUMN),
-		cont: defaultCol ? col : (wide ? HOME_COLUMN : null),
+		view: wide ? 'cont' : 'world',
+		contView: wide ? 'ALL' : col,
+		cont: wide ? col : null,
 		weight: 'equal',
 		band: 40,
 		month: 7,
@@ -706,20 +706,12 @@ export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonSt
 /** No-op once the user has touched the view toggle (mockup `applyWide`). */
 export function applyWide(s: RibbonState, wide: boolean, defaultCol?: RibbonColumn): RibbonState {
 	if (s.viewTouched) return s;
-	if (defaultCol) {
-		const col = s.cont ?? defaultCol;
-		return {
-			...s,
-			view: 'cont',
-			contView: s.contView === 'ALL' ? 'ALL' : col,
-			cont: col
-		};
-	}
+	const col = defaultCol ?? s.cont ?? HOME_COLUMN;
 	return {
 		...s,
 		view: wide ? 'cont' : 'world',
-		contView: wide ? 'ALL' : HOME_COLUMN,
-		cont: wide ? (s.cont ?? HOME_COLUMN) : null
+		contView: wide ? 'ALL' : (defaultCol ?? s.contView),
+		cont: wide ? col : null
 	};
 }
 

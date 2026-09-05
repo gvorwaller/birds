@@ -385,10 +385,9 @@
 						"no data" column reads as "not loaded," never as "absent." A note
 						below the chart names any stretch of the year where every loaded
 						region fell under 0.5% of checklists — a fixed threshold, the same
-						one the gap note always uses. Pick a band and month — a square on
-						larger screens, a latitude row plus the slider on a phone — to open
-						the regions behind it, sorted by how often they report the bird,
-						showing the 40 highest. <strong>Play</strong> advances one month every
+						one the gap note always uses. Pick a band and month — tap any square
+						(or use the slider on a phone) — to open the regions behind it, sorted
+						by how often they report the bird, showing the 40 highest. <strong>Play</strong> advances one month every
 						three-quarters of a second and loops; it's hidden entirely when your
 						system asks for reduced motion. Because the ribbon rolls up each
 						region's whole stored history into one number, it combines whatever
