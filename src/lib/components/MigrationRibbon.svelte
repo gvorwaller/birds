@@ -44,6 +44,7 @@
 		initialState,
 		landmarkFor,
 		migrationSummary,
+		nearestBand,
 		pickCell,
 		readout,
 		reduce,
@@ -98,11 +99,14 @@
 	let fullGlobe = $state(false);
 	const currentBands = $derived(activeBands(grid, ribbonState, fullGlobe));
 	const summary = $derived(migrationSummary(grid, ribbonState));
+	const gutterCol = $derived<RibbonColumn | null>(
+		ribbonState.view === 'cont' && ribbonState.contView !== 'ALL' ? ribbonState.contView : null
+	);
 
 	$effect(() => {
 		const bands = currentBands;
 		if (bands.length > 0 && !bands.includes(ribbonState.band as (typeof bands)[number])) {
-			ribbonState = { ...ribbonState, band: bands[0] as (typeof BANDS)[number] };
+			ribbonState = { ...ribbonState, band: nearestBand(ribbonState.band, bands) as (typeof BANDS)[number] };
 		}
 	});
 
@@ -222,7 +226,7 @@
 	const currentReadout = $derived(readout(grid, ribbonState));
 	const currentGap = $derived(gapText(grid.gapMonths));
 	const currentScope = $derived(scopeText(grid.meta, ribbonState.weight));
-	const currentAria = $derived(chartAria(grid, ribbonState, speciesName));
+	const currentAria = $derived(chartAria(grid, ribbonState, speciesName, currentBands));
 	const showToDrill = $derived(!currentReadout.empty && currentReadout.nreg > 0);
 
 	/** Visually-hidden live announcement — updated only on USER-initiated
@@ -533,6 +537,7 @@
 						aria-pressed={!fullGlobe}
 						onclick={() => {
 							fullGlobe = false;
+							ribbonState = { ...ribbonState, fullGlobe: false };
 						}}>Species range</button
 					>
 					<button
@@ -540,6 +545,7 @@
 						aria-pressed={fullGlobe}
 						onclick={() => {
 							fullGlobe = true;
+							ribbonState = { ...ribbonState, fullGlobe: true };
 						}}>Full globe</button
 					>
 				</div>
@@ -584,8 +590,8 @@
 					{#each currentBands as band (band)}
 						<div class="bl" class:on={band === ribbonState.band} style="height:{geom.rowH}px">
 							<span class="b-deg">{bandLabel(band)}</span>
-							{#if landmarkFor(band, ribbonState.cont)}
-								<span class="b-land">{landmarkFor(band, ribbonState.cont)}</span>
+							{#if landmarkFor(band, gutterCol)}
+								<span class="b-land">{landmarkFor(band, gutterCol)}</span>
 							{/if}
 						</div>
 					{/each}
@@ -1064,10 +1070,11 @@
 		padding-right: 6px;
 		color: var(--muted);
 		white-space: nowrap;
-		line-height: 1.15;
+		line-height: 1.05;
 	}
 	.rgut .bl .b-deg {
-		font-size: 0.7rem;
+		font-size: 0.68rem;
+		line-height: 1.1;
 	}
 	.rgut .bl .b-land {
 		display: none;
@@ -1194,9 +1201,9 @@
 		}
 		.rgut .bl .b-land {
 			display: block;
-			font-size: 0.58rem;
+			font-size: 0.54rem;
+			line-height: 1.05;
 			color: var(--muted);
-			opacity: 0.85;
 			max-width: 130px;
 			overflow: hidden;
 			text-overflow: ellipsis;
@@ -1204,7 +1211,6 @@
 		}
 		.rgut .bl.on .b-land {
 			color: var(--accent);
-			opacity: 1;
 			font-weight: 600;
 		}
 	}

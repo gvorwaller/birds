@@ -370,7 +370,7 @@
 						from monthly reporting rates, hedged when seasonal coverage is
 						sparse.
 						The chart automatically crops to the <strong>Species range</strong>
-						(occupied latitude bands plus one buffer row), switchable via the
+						(occupied latitude bands plus one buffer row above and below), switchable via the
 						<strong>Latitudes</strong> toggle to <strong>Full globe</strong> to view all 18
 						bands from 90°N to 90°S.
 						Latitude rows are labeled with geographic landmarks on wider screens

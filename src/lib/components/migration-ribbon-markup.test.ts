@@ -212,4 +212,22 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(desktopReadout).toContain('top: calc(var(--nav-h) + 12px);');
 		expect(desktopReadout).not.toContain('bottom:');
 	});
+
+	it('renders summary card with badge and details when summary.hasData is true (td-476c32)', () => {
+		expect(markup).toContain('{#if summary.hasData}');
+		expect(markup).toContain('class="mig-summary"');
+		expect(markup).toContain('class="mig-badge"');
+		expect(markup).toContain('class="mig-details"');
+	});
+
+	it('renders landmark gutter elements and keys them on gutterCol (td-476c32, P1-1)', () => {
+		expect(markup).toContain('class="b-land"');
+		expect(markup).toContain('landmarkFor(band, gutterCol)');
+	});
+
+	it('provides Latitudes toggle between Species range and Full globe (td-476c32)', () => {
+		expect(markup).toContain('id="rbrangeLbl">Latitudes');
+		expect(markup).toContain('Species range');
+		expect(markup).toContain('Full globe');
+	});
 });

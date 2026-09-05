@@ -129,29 +129,28 @@ export const LANDMARKS: Record<string, Record<number, string>> = {
 		60: 'Hudson Bay / Subarctic',
 		50: 'Boreal & S. Canada',
 		40: 'Great Lakes & New England',
-		30: 'Mid-Atlantic & Midwest',
+		30: 'US Southeast & Mid-Atlantic',
 		20: 'Gulf Coast & S. Florida',
 		10: 'Central America & Caribbean',
-		0: 'Panama & N. South America'
+		0: 'Panama & Costa Rica'
 	},
 	NAW: {
 		80: 'Beaufort Sea / High Arctic',
 		70: 'N. Alaska & Yukon',
 		60: 'Central Alaska & N. BC',
-		50: 'Pacific NW, S. BC & Prairies',
-		40: 'N. California & Great Basin',
+		50: 'British Columbia & Prairies',
+		40: 'Pacific NW & N. California',
 		30: 'S. California & Desert SW',
 		20: 'NW Mexico & Baja',
-		10: 'S. Mexico & Central America',
-		0: 'Costa Rica & Galapagos'
+		10: 'Mexican Pacific & S. Mexico'
 	},
 	EU: {
 		70: 'Lapland & Arctic Norway',
 		60: 'Scandinavia, Baltic & Scotland',
 		50: 'British Isles & Central Europe',
 		40: 'Mediterranean & Iberia',
-		30: 'N. Africa Coast & Canary Is.',
-		20: 'Sahara'
+		30: 'S. Mediterranean & Iberia',
+		20: 'Canary Islands'
 	},
 	AF: {
 		30: 'Maghreb & N. Sahara',
@@ -234,6 +233,23 @@ export const BAND_HALF = BAND_STEP / 2;
 /** Centroid delta threshold to distinguish latitudinal migration from stationary range (8° = 80% of a band step). */
 export const SHIFT_THRESHOLD = BAND_STEP * 0.8;
 
+/**
+ * Finds the band in `bands` closest in latitude to `target`.
+ */
+export function nearestBand(target: number, bands: readonly number[]): number {
+	if (bands.length === 0) return target;
+	let nearest = bands[0];
+	let minDiff = Math.abs(target - nearest);
+	for (let i = 1; i < bands.length; i++) {
+		const diff = Math.abs(target - bands[i]);
+		if (diff < minDiff) {
+			minDiff = diff;
+			nearest = bands[i];
+		}
+	}
+	return nearest;
+}
+
 export interface MigrationSummary {
 	hasData: boolean;
 	headline: string;
@@ -258,7 +274,7 @@ export function occupiedBands(grid: RibbonGridClient, s: RibbonState): number[] 
 				for (const c of cols) {
 					const ci = COLUMNS.indexOf(c);
 					const cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
-					if (cell && (cell.state === 'reported' || cell.f > 0)) {
+					if (cell && cell.f >= PRESENT) {
 						hasData = true;
 						break;
 					}
@@ -266,7 +282,7 @@ export function occupiedBands(grid: RibbonGridClient, s: RibbonState): number[] 
 				if (hasData) break;
 			} else {
 				const cell = mode.world[bi]?.[m];
-				if (cell && (cell.state === 'reported' || cell.f > 0)) {
+				if (cell && cell.f >= PRESENT) {
 					hasData = true;
 					break;
 				}
@@ -299,6 +315,15 @@ export function activeBands(grid: RibbonGridClient, s: RibbonState, fullGlobe?: 
  * from the frequency distribution.
  */
 export function migrationSummary(grid: RibbonGridClient, s: RibbonState): MigrationSummary {
+	if (s.view === 'cont' && s.contView === 'ALL') {
+		return {
+			hasData: true,
+			headline: 'All Continents Overview',
+			details: 'Select a continent to view regional migration patterns and seasonal shifts.',
+			span: '8 continental columns'
+		};
+	}
+
 	const col = s.view === 'cont' && s.contView !== 'ALL' ? s.contView : null;
 	const mode = grid.modes[s.weight];
 
@@ -416,7 +441,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	return {
 		hasData: true,
 		headline: 'Seasonal Latitudinal Shift',
-		details: `Reported furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
+		details: `Range centroid shifts furthest north in ${northStr} (${northLandmark}); furthest south in ${southStr} (${southLandmark}).`,
 		span
 	};
 }
@@ -601,7 +626,11 @@ export function geometry(
 	const single = cont && conts.length === 1;
 	const cols = cont ? conts.length * 12 : 12;
 	const cellW = cont && !single ? Math.max(6, avail / cols) : Math.max(11, Math.min(avail / cols, 44));
-	const rowH = phone ? ROW_H_TOUCH : ROW_H;
+	const rowH = phone
+		? ROW_H_TOUCH
+		: bands.length < BANDS.length
+			? Math.min(ROW_H_TOUCH, Math.max(ROW_H, Math.round((BANDS.length * ROW_H) / bands.length)))
+			: ROW_H;
 	const headH = cont ? 34 : 20;
 	const w = cols * cellW;
 	const h = headH + bands.length * rowH;
@@ -862,7 +891,12 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 // CODEX1 P2-3 — instead of always the world row)
 // ---------------------------------------------------------------------------
 
-export function chartAria(grid: RibbonGridClient, s: RibbonState, speciesName: string): string {
+export function chartAria(
+	grid: RibbonGridClient,
+	s: RibbonState,
+	speciesName: string,
+	bands: readonly number[] = BANDS
+): string {
 	const mode = grid.modes[s.weight];
 	const cols = drawnColumns(s);
 	const cellsIn = (b: number, m: number): RibbonCellClient[] => {
@@ -880,7 +914,10 @@ export function chartAria(grid: RibbonGridClient, s: RibbonState, speciesName: s
 	// reported nor absent (TD-B deploy gate contract change) and never sets
 	// the peak.
 	let thinOnly = 0;
-	for (let b = 0; b < BANDS.length; b++) {
+	for (let i = 0; i < bands.length; i++) {
+		const band = bands[i];
+		const b = BANDS.indexOf(band as (typeof BANDS)[number]);
+		if (b < 0) continue;
 		let hit = false;
 		let sawThin = false;
 		for (let m = 0; m < 12; m++) {
@@ -890,13 +927,13 @@ export function chartAria(grid: RibbonGridClient, s: RibbonState, speciesName: s
 					continue;
 				}
 				if (c.f >= PRESENT) hit = true;
-				if (c.f > peak.f) peak = { f: c.f, band: BANDS[b], month: m };
+				if (c.f > peak.f) peak = { f: c.f, band, month: m };
 			}
 		}
 		if (hit) occupied++;
 		else if (sawThin) thinOnly++;
 	}
-	let out = `${speciesName}, latitude bands${s.view === 'cont' ? ' by continent' : ''}: reported in ${occupied} of ${BANDS.length} bands`;
+	let out = `${speciesName}, latitude bands${s.view === 'cont' ? ' by continent' : ''}: reported in ${occupied} of ${bands.length} bands`;
 	if (thinOnly > 0) out += `, ${thinOnly} surveyed but too thin to rate`;
 	if (peak.band !== null) out += `, strongest ${bandLabel(peak.band)} in ${MONTHS[peak.month]} at ${pct(peak.f)}`;
 	return `${out}.`;

@@ -30,9 +30,11 @@ import {
 	initialState,
 	landmarkFor,
 	migrationSummary,
+	nearestBand,
 	occupiedBands,
 	pct,
 	pickCell,
+	PRESENT,
 	readout,
 	reduce,
 	resolveDrillLoad,
@@ -449,6 +451,22 @@ describe('geometry', () => {
 		const g = geometry(s, 300, true, false);
 		expect(g.rowH).toBe(22);
 	});
+	it('reallocates row height when cropped on desktop/tablet to give vertical breathing room', () => {
+		const s = baseState({ view: 'cont', contView: 'NAE', cont: 'NAE' });
+		// 6 bands (e.g. Baltimore Oriole crop)
+		const croppedBands = [50, 40, 30, 20, 10, 0];
+		const gCropped = geometry(s, 300, true, false, croppedBands);
+		expect(gCropped.rowH).toBe(48); // max(22, round(396/6)) = 66 -> capped at ROW_H_TOUCH (48)
+
+		// 12 bands
+		const twelveBands = [80, 70, 60, 50, 40, 30, 20, 10, 0, -10, -20, -30];
+		const gTwelve = geometry(s, 300, true, false, twelveBands);
+		expect(gTwelve.rowH).toBe(33); // round(396/12) = 33
+
+		// Full globe (18 bands) stays at 22px
+		const gFull = geometry(s, 300, true, false, BANDS);
+		expect(gFull.rowH).toBe(22);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -512,6 +530,20 @@ describe('chartAria', () => {
 		expect(aria).toContain('reported in 0 of 18 bands');
 		expect(aria).toContain('surveyed but too thin to rate');
 		expect(aria).not.toContain('strongest');
+	});
+	it('respects cropped bands when passed (P3-13)', () => {
+		const grid = emptyGrid();
+		grid.modes.equal.world[bandIndex(40)][8] = {
+			f: 0.06,
+			n: 500,
+			state: 'reported',
+			low: false,
+			excluded: 0
+		};
+		const s = baseState({ view: 'world', cont: null, weight: 'equal' });
+		const croppedBands = [50, 40, 30, 20];
+		const aria = chartAria(grid, s, 'Osprey', croppedBands);
+		expect(aria).toContain('reported in 1 of 4 bands, strongest 40–50°N in September at 6%');
 	});
 });
 
@@ -638,12 +670,43 @@ describe('beginDrill (CODEX1 P1-2: generation bumps BEFORE the cache check)', ()
 	});
 });
 
+describe('nearestBand', () => {
+	it('snaps out-of-crop band to nearest remaining band', () => {
+		const bands = [-20, -30, -40, -50];
+		// Northern out-of-range target (e.g. default band 40) snaps to -20
+		expect(nearestBand(40, bands)).toBe(-20);
+		// Southern out-of-range target snaps to -50
+		expect(nearestBand(-80, bands)).toBe(-50);
+		// In-range exact match returns itself
+		expect(nearestBand(-30, bands)).toBe(-30);
+		// Between bands snaps to closest
+		expect(nearestBand(-24, bands)).toBe(-20);
+		expect(nearestBand(-26, bands)).toBe(-30);
+	});
+});
+
 describe('landmarkFor', () => {
 	it('resolves specific continent landmarks', () => {
 		expect(landmarkFor(40, 'NAE')).toBe('Great Lakes & New England');
 		expect(landmarkFor(30, 'NAW')).toBe('S. California & Desert SW');
 		expect(landmarkFor(50, 'EU')).toBe('British Isles & Central Europe');
 		expect(landmarkFor(0, 'SA')).toBe('Amazonia, Colombia & Ecuador');
+	});
+
+	it('grounds column landmarks to physical and continental geography (GROK review)', () => {
+		// NAW 0 has no land west of 100°W in NA; Central America is in NAE
+		expect(landmarkFor(0, 'NAW')).toBeNull();
+		expect(landmarkFor(10, 'NAW')).toBe('Mexican Pacific & S. Mexico');
+		expect(landmarkFor(40, 'NAW')).toBe('Pacific NW & N. California');
+		expect(landmarkFor(50, 'NAW')).toBe('British Columbia & Prairies');
+
+		// NAE 0 drops South America; NAE 30 is Southeast & Mid-Atlantic
+		expect(landmarkFor(0, 'NAE')).toBe('Panama & Costa Rica');
+		expect(landmarkFor(30, 'NAE')).toBe('US Southeast & Mid-Atlantic');
+
+		// EU 20 is Canary Islands (not Sahara, which is Africa); EU 30 is S. Mediterranean & Iberia
+		expect(landmarkFor(20, 'EU')).toBe('Canary Islands');
+		expect(landmarkFor(30, 'EU')).toBe('S. Mediterranean & Iberia');
 	});
 
 	it('resolves WORLD landmarks when column is null (World view)', () => {
@@ -714,6 +777,21 @@ describe('occupiedBands & activeBands', () => {
 		const s = baseState({ view: 'world' });
 		expect(activeBands(grid, s, true)).toEqual([...BANDS]);
 		expect(activeBands(grid, s, false)).toEqual([50, 40, 30, 20]);
+	});
+
+	it('ignores sub-0.5% vagrant reports (< PRESENT) in occupancy calculation', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		const b30 = bandIndex(30);
+		// Core presence at 40°
+		grid.modes.equal.world[b40][5] = { f: 0.1, n: 1000, state: 'reported', low: false, excluded: 0 };
+		// Sub-0.5% vagrant report at 30° (below PRESENT = 0.005)
+		grid.modes.equal.world[b30][5] = { f: 0.002, n: 1000, state: 'reported', low: false, excluded: 0 };
+
+		const s = baseState({ view: 'world' });
+		const bands = occupiedBands(grid, s);
+		// Only 40° is occupied (plus 50° and 30° buffer rows) -> [50, 40, 30]
+		expect(bands).toEqual([50, 40, 30]);
 	});
 });
 
@@ -793,6 +871,67 @@ describe('migrationSummary', () => {
 		expect(summary.span).toBe('Recorded in 3 of 12 months');
 		expect(summary.details).toContain('May–Jul');
 		expect(summary.headline).not.toContain('Year-Round');
+	});
+
+	it('refuses to summarize All continents with an equatorial world landmark and points at a continent (P1-2)', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		grid.modes.equal.world[b40][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('All Continents Overview');
+		expect(summary.details).toContain('Select a continent');
+		expect(summary.span).toBe('8 continental columns');
+	});
+
+	it('identifies stationary occurrence when latitude does not shift across 4–11 months (P3-14)', () => {
+		const grid = emptyGrid();
+		const b40 = bandIndex(40);
+		for (let m = 0; m < 8; m++) {
+			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+		}
+		const s = baseState({ view: 'world' });
+		const summary = migrationSummary(grid, s);
+		expect(summary.hasData).toBe(true);
+		expect(summary.headline).toBe('Stationary Occurrence');
+		expect(summary.span).toBe('Recorded in 8 of 12 months');
+		expect(summary.details).toContain('across 8 months');
+	});
+});
+
+describe('reduce & pickCell with cropped bands (P3-15)', () => {
+	it('reduce ArrowUp/ArrowDown stays bounded to cropped bands slice', () => {
+		const croppedBands = [50, 40, 30, 20];
+		const s = baseState({ band: 40 });
+		const up = reduce(s, 'ArrowUp', croppedBands);
+		expect(up?.state.band).toBe(50);
+		const top = reduce(up!.state, 'ArrowUp', croppedBands);
+		expect(top?.state.band).toBe(50); // stays at top of crop
+
+		const down = reduce(s, 'ArrowDown', croppedBands);
+		expect(down?.state.band).toBe(30);
+		const bottom = reduce(down!.state, 'ArrowDown', croppedBands);
+		expect(bottom?.state.band).toBe(20);
+		const clamped = reduce(bottom!.state, 'ArrowDown', croppedBands);
+		expect(clamped?.state.band).toBe(20); // stays at bottom of crop
+	});
+
+	it('pickCell hit-tests correctly within cropped bands', () => {
+		const croppedBands = [50, 40, 30, 20];
+		const geom = { cont: false, single: false, cols: 12, cellW: 25, rowH: 48, headH: 20, w: 300, h: 212 };
+		const s = baseState({ view: 'world', cont: null, month: 7, band: 40 });
+		// Click on row 1 (band 40: y = headH + 48 + 10 = 78)
+		const picked = pickCell(s, geom, 50, 78, false, croppedBands);
+		expect(picked?.band).toBe(40);
+
+		// Click on row 3 (band 20: y = headH + 3 * 48 + 10 = 174)
+		const pickedRow3 = pickCell(s, geom, 50, 174, false, croppedBands);
+		expect(pickedRow3?.band).toBe(20);
+
+		// Click below cropped bands (y = 220 > headH + 4 * 48 = 212) -> null
+		const outside = pickCell(s, geom, 50, 220, false, croppedBands);
+		expect(outside).toBeNull();
 	});
 });
 
