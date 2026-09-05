@@ -320,9 +320,8 @@ describe('pickCell (pointer hit-test) — a cell/row tap stops Play', () => {
 		expect(pickCell(s, geom, 10, 5)).toBeNull();
 	});
 
-	// Spec rev 3.3 TD-C, P1-1: below 640px cells are not tap targets — the
-	// scrubber owns the month, a 48px band row owns the band.
-	describe('bandOnly (phone contract)', () => {
+	// bandOnly option preserved for row-only selection modes (td-2c7a0b)
+	describe('bandOnly (row-only selection mode)', () => {
 		it('never returns a different month — `s.month` passes through unchanged', () => {
 			const s = baseState({ view: 'world', cont: null, month: 9, playing: true });
 			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };

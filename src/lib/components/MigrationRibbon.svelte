@@ -88,12 +88,11 @@
 	// scrollbar after this script runs), and never again once the user
 	// touches the View toggle. ------------------------------------------------
 	let wide = $state(false);
-	/** Below 640px (spec rev 3.3 TD-C, P1-1) — sampled independently from
-	 * `wide`, NOT derived as `!wide`, since 640-1023px (tablet) must keep the
-	 * compact rows and full cell picking that `wide` alone would otherwise
-	 * lump in with "phone". Drives `geometry()`'s row height and `pickCell`'s
-	 * band-only picking; never touches `ribbonState`, so it needs no
-	 * `untrack()` (unlike the `wide` effect below). */
+	/** Below 640px (spec rev 3.3 TD-C, P1-1, td-2c7a0b) — sampled independently from
+	 * `wide`, NOT derived as `!wide`, since 640-1023px (tablet) keeps the
+	 * compact rows that `wide` alone would otherwise lump in with "phone".
+	 * Drives `geometry()`'s 48px touch row height on mobile; never touches
+	 * `ribbonState`, so it needs no `untrack()` (unlike the `wide` effect below). */
 	let phone = $state(false);
 	let reducedMotion = $state(false);
 	const primaryCol = $derived(primaryContinent(grid));
