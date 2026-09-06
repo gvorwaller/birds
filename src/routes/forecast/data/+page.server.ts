@@ -95,7 +95,8 @@ export interface StateGroup {
   state: DataRow | null;
   /** Counties (with their nested hotspots), sorted by name. */
   countyBlocks: CountyBlock[];
-  /** Hotspots whose county isn't recorded (pre-0014 rows never re-cached). */
+  /** Hotspots recorded directly under this region. A smaller subdivision
+   * may not exist in eBird, or its assignment may not be recorded. */
   stateHotspots: DataRow[];
   countiesLoaded: number;
   hotspotCount: number;

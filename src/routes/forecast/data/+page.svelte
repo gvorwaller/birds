@@ -844,10 +844,12 @@
         </div>
       {/if}
       {#if detail.stateHotspots.length > 0}
-        <p class="notice">
-          Hotspots below have no recorded {countyNoun(g)} — refreshing them
-          (or the next area load) files them correctly.
-        </p>
+        {#if g.countyTotal !== null && g.countyTotal > 0}
+          <p class="notice">
+            These hotspots are recorded under {g.stateName}, without a more
+            specific {g.countryCode === "US" ? "county" : "subdivision"} assignment.
+          </p>
+        {/if}
         {@render dataTable("Hotspot", detail.stateHotspots)}
       {/if}
     {/if}
@@ -903,10 +905,12 @@
         {@render dataTable("Countrywide", [s.countrywide])}
       {/if}
       {#if cdetail.stateHotspots.length > 0}
-        <p class="notice">
-          Hotspots below have no recorded region — refreshing them (or the
-          next area load) files them correctly.
-        </p>
+        {#if s.regionTotal !== null && s.regionTotal > 0}
+          <p class="notice">
+            These hotspots are recorded under {s.countryName}, without a more
+            specific region assignment.
+          </p>
+        {/if}
         {@render dataTable("Hotspot", cdetail.stateHotspots)}
       {/if}
       {#each s.groups as g (g.stateCode)}

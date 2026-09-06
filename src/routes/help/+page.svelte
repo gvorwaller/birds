@@ -332,7 +332,12 @@
 						all of its states; each level stays collapsed until opened. Each row
 						shows its year span, species count (with any unmatched
 						bar-chart rows), load date, and a Refresh; failed loads keep a
-						Retry. Load new regions and analyze counties from here too — pick
+						Retry. Hotspots can belong directly to a country or region when
+						eBird has no smaller subdivisions there. Where smaller subdivisions
+						are known, a note identifies hotspots without that more specific
+						assignment. Refresh reloads historical bird data; it does not look
+						up or repair geographic assignments.
+						Load new regions and analyze counties from here too — pick
 						a <strong>Country</strong> above the region select to load
 						anywhere eBird covers. That picker is alphabetical and only shows
 						countries that do not yet have either countrywide coverage or every

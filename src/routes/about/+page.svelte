@@ -121,6 +121,13 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Clearer hotspot geography</strong> — hotspots filed directly
+								under regions such as Suðurland no longer show a missing-region
+								warning when eBird lists no smaller subdivisions. Notes for known
+								subdivisions now distinguish the recorded parent from a missing
+								more specific assignment, without suggesting Refresh will repair it.
+							</li>
+							<li>
 								<strong>Cleaner worldwide loading</strong> — the country picker now removes
 								countries whose remaining regional locations were conclusively resolved as
 								no-data or quarantined after repeated unavailable responses, while temporary
