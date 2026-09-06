@@ -47,6 +47,51 @@ export const COLUMN_SHORT: Record<RibbonColumn, string> = {
 	AN: 'AN'
 };
 
+export type ContinentCode = 'AF' | 'AN' | 'AS' | 'EU' | 'NA' | 'OC' | 'SA';
+
+export interface ContinentDef {
+	readonly id: ContinentCode;
+	readonly name: string;
+	readonly columns: readonly RibbonColumn[];
+}
+
+export const CONTINENTS: readonly ContinentDef[] = [
+	{ id: 'AF', name: 'Africa', columns: ['AF'] },
+	{ id: 'AN', name: 'Antarctica', columns: ['AN'] },
+	{ id: 'AS', name: 'Asia', columns: ['AS'] },
+	{ id: 'EU', name: 'Europe', columns: ['EU'] },
+	{ id: 'NA', name: 'North America', columns: ['NAW', 'NAE'] },
+	{ id: 'OC', name: 'Oceania', columns: ['OC'] },
+	{ id: 'SA', name: 'South America', columns: ['SA'] }
+];
+
+export function continentForColumn(col: RibbonColumn): ContinentDef {
+	return (
+		CONTINENTS.find((c) => (c.columns as readonly RibbonColumn[]).includes(col)) ?? CONTINENTS[4]
+	);
+}
+
+export function selectedContinentIds(cols: readonly RibbonColumn[]): ContinentCode[] {
+	const ids: ContinentCode[] = [];
+	for (const cont of CONTINENTS) {
+		if (cont.columns.some((c) => cols.includes(c))) {
+			ids.push(cont.id);
+		}
+	}
+	return ids;
+}
+
+export function columnsForContinents(ids: readonly ContinentCode[]): RibbonColumn[] {
+	const cols: RibbonColumn[] = [];
+	for (const col of COLUMNS) {
+		const cont = CONTINENTS.find((c) => (c.columns as readonly RibbonColumn[]).includes(col));
+		if (cont && ids.includes(cont.id)) {
+			cols.push(col);
+		}
+	}
+	return cols;
+}
+
 export const MONTHS = [
 	'January',
 	'February',
@@ -71,7 +116,6 @@ export const LOW_N = 40;
 export const PRESENT = 0.005;
 /** Home region's column — the default single-continent selection. */
 export const HOME_COLUMN: RibbonColumn = 'NAE';
-export const PLAY_MS = 750;
 /** Row height, world/all-continents view. */
 export const ROW_H = 22;
 /** Row height, single-continent view on a phone — a 48px tap target
@@ -198,23 +242,23 @@ export const LANDMARKS: Record<string, Record<number, string>> = {
 		[-90]: 'South Pole'
 	},
 	WORLD: {
-		80: 'High Arctic',
-		70: 'Arctic Tundra',
-		60: 'Subarctic & Boreal',
-		50: 'Temperate North',
-		40: 'Mid-Latitudes North',
-		30: 'Subtropics North',
-		20: 'Tropical North',
-		10: 'Equatorial North',
-		0: 'Equatorial Belt',
-		[-10]: 'Equatorial South',
-		[-20]: 'Tropical South',
-		[-30]: 'Subtropics South',
-		[-40]: 'Mid-Latitudes South',
-		[-50]: 'Subantarctic',
-		[-60]: 'Southern Ocean',
-		[-70]: 'Antarctic Coast',
-		[-80]: 'Antarctic Interior',
+		80: 'High Arctic · Ellesmere, Svalbard',
+		70: 'Arctic Tundra · Baffin, Prudhoe, Lapland',
+		60: 'Subarctic & Boreal · Anchorage, Oslo, Helsinki',
+		50: 'Temperate North · London, Vancouver, Berlin',
+		40: 'Mid-Latitudes North · New York, Chicago, Rome',
+		30: 'Subtropics North · Los Angeles, Cairo, Shanghai',
+		20: 'Tropical North · Miami, Delhi, Sahara',
+		10: 'Equatorial North · Caribbean, Sahel, Bangkok',
+		0: 'Equatorial Belt · Bogota, Nairobi, Singapore',
+		[-10]: 'Equatorial South · Lima, Manaus, Jakarta',
+		[-20]: 'Tropical South · Rio de Janeiro, Zimbabwe',
+		[-30]: 'Subtropics South · São Paulo, Brisbane',
+		[-40]: 'Mid-Latitudes South · Buenos Aires, Sydney',
+		[-50]: 'Subantarctic · Patagonia, S. Island NZ',
+		[-60]: 'Southern Ocean · Tierra del Fuego, Drake',
+		[-70]: 'Antarctic Coast · Peninsula & McMurdo',
+		[-80]: 'Antarctic Interior · Ross Ice Shelf',
 		[-90]: 'South Pole'
 	}
 };
@@ -377,33 +421,59 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		};
 	}
 
-	if (s.view === 'cont' && s.contView === 'ALL') {
+	const drawn = drawnColumns(s);
+	const selectedContinents = CONTINENTS.filter((c) =>
+		c.columns.some((col) => drawn.includes(col))
+	);
+
+	if (s.view === 'cont' && drawn.length > 1) {
+		if (selectedContinents.length === 1 && selectedContinents[0].id === 'NA') {
+			return {
+				hasData: true,
+				headline: 'North America Overview',
+				details:
+					'North America is split into West and East columns (100°W). Select a cell to inspect regional reporting rates and seasonal presence in the readout.',
+				span: `${drawn.length} continental columns`
+			};
+		}
+		const isAll = drawn.length === COLUMNS.length;
 		return {
 			hasData: true,
-			headline: 'All Continents Overview',
-			details: 'Select a continent to view regional migration patterns and seasonal shifts.',
-			span: '8 continental columns'
+			headline: isAll ? 'All Continents Overview' : 'Selected Continents Overview',
+			details: isAll
+				? 'Select a continent to view regional migration patterns and seasonal shifts.'
+				: 'Select a single continent to view regional migration patterns and seasonal shifts.',
+			span: `${drawn.length} continental columns`
 		};
 	}
 
-	const col = s.view === 'cont' && s.contView !== 'ALL' ? s.contView : null;
+	const col = s.view === 'cont' ? (s.contView !== 'ALL' ? s.contView : drawn[0]) : null;
 
 	// Extract peak band and frequency per month
-	const monthlyPeaks: { month: number; band: number; maxF: number; avgLat: number }[] = [];
+	const monthlyPeaks: {
+		month: number;
+		band: number;
+		maxF: number;
+		avgLat: number;
+		col?: RibbonColumn;
+	}[] = [];
 	let totalObserved = 0;
 
 	for (let m = 0; m < 12; m++) {
 		let maxF = 0;
 		let peakBand: number | null = null;
+		let peakCol: RibbonColumn | null = null;
 		let sumLatF = 0;
 		let sumF = 0;
 
 		for (let bi = 0; bi < BANDS.length; bi++) {
 			const band = BANDS[bi];
 			let cell: RibbonCellClient | null = null;
+			let bandCol: RibbonColumn | null = null;
 			if (col != null) {
 				const ci = COLUMNS.indexOf(col);
 				cell = ci >= 0 ? mode.cols[bi]?.[ci]?.[m] : null;
+				bandCol = col;
 			} else {
 				cell = mode.world[bi]?.[m];
 			}
@@ -414,12 +484,19 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 				if (cell.f > maxF) {
 					maxF = cell.f;
 					peakBand = band;
+					peakCol = bandCol;
 				}
 			}
 		}
 		if (sumF > 0 && peakBand !== null) {
 			const avgLat = sumLatF / sumF;
-			monthlyPeaks.push({ month: m + 1, band: peakBand, maxF, avgLat });
+			monthlyPeaks.push({
+				month: m + 1,
+				band: peakBand,
+				maxF,
+				avgLat,
+				col: peakCol ?? undefined
+			});
 		}
 	}
 
@@ -437,7 +514,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	// Guard against sparse / single-month data making unsupported annual claims (CODEX1 Blocker 2)
 	if (observed.length === 1) {
 		const p = observed[0];
-		const landmark = landmarkFor(p.band, col) ?? bandLabel(p.band);
+		const landmark = landmarkFor(p.band, p.col ?? col) ?? bandLabel(p.band);
 		return {
 			hasData: true,
 			headline: 'Sparse Seasonal Data',
@@ -450,7 +527,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 		const monthsStr = formatWindow(observed.map((p) => p.month));
 		const sorted = [...observed].sort((a, b) => b.avgLat - a.avgLat);
 		const northPeak = sorted[0];
-		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		const landmark = landmarkFor(northPeak.band, northPeak.col ?? col) ?? bandLabel(northPeak.band);
 		return {
 			hasData: true,
 			headline: 'Limited Seasonal Data',
@@ -465,7 +542,7 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 	const deltaLat = northPeak.avgLat - southPeak.avgLat;
 
 	if (deltaLat < SHIFT_THRESHOLD) {
-		const landmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
+		const landmark = landmarkFor(northPeak.band, northPeak.col ?? col) ?? bandLabel(northPeak.band);
 		const seasonalRanges: SeasonalRange[] = [
 			{
 				label: observed.length === 12 ? 'Year-Round Range' : 'Observed Range',
@@ -504,8 +581,8 @@ export function migrationSummary(grid: RibbonGridClient, s: RibbonState): Migrat
 
 	const northStr = formatWindow(northMonths);
 	const southStr = formatWindow(southMonths);
-	const northLandmark = landmarkFor(northPeak.band, col) ?? bandLabel(northPeak.band);
-	const southLandmark = landmarkFor(southPeak.band, col) ?? bandLabel(southPeak.band);
+	const northLandmark = landmarkFor(northPeak.band, northPeak.col ?? col) ?? bandLabel(northPeak.band);
+	const southLandmark = landmarkFor(southPeak.band, southPeak.col ?? col) ?? bandLabel(southPeak.band);
 	const span =
 		observed.length === 12
 			? `${Math.round(deltaLat)}° latitudinal shift across the year`
@@ -634,12 +711,13 @@ export interface RibbonState {
 	/** The continent PICKER: 'ALL' draws every column, a key draws one
 	 * full-width grid. */
 	contView: 'ALL' | RibbonColumn;
+	/** Continents to display in By continent view. If omitted, drawnColumns falls back to contView. */
+	selectedConts?: RibbonColumn[];
 	/** The continent of the SELECTED cell (readout/drill). */
 	cont: RibbonColumn | null;
 	weight: Weighting;
 	band: number;
 	month: number;
-	playing: boolean;
 	/** Once true, `applyWide` stops overriding the user's own view choice. */
 	viewTouched: boolean;
 	drillExpanded: boolean;
@@ -657,11 +735,11 @@ export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonSt
 	return {
 		view: wide ? 'cont' : 'world',
 		contView: wide ? 'ALL' : col,
+		selectedConts: [...COLUMNS],
 		cont: wide ? col : null,
 		weight: 'equal',
 		band: 40,
 		month: 7,
-		playing: false,
 		viewTouched: false,
 		drillExpanded: false,
 		drillOpen: true,
@@ -677,14 +755,48 @@ export function applyWide(s: RibbonState, wide: boolean, defaultCol?: RibbonColu
 		...s,
 		view: wide ? 'cont' : 'world',
 		contView: wide ? 'ALL' : (defaultCol ?? s.contView),
+		selectedConts: s.selectedConts ?? [...COLUMNS],
 		cont: wide ? col : null
 	};
 }
 
-/** Continents currently drawn: none in World view, all or one in By continent. */
+/**
+ * State transition from World view (or any view) to By continent view.
+ * Ensures the visible multi-select continent selection is canonical:
+ * if multiple continents/columns are selected, contView becomes 'ALL';
+ * if exactly one column is selected, contView matches that column.
+ */
+export function transitionToContinentView(
+	s: RibbonState,
+	lastCont?: RibbonColumn | null
+): RibbonState & { cont: RibbonColumn } {
+	const targetCols =
+		s.selectedConts && s.selectedConts.length > 0
+			? COLUMNS.filter((c) => s.selectedConts!.includes(c))
+			: [...COLUMNS];
+	const cont: RibbonColumn =
+		s.cont && targetCols.includes(s.cont)
+			? s.cont
+			: lastCont && targetCols.includes(lastCont)
+				? lastCont
+				: (targetCols[0] ?? HOME_COLUMN);
+	return {
+		...s,
+		viewTouched: true,
+		view: 'cont',
+		contView: targetCols.length === 1 ? targetCols[0] : 'ALL',
+		cont
+	};
+}
+
+/** Continents currently drawn: none in World view, all, one, or custom subset in By continent. */
 export function drawnColumns(s: RibbonState): RibbonColumn[] {
 	if (s.view !== 'cont') return [];
-	return s.contView === 'ALL' ? [...COLUMNS] : [s.contView];
+	if (s.contView !== 'ALL') return [s.contView];
+	if (s.selectedConts && s.selectedConts.length > 0) {
+		return COLUMNS.filter((c) => s.selectedConts!.includes(c));
+	}
+	return [...COLUMNS];
 }
 
 export interface RibbonGeometry {
@@ -774,14 +886,21 @@ export type Key =
 	| 'PageDown'
 	| 'Home'
 	| 'End'
-	| 'Enter'
-	| ' ';
+	| 'Enter';
 
 function pageContinent(s: RibbonState, dir: 1 | -1): RibbonState {
 	if (s.view !== 'cont') return s;
-	const ci = s.cont ? COLUMNS.indexOf(s.cont) : 0;
-	const ni = Math.max(0, Math.min(COLUMNS.length - 1, ci + dir));
-	const cont = COLUMNS[ni];
+	const cols =
+		s.contView === 'ALL'
+			? drawnColumns(s)
+			: s.selectedConts && s.selectedConts.length > 0
+				? COLUMNS.filter((c) => s.selectedConts!.includes(c))
+				: [...COLUMNS];
+	if (cols.length === 0) return s;
+	const ci = s.cont ? cols.indexOf(s.cont) : 0;
+	const validCi = ci === -1 ? 0 : ci;
+	const ni = Math.max(0, Math.min(cols.length - 1, validCi + dir));
+	const cont = cols[ni];
 	// One-continent mode: paging also moves the picker (mockup comment).
 	const contView = s.contView !== 'ALL' ? cont : s.contView;
 	return { ...s, cont, contView };
@@ -800,9 +919,9 @@ export function reduce(
 	const bi = Math.max(0, bands.indexOf(s.band as (typeof BANDS)[number]));
 	switch (key) {
 		case 'ArrowLeft':
-			return { state: { ...s, month: s.month === 1 ? 12 : s.month - 1, playing: false } };
+			return { state: { ...s, month: s.month === 1 ? 12 : s.month - 1 } };
 		case 'ArrowRight':
-			return { state: { ...s, month: (s.month % 12) + 1, playing: false } };
+			return { state: { ...s, month: (s.month % 12) + 1 } };
 		case 'ArrowUp':
 			return { state: { ...s, band: bands[Math.max(0, bi - 1)] } };
 		case 'ArrowDown':
@@ -812,22 +931,20 @@ export function reduce(
 		case 'PageDown':
 			return { state: pageContinent(s, 1) };
 		case 'Home':
-			return { state: { ...s, month: 1, playing: false } };
+			return { state: { ...s, month: 1 } };
 		case 'End':
-			return { state: { ...s, month: 12, playing: false } };
+			return { state: { ...s, month: 12 } };
 		case 'Enter':
 			return { state: { ...s, drillOpen: true }, action: 'openDrill' };
-		case ' ':
-			return { state: { ...s, playing: !s.playing } };
 		default:
 			return null;
 	}
 }
 
 /** The slider / ◀ / ▶ controls set an arbitrary month directly (mockup
- * `setMonth`) and always stop Play, same as a keyboard month change. */
+ * `setMonth`), same as a keyboard month change. */
 export function setMonth(s: RibbonState, month: number): RibbonState {
-	return { ...s, month, playing: false };
+	return { ...s, month };
 }
 
 // ---------------------------------------------------------------------------
@@ -868,14 +985,14 @@ export function pickCell(
 				cont = conts[ci] ?? conts[conts.length - 1] ?? null;
 			}
 		}
-		return { ...s, band, cont, playing: false, drillExpanded: false };
+		return { ...s, band, cont, drillExpanded: false };
 	}
 
 	const col = Math.floor(x / geom.cellW);
 	if (col < 0 || col >= geom.cols) return null;
 	const cont = geom.cont ? (conts[Math.floor(col / 12)] ?? null) : null;
 	const month = (col % 12) + 1;
-	return { ...s, band, cont, month, playing: false, drillExpanded: false };
+	return { ...s, band, cont, month, drillExpanded: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,7 +1157,8 @@ export function chartAria(
 export function scopeText(meta: RibbonGridClient['meta'], weight: Weighting): string {
 	const loadedNames = meta.columnsLoaded.map((c) => COLUMN_NAMES[c]).join(', ');
 	const missingNames = meta.columnsMissing.map((c) => COLUMN_NAMES[c]);
-	let s = `Loaded: ${meta.regions} regions in ${meta.countries} countries across ${meta.columnsLoaded.length} continents (${loadedNames}). `;
+	const colUnit = meta.columnsLoaded.length === 1 ? 'continental column' : 'continental columns';
+	let s = `Loaded: ${meta.regions} regions in ${meta.countries} countries across ${meta.columnsLoaded.length} ${colUnit} (${loadedNames}). `;
 	if (missingNames.length > 0) {
 		s += `Nothing loaded yet for ${missingNames.join(' or ')}, so those columns read "no data", not "absent". `;
 	}
@@ -1092,14 +1210,13 @@ export function drillHeading(s: RibbonState): string {
 	return `Inside ${where}`;
 }
 
-/** 'url(#…)' for a hatched cell — low-sample, excluded countries, or a
- * 'thin' cell (surveyed but nothing voted; `f` is a placeholder there and
- * MUST NOT reach `binIndex` — TD-B deploy gate) — a `--rb-N` token for a
- * normal one, or the sentinel `'slash'` for nothing-loaded (rendered as a
- * white cell with a diagonal slash, never a color — CODEX1 P1). */
-export function fillFor(cell: RibbonCellOrNullClient, hatchId: string): string {
+/** 'dash' for a low-sample cell (excluded countries or a 'thin' cell surveyed
+ * but nothing voted; `f` is a placeholder there and MUST NOT reach `binIndex`
+ * — TD-B deploy gate) — a `--rb-N` token for a normal one, or the sentinel
+ * `'slash'` for nothing-loaded (rendered as a white cell with a diagonal slash). */
+export function fillFor(cell: RibbonCellOrNullClient): string {
 	if (!cell) return 'slash';
-	if (cell.low || cell.state === 'thin') return `url(#${hatchId})`;
+	if (cell.low || cell.state === 'thin') return 'dash';
 	return `var(--rb-${binIndex(cell.f)})`;
 }
 

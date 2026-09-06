@@ -379,17 +379,21 @@
 						continent and each continent once in the world row, so one
 						heavily-birded country can't drown out the rest; regions inside a
 						country are still weighted by their own checklists. Grey means
-						birders were out looking and came up empty; a diagonal slash means
-						nothing is loaded there yet — the two are never the same thing.
+						birders were out looking and came up empty; a dash marks small samples —
+						under equal weighting, one or more countries below 40 checklists were excluded
+						from the average (and if every country is below 40, the cell is too thin to
+						rate); under checklists weighting, the aggregate cell itself is under 40
+						checklists, with its reporting rate still available in the readout; a diagonal
+						slash means nothing is loaded there yet — these are never the same thing.
 						Coverage is partial and the card names exactly what is loaded, so a
-						"no data" column reads as "not loaded," never as "absent." A note
-						below the chart names any stretch of the year where every loaded
-						region fell under 0.5% of checklists — a fixed threshold, the same
-						one the gap note always uses. Pick a band and month — tap any square
+						"no data" column reads as "not loaded," never as "absent." In By continent
+						view, use the continents selector to choose any subset of continents to
+						display side by side. A note below the chart names any stretch of the year
+						where every loaded region fell under 0.5% of checklists — a fixed threshold,
+						the same one the gap note always uses. Pick a band and month — tap any square
 						(or use the slider on a phone) — to open the regions behind it, sorted
-						by how often they report the bird, showing the 40 highest. <strong>Play</strong> advances one month every
-						three-quarters of a second and loops; it's hidden entirely when your
-						system asks for reduced motion. Because the ribbon rolls up each
+						by how often they report the bird, showing the 40 highest. Use the slider
+						or ◀ ▶ buttons for manual month scrubbing. Because the ribbon rolls up each
 						region's whole stored history into one number, it combines whatever
 						year window that region's data covers rather than a single shared
 						span.

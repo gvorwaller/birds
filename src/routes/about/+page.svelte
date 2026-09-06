@@ -137,13 +137,12 @@
 								the full globe. Latitude rows feature geographic landmark anchors on
 								larger viewports and in the readout. It opens to World view on a phone
 								or tablet and to All continents (starting on the species' data-derived primary column) at
-								desktop widths, and is switchable to any single continent or all of
-								them side by side. An equal-weight average keeps one heavily-birded
+								desktop widths, and is switchable to any combination of continents via the multi-select dropdown. An equal-weight average keeps one heavily-birded
 								country from drowning out the rest; a by-checklist average is one
-								tap away. Pick a band and month to see the loaded regions behind
+								tap away. Under equal weighting, a neutral dash marks cells where one or more countries below 40 checklists were excluded from the average (or where every country fell below 40, leaving the cell too thin to rate); under checklist weighting, a dash marks cells where the aggregate sample itself is under 40 checklists (with its reporting rate still available in the readout). Cells with nothing loaded show a diagonal slash. Pick a band and month to see the loaded regions behind
 								them, and tap a region there to chart it in Best time of year as a
-								third pick alongside the closest and best regions. A Play button
-								steps through the year automatically (off under reduced motion). On a
+								third pick alongside the closest and best regions. Use the month slider or step buttons to
+								browse the full year. On a
 								phone, tap any square or use the slider; on larger screens tap any square.
 							</li>
 						</ul>

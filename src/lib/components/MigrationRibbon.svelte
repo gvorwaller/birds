@@ -21,12 +21,13 @@
 	import {
 		BANDS,
 		COLUMNS,
+		CONTINENTS,
+		type ContinentDef,
 		COLUMN_NAMES,
 		LOW_N,
 		ML,
 		MSHORT,
 		HOME_COLUMN,
-		PLAY_MS,
 		BINS,
 		bandLabel,
 		binIndex,
@@ -51,6 +52,7 @@
 		reduce,
 		scopeText,
 		setMonth,
+		transitionToContinentView,
 		boundedCacheSet,
 		DrillGeneration,
 		resolveDrillLoad,
@@ -75,13 +77,6 @@
 		onchartregion: (row: RibbonRegionRowClient) => void;
 	} = $props();
 
-	function stableId(s: string): string {
-		let h = 0;
-		for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-		return (h >>> 0).toString(36);
-	}
-	const hatchId = $derived(`rbhatch-${stableId(speciesCode)}`);
-
 	// ---- Breakpoint / reduced-motion sampling (owner decision, CODEX1 P1-7 /
 	// P2-5): World under 1024px, By continent at >=1024px, following
 	// `matchMedia`, re-sampled once after first paint (Safari can add the
@@ -101,10 +96,11 @@
 	let fullGlobe = $state(false);
 	const currentBands = $derived(activeBands(grid, ribbonState, fullGlobe));
 	const summary = $derived(migrationSummary(grid, ribbonState));
+	const drawnCols = $derived(drawnColumns(ribbonState));
 	const gutterCol = $derived<RibbonColumn | null>(
-		ribbonState.view === 'cont' && ribbonState.contView !== 'ALL'
-			? ribbonState.contView
-			: (ribbonState.cont ?? primaryCol)
+		ribbonState.view === 'cont' && drawnCols.length === 1
+			? drawnCols[0]
+			: null
 	);
 
 	$effect(() => {
@@ -176,9 +172,6 @@
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		const apply = (matches: boolean) => {
 			reducedMotion = matches;
-			if (matches && untrack(() => ribbonState.playing)) {
-				ribbonState = { ...untrack(() => ribbonState), playing: false };
-			}
 		};
 		apply(mq.matches);
 		const onChange = (e: MediaQueryListEvent) => apply(e.matches);
@@ -221,7 +214,6 @@
 		};
 	});
 
-	const drawnCols = $derived(drawnColumns(ribbonState));
 	const geom = $derived(geometry(ribbonState, availWidth, wide, phone, currentBands));
 	const clipped = $derived(geom.w > availWidth + 1);
 	const eqIndex = $derived(currentBands.indexOf(-10 as (typeof currentBands)[number]));
@@ -249,29 +241,21 @@
 	const showToDrill = $derived(!currentReadout.empty && currentReadout.nreg > 0);
 
 	/** Visually-hidden live announcement — updated only on USER-initiated
-	 * selection changes, never on a Play timer tick (CODEX1 P2-3: an
-	 * aria-live readout firing every 750ms during Play is unusable). */
+	 * selection changes (CODEX1 P2-3). */
+	let lastCont = $state<RibbonColumn>(HOME_COLUMN);
+	$effect.pre(() => {
+		if (primaryCol && lastCont === HOME_COLUMN && !ribbonState.viewTouched) {
+			lastCont = primaryCol;
+		}
+	});
 	let srAnnounce = $state('');
 	function applySelection(next: RibbonState) {
+		if (next.cont) {
+			lastCont = next.cont;
+		}
 		ribbonState = next;
 		const r = readout(grid, next);
 		srAnnounce = r.empty ? r.line2 : `${r.line1}. ${r.line2}${r.line3 ? `. ${r.line3}` : ''}`;
-	}
-
-	// ---- Play: 750ms looping interval, an `$effect` + cleanup (NavProgress
-	// pattern), hidden under reduced motion; any manual month change stops it
-	// (every handler below that changes month goes through `applySelection`
-	// with `playing: false`, never this effect's own direct advance). --------
-	$effect(() => {
-		if (!ribbonState.playing || reducedMotion) return;
-		const id = setInterval(() => {
-			ribbonState = { ...ribbonState, month: (ribbonState.month % 12) + 1 };
-		}, PLAY_MS);
-		return () => clearInterval(id);
-	});
-	function togglePlay() {
-		if (reducedMotion) return;
-		ribbonState = { ...ribbonState, playing: !ribbonState.playing };
 	}
 
 	// ---- Keyboard (mockup keydown handler, ported to `reduce()`). ----------
@@ -331,24 +315,139 @@
 		applySelection({ ...ribbonState, viewTouched: true, view: 'world', cont: null });
 	}
 	function selectContView() {
-		applySelection({
-			...ribbonState,
-			viewTouched: true,
-			view: 'cont',
-			cont: ribbonState.contView === 'ALL' ? (ribbonState.cont ?? HOME_COLUMN) : ribbonState.contView
-		});
+		const next = transitionToContinentView(ribbonState, lastCont);
+		lastCont = next.cont;
+		applySelection(next);
 	}
-	function onContSelect(e: Event) {
-		const value = (e.currentTarget as HTMLSelectElement).value as 'ALL' | RibbonColumn;
+
+	// Continent multi-select popover
+	let contPopoverOpen = $state(false);
+	let contPopoverEl = $state<HTMLDivElement | null>(null);
+
+	function closeContPopover(restoreFocus = true) {
+		if (!contPopoverOpen) return;
+		contPopoverOpen = false;
+		if (restoreFocus) {
+			document.getElementById('rbcontBtn')?.focus();
+		}
+	}
+
+	function toggleContPopover() {
+		if (contPopoverOpen) {
+			closeContPopover(false);
+		} else {
+			contPopoverOpen = true;
+		}
+	}
+
+	const selectedContinents = $derived.by(() => {
+		const selected = ribbonState.selectedConts ?? COLUMNS;
+		return CONTINENTS.filter((c) => c.columns.some((col) => selected.includes(col)));
+	});
+
+	const contSummaryText = $derived.by(() => {
+		if (selectedContinents.length === CONTINENTS.length) {
+			return 'All continents';
+		}
+		if (selectedContinents.length === 1) {
+			return selectedContinents[0].name;
+		}
+		return `${selectedContinents.length} continents`;
+	});
+
+	function isContinentSelected(c: ContinentDef): boolean {
+		const selected = ribbonState.selectedConts ?? COLUMNS;
+		return c.columns.some((col) => selected.includes(col));
+	}
+
+	function onToggleContinent(c: ContinentDef, checked: boolean, e?: Event) {
+		const current = ribbonState.selectedConts ? [...ribbonState.selectedConts] : [...COLUMNS];
+		let nextCols: RibbonColumn[];
+		if (checked) {
+			nextCols = COLUMNS.filter((col) => current.includes(col) || c.columns.includes(col));
+		} else {
+			if (selectedContinents.length <= 1) {
+				if (e?.currentTarget) {
+					(e.currentTarget as HTMLInputElement).checked = true;
+				}
+				return;
+			}
+			nextCols = current.filter((col) => !c.columns.includes(col));
+		}
+		const cont = nextCols.includes(ribbonState.cont as RibbonColumn)
+			? ribbonState.cont
+			: lastCont && nextCols.includes(lastCont)
+				? lastCont
+				: nextCols[0];
+		lastCont = cont ?? nextCols[0];
 		applySelection({
 			...ribbonState,
-			contView: value,
-			cont: value === 'ALL' ? ribbonState.cont : value,
+			selectedConts: nextCols,
+			contView: nextCols.length === COLUMNS.length ? 'ALL' : nextCols.length === 1 ? nextCols[0] : 'ALL',
+			cont,
+			viewTouched: true,
 			drillExpanded: false
 		});
-		// drillNote/selectedRegionCode reset happens in the drill effect,
-		// keyed on (speciesCode, band, cont) — CODEX1 P2-3.
 	}
+
+	function selectAllContinents() {
+		const cont = lastCont && COLUMNS.includes(lastCont) ? lastCont : (primaryCol ?? HOME_COLUMN);
+		lastCont = cont;
+		applySelection({
+			...ribbonState,
+			selectedConts: [...COLUMNS],
+			contView: 'ALL',
+			cont,
+			viewTouched: true,
+			drillExpanded: false
+		});
+	}
+
+	function selectPrimaryContinent() {
+		const pCol = primaryCol ?? HOME_COLUMN;
+		const primaryDef = CONTINENTS.find((c) => c.columns.includes(pCol)) ?? CONTINENTS[4];
+		const nextCols = [...primaryDef.columns];
+		lastCont = pCol;
+		applySelection({
+			...ribbonState,
+			selectedConts: nextCols,
+			contView: nextCols.length === 1 ? nextCols[0] : 'ALL',
+			cont: pCol,
+			viewTouched: true,
+			drillExpanded: false
+		});
+	}
+
+	$effect(() => {
+		if (!contPopoverOpen) return;
+		// Nonmodal dialog keyboard contract: focus first control on open (CODEX13 P2)
+		void tick().then(() => {
+			const firstEl = contPopoverEl?.querySelector<HTMLElement>(
+				'button:not([disabled]), input:not([disabled])'
+			);
+			firstEl?.focus();
+		});
+		const onDocClick = (e: MouseEvent) => {
+			const target = e.target as Node | null;
+			const btn = document.getElementById('rbcontBtn');
+			if (btn && btn.contains(target)) return;
+			if (contPopoverEl && !contPopoverEl.contains(target)) {
+				closeContPopover(false);
+			}
+		};
+		const onDocKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				closeContPopover(true);
+			}
+		};
+		document.addEventListener('click', onDocClick);
+		document.addEventListener('keydown', onDocKey);
+		return () => {
+			document.removeEventListener('click', onDocClick);
+			document.removeEventListener('keydown', onDocKey);
+		};
+	});
 	function setWeight(weight: Weighting) {
 		applySelection({ ...ribbonState, weight });
 	}
@@ -537,15 +636,6 @@
 				<span class="mlabel">{MSHORT[ribbonState.month - 1]}</span>
 				<button type="button" class="btn" aria-label="Next month" onclick={nextMonth}>▶</button>
 			</div>
-			<div class="scrub-play">
-				{#if !reducedMotion}
-					<button type="button" class="btn" aria-pressed={ribbonState.playing} onclick={togglePlay}>
-						{ribbonState.playing ? '⏸ Pause' : '▶ Play the year'}
-					</button>
-				{:else}
-					<span class="rm-note">Auto-play off (reduced motion); use ◀ ▶.</span>
-				{/if}
-			</div>
 		</div>
 
 		<div class="toolbar">
@@ -561,14 +651,52 @@
 				</div>
 			</div>
 			{#if geom.cont}
-				<div>
-					<span class="seg-label" id="rbcpLbl">Continent</span>
-					<select id="rbcontSel" aria-labelledby="rbcpLbl" value={ribbonState.contView} onchange={onContSelect}>
-						<option value="ALL">All continents</option>
-						{#each COLUMNS as col (col)}
-							<option value={col}>{COLUMN_NAMES[col]}</option>
-						{/each}
-					</select>
+				<div class="cont-select-wrapper">
+					<span class="seg-label" id="rbcpLbl">Continents</span>
+					<button
+						type="button"
+						id="rbcontBtn"
+						class="btn cont-btn"
+						aria-labelledby="rbcpLbl rbcontSummary"
+						aria-haspopup="dialog"
+						aria-expanded={contPopoverOpen}
+						onclick={toggleContPopover}
+					>
+						<span id="rbcontSummary">{contSummaryText}</span>
+						<span class="caret" aria-hidden="true">▾</span>
+					</button>
+					{#if contPopoverOpen}
+						<div
+							class="cont-popover"
+							role="dialog"
+							aria-labelledby="rbcpLbl"
+							bind:this={contPopoverEl}
+						>
+							<div class="pop-actions">
+								<span class="pop-title">Continents</span>
+								<div class="pop-links">
+									<button type="button" class="btn-link" onclick={selectAllContinents}>Select all</button>
+									<button type="button" class="btn-link" onclick={selectPrimaryContinent}>Primary only</button>
+								</div>
+							</div>
+							<div class="cont-options" role="group" aria-label="Select continents to display">
+								{#each CONTINENTS as c (c.id)}
+									{@const checked = isContinentSelected(c)}
+									{@const isOnly = checked && selectedContinents.length === 1}
+									<label class="cont-opt" class:disabled={isOnly}>
+										<input
+											type="checkbox"
+											{checked}
+											disabled={isOnly}
+											title={isOnly ? 'At least one continent must remain selected' : undefined}
+											onchange={(e) => onToggleContinent(c, e.currentTarget.checked, e)}
+										/>
+										<span>{c.name}</span>
+									</label>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				</div>
 			{/if}
 			<div>
@@ -610,7 +738,7 @@
 		</div>
 
 		<!-- Composite widget (spec TD-C): role="group" + aria-roledescription make this a
-		     keyboard-driven custom control (arrow keys/Home/End/Enter/Space via onkeydown), not a
+		     keyboard-driven custom control (arrow keys/Home/End/Enter via onkeydown), not a
 		     static container — tabindex and the keydown handler are the point, not an oversight. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 		<div
@@ -625,15 +753,16 @@
 			<span id="rbkeys" class="sr-only"
 				>Left and right arrows change month, up and down change latitude band, Page Up and Page
 				Down change continent, Home and End jump to January and December, Enter opens the regions
-				inside the selected cell, Space plays or pauses.</span
+				inside the selected cell.</span
 			>
 			<div class="ribwrap" class:clipped>
 				<div class="rgut" style="padding-top:{geom.headH + 4}px">
 					{#each currentBands as band (band)}
+						{@const lm = gutterCol === null ? landmarkFor(band, null) : landmarkFor(band, gutterCol)}
 						<div class="bl" class:on={band === ribbonState.band} style="height:{geom.rowH}px">
 							<span class="b-deg">{bandLabel(band)}</span>
-							{#if landmarkFor(band, gutterCol)}
-								<span class="b-land">{landmarkFor(band, gutterCol)}</span>
+							{#if lm}
+								<span class="b-land">{lm}</span>
 							{/if}
 						</div>
 					{/each}
@@ -653,13 +782,6 @@
 					onpointercancel={onPointerCancel}
 				>
 					<svg width={geom.w} height={geom.h} viewBox="0 0 {geom.w} {geom.h}" role="img" aria-label={currentAria}>
-						<defs>
-							<pattern id={hatchId} width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-								<rect width="6" height="6" fill="var(--accent-soft)" />
-								<line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent)" stroke-width="2" />
-							</pattern>
-						</defs>
-
 						{#if geom.cont}
 							{#each drawnCols as col, ci (col)}
 								{@const x0 = ci * 12 * geom.cellW}
@@ -705,7 +827,7 @@
 									{#each ML as _m, m (m)}
 										{@const cell = grid.modes[ribbonState.weight].cols[origBi][colIdx][m]}
 										{@const x = (ci * 12 + m) * geom.cellW}
-										{@const fill = fillFor(cell, hatchId)}
+										{@const fill = fillFor(cell)}
 										{#if fill === 'slash'}
 											<rect
 												x={x + 0.5}
@@ -722,6 +844,22 @@
 												stroke="var(--rb-slash)"
 												stroke-width="1.1"
 											/>
+										{:else if fill === 'dash'}
+											<rect
+												x={x + 0.5}
+												y={y + 0.5}
+												width={Math.max(1, geom.cellW - 1)}
+												height={Math.max(1, geom.rowH - 1)}
+												fill="var(--card)"
+											/>
+											<line
+												x1={x + 2.5}
+												y1={y + geom.rowH / 2}
+												x2={x + geom.cellW - 2.5}
+												y2={y + geom.rowH / 2}
+												stroke="var(--muted)"
+												stroke-width="1.3"
+											/>
 										{:else}
 											<rect
 												{x}
@@ -737,7 +875,7 @@
 								{#each ML as _m, m (m)}
 									{@const cell = grid.modes[ribbonState.weight].world[origBi][m]}
 									{@const x = m * geom.cellW}
-									{@const fill = fillFor(cell, hatchId)}
+									{@const fill = fillFor(cell)}
 									{#if fill === 'slash'}
 										<rect
 											x={x + 0.5}
@@ -753,6 +891,22 @@
 											y2={y + 2}
 											stroke="var(--rb-slash)"
 											stroke-width="1.1"
+										/>
+									{:else if fill === 'dash'}
+										<rect
+											x={x + 0.5}
+											y={y + 0.5}
+											width={Math.max(1, geom.cellW - 1)}
+											height={Math.max(1, geom.rowH - 1)}
+											fill="var(--card)"
+										/>
+										<line
+											x1={x + 2.5}
+											y1={y + geom.rowH / 2}
+											x2={x + geom.cellW - 2.5}
+											y2={y + geom.rowH / 2}
+											stroke="var(--muted)"
+											stroke-width="1.3"
 										/>
 									{:else}
 										<rect
@@ -831,7 +985,11 @@
 		{#each BINS as bin, i (bin.label)}
 			<span class="l"><span class="sw" style="background: var(--rb-{i})"></span>{bin.label}</span>
 		{/each}
-		<span class="l"><span class="sw hatch"></span>small sample (under {LOW_N} checklists)</span>
+		{#if ribbonState.weight === 'checklists'}
+			<span class="l"><span class="sw dash">–</span>aggregate cell under {LOW_N} checklists (rate available in readout)</span>
+		{:else}
+			<span class="l"><span class="sw dash">–</span>one or more countries below {LOW_N} checklists excluded (too thin to rate if all below {LOW_N})</span>
+		{/if}
 		<span class="l"><span class="sw nodata"></span>no data (nothing loaded here)</span>
 	</div>
 
@@ -1055,16 +1213,6 @@
 		font-weight: 700;
 		text-align: center;
 	}
-	.scrub-play {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		flex-wrap: wrap;
-	}
-	.rm-note {
-		color: var(--muted);
-		font-size: 0.83rem;
-	}
 
 	.toolbar {
 		display: flex;
@@ -1107,15 +1255,107 @@
 		background: var(--accent);
 		color: #fff;
 	}
-	select {
+	.cont-select-wrapper {
+		position: relative;
+	}
+	.cont-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		min-width: 160px;
 		min-height: 48px;
-		max-width: 100%;
-		padding: 0 10px;
+		background: var(--card);
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--card);
+		padding: 8px 14px;
+		font-size: 0.9rem;
+		font-weight: 600;
 		color: var(--text);
-		font-size: 1rem;
+		cursor: pointer;
+	}
+	.cont-btn .caret {
+		font-size: 0.8rem;
+		opacity: 0.7;
+	}
+	.cont-popover {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: 0;
+		z-index: 20;
+		background: var(--card);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+		width: 280px;
+		padding: 10px;
+	}
+	.pop-actions {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding-bottom: 8px;
+		margin-bottom: 6px;
+		border-bottom: 1px solid var(--border);
+	}
+	.pop-title {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+	.btn-link {
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		padding: 8px 12px;
+		min-height: 48px;
+		min-width: 48px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.btn-link:hover {
+		text-decoration: underline;
+	}
+	.cont-options {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		max-height: 280px;
+		overflow-y: auto;
+	}
+	.cont-opt {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 12px;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.88rem;
+		min-height: 48px;
+		user-select: none;
+	}
+	.cont-opt:hover {
+		background: var(--bg);
+	}
+	.cont-opt.disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+	.cont-opt.disabled input[type='checkbox'] {
+		cursor: not-allowed;
+	}
+	.cont-opt input[type='checkbox'] {
+		accent-color: var(--accent);
+		width: 20px;
+		height: 20px;
+		margin: 0;
+		cursor: pointer;
 	}
 
 	.ribbon {
@@ -1233,14 +1473,22 @@
 		border: 1px solid var(--border);
 		display: inline-block;
 	}
-	.legend .sw.hatch {
-		background: repeating-linear-gradient(45deg, var(--accent-soft) 0 2px, var(--accent) 2px 3px);
+	.legend .sw.dash {
+		border: 1px solid var(--border);
+		background: var(--card);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--muted);
+		line-height: 1;
 	}
 	.legend .sw.nodata {
 		border: 1px solid var(--border);
 		background:
 			linear-gradient(
-					to top right,
+					135deg,
 					transparent calc(50% - 0.8px),
 					var(--rb-slash) calc(50% - 0.8px),
 					var(--rb-slash) calc(50% + 0.8px),

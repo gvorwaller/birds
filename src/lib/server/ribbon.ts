@@ -70,14 +70,14 @@ export type RibbonCellState = 'reported' | 'zero' | 'thin';
 export interface RibbonCell {
 	/**
 	 * When `state === 'thin'` this is a PLACEHOLDER (always 0) — MUST NOT be
-	 * read as a reporting rate. TD-C draws a 'thin' cell as a hatch with no
+	 * read as a reporting rate. TD-C draws a 'thin' cell as a dash with no
 	 * colour bin ("surveyed, too few checklists to rate"), never a %.
 	 */
 	f: number;
 	/** For 'thin', the summed n of every excluded (surveyed-but-thin) country. */
 	n: number;
 	state: RibbonCellState;
-	/** Hatched: an aggregate with a country excluded (equal weight, includes
+	/** Low sample: an aggregate with a country excluded (equal weight, includes
 	 * every 'thin' cell) or a thin sample under the summed-n rule (checklists). */
 	low: boolean;
 	/** Countries left out of an equal-weight average for n < LOW_N. */
@@ -169,7 +169,7 @@ export function classify(f: number, n: number): RibbonCell {
 /**
  * One column: mean over countries of num/n (n>0 only). A country whose
  * coalesced n < LOW_N does not vote (owner decision, CODEX1 P2-2); if any
- * country was excluded the cell is hatched (`low: true`). When EVERY
+ * country was excluded the cell is marked low sample (`low: true`). When EVERY
  * coalesced country is thin (surveyed but none reached LOW_N), the cell is
  * 'thin' — never null (CODEX1 P1-1): null is reserved for nothing loaded.
  */

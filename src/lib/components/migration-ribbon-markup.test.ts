@@ -34,7 +34,7 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toContain('Data from <a href="https://ebird.org">eBird.org</a>');
 	});
 
-	it('hides Play and samples the reduced-motion query', () => {
+	it('samples the reduced-motion query', () => {
 		expect(markup).toContain('prefers-reduced-motion');
 	});
 
@@ -76,6 +76,9 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toMatch(/\.btn\s*\{[^}]*min-height:\s*48px/);
 		expect(markup).toMatch(/\.seg button\s*\{[^}]*min-height:\s*48px/);
 		expect(markup).toMatch(/\.drow\s*\{[^}]*min-height:\s*48px/);
+		expect(markup).toMatch(/\.btn-link\s*\{[^}]*min-height:\s*48px/);
+		expect(markup).toMatch(/\.cont-opt\s*\{[^}]*min-height:\s*48px/);
+		expect(markup).toMatch(/\.cont-btn\s*\{[^}]*min-height:\s*48px/);
 	});
 
 	it('colour tokens are declared, and --rb-5 IS --accent (build spec)', () => {
@@ -83,10 +86,11 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toContain('--rb-5: var(--accent)');
 	});
 
-	it('Play runs on a 750ms interval with $effect cleanup (NavProgress pattern)', () => {
-		expect(markup).toContain('PLAY_MS');
-		expect(markup).toMatch(/setInterval\([\s\S]*?PLAY_MS\)/);
-		expect(markup).toMatch(/return \(\) => clearInterval\(/);
+	it('year player mechanism is removed in favor of manual month scrubbing', () => {
+		expect(markup).not.toContain('Play the year');
+		expect(markup).not.toContain('PLAY_MS');
+		expect(markup).toContain('class="sw dash"');
+		expect(markup).toContain('one or more countries below {LOW_N} checklists excluded');
 	});
 
 	it('pointer selection uses no pointer capture and a movement threshold', () => {
@@ -227,5 +231,33 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toContain('id="rbrangeLbl">Latitudes');
 		expect(markup).toContain('Species range');
 		expect(markup).toContain('Full globe');
+	});
+
+	it('provides continent multi-select popover with 7 continents and honest actions (td-1a47a7)', () => {
+		expect(markup).toContain('id="rbcontBtn"');
+		expect(markup).toContain('aria-labelledby="rbcpLbl rbcontSummary"');
+		expect(markup).toContain('id="rbcontSummary"');
+		expect(markup).toContain('class="cont-popover"');
+		expect(markup).toContain('Select all');
+		expect(markup).toContain('Primary only');
+		expect(markup).not.toContain('>Reset<');
+		expect(markup).toContain('disabled={isOnly}');
+		expect(markup).toContain('{#each CONTINENTS as c (c.id)}');
+	});
+
+	it('renders weighting-aware dash legend (td-1a47a7, CODEX13)', () => {
+		expect(markup).toContain("ribbonState.weight === 'checklists'");
+		expect(markup).toContain('aggregate cell under {LOW_N} checklists (rate available in readout)');
+		expect(markup).toContain(
+			'one or more countries below {LOW_N} checklists excluded (too thin to rate if all below {LOW_N})'
+		);
+	});
+
+	it('continent selector implements nonmodal dialog keyboard contract (td-1a47a7, CODEX13 P2)', () => {
+		expect(markup).toContain('role="dialog"');
+		expect(markup).toContain('aria-haspopup="dialog"');
+		expect(markup).toContain('firstEl?.focus()');
+		expect(markup).toContain("e.key === 'Escape'");
+		expect(markup).toContain("document.getElementById('rbcontBtn')?.focus()");
 	});
 });

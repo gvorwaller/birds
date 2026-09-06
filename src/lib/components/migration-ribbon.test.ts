@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	BANDS,
 	COLUMNS,
+	CONTINENTS,
 	DRILL_ERROR_MESSAGE,
 	DrillGeneration,
 	LOW_N,
@@ -21,6 +22,9 @@ import {
 	binIndex,
 	chartAria,
 	compact,
+	columnsForContinents,
+	continentForColumn,
+	drawnColumns,
 	drillCacheKey,
 	drillHeading,
 	fillFor,
@@ -40,7 +44,9 @@ import {
 	reduce,
 	resolveDrillLoad,
 	scopeText,
+	selectedContinentIds,
 	setMonth,
+	transitionToContinentView,
 	type RibbonCellClient,
 	type RibbonGridClient,
 	type RibbonRegionsClient,
@@ -127,21 +133,25 @@ describe('bandLabel', () => {
 // ---------------------------------------------------------------------------
 
 describe('fillFor', () => {
-	it('a low-sample cell fills with the hatch pattern', () => {
+	it('a low-sample cell fills with the dash sentinel', () => {
 		const cell: RibbonCellClient = { f: 0.2, n: 39, state: 'reported', low: true, excluded: 0 };
-		expect(fillFor(cell, 'h1')).toBe('url(#h1)');
+		expect(fillFor(cell)).toBe('dash');
 	});
 	it('a normal cell fills with its bin token', () => {
 		const cell: RibbonCellClient = { f: 0, n: 39, state: 'zero', low: false, excluded: 0 };
-		expect(fillFor(cell, 'h1')).toBe('var(--rb-0)');
+		expect(fillFor(cell)).toBe('var(--rb-0)');
 	});
 	it('null (nothing loaded) is the slash sentinel', () => {
-		expect(fillFor(null, 'h1')).toBe('slash');
+		expect(fillFor(null)).toBe('slash');
 	});
-	it("a 'thin' cell hatches too, and never touches binIndex (TD-B deploy gate)", () => {
+	it("a 'thin' cell fills with dash too, and never touches binIndex (TD-B deploy gate)", () => {
 		const cell: RibbonCellClient = { f: 0, n: 200, state: 'thin', low: true, excluded: 2 };
-		expect(fillFor(cell, 'h1')).toBe('url(#h1)');
-		expect(fillFor(cell, 'h1')).not.toContain('--rb-');
+		expect(fillFor(cell)).toBe('dash');
+		expect(fillFor(cell)).not.toContain('--rb-');
+	});
+	it('mixed eligible + excluded countries (n=10,000, low=true, excluded=1) fills with dash', () => {
+		const cell: RibbonCellClient = { f: 0.25, n: 10000, state: 'reported', low: true, excluded: 1 };
+		expect(fillFor(cell)).toBe('dash');
 	});
 });
 
@@ -229,6 +239,15 @@ describe('readout', () => {
 		expect(r.line3).toBe('1 country under 40 checklists left out · 3 regions · 300 checklists');
 	});
 
+	it('equal + mixed eligible and excluded countries (n=10,000, excluded=1, low=true) preserves valid aggregate rate with country exclusion note', () => {
+		const grid = emptyGrid();
+		grid.modes.equal.world[b][0] = { f: 0.05, n: 10000, state: 'reported', low: true, excluded: 1 };
+		grid.regionCounts[b] = COLUMNS.map((c) => (c === 'NAE' ? 10 : 0));
+		const r = readout(grid, state);
+		expect(r.line2).toBe('5% average reporting rate · small sample');
+		expect(r.line3).toBe('1 country under 40 checklists left out · 10 regions · 10K checklists');
+	});
+
 	it("'thin' -> surveyed-but-unratable copy, f is never printed as a rate (TD-B deploy gate)", () => {
 		const grid = emptyGrid();
 		grid.modes.equal.world[b][0] = { f: 0, n: 200, state: 'thin', low: true, excluded: 2 };
@@ -245,11 +264,10 @@ describe('readout', () => {
 // ---------------------------------------------------------------------------
 
 describe('reduce', () => {
-	it('ArrowLeft at month 1 wraps to 12 and stops Play', () => {
-		const s = baseState({ month: 1, playing: true });
+	it('ArrowLeft at month 1 wraps to 12', () => {
+		const s = baseState({ month: 1 });
 		const res = reduce(s, 'ArrowLeft')!;
 		expect(res.state.month).toBe(12);
-		expect(res.state.playing).toBe(false);
 	});
 	it('ArrowRight at month 12 wraps to 1', () => {
 		const s = baseState({ month: 12 });
@@ -273,14 +291,25 @@ describe('reduce', () => {
 		expect(res.cont).toBe('SA');
 		expect(res.contView).toBe('SA');
 	});
-	it('Home / End jump to Jan / Dec and stop Play', () => {
-		const s = baseState({ month: 6, playing: true });
-		expect(reduce(s, 'Home')!.state).toMatchObject({ month: 1, playing: false });
-		expect(reduce(s, 'End')!.state).toMatchObject({ month: 12, playing: false });
+	it('PageDown and PageUp with selectedConts subset cycles ONLY within the visible subset', () => {
+		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'EU', selectedConts: ['EU', 'AF'] });
+		const next = reduce(s, 'PageDown')!.state;
+		expect(next.cont).toBe('AF');
+		// PageDown at end of subset stays on AF
+		expect(reduce(next, 'PageDown')!.state.cont).toBe('AF');
+		// PageUp returns to EU
+		expect(reduce(next, 'PageUp')!.state.cont).toBe('EU');
+		// PageUp at start of subset stays on EU
+		expect(reduce(reduce(next, 'PageUp')!.state, 'PageUp')!.state.cont).toBe('EU');
 	});
-	it('Space toggles playing', () => {
-		const s = baseState({ playing: false });
-		expect(reduce(s, ' ')!.state.playing).toBe(true);
+	it('Home / End jump to Jan / Dec', () => {
+		const s = baseState({ month: 6 });
+		expect(reduce(s, 'Home')!.state).toMatchObject({ month: 1 });
+		expect(reduce(s, 'End')!.state).toMatchObject({ month: 12 });
+	});
+	it('Space key does not toggle playing (year player removed)', () => {
+		const s = baseState();
+		expect(reduce(s, ' ' as never)).toBeNull();
 	});
 	it('Enter opens the drill', () => {
 		const s = baseState({ drillOpen: false });
@@ -293,24 +322,22 @@ describe('reduce', () => {
 	});
 });
 
-describe('setMonth (slider / ◀ / ▶) — always stops Play', () => {
-	it('sets an arbitrary month and clears playing', () => {
-		const s = baseState({ month: 1, playing: true });
+describe('setMonth (slider / ◀ / ▶)', () => {
+	it('sets an arbitrary month', () => {
+		const s = baseState({ month: 1 });
 		const res = setMonth(s, 9);
 		expect(res.month).toBe(9);
-		expect(res.playing).toBe(false);
 	});
 });
 
-describe('pickCell (pointer hit-test) — a cell/row tap stops Play', () => {
-	it('resolves a world-view tap to its band/month and clears playing', () => {
-		const s = baseState({ view: 'world', cont: null, playing: true });
+describe('pickCell (pointer hit-test) — a cell/row tap', () => {
+	it('resolves a world-view tap to its band/month', () => {
+		const s = baseState({ view: 'world', cont: null });
 		const geom = { cont: false, rowH: 22, cellW: 25, headH: 20, cols: 12 };
 		// Row 2 (band index 2 -> BANDS[2] = 60), month column 3 (index 2 -> month 3).
 		const res = pickCell(s, geom, 2 * 25 + 1, 20 + 2 * 22 + 1)!;
 		expect(res.band).toBe(BANDS[2]);
 		expect(res.month).toBe(3);
-		expect(res.playing).toBe(false);
 		expect(res.drillExpanded).toBe(false);
 	});
 	it('outside the grid is null', () => {
@@ -323,14 +350,13 @@ describe('pickCell (pointer hit-test) — a cell/row tap stops Play', () => {
 	// bandOnly option preserved for row-only selection modes (td-2c7a0b)
 	describe('bandOnly (row-only selection mode)', () => {
 		it('never returns a different month — `s.month` passes through unchanged', () => {
-			const s = baseState({ view: 'world', cont: null, month: 9, playing: true });
+			const s = baseState({ view: 'world', cont: null, month: 9 });
 			const geom = { cont: false, rowH: 48, cellW: 25, headH: 20, cols: 12 };
 			// x lands in month-column 3 in full-picking terms, but bandOnly must
 			// ignore that entirely.
 			const res = pickCell(s, geom, 2 * 25 + 1, 20 + 2 * 48 + 1, true)!;
 			expect(res.month).toBe(9);
 			expect(res.band).toBe(BANDS[2]);
-			expect(res.playing).toBe(false);
 		});
 		it('World view: cont stays null regardless of x', () => {
 			const s = baseState({ view: 'world', cont: null });
@@ -415,6 +441,31 @@ describe('initialState / applyWide', () => {
 		expect(wide.view).toBe('cont');
 		expect(wide.contView).toBe('ALL');
 		expect(wide.cont).toBe('EU');
+	});
+	it('World -> By continent state transition from initialState(false) preserves visible-selection invariant (td-1a47a7, CODEX13 P1-1)', () => {
+		// Phone/tablet initialState begins in World view with primary continent queued in contView ('EU')
+		// and all 8 columns in selectedConts
+		const s = initialState(false, 'EU');
+		expect(s.view).toBe('world');
+		expect(s.contView).toBe('EU');
+		expect(s.selectedConts).toEqual([...COLUMNS]);
+		expect(drawnColumns(s)).toEqual([]);
+
+		// Transition to By continent view (selectContView)
+		const next = transitionToContinentView(s);
+		expect(next.view).toBe('cont');
+		// Multi-select selection must be canonical: contView becomes 'ALL' because all columns are selected
+		expect(next.contView).toBe('ALL');
+		// Chart draws all 8 columns, matching the 7 selected continents in the picker
+		expect(drawnColumns(next)).toEqual([...COLUMNS]);
+		expect(selectedContinentIds(drawnColumns(next))).toEqual(['AF', 'AN', 'AS', 'EU', 'NA', 'OC', 'SA']);
+
+		// Transitioning back to World and then to Continent with custom subset preserves subset
+		const subsetState: RibbonState = { ...next, selectedConts: ['NAW', 'NAE'] };
+		const nextSubset = transitionToContinentView(subsetState);
+		expect(nextSubset.contView).toBe('ALL');
+		expect(drawnColumns(nextSubset)).toEqual(['NAW', 'NAE']);
+		expect(selectedContinentIds(drawnColumns(nextSubset))).toEqual(['NA']);
 	});
 });
 
@@ -584,7 +635,7 @@ describe('scopeText', () => {
 			unmappedCountries: []
 		};
 		const equalText = scopeText(grid.meta, 'equal');
-		expect(equalText).toContain('Loaded: 10 regions in 4 countries across 2 continents');
+		expect(equalText).toContain('Loaded: 10 regions in 4 countries across 2 continental columns');
 		expect(equalText).toContain('Equal weight:');
 		expect(equalText).not.toContain('By checklists:');
 		const checklistsText = scopeText(grid.meta, 'checklists');
@@ -732,13 +783,14 @@ describe('landmarkFor', () => {
 	});
 
 	it('resolves WORLD landmarks when column is null (World view)', () => {
-		expect(landmarkFor(40, null)).toBe('Mid-Latitudes North');
-		expect(landmarkFor(-40, null)).toBe('Mid-Latitudes South');
+		expect(landmarkFor(40, null)).toBe('Mid-Latitudes North · New York, Chicago, Rome');
+		expect(landmarkFor(-40, null)).toBe('Mid-Latitudes South · Buenos Aires, Sydney');
 	});
 
 	it('returns null when a continent does not span that latitude (no silent fallback)', () => {
 		expect(landmarkFor(-40, 'EU')).toBeNull();
 		expect(landmarkFor(-90, 'NAE')).toBeNull();
+		expect(landmarkFor(40, 'AF')).toBeNull();
 	});
 });
 
@@ -831,6 +883,46 @@ describe('migrationSummary', () => {
 		const summaryAll = migrationSummary(grid, sAll);
 		expect(summaryAll.hasData).toBe(false);
 		expect(summaryAll.headline).toBe('Seasonal Distribution');
+	});
+
+	it('reports correct column count and headline for continent subsets (td-1a47a7)', () => {
+		const grid = emptyGrid();
+		const b50 = bandIndex(50);
+		grid.modes.equal.world[b50][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		const sAll = baseState({ view: 'cont', contView: 'ALL', selectedConts: [...COLUMNS] });
+		const summaryAll = migrationSummary(grid, sAll);
+		expect(summaryAll.headline).toBe('All Continents Overview');
+		expect(summaryAll.span).toBe('8 continental columns');
+
+		const sSubset = baseState({ view: 'cont', contView: 'ALL', selectedConts: ['EU', 'AF'] });
+		const summarySubset = migrationSummary(grid, sSubset);
+		expect(summarySubset.headline).toBe('Selected Continents Overview');
+		expect(summarySubset.span).toBe('2 continental columns');
+	});
+
+	it('treats multi-column North America selection as overview and single-column as regional (td-1a47a7, CODEX13)', () => {
+		const grid = emptyGrid();
+		const b50 = bandIndex(50);
+		// In NAW (col 0) at band 50 in Jun/Jul
+		grid.modes.equal.cols[b50][0][5] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[b50][0][6] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][5] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][6] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
+
+		// NA selection draws 2 columns (NAW, NAE) -> Overview mode with NA-specific overview copy
+		const sNA = baseState({ view: 'cont', contView: 'ALL', selectedConts: ['NAW', 'NAE'] });
+		const summaryNA = migrationSummary(grid, sNA);
+		expect(summaryNA.headline).toBe('North America Overview');
+		expect(summaryNA.span).toBe('2 continental columns');
+		expect(summaryNA.details).toContain('split into West and East');
+		expect(summaryNA.details).toContain('Select a cell');
+
+		// Single column selection (e.g. NAW) -> single-column seasonal analysis (drawn.length === 1)
+		const sNAW = baseState({ view: 'cont', contView: 'NAW', selectedConts: ['NAW'] });
+		const summaryNAW = migrationSummary(grid, sNAW);
+		expect(summaryNAW.hasData).toBe(true);
+		expect(summaryNAW.headline).toBe('Limited Seasonal Data');
+		expect(summaryNAW.details).toContain('British Columbia & Prairies');
 	});
 
 	it('identifies seasonal latitudinal shift when latitudes change between seasons', () => {
@@ -1034,7 +1126,6 @@ describe('td-2c7a0b: iPhone heatmap cell selection hit-testing & boundaries', ()
 		expect(picked!.band).toBe(20);
 		expect(picked!.month).toBe(7);
 		expect(picked!.cont).toBe('NAE');
-		expect(picked!.playing).toBe(false);
 	});
 
 	it('hit-tests accurately near all four inner boundaries of a cell', () => {
@@ -1390,6 +1481,143 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 
 		// Neutral transition months window (no reversed northbound/southbound misattribution)
 		expect(summary.transitionMonths).toBe('Mar, Apr, Sep, Oct');
+	});
+
+	it('defines exactly 7 continents matching real geography (td-1a47a7)', () => {
+		expect(CONTINENTS.length).toBe(7);
+		const ids = CONTINENTS.map((c) => c.id);
+		expect(ids).toEqual(['AF', 'AN', 'AS', 'EU', 'NA', 'OC', 'SA']);
+		// North America groups both NAW and NAE
+		const na = CONTINENTS.find((c) => c.id === 'NA')!;
+		expect(na.columns).toEqual(['NAW', 'NAE']);
+		expect(na.name).toBe('North America');
+	});
+
+	it('continent helpers correctly map columns and count continents (td-1a47a7, CODEX13 P1-3)', () => {
+		expect(continentForColumn('NAW').id).toBe('NA');
+		expect(continentForColumn('NAE').id).toBe('NA');
+		expect(continentForColumn('EU').id).toBe('EU');
+
+		// Selecting both NA halves is 1 continent, not 2
+		const naOnly = selectedContinentIds(['NAW', 'NAE']);
+		expect(naOnly).toEqual(['NA']);
+
+		// Selecting both NA halves plus EU is 2 continents, not 3
+		const naPlusEu = selectedContinentIds(['NAW', 'NAE', 'EU']);
+		expect(naPlusEu).toEqual(['EU', 'NA']);
+
+		const cols = columnsForContinents(['NA', 'EU']);
+		expect(cols).toEqual(['NAW', 'NAE', 'EU']);
+	});
+
+	it('pageContinent constrains cycling to the visible drawn subset (td-1a47a7, CODEX13 P1-1)', () => {
+		// Custom 2-column subset: EU and AF
+		const subset: RibbonState = baseState({
+			view: 'cont',
+			contView: 'ALL',
+			selectedConts: ['EU', 'AF'],
+			cont: 'EU'
+		});
+
+		expect(drawnColumns(subset)).toEqual(['EU', 'AF']);
+
+		// PageDown moves from EU to AF
+		const step1 = reduce(subset, 'PageDown')!.state;
+		expect(step1.cont).toBe('AF');
+		expect(step1.contView).toBe('ALL');
+
+		// PageDown at end of visible subset clamps to AF (does not jump to AS/OC/AN)
+		const step2 = reduce(step1, 'PageDown')!.state;
+		expect(step2.cont).toBe('AF');
+
+		// PageUp moves from AF back to EU
+		const step3 = reduce(step2, 'PageUp')!.state;
+		expect(step3.cont).toBe('EU');
+
+		// PageUp at start of visible subset clamps to EU (does not jump to NAW/NAE/SA)
+		const step4 = reduce(step3, 'PageUp')!.state;
+		expect(step4.cont).toBe('EU');
+
+		// If cont somehow pointed to an invisible column (e.g. NAE), paging moves into visible subset
+		const invisibleCont = baseState({
+			view: 'cont',
+			contView: 'ALL',
+			selectedConts: ['EU', 'AF'],
+			cont: 'NAE'
+		});
+		const fixed = reduce(invisibleCont, 'PageDown')!.state;
+		expect(['EU', 'AF']).toContain(fixed.cont);
+	});
+
+	it('migrationSummary accurately reports subset column counts (td-1a47a7, CODEX13 P1-2)', () => {
+		const grid = emptyGrid();
+		const bi40 = bandIndex(40);
+		// Add some observations so hasAnyData is true
+		grid.modes.equal.world[bi40][5] = { f: 0.15, n: 100, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[bi40][COLUMNS.indexOf('EU')][5] = {
+			f: 0.2,
+			n: 100,
+			state: 'reported',
+			low: false,
+			excluded: 0
+		};
+		grid.modes.equal.cols[bi40][COLUMNS.indexOf('AF')][5] = {
+			f: 0.1,
+			n: 100,
+			state: 'reported',
+			low: false,
+			excluded: 0
+		};
+
+		// 8 columns
+		const allState = baseState({ view: 'cont', contView: 'ALL', selectedConts: [...COLUMNS] });
+		const allSummary = migrationSummary(grid, allState);
+		expect(allSummary.headline).toBe('All Continents Overview');
+		expect(allSummary.span).toBe('8 continental columns');
+
+		// 2-column subset (EU + AF) must report 2 continental columns, never 8
+		const twoState = baseState({ view: 'cont', contView: 'ALL', selectedConts: ['EU', 'AF'] });
+		const twoSummary = migrationSummary(grid, twoState);
+		expect(twoSummary.headline).toBe('Selected Continents Overview');
+		expect(twoSummary.span).toBe('2 continental columns');
+		expect(twoSummary.details).toBe(
+			'Select a single continent to view regional migration patterns and seasonal shifts.'
+		);
+
+		// 3-column subset
+		const threeState = baseState({
+			view: 'cont',
+			contView: 'ALL',
+			selectedConts: ['NAW', 'NAE', 'SA']
+		});
+		const threeSummary = migrationSummary(grid, threeState);
+		expect(threeSummary.span).toBe('3 continental columns');
+	});
+
+	it('initialState(false) preserves all-continents drawnColumns on transition to By continent (CODEX13 P1-1)', () => {
+		const sPhone = initialState(false, 'EU');
+		expect(sPhone.view).toBe('world');
+		expect(sPhone.selectedConts).toEqual([...COLUMNS]);
+		expect(drawnColumns(sPhone)).toEqual([]);
+
+		// Transition to By continent:
+		const targetCols =
+			sPhone.selectedConts && sPhone.selectedConts.length > 0
+				? COLUMNS.filter((c) => sPhone.selectedConts!.includes(c))
+				: [...COLUMNS];
+		const next: RibbonState = {
+			...sPhone,
+			viewTouched: true,
+			view: 'cont',
+			contView: targetCols.length === 1 ? targetCols[0] : 'ALL',
+			cont: sPhone.cont ?? (targetCols.includes('EU') ? 'EU' : targetCols[0])
+		};
+
+		expect(next.view).toBe('cont');
+		expect(next.contView).toBe('ALL');
+		expect(next.cont).toBe('EU');
+		// Must draw ALL 8 columns, not just EU
+		expect(drawnColumns(next)).toEqual([...COLUMNS]);
 	});
 });
 
