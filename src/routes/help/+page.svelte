@@ -561,6 +561,14 @@
 			<div class="body">
 				<ul>
 					<li>
+						<strong>Appearance</strong> — choose Light, Dark, Forest, Ocean, or
+						Warm Paper in Settings → Choose your theme, then Save theme. Light
+						is the default. The choice belongs to your account, follows you across
+						devices on the next page load, and never changes another user's view.
+						Maps retain their provider's styling; conservation badges retain their
+						meaningful colors. Chart labels and intensity ramps adapt to dark mode.
+					</li>
+					<li>
 						<strong>eBird API key</strong> — connects the app to your eBird
 						account so it knows your life list and can pull recent sightings. Get
 						a free key from eBird and paste it here.
@@ -579,8 +587,9 @@
 						<strong>Need alerts</strong> section below.
 					</li>
 					<li>
-						Read-only family accounts don't see Settings — they're along for the
-						ride on someone else's data.
+						Read-only family accounts cannot access private account settings.
+						They can use Appearance from the menu
+						to choose their own theme without accessing private settings.
 					</li>
 				</ul>
 			</div>

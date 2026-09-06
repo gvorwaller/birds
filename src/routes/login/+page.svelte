@@ -119,7 +119,7 @@
 		margin-top: 0.5rem;
 		min-height: 48px;
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 		border: none;
 		border-radius: 8px;
 		font-size: 0.95rem;
@@ -130,6 +130,7 @@
 		cursor: default;
 	}
 	button:hover:not(:disabled) {
-		background: #07472f;
+		background: var(--accent);
+		filter: brightness(0.95);
 	}
 </style>

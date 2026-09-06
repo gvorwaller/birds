@@ -25,6 +25,10 @@
 	--notable-bg: #f8d7da;
 	--notable-text: #58151c;
 	--danger: #842029;
+	--on-accent: #ffffff;
+	--on-danger: #ffffff;
+	--card-bg: var(--card);
+	--bg-subtle: var(--bg);
 	--nav-h: 56px;
 	--bottomnav-h: 64px;
 }
@@ -55,7 +59,12 @@ select,
 textarea {
 	font: inherit;
 	font-size: 1rem; /* >=16px prevents iOS zoom */
+	color: var(--text);
+	background-color: var(--card);
 }
+
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
 	* {

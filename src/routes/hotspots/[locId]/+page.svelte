@@ -399,9 +399,9 @@
     border-radius: 12px;
     font-size: 0.78rem;
     font-weight: 600;
-    background: #e9f1ec;
-    color: #1d4a35;
-    border: 1px solid #c4d9cd;
+    background: var(--accent-soft);
+    color: var(--tag-text);
+    border: 1px solid var(--tag-border);
   }
   .card {
     background: var(--card);
@@ -451,7 +451,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .card form button:disabled {
@@ -488,7 +488,7 @@
   .tabs a.active {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .card-head {
     display: flex;
@@ -517,7 +517,7 @@
   .backopt.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .day {
     font-size: 0.82rem;
@@ -603,7 +603,7 @@
   .month.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .mname {
     font-size: 0.72rem;
@@ -642,7 +642,7 @@
     }
     .act:hover {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
     }
   }
   .attribution {

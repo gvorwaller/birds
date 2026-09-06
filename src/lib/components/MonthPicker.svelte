@@ -62,7 +62,7 @@
 	button.active {
 		background: var(--accent);
 		border-color: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 		font-weight: 600;
 	}
 	@media (min-width: 640px) {

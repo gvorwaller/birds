@@ -626,7 +626,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
 
@@ -677,7 +677,7 @@
     height: 28px;
     border-radius: 50%;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -685,7 +685,8 @@
     font-size: 0.85rem;
   }
   .ordnum.hist {
-    background: #842029;
+    background: var(--danger);
+    color: var(--on-danger);
   }
   .grow {
     flex: 1;
@@ -715,14 +716,14 @@
     min-height: 36px;
     padding: 6px 12px;
     border-radius: 8px;
-    border: 1px solid #d9a5ab;
+    border: 1px solid var(--danger-border);
     background: var(--card);
     color: var(--danger);
     font-size: 0.8rem;
     font-weight: 600;
   }
   .remove:hover {
-    background: #fdf0f1;
+    background: var(--danger-soft);
   }
   .add-hist {
     margin-top: 12px;
@@ -745,14 +746,14 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-size: 0.8rem;
     font-weight: 600;
   }
   .toggle.in {
     background: var(--card);
     color: var(--danger);
-    border-color: #d9a5ab;
+    border-color: var(--danger-border);
   }
   .links {
     display: flex;
@@ -803,7 +804,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .save button:disabled {

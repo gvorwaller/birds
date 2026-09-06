@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { query } from '$lib/db';
+import type { ThemeId } from '$lib/themes';
 
 export const SESSION_COOKIE_NAME = 'birds_session';
 export const SESSION_TTL_DAYS = 30;
@@ -27,6 +28,7 @@ export interface SessionUser {
 	display_name: string;
 	/** The owner this account reads (null = self). See $server/access. */
 	views_user_id: number | null;
+	theme: ThemeId;
 }
 
 export async function validateSession(token: string): Promise<SessionUser | null> {
@@ -38,9 +40,10 @@ export async function validateSession(token: string): Promise<SessionUser | null
 		role: string;
 		display_name: string;
 		views_user_id: number | null;
+		theme: ThemeId;
 	}>(
 		`SELECT s.id AS sid, s.expires_at,
-		        u.id AS uid, u.username, u.role, u.display_name, u.views_user_id
+		        u.id AS uid, u.username, u.role, u.display_name, u.views_user_id, u.theme
 		   FROM sessions s
 		   JOIN users u ON u.id = s.user_id
 		  WHERE s.id = $1`,
@@ -64,7 +67,8 @@ export async function validateSession(token: string): Promise<SessionUser | null
 		username: row.username,
 		role: row.role as 'admin' | 'user' | 'viewer',
 		display_name: row.display_name,
-		views_user_id: row.views_user_id
+		views_user_id: row.views_user_id,
+		theme: row.theme
 	};
 }
 

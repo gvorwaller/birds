@@ -927,7 +927,7 @@
 								y={geom.headH}
 								width={Math.max(1, geom.cellW - 1)}
 								height={geom.h - geom.headH}
-								fill="#212529"
+								fill="var(--text)"
 								opacity="0.10"
 								pointer-events="none"
 							/>
@@ -939,7 +939,7 @@
 								width={geom.w - 1}
 								height={geom.rowH}
 								fill="none"
-								stroke="#212529"
+								stroke="var(--text)"
 								stroke-width="1"
 								pointer-events="none"
 							/>
@@ -951,14 +951,14 @@
 								width={geom.cellW + 1}
 								height={geom.rowH + 1}
 								fill="none"
-								stroke="#212529"
+								stroke="var(--text)"
 								stroke-width="2.5"
 								pointer-events="none"
 							/>
 						{/if}
 						{#if eqIndex > 0}
 							{@const ey = geom.headH + eqIndex * geom.rowH}
-							<line x1="0" y1={ey} x2={geom.w} y2={ey} stroke="#495057" stroke-width="1" stroke-dasharray="4 3" />
+							<line x1="0" y1={ey} x2={geom.w} y2={ey} stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3" />
 						{/if}
 					</svg>
 				</div>
@@ -1253,7 +1253,7 @@
 	}
 	.seg button[aria-pressed='true'] {
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 	}
 	.cont-select-wrapper {
 		position: relative;
@@ -1651,19 +1651,17 @@
 		font-size: 0.9rem;
 	}
 
-	/* Colour tokens (build spec): --rb-5 IS --accent, so the darkest bin and
-	   the app's accent are always the same green. Slash colour sits on white
-	   at 4.69:1 (mockup verified). Declared once on the top-level layout and
-	   inherited by every descendant that reads them (.ribwrap, .legend,
-	   .drill, .drow). */
+	/* Theme-aware green intensity ramp, independent of decorative accents.
+	   Preserve the same bin meanings in every theme; the dark ramp increases
+	   in luminance instead of disappearing into a dark background. */
 	.rlayout {
-		--rb-0: #eceff1;
-		--rb-1: #cfe9dc;
-		--rb-2: #9fd0b8;
-		--rb-3: #63ad8b;
-		--rb-4: #2f855f;
-		--rb-5: var(--accent);
-		--rb-slash: #6c757d;
+		--rb-0: var(--ribbon-0);
+		--rb-1: var(--ribbon-1);
+		--rb-2: var(--ribbon-2);
+		--rb-3: var(--ribbon-3);
+		--rb-4: var(--ribbon-4);
+		--rb-5: var(--ribbon-5);
+		--rb-slash: var(--ribbon-slash);
 	}
 
 	/* Phone: chart first, right after the scrubber; view/average toggles and

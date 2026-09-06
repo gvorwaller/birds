@@ -175,7 +175,7 @@
 <div class="page">
   <header class="page-head">
     <h1>Settings</h1>
-    <p class="sub">eBird credentials, home location, and syncs</p>
+    <p class="sub">Appearance, eBird credentials, home location, and syncs</p>
   </header>
 
   {#if form && "message" in form && form.message}
@@ -184,6 +184,12 @@
   {#if form && "error" in form && form.error}
     <section class="card"><p class="err" role="alert">{form.error}</p></section>
   {/if}
+
+  <section class="card">
+    <h2>Appearance</h2>
+    <p>Choose Light, Dark, Forest, Ocean, or Warm Paper for your account.</p>
+    <a href="/settings/appearance">Choose your theme →</a>
+  </section>
 
   <section class="card">
     <h2>
@@ -804,7 +810,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   button:disabled {
@@ -812,7 +818,7 @@
   }
   button.danger {
     background: var(--card);
-    border-color: #d9a5ab;
+    border-color: var(--danger-border);
     color: var(--danger);
   }
   .syncrow {

@@ -121,6 +121,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Your own theme</strong> — choose Light, Dark, Forest, Ocean,
+								or Warm Paper in Settings → Appearance. Preferences are saved per
+								account and applied before the page appears. Read-only viewers have
+								their own appearance control without access to private settings.
+							</li>
+							<li>
 								<strong>Species totals at a glance</strong> — Hotspots &amp; data now
 								shows a deduplicated worldwide species total in the Loaded data heading,
 								plus distinct species counts on collapsed geographic area, country,
@@ -728,12 +734,12 @@
 		font-weight: 700;
 		padding: 2px 7px;
 		border-radius: 10px;
-		background: #e9ecef;
-		color: #495057;
+		background: var(--bg);
+		color: var(--muted);
 	}
 	.v-tag.current {
 		background: var(--accent);
-		color: #ffffff;
+		color: var(--on-accent);
 	}
 	.v-title {
 		flex: 1;

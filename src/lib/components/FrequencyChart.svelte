@@ -343,7 +343,7 @@
 	}
 	.modes button.on {
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 	}
 	.grid {
 		stroke: var(--border);

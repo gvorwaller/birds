@@ -8,6 +8,7 @@ declare global {
 				role: 'admin' | 'user' | 'viewer';
 				display_name: string;
 				views_user_id: number | null;
+				theme: import('$lib/themes').ThemeId;
 			};
 			// The owner whose data this request READS. Self for normal users
 			// (strict isolation); for the `family` viewer it points at the owner

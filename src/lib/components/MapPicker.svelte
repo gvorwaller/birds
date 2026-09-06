@@ -240,20 +240,24 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .search button:disabled {
     opacity: 0.5;
   }
   .map {
+    color-scheme: light;
+    color: #212529;
+    --card: #ffffff;
+    --text: #212529;
     height: 50vh;
     min-height: 300px;
     max-height: 460px;
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    background: #dde3e8;
+    background: var(--placeholder-bg);
   }
   .status {
     color: var(--muted);

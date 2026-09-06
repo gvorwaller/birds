@@ -180,10 +180,10 @@
     text-underline-offset: 2px;
   }
   .hotspot-badge {
-    background: #e8f2ff;
-    border: 1px solid #bfd8ff;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
     border-radius: 999px;
-    color: #165c9f;
+    color: var(--info-text);
     font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.02em;
@@ -225,6 +225,6 @@
   .focus-btn[aria-pressed="true"] {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
 </style>

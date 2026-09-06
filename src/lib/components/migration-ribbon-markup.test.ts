@@ -81,9 +81,9 @@ describe('MigrationRibbon.svelte markup', () => {
 		expect(markup).toMatch(/\.cont-btn\s*\{[^}]*min-height:\s*48px/);
 	});
 
-	it('colour tokens are declared, and --rb-5 IS --accent (build spec)', () => {
-		expect(markup).toContain('--rb-0: #eceff1');
-		expect(markup).toContain('--rb-5: var(--accent)');
+	it('all intensity bins use the shared theme-aware green ramp', () => {
+		for (let i = 0; i <= 5; i++) expect(markup).toContain(`--rb-${i}: var(--ribbon-${i})`);
+		expect(markup).toContain('--rb-slash: var(--ribbon-slash)');
 	});
 
 	it('year player mechanism is removed in favor of manual month scrubbing', () => {

@@ -1104,7 +1104,7 @@
     border: none;
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
   }
   button:disabled {
@@ -1132,7 +1132,7 @@
     border: none;
     border-radius: 10px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
   }
   .loadcta .ctasub {

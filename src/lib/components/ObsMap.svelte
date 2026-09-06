@@ -268,13 +268,18 @@
     background: var(--bg);
   }
   .map {
+    /* Provider-rendered map controls/popups retain their own light palette. */
+    color-scheme: light;
+    color: #212529;
+    --card: #ffffff;
+    --text: #212529;
     height: 42vh;
     min-height: 260px;
     max-height: 420px;
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    background: #dde3e8;
+    background: var(--placeholder-bg);
   }
   .err {
     color: var(--danger);

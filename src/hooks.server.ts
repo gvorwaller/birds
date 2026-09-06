@@ -3,6 +3,7 @@ import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
 import { scopeOwnerId } from '$server/access';
 import { dev } from '$app/environment';
+import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
 	newTimingBag,
 	PERF_LOG_SLOW_MS,
@@ -72,7 +73,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		});
 	}
 
-	// Read-only viewers: no writes, no settings (holds eBird credentials).
+	// Read-only viewers: personal appearance is the only settings exception.
 	if (event.locals.user?.role === 'viewer') {
 		const method = event.request.method;
 		// td-0753d0: viewers may POST load_enrichment (first-time species data,
@@ -80,22 +81,31 @@ export const handle: Handle = async ({ event, resolve }) => {
 		// Check the FIRST action param only — ?/refresh_enrichment&/load_enrichment
 		// must NOT pass (SvelteKit dispatches the first slash-prefixed key).
 		const firstAction = event.url.searchParams.keys().next().value;
+		const isAppearance = isAppearanceRequest(path, method, firstAction);
 		const isLoadEnrichment =
 			method === 'POST' &&
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
-		// Block every mutation except logout and first-time species load.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment) {
+		// Keep private settings/actions blocked; appearance changes only this user.
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
-		// Hide Settings entirely (it holds eBird credentials).
-		if (path.startsWith('/settings')) throw redirect(303, '/');
+		// The separate appearance page never loads the credential-bearing page.
+		if (path.startsWith('/settings') && !isAppearance) throw redirect(303, '/');
 	}
 
 	// Latency accounting (refactor plan Phase 1): the bag rides the request
 	// via AsyncLocalStorage; db/eBird/Google/AI chokepoints record into it.
 	const bag = newTimingBag();
-	const response = await runWithTiming(bag, () => resolve(event));
+	const response = await runWithTiming(bag, () => resolve(event, {
+		transformPageChunk: ({ html }) => {
+			// Read AFTER actions run, so a normal form POST paints the saved theme.
+			const theme = event.locals.user?.theme ?? DEFAULT_THEME;
+			return html.replace('%birds.theme%', theme)
+				.replace('%birds.theme-style%', themeStyle(theme))
+				.replace('%birds.theme-color%', themeDefinition(theme).colors.bg);
+		}
+	}));
 	// SSR responses previously carried NO Cache-Control, which let browsers
 	// (Safari especially) reuse them heuristically from disk cache — stale
 	// pages after data changed, and authenticated content on shared disks.

@@ -311,7 +311,7 @@
 		border-radius: 8px;
 		overflow: hidden;
 		border: 1px solid var(--border);
-		background: #dde3e8;
+		background: var(--placeholder-bg);
 	}
 	.grid img {
 		display: block;
@@ -341,7 +341,7 @@
 		border-radius: 8px;
 		border: 1px solid var(--accent);
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 		font-weight: 600;
 	}
 	.attribution {

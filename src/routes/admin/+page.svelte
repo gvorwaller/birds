@@ -885,7 +885,7 @@
     color: var(--need-text);
   }
   .badge[data-color="error"] {
-    background: #fdf0f1;
+    background: var(--danger-soft);
     color: var(--danger);
   }
   .jobs {
@@ -937,7 +937,7 @@
   .worker-control button.resume {
     border-color: var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .worker-control button:disabled {
     border-color: var(--border);
@@ -950,7 +950,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .nudge button:disabled {
@@ -1042,7 +1042,7 @@
   }
   .seg button.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
 
   /* Usage meter */
@@ -1192,7 +1192,7 @@
   .btn.accent-solid {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .btn:disabled {
     opacity: 0.6;

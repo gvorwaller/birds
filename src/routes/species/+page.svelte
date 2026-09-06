@@ -397,7 +397,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .location-fields {
@@ -405,6 +405,7 @@
     gap: 12px;
   }
   .location-field {
+    position: relative;
     display: grid;
     gap: 4px;
     font-size: 0.89rem;
@@ -420,12 +421,20 @@
     font-size: 1rem;
     color: var(--text);
     background: var(--bg);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%234b5159' stroke-width='2'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    background-size: 12px 8px;
     border: 1px solid var(--border);
     border-radius: 8px;
+  }
+  .location-field::after {
+    content: "";
+    position: absolute;
+    right: 16px;
+    bottom: 21px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    pointer-events: none;
   }
   .location-hint {
     font-size: 0.89rem;
@@ -489,25 +498,25 @@
     font-size: 0.85rem;
     font-weight: 600;
     background: var(--bg);
-    color: #1d4a35;
-    border: 1px solid #c4d9cd;
+    color: var(--tag-text);
+    border: 1px solid var(--tag-border);
     text-decoration: none;
   }
   .chip-on,
   .chip-active {
     background: #1d4a35;
     color: #f2f7f4;
-    border-color: #1d4a35;
+    border-color: var(--tag-text);
   }
   .chip-tide {
-    color: #163e5e;
-    border-color: #b3d1e8;
+    color: var(--info-text);
+    border-color: var(--info-border);
   }
   .chip-tide.chip-on,
   .chip-tide.chip-active {
     background: #163e5e;
     color: #eef5fb;
-    border-color: #163e5e;
+    border-color: var(--info-text);
   }
   .results {
     padding: 4px 0;
@@ -628,7 +637,7 @@
   .rowtag.hit {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .iucn {
     display: inline-block;

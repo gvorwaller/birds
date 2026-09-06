@@ -1196,29 +1196,29 @@
     border-radius: 16px;
     font-size: 0.82rem;
     font-weight: 600;
-    background: #e9f1ec;
-    color: #1d4a35;
-    border: 1px solid #c4d9cd;
+    background: var(--accent-soft);
+    color: var(--tag-text);
+    border: 1px solid var(--tag-border);
   }
   /* Tide chips: distinct token + the word "Tide" in the label (color+text,
      never color alone) — the td-47d6d5 payload. */
   .tag.tag-tide {
-    background: #dcebf7;
-    color: #163e5e;
-    border: 1px solid #b3d1e8;
+    background: var(--info-bg);
+    color: var(--info-text);
+    border: 1px solid var(--info-border);
   }
-  /* Tide line (td-6a3d2e) — same tokens as .tag-tide (#dcebf7 bg / #163e5e
-     text = 9.16:1, AAA). Do NOT use .muted here: var(--muted) on #dcebf7 is
+  /* Tide line (td-6a3d2e) — same tokens as .tag-tide (var(--info-bg) bg / #163e5e
+     text = 9.16:1, AAA). Do NOT use .muted here: var(--muted) on var(--info-bg) is
      not guaranteed to hit 7:1. */
   .tideline {
     margin-top: 6px;
     margin-bottom: 10px;
     padding: 8px 10px;
-    background: #dcebf7;
-    border-left: 3px solid #163e5e;
+    background: var(--info-bg);
+    border-left: 3px solid var(--info-text);
     border-radius: 6px;
     font-size: 0.85rem;
-    color: #163e5e;
+    color: var(--info-text);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1397,10 +1397,10 @@
     text-underline-offset: 2px;
   }
   .hotspot-badge {
-    background: #e8f2ff;
-    border: 1px solid #bfd8ff;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
     border-radius: 999px;
-    color: #165c9f;
+    color: var(--info-text);
     font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.02em;

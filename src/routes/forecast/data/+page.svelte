@@ -1574,7 +1574,7 @@
     border: none;
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
   }
   .groupaction button:disabled {
@@ -1743,7 +1743,7 @@
     border: none;
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
   }
   .loadstate button:disabled {
@@ -1860,7 +1860,7 @@
     border: none;
     border-radius: 8px;
     background: var(--danger);
-    color: #fff;
+    color: var(--on-danger);
     cursor: pointer;
   }
   .jobstatus[data-color="ok"],

@@ -27,7 +27,7 @@ describe("isPublicPath", () => {
   });
 
   it("everything else stays private — including lookalikes", () => {
-    for (const p of ["/", "/trips", "/trips/7", "/loginx", "/api/healthz", "/sharex/y"]) {
+    for (const p of ["/", "/trips", "/trips/7", "/settings/appearance", "/loginx", "/api/healthz", "/sharex/y"]) {
       expect(isPublicPath(p), p).toBe(false);
     }
   });

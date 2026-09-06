@@ -587,7 +587,7 @@
     border: 1px solid var(--border, #ccc);
     border-radius: 8px;
     background: var(--card-bg, #fff);
-    color: #084298;
+    color: var(--link);
     font-weight: 600;
     cursor: pointer;
   }
@@ -615,9 +615,9 @@
     min-height: 48px; /* AAA tap target (nearest precedent) */
   }
   .chip.active {
-    background: #0a5c43;
-    border-color: #07472f;
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
   }
   .seg {
     display: flex;
@@ -637,8 +637,8 @@
     min-height: 48px; /* AAA tap target */
   }
   .seg button.active {
-    background: #084298;
-    color: #fff;
+    background: var(--accent);
+    color: var(--on-accent);
   }
   .yearhead {
     position: sticky;
@@ -669,13 +669,14 @@
     align-items: baseline;
   }
   .lifers li.milestone {
-    background: #fffbe8;
+    background: var(--need-bg);
+    color: var(--need-text);
     border-radius: 6px;
     padding-left: 0.3rem;
   }
   .num {
     font-variant-numeric: tabular-nums;
-    color: #555; /* 7.5:1 on white — AAA (GROK P2: #777 fails) */
+    color: var(--muted);
     font-size: 0.9rem;
   }
   .what a {

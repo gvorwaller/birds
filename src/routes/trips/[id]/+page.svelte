@@ -1018,7 +1018,7 @@
     border: 1px solid var(--accent);
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-size: 0.85rem;
     font-weight: 600;
     text-decoration: none;
@@ -1108,16 +1108,16 @@
     margin-top: 3px;
   }
   /* Tide line (td-6a3d2e) — same tokens as the species-page tide chip
-     (#dcebf7 bg / #163e5e text = 9.16:1, AAA). Do NOT use .muted here:
-     var(--muted) on #dcebf7 is not guaranteed to hit 7:1. */
+     (var(--info-bg) bg / #163e5e text = 9.16:1, AAA). Do NOT use .muted here:
+     var(--muted) on var(--info-bg) is not guaranteed to hit 7:1. */
   .tideline {
     margin-top: 6px;
     padding: 8px 10px;
-    background: #dcebf7;
-    border-left: 3px solid #163e5e;
+    background: var(--info-bg);
+    border-left: 3px solid var(--info-text);
     border-radius: 6px;
     font-size: 0.85rem;
-    color: #163e5e;
+    color: var(--info-text);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1211,7 +1211,7 @@
     border-radius: 8px;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   button.small {
@@ -1239,7 +1239,7 @@
     height: 28px;
     border-radius: 50%;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1264,10 +1264,10 @@
     text-underline-offset: 2px;
   }
   .hotspot-badge {
-    background: #e8f2ff;
-    border: 1px solid #bfd8ff;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
     border-radius: 999px;
-    color: #165c9f;
+    color: var(--info-text);
     font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.02em;
@@ -1342,7 +1342,7 @@
   }
   button.icon.danger {
     color: var(--danger);
-    border-color: #d9a5ab;
+    border-color: var(--danger-border);
   }
 
   .result {
@@ -1395,11 +1395,11 @@
   }
   .danger-btn {
     background: var(--card);
-    border: 1px solid #d9a5ab;
+    border: 1px solid var(--danger-border);
     color: var(--danger);
   }
   .danger-btn:hover {
-    background: #fdf0f1;
+    background: var(--danger-soft);
   }
   .attribution {
     text-align: center;
@@ -1452,7 +1452,7 @@
   .btn.danger-solid {
     background: var(--danger);
     border-color: var(--danger);
-    color: #fff;
+    color: var(--on-danger);
   }
   .share-modal {
     max-width: 560px;

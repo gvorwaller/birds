@@ -7,11 +7,23 @@
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
+	import { DEFAULT_THEME, themeDefinition } from '$lib/themes';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
 	let menuOpen = $state(false);
 	let isViewer = $derived(data.user?.role === 'viewer');
+	$effect(() => {
+		const id = data.user?.theme ?? DEFAULT_THEME;
+		const theme = themeDefinition(id);
+		document.documentElement.dataset.theme = id;
+		document.documentElement.style.colorScheme = theme.scheme;
+		// Preserve unrelated root properties, notably mobile viewport correction.
+		for (const [key, value] of Object.entries(theme.colors)) {
+			document.documentElement.style.setProperty(`--${key}`, value);
+		}
+		document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.colors.bg);
+	});
 
 	// Background-load tracking (td-ca32f0): one app-level poller, started once
 	// per session, resumes across reloads/bfcache restores. When jobs are
@@ -70,7 +82,7 @@
 
 	let drawerItems = $derived(
 		isViewer
-			? [...primaryItems, ...drawerOnlyItems]
+			? [...primaryItems, ...drawerOnlyItems, { href: '/settings/appearance', label: 'Appearance', ico: '⚙️' }]
 			: data.user?.role === 'admin'
 				? [...primaryItems, ...drawerOnlyItems, ...ownerMenuItems, ...adminMenuItems]
 				: [...primaryItems, ...drawerOnlyItems, ...ownerMenuItems]
@@ -200,6 +212,7 @@
 		<div class="spacer"></div>
 		{#if isViewer}
 			<span class="ro-tag">👀 Read-only</span>
+			<a class="settings" href="/settings/appearance">⚙ Appearance</a>
 		{:else}
 			<a class="settings" href="/settings" class:active={$page.url.pathname.startsWith('/settings')}
 				>⚙ Settings</a
@@ -288,7 +301,7 @@
 		right: 0;
 		z-index: 1000;
 		height: var(--nav-h);
-		background: rgba(255, 255, 255, 0.92);
+		background: var(--nav-bg);
 		backdrop-filter: blur(12px);
 		-webkit-backdrop-filter: blur(12px);
 		border-bottom: 1px solid var(--border);
@@ -486,13 +499,13 @@
 		width: 100%;
 		min-height: 48px;
 		border-radius: 8px;
-		border: 1px solid #d9a5ab;
+		border: 1px solid var(--danger-border);
 		background: var(--card);
 		color: var(--danger);
 		font-weight: 600;
 	}
 	.signout:hover {
-		background: #fdf0f1;
+		background: var(--danger-soft);
 	}
 
 	main.with-nav {
@@ -507,7 +520,7 @@
 		left: 0;
 		right: 0;
 		z-index: 1000;
-		background: rgba(255, 255, 255, 0.96);
+		background: var(--nav-bg);
 		border-top: 1px solid var(--border);
 		display: flex;
 		padding-bottom: env(safe-area-inset-bottom);
