@@ -329,7 +329,15 @@
 						loaded, which failed and why), Cancel, and recent history; below,
 						loaded data drills from geographic area to country, then from
 						state/region to smaller regions and hotspots. United States contains
-						all of its states; each level stays collapsed until opened. Each row
+						all of its states; each level stays collapsed until opened. Collapsed
+						geographic area, country, and state/region lines show distinct species
+						totals across their loaded data, counting shared species only once.
+						The Loaded data heading also shows a worldwide total, deduplicated
+						across continents and including hotspots without a recorded region.
+						These totals include all loaded years and seasons, not a complete range
+						checklist; missing areas are not evidence of absence. Counts load
+						separately so the controls remain usable, and Reload updates them.
+						Each row
 						shows its year span, species count (with any unmatched
 						bar-chart rows), load date, and a Refresh; failed loads keep a
 						Retry. Hotspots can belong directly to a country or region when

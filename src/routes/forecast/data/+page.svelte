@@ -721,7 +721,7 @@
   >
     <summary>
       <strong>{g.stateName}</strong>
-      <span class="groupmeta">{groupStatusText(g)}</span>
+      <span class="groupmeta">{groupStatusText(g)} · {@render speciesTotal("regions", g.stateCode)}</span>
     </summary>
     <!-- Lazy body (Gaylon 2026-08-31): a <details> keeps its contents in the
          DOM even when closed, so all 3,459 loaded county rows used to render
@@ -866,7 +866,7 @@
   >
     <summary>
       <strong>{s.countryName}</strong>
-      <span class="groupmeta">{sectionStatusText(s)}</span>
+      <span class="groupmeta">{sectionStatusText(s)} · {@render speciesTotal("regions", s.countryCode)}</span>
     </summary>
     <!-- Same lazy body as the state groups above: a closed <details> still
          hydrates everything inside it. -->
@@ -920,6 +920,23 @@
   </details>
 {/snippet}
 
+{#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string)}
+  <span class="species-total">
+    {#await data.speciesCounts}
+      Counting species…
+    {:then result}
+      {@const count = result.ok ? (kind === "world" ? result.data.world : result.data[kind][code]) : undefined}
+      {#if count !== undefined}
+        {count.toLocaleString()} species
+      {:else}
+        Species counts unavailable
+      {/if}
+    {:catch}
+      Species counts unavailable
+    {/await}
+  </span>
+{/snippet}
+
 {#snippet geographicArea(area: LoadedArea)}
   <details
     class="area-group"
@@ -928,7 +945,7 @@
   >
     <summary>
       <strong>{area.name}</strong>
-      <span class="groupmeta">{areaStatusText(area)}</span>
+      <span class="groupmeta">{areaStatusText(area)} · {@render speciesTotal("areas", area.id)}</span>
     </summary>
     <!-- Do not even render the country summaries while this area is closed.
          Country and region bodies have the same lazy boundary one level down. -->
@@ -1260,7 +1277,8 @@
   <section class="card">
     <div class="section-head">
       <h2>
-        Loaded data ({totalCountryCount} countr{totalCountryCount === 1 ? "y" : "ies"})
+        Loaded data ({totalCountryCount} countr{totalCountryCount === 1 ? "y" : "ies"}
+        · {@render speciesTotal("world", "world")})
       </h2>
       <button
         type="button"
@@ -1274,6 +1292,10 @@
     {#if totalCountryCount === 0}
       <p class="notice">Nothing loaded yet — load a region above.</p>
     {:else}
+      <p class="notice">
+        Species totals count each species once across loaded historical data—not
+        a complete range checklist.
+      </p>
       {#each geographicAreas as area (area.id)}
         {@render geographicArea(area)}
       {/each}
@@ -1480,6 +1502,9 @@
   .groupmeta {
     color: var(--muted);
     font-size: 0.82rem;
+  }
+  .species-total {
+    white-space: nowrap;
   }
   .stategroup .tablewrap {
     margin: 0 0 12px 12px;

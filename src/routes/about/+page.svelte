@@ -121,6 +121,13 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Species totals at a glance</strong> — Hotspots &amp; data now
+								shows a deduplicated worldwide species total in the Loaded data heading,
+								plus distinct species counts on collapsed geographic area, country,
+								and state/region lines, without double-counting birds shared by loaded
+								locations. Totals describe loaded historical data, not complete ranges.
+							</li>
+							<li>
 								<strong>Field guide location search and photos</strong> — combine a
 								country or state/region with names and tags to find birds reported
 								there in any season of the stored historical years. Results now include

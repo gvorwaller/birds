@@ -1,6 +1,8 @@
 import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
+import { loadedSpeciesCounts } from "$server/loaded-species-counts";
+import { streamed } from "$lib/streamed";
 import {
   getEbirdApiKey,
   subregions,
@@ -170,6 +172,9 @@ interface CountryJobStateRow {
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
+  // Stream the counts: the inventory and its controls need not wait for the
+  // all-world distinct aggregation. Failure is explicit, never shown as zero.
+  const speciesCounts = streamed(loadedSpeciesCounts(), () => "Species counts unavailable");
 
   const [loadedRes, failedRes, correctionsRes, countryJobStateRes, apiKey] = await Promise.all([
     query<LoadedRow>(
@@ -609,6 +614,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   return {
     hasHome: home != null,
+    speciesCounts,
     stateGroups: stateGroups.map(stripDetail),
     countrySections: sortedCountrySections.map((s) => ({
       ...s,
