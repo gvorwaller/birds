@@ -121,6 +121,13 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Field guide location search and photos</strong> — combine a
+								country or state/region with names and tags to find birds reported
+								there in any season of the stored historical years. Results now include
+								reference thumbnails with photo credits. Missing geographic coverage
+								and unavailable photos are clearly labeled.
+							</li>
+							<li>
 								<strong>Clearer hotspot geography</strong> — hotspots filed directly
 								under regions such as Suðurland no longer show a missing-region
 								warning when eBird lists no smaller subdivisions. Notes for known

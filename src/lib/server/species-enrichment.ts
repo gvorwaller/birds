@@ -767,6 +767,13 @@ export interface GuideResult {
 	wiki_status: string | null;
 	wiki_fetched_at: string | null;
 	has_prose: boolean;
+	photo: {
+		url: string;
+		creator: string | null;
+		sourceUrl: string;
+		licenseCode: string;
+		licenseUrl: string | null;
+	} | null;
 }
 
 /**
@@ -780,12 +787,15 @@ export interface GuideResult {
  *    INNER JOIN to taxonomy (requires enrichment row).
  *
  * Combined with DISTINCT ON to keep each species' best-ranked candidate,
- * then a final deterministic ORDER + LIMIT 50.
+ * then a location-presence intersection and deterministic ORDER + LIMIT 50.
+ * Photo metadata is joined only for that final result set. Location-only
+ * searches include taxonomy species even when they have no enrichment.
  */
 export async function searchEnrichment(
 	q: string,
 	tags: readonly string[],
-	seenUserId: number
+	seenUserId: number,
+	locationCodes: readonly string[] | null = null
 ): Promise<GuideResult[]> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
@@ -794,10 +804,16 @@ export async function searchEnrichment(
 	const substr = `%${escaped}%`;
 	const lowerQ = query_.toLowerCase();
 
-	// $1=hasQ  $2=query_  $3=seenUserId  $4=tags  $5=lowerQ  $6=prefix  $7=substr
+	// $8=null means anywhere; [] means selected geography has no loaded data.
+	// Intersect before LIMIT so out-of-area hits cannot displace valid matches.
 	type Row = GuideResult & { name_tier: number; rank: number };
 	const r = await query<Row>(
-		`SELECT * FROM (
+		`WITH regional_species AS MATERIALIZED (
+		   SELECT DISTINCT species_code FROM species_month_freq
+		   WHERE loc_code = ANY($8::text[]) AND num > 0
+		 )
+		 SELECT matches.*, photo.photo FROM (
+		 SELECT * FROM (
 		   SELECT DISTINCT ON (species_code) *
 		   FROM (
 		     /* Leg 1: taxonomy name/code — the "never empty" leg */
@@ -822,8 +838,8 @@ export async function searchEnrichment(
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
 		      WHERE tc.category = 'species'
-		        AND $1::bool
-		        AND (tc.species_code = $5
+		        AND ($1::bool OR ($8::text[] IS NOT NULL AND $4::text[] = '{}'))
+		        AND (NOT $1::bool OR tc.species_code = $5
 		             OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
 		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
 
@@ -849,9 +865,19 @@ export async function searchEnrichment(
 		   ) combined
 		   ORDER BY species_code, name_tier, rank DESC
 		 ) deduped
+		 WHERE $8::text[] IS NULL OR species_code IN (SELECT species_code FROM regional_species)
 		 ORDER BY name_tier, rank DESC NULLS LAST, com_name, species_code
-		 LIMIT 50`,
-		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr]
+		 LIMIT 50
+		 ) matches
+		 LEFT JOIN LATERAL (
+		   SELECT json_build_object('url', COALESCE(thumbnail_url, media_url),
+		     'creator', creator, 'sourceUrl', source_url,
+		     'licenseCode', license_code, 'licenseUrl', license_url) AS photo
+		   FROM species_media WHERE species_code = matches.species_code AND kind = 'photo'
+		   ORDER BY rank LIMIT 1
+		 ) photo ON true
+		 ORDER BY name_tier, rank DESC NULLS LAST, com_name, species_code`,
+		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes]
 	);
 	return r.rows.map(({ name_tier: _t, rank: _r, ...row }) => row);
 }

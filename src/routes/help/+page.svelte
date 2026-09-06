@@ -607,6 +607,23 @@
 						mudflats"). Name matches always rank first.
 					</li>
 					<li>
+						<strong>Filter by location</strong> — choose a Country and, optionally,
+						a State / region (for example, United States → Florida). Location
+						combines with your search text and every selected tag, or works on its
+						own. It includes birds reported in any month of the displayed historical
+						years, using loaded regional, county, and hotspot data. This is recorded
+						presence, not a complete range checklist or a prediction for today.
+						Places without loaded data show a coverage message. Choose Anywhere
+						to remove the location filter. Filters remain in the URL and survive
+						opening a species and returning to the results.
+					</li>
+					<li>
+						<strong>Result photos</strong> — reference thumbnails help you scan the
+						birds, with creator, source, and license credits below each pictured
+						result. A missing or unavailable photo is labeled; it never removes
+						a bird from the results.
+					</li>
+					<li>
 						<strong>Or filter by tags</strong> — open a dimension (Habitat,
 						Foraging, Tide, Time of day, Movement, Finding) and tap chips.
 						Multiple chips must ALL match, so

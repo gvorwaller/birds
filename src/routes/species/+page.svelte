@@ -12,6 +12,23 @@
   let { data }: { data: PageData } = $props();
 
   const selected = $derived(new Set(data.tags));
+  let brokenPhotos = $state(new Set<string>());
+
+  function checkThumbnail(image: HTMLImageElement, url: string) {
+    // An SSR image may fail before hydration installs its error handler.
+    if (image.complete && image.naturalWidth === 0) {
+      brokenPhotos = new Set([...brokenPhotos, url]);
+    }
+  }
+
+  function countryChanged(event: Event) {
+    const form = (event.currentTarget as HTMLSelectElement).form!;
+    const region = form.elements.namedItem(
+      "region",
+    ) as HTMLSelectElement | null;
+    if (region) region.value = "";
+    form.requestSubmit();
+  }
 
   // Tier-1 (td-97b22e): every result row SHIPS its tags + IUCN status —
   // the user just filtered by tags and the rows didn't show them.
@@ -35,6 +52,8 @@
   function toggleHref(tag: string): string {
     const p = new URLSearchParams();
     if (data.q) p.set("q", data.q);
+    if (data.country) p.set("country", data.country);
+    if (data.region) p.set("region", data.region);
     const next = selected.has(tag)
       ? data.tags.filter((t) => t !== tag)
       : [...data.tags, tag];
@@ -46,6 +65,8 @@
   function detailHref(code: string): string {
     const back = new URLSearchParams();
     if (data.q) back.set("q", data.q);
+    if (data.country) back.set("country", data.country);
+    if (data.region) back.set("region", data.region);
     for (const t of data.tags) back.append("tags", t);
     const qs = back.toString();
     // safeReturnTo labels /species?… itself — no label param needed (GROK).
@@ -78,15 +99,73 @@
       {#each data.tags as t (t)}
         <input type="hidden" name="tags" value={t} />
       {/each}
-      <input
-        type="search"
-        name="q"
-        value={data.q}
-        placeholder="Shoebill, mudflats, granary trees…"
-        aria-label="Search species"
-      />
-      <button type="submit">Search</button>
+      <div class="search-entry">
+        <input
+          type="search"
+          name="q"
+          value={data.q}
+          placeholder="Shoebill, mudflats, granary trees…"
+          aria-label="Search species"
+        />
+        <button type="submit">Search</button>
+      </div>
+      <div class="location-fields">
+        <div class="location-field">
+          <label for="guide-country">Country</label>
+          <select
+            id="guide-country"
+            name="country"
+            value={data.country}
+            onchange={countryChanged}
+          >
+            <option value="">Anywhere</option>
+            {#each data.countries as c (c.code)}
+              <option value={c.code}>{c.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="location-field">
+          <label for="guide-region">State / region</label>
+          <select
+            id="guide-region"
+            name="region"
+            value={data.region}
+            disabled={!data.country || data.regions.length === 0}
+            onchange={(e) => e.currentTarget.form?.requestSubmit()}
+          >
+            <option value=""
+              >{data.country
+                ? "Anywhere in this country"
+                : "Choose a country first"}</option
+            >
+            {#each data.regions as r (r.code)}
+              <option value={r.code}>{r.name}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
     </form>
+    <p class="location-hint muted">
+      Optional: birds reported in this location at any time of year.
+    </p>
+    {#if data.location}
+      <p class="location-hint" role="status">
+        {#if data.location.sourceCount === 0}
+          No historical data is loaded for {data.location.label} yet.
+          <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search
+          here.
+        {:else}
+          Reported in <strong>{data.location.label}</strong> · any month ·
+          {data.location.beginYear}–{data.location.endYear}.
+          {#if !data.location.wholeArea}
+            Based on {data.location.sourceCount} loaded areas and hotspots; places
+            without loaded data are not covered.
+          {/if}
+          This shows recorded presence, not a complete list of birds that could occur
+          here.
+        {/if}
+      </p>
+    {/if}
 
     {#if data.tags.length > 0}
       <div class="active-filters">
@@ -127,7 +206,12 @@
   {#if data.active}
     {#if data.results.length === 0}
       <section class="card">
-        {#if data.counts.taxonomy === 0}
+        {#if data.location?.sourceCount === 0}
+          <p class="muted">
+            Location coverage is unavailable; this does not mean there are no
+            birds here.
+          </p>
+        {:else if data.counts.taxonomy === 0}
           <p class="muted">
             No species taxonomy loaded yet. Sync eBird taxonomy from
             <a href="/settings">Settings</a> or load a forecast area on
@@ -137,6 +221,8 @@
           <p class="muted">
             No species match{data.q ? ` "${data.q}"` : ""}{data.tags.length > 0
               ? " with every selected tag"
+              : ""}{data.location
+              ? ` in the stored data for ${data.location.label}`
               : ""}.
             {data.tags.length > 0
               ? "Try fewer tags or a broader search — tags come from AI annotation, which is still filling in."
@@ -147,54 +233,98 @@
     {:else}
       <section class="card results">
         {#each data.results as r (r.species_code)}
-          <a class="row" href={detailHref(r.species_code)}>
-            <span class="row-main">
-              <span class="name">
-                {r.com_name}
-                {#if r.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
-                    kind="need"
-                    label="Need"
-                  />{/if}
+          <article class="result">
+            <a class="row" href={detailHref(r.species_code)}>
+              <span class="thumbnail">
+                {#if r.photo && !brokenPhotos.has(r.photo.url)}
+                  <img
+                    src={r.photo.url}
+                    alt=""
+                    width="88"
+                    height="88"
+                    loading="lazy"
+                    decoding="async"
+                    use:checkThumbnail={r.photo.url}
+                    onerror={() => {
+                      if (r.photo)
+                        brokenPhotos = new Set([...brokenPhotos, r.photo.url]);
+                    }}
+                  />
+                {:else}
+                  <span class="photo-missing"
+                    >{r.photo ? "Photo unavailable" : "No photo yet"}</span
+                  >
+                {/if}
               </span>
-              <span class="muted sci"><em>{r.sci_name}</em>{#if r.family}
-                  · {r.family}{/if}
-                {#if r.iucn_status}<span
-                    class="iucn s-{r.iucn_status.toLowerCase()}"
-                    title={IUCN_LABELS[r.iucn_status] ?? "IUCN status"}
-                    >{r.iucn_status}</span
-                  >{/if}</span>
-              {#if (r.tags ?? []).length > 0}
-                <span class="rowtags">
-                  {#each r.tags as t (t)}
-                    <span class="rowtag" class:hit={selected.has(t)}
-                      >{chipText(t)}</span
-                    >
-                  {/each}
+              <span class="row-main">
+                <span class="name">
+                  {r.com_name}
+                  {#if r.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
+                      kind="need"
+                      label="Need"
+                    />{/if}
                 </span>
-              {/if}
-              {#if r.field_craft}
-                <span class="muted craft">{r.field_craft.slice(0, 140)}{r
-                    .field_craft.length > 140
-                    ? "…"
-                    : ""}</span>
-              {:else if !r.wiki_fetched_at}
-                <span class="muted craft">Wikipedia notes not loaded yet.</span>
-              {:else if !r.has_prose}
-                <span class="muted craft">No Wikipedia article.</span>
-              {/if}
-            </span>
-            <span class="go" aria-hidden="true">›</span>
-          </a>
+                <span class="muted sci"
+                  ><em>{r.sci_name}</em>{#if r.family}
+                    · {r.family}{/if}
+                  {#if r.iucn_status}<span
+                      class="iucn s-{r.iucn_status.toLowerCase()}"
+                      title={IUCN_LABELS[r.iucn_status] ?? "IUCN status"}
+                      >{r.iucn_status}</span
+                    >{/if}</span
+                >
+                {#if (r.tags ?? []).length > 0}
+                  <span class="rowtags">
+                    {#each r.tags as t (t)}
+                      <span class="rowtag" class:hit={selected.has(t)}
+                        >{chipText(t)}</span
+                      >
+                    {/each}
+                  </span>
+                {/if}
+                {#if r.field_craft}
+                  <span class="muted craft"
+                    >{r.field_craft.slice(0, 140)}{r.field_craft.length > 140
+                      ? "…"
+                      : ""}</span
+                  >
+                {:else if !r.wiki_fetched_at}
+                  <span class="muted craft"
+                    >Wikipedia notes not loaded yet.</span
+                  >
+                {:else if !r.has_prose}
+                  <span class="muted craft">No Wikipedia article.</span>
+                {/if}
+              </span>
+              <span class="go" aria-hidden="true">›</span>
+            </a>
+            {#if r.photo}
+              <p class="photo-credit">
+                Photo: {r.photo.creator ?? "Creator not recorded"} ·
+                <a href={r.photo.sourceUrl} target="_blank" rel="noopener"
+                  >source</a
+                >
+                ·
+                {#if r.photo.licenseUrl}
+                  <a href={r.photo.licenseUrl} target="_blank" rel="noopener"
+                    >{r.photo.licenseCode}</a
+                  >
+                {:else}{r.photo.licenseCode}{/if}
+              </p>
+            {/if}
+          </article>
         {/each}
       </section>
       {#if data.results.length === 50}
-        <p class="muted trunc">Showing the first 50 matches — narrow the search.</p>
+        <p class="muted trunc">
+          Showing the first 50 matches — narrow the search.
+        </p>
       {/if}
     {/if}
   {:else}
     <section class="card">
       <p class="muted">
-        Pick tags above or type a search — try
+        Choose a location, pick tags above, or type a search — try
         <a href="/species?tags=habitat%3Amudflat&tags=tide%3Alow"
           >mudflat birds at low tide</a
         >
@@ -208,7 +338,9 @@
 
   <p class="attribution">
     Species text from
-    <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a>
+    <a href="https://en.wikipedia.org" target="_blank" rel="noopener"
+      >Wikipedia</a
+    >
     where available (CC BY-SA 4.0) · data from
     <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a>
   </p>
@@ -239,10 +371,14 @@
     margin-bottom: 12px;
   }
   .searchform {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .search-entry {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 10px;
   }
   .searchform input[type="search"] {
     flex: 1;
@@ -263,6 +399,42 @@
     background: var(--accent);
     color: #fff;
     font-weight: 600;
+  }
+  .location-fields {
+    display: grid;
+    gap: 12px;
+  }
+  .location-field {
+    display: grid;
+    gap: 4px;
+    font-size: 0.89rem;
+    font-weight: 600;
+    min-width: 0;
+  }
+  .location-fields select {
+    appearance: none;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 8px 32px 8px 12px;
+    font-size: 1rem;
+    color: var(--text);
+    background: var(--bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%234b5159' stroke-width='2'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 12px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .location-hint {
+    font-size: 0.89rem;
+    margin: 8px 0 12px;
+  }
+  @media (min-width: 640px) {
+    .location-fields {
+      grid-template-columns: 1fr 1fr;
+    }
   }
   .active-filters {
     display: flex;
@@ -343,21 +515,64 @@
   .row {
     display: flex;
     gap: 12px;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     padding: 10px 16px;
     min-height: 48px;
     color: inherit;
     text-decoration: none;
   }
-  .row + .row {
+  .result + .result {
     border-top: 1px solid var(--border);
   }
   .row-main {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
+  }
+  .thumbnail {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .photo-missing {
+    color: var(--muted);
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .photo-credit {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 6px;
+    padding: 0 16px 8px;
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .photo-credit a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
+  @media (min-width: 640px) {
+    .thumbnail {
+      width: 88px;
+      height: 88px;
+    }
   }
   .name {
     font-weight: 600;
@@ -368,6 +583,7 @@
     overflow-wrap: anywhere;
   }
   .go {
+    align-self: center;
     color: var(--accent);
     font-size: 1.3em;
     flex-shrink: 0;
@@ -426,11 +642,33 @@
     background: #e9ecef;
     color: #343a40;
   }
-  .iucn.s-lc { background: #d8ecd9; color: #1e4620; }
-  .iucn.s-nt { background: #e8ecc9; color: #4a4d1d; }
-  .iucn.s-vu { background: #fde8c8; color: #724200; }
-  .iucn.s-en { background: #fcd9cc; color: #842607; }
-  .iucn.s-cr { background: #f8d0d4; color: #880e1a; }
-  .iucn.s-ew, .iucn.s-ex { background: #43464a; color: #f4f5f6; }
-  .iucn.s-dd { background: #e9ecef; color: #343a40; }
+  .iucn.s-lc {
+    background: #d8ecd9;
+    color: #1e4620;
+  }
+  .iucn.s-nt {
+    background: #e8ecc9;
+    color: #4a4d1d;
+  }
+  .iucn.s-vu {
+    background: #fde8c8;
+    color: #724200;
+  }
+  .iucn.s-en {
+    background: #fcd9cc;
+    color: #842607;
+  }
+  .iucn.s-cr {
+    background: #f8d0d4;
+    color: #880e1a;
+  }
+  .iucn.s-ew,
+  .iucn.s-ex {
+    background: #43464a;
+    color: #f4f5f6;
+  }
+  .iucn.s-dd {
+    background: #e9ecef;
+    color: #343a40;
+  }
 </style>

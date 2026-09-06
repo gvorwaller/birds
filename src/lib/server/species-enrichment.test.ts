@@ -633,8 +633,10 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       expect(both.find((r) => r.species_code === B)?.seen).toBe(false);
 
       // Tag AND semantics: both tags → B only; adding a non-matching tag → none.
+      // Keep the fixture candidates in scope on a production-sized corpus:
+      // unrelated tagged birds can otherwise fill the first 50 results.
       const tagged = await searchEnrichment(
-        "",
+        "testfinch",
         ["habitat:freshwater-marsh", "find:heard-more-than-seen"],
         uid,
       );
@@ -644,7 +646,7 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       expect(tagged.map((r) => r.species_code)).toContain(B);
       expect(tagged.map((r) => r.species_code)).not.toContain(A);
       const none = await searchEnrichment(
-        "",
+        "testfinch",
         ["habitat:freshwater-marsh", "tide:low"],
         uid,
       );
