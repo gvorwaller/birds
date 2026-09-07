@@ -472,6 +472,13 @@
 						Older <code>/targets</code> links and bookmarks still work; they land on Home
 						with their search intact.
 					</li>
+					<li>
+						<strong>Map, directions, and eBird checklists.</strong> Each reported
+						location provides direct links to view the spot on Google Maps
+						(<code>📍 Map</code>), open turn-by-turn navigation (<code>Directions ↗</code>),
+						and link directly to the observer's public eBird report (<code>checklist ↗</code>)
+						whenever an eBird checklist ID was included with the observation.
+					</li>
 				</ul>
 			</div>
 		{/if}

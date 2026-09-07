@@ -779,6 +779,7 @@
                       lng={pl.lng}
                       name={pl.locName}
                       googlePlaceId={pl.googlePlaceId}
+                      subId={pl.subId}
                     />
                     <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
@@ -800,6 +801,7 @@
                 lng={n.lastLng}
                 name={n.locations[0] ?? n.comName}
                 googlePlaceId={n.googlePlaceId}
+                subId={n.lastSubId}
               />
             {/if}
           </div>
@@ -952,6 +954,7 @@
                       lng={pl.lng}
                       name={pl.locName}
                       googlePlaceId={pl.googlePlaceId}
+                      subId={pl.subId}
                     />
                     <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
@@ -973,6 +976,7 @@
                 lng={n.lastLng}
                 name={n.locations[0] ?? n.comName}
                 googlePlaceId={n.googlePlaceId}
+                subId={n.lastSubId}
               />
             {/if}
           </div>

@@ -1,21 +1,24 @@
 <script lang="ts">
   import { mapsPlaceUrl, mapsDirectionsUrl } from "$lib/geo";
 
-  // A compact pair of links for a spotting location: "📍 Map" opens the spot in
+  // A compact set of links for a spotting location: "📍 Map" opens the spot in
   // Google Maps; "Directions ↗" hands off to turn-by-turn from the device's
-  // location. Renders nothing if coordinates are missing/invalid.
+  // location; "checklist ↗" opens the eBird report if subId is provided.
+  // Renders nothing if coordinates and subId are missing/invalid.
   let {
     lat,
     lng,
     name = null,
     placeId = null,
     googlePlaceId = null,
+    subId = null,
   }: {
     lat?: number | null;
     lng?: number | null;
     name?: string | null;
     placeId?: string | null;
     googlePlaceId?: string | null;
+    subId?: string | null;
   } = $props();
 
   let ok = $derived(
@@ -36,27 +39,40 @@
   });
 </script>
 
-{#if ok}
+{#if ok || subId}
   <span class="maplink">
-    <a
-      href={mapsPlaceUrl(place)}
-      target="_blank"
-      rel="noopener"
-      title="Show this spot on Google Maps">📍 Map</a
-    >
-    <a
-      href={mapsDirectionsUrl(place)}
-      target="_blank"
-      rel="noopener"
-      title="Directions to this spot in Google Maps">Directions ↗</a
-    >
+    {#if ok}
+      <a
+        href={mapsPlaceUrl(place)}
+        target="_blank"
+        rel="noopener"
+        title="Show this spot on Google Maps">📍 Map</a
+      >
+      <a
+        href={mapsDirectionsUrl(place)}
+        target="_blank"
+        rel="noopener"
+        title="Directions to this spot in Google Maps">Directions ↗</a
+      >
+    {/if}
+    {#if subId}
+      <a
+        class="cl"
+        href={`https://ebird.org/checklist/${encodeURIComponent(subId)}`}
+        target="_blank"
+        rel="noopener"
+        title="Open eBird checklist">checklist ↗</a
+      >
+    {/if}
   </span>
 {/if}
 
 <style>
   .maplink {
     display: inline-flex;
-    gap: 14px;
+    flex-wrap: wrap;
+    max-width: 100%;
+    gap: 0 14px;
     margin-top: 4px;
     font-size: 0.8rem;
     font-weight: 600;
@@ -71,5 +87,8 @@
   }
   .maplink a:hover {
     text-decoration: underline;
+  }
+  .maplink a.cl {
+    color: var(--accent);
   }
 </style>

@@ -447,4 +447,107 @@ describe("geoTargetsBase", () => {
     expect(view.needs).toHaveLength(0);
     expect(view.seenCount).toBe(1);
   });
+
+  it("preserves eBird checklist subId when merging enriched observations", async () => {
+    const base = baseNeed([{ ...AREA_ROW, subId: "S_BASE" }]);
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: [
+        obs({
+          speciesCode: "gbbgul",
+          comName: "Great Black-backed Gull",
+          locId: "L1",
+          locName: "Fort George",
+          obsDt: "2026-08-31 09:00",
+          lat: 30.4,
+          lng: -81.4,
+          subId: "S_NEWER",
+        }),
+      ],
+      stale: false,
+      fetchedAt: new Date(),
+    });
+
+    const { needs } = await enrichNeedsWithSpeciesReports(
+      [base],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(needs[0].lastSubId).toBe("S_NEWER");
+    expect(needs[0].places[0].subId).toBe("S_NEWER");
+  });
+
+  it("does not fall back to older base subId when enriched observation is newer but has no subId (CODEX13 finding 1)", async () => {
+    const base = baseNeed([{ ...AREA_ROW, subId: "S_BASE" }]);
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: [
+        obs({
+          speciesCode: "gbbgul",
+          comName: "Great Black-backed Gull",
+          locId: "L1",
+          locName: "Fort George",
+          obsDt: "2026-08-31 09:00",
+          lat: 30.4,
+          lng: -81.4,
+        }),
+      ],
+      stale: false,
+      fetchedAt: new Date(),
+    });
+
+    const { needs } = await enrichNeedsWithSpeciesReports(
+      [base],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(needs[0].lastSubId).toBeNull();
+    expect(needs[0].places[0].subId).toBeNull();
+  });
+
+  it("does not adopt older detail subId when base observation is newer but has no subId", async () => {
+    // Base is newer (2026-08-31) without subId
+    const base = baseNeed([
+      {
+        ...AREA_ROW,
+        obsDt: "2026-08-31 09:00",
+        subId: undefined,
+      },
+    ]);
+    // Detail payload is older cache generation (2026-08-30) with subId
+    ebird.recentNearbySpeciesObs.mockResolvedValue({
+      data: [
+        obs({
+          speciesCode: "gbbgul",
+          comName: "Great Black-backed Gull",
+          locId: "L1",
+          locName: "Fort George",
+          obsDt: "2026-08-30 08:00",
+          lat: 30.4,
+          lng: -81.4,
+          subId: "S_OLDER",
+        }),
+      ],
+      stale: false,
+      fetchedAt: new Date(),
+    });
+
+    const { needs } = await enrichNeedsWithSpeciesReports(
+      [base],
+      "key",
+      ORIGIN,
+      40,
+      7,
+      new Map(),
+    );
+
+    expect(needs[0].lastSubId).toBeNull();
+    expect(needs[0].places[0].subId).toBeNull();
+  });
 });

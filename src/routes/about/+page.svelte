@@ -127,6 +127,12 @@
 								their own appearance control without access to private settings.
 							</li>
 							<li>
+								<strong>Direct eBird checklist links on Home</strong> — each reported
+								location for needed and notable species now includes an inline <code>checklist ↗</code>
+								link to open the observer's eBird submission in a new tab when available,
+								matching the Field Guide species view and avoiding extra page navigation.
+							</li>
+							<li>
 								<strong>Species totals at a glance</strong> — Hotspots &amp; data now
 								shows a deduplicated worldwide species total in the Loaded data heading,
 								plus distinct species counts on collapsed geographic area, country,

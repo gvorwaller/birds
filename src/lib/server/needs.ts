@@ -36,6 +36,11 @@ export interface SpeciesPlace {
    * valid places.
    */
   isHotspot: boolean;
+  /**
+   * eBird checklist submission ID ("S123456789") for the latest observation at
+   * this place. Powers the inline checklist link-out.
+   */
+  subId?: string | null;
 }
 
 export interface SpeciesActivity {
@@ -53,6 +58,8 @@ export interface SpeciesActivity {
   lastLat: number;
   lastLng: number;
   googlePlaceId: string | null;
+  /** Checklist ID for the species' most recent report (`lastLat`/`lastLng`). */
+  lastSubId?: string | null;
   /**
    * Distance to the species' LAST report (`lastLat`/`lastLng`) — not to its
    * nearest place, which is `nearestDistanceKm()` over `places`. The two are
@@ -204,6 +211,7 @@ export function aggregate(
         lastLat: o.lat,
         lastLng: o.lng,
         googlePlaceId: o.locId ? (locationPlaceIds.get(o.locId) ?? null) : null,
+        lastSubId: o.subId ?? null,
         distanceKm: null,
         photoCount: photoCounts.get(o.speciesCode) ?? 0,
         enriched: false,
@@ -220,6 +228,7 @@ export function aggregate(
       agg.googlePlaceId = o.locId
         ? (locationPlaceIds.get(o.locId) ?? null)
         : null;
+      agg.lastSubId = o.subId ?? null;
     }
     if (
       o.locName &&
@@ -244,12 +253,16 @@ export function aggregate(
         distanceKm: null,
         googlePlaceId: null,
         isHotspot: !!o.locId && hotspotLocIds.has(o.locId),
+        subId: o.subId ?? null,
       };
       pmap.set(key, pl);
     }
     pl.nReports++;
     pl.totalCount += o.howMany ?? 1;
-    if (o.obsDt > pl.lastObsDt) pl.lastObsDt = o.obsDt;
+    if (o.obsDt > pl.lastObsDt) {
+      pl.lastObsDt = o.obsDt;
+      pl.subId = o.subId ?? null;
+    }
     if (o.locId && locationPlaceIds.has(o.locId)) {
       pl.googlePlaceId = locationPlaceIds.get(o.locId)!;
     }
@@ -320,6 +333,7 @@ function mergePlace(prev: SpeciesPlace, incoming: SpeciesPlace): SpeciesPlace {
     totalCount: countsFrom.totalCount,
     googlePlaceId: incoming.googlePlaceId ?? prev.googlePlaceId ?? null,
     isHotspot: incoming.isHotspot || prev.isHotspot,
+    subId: newest.subId ?? null,
   };
 }
 
@@ -384,6 +398,7 @@ function mergeEnrichedNeed<T extends SpeciesActivity>(
     lastLat: newest.lastLat,
     lastLng: newest.lastLng,
     googlePlaceId: newest.googlePlaceId,
+    lastSubId: newest.lastSubId ?? null,
     distanceKm: newest.distanceKm,
     locations,
     enriched: true,

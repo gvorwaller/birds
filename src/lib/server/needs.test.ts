@@ -71,6 +71,115 @@ describe("aggregate", () => {
       totalCount: 1,
     });
   });
+
+  it("preserves eBird checklist subId for places and latest observation", () => {
+    const activity = aggregate(
+      [
+        obs({
+          speciesCode: "ospre1",
+          comName: "Osprey",
+          locId: "L1",
+          locName: "Harbor",
+          lat: 44.4,
+          lng: -68.6,
+          obsDt: "2026-06-20 08:00",
+          subId: "S100",
+        }),
+        obs({
+          speciesCode: "ospre1",
+          comName: "Osprey",
+          locId: "L1",
+          locName: "Harbor",
+          lat: 44.4,
+          lng: -68.6,
+          obsDt: "2026-06-21 08:00",
+          subId: "S200",
+        }),
+        obs({
+          speciesCode: "ospre1",
+          comName: "Osprey",
+          locId: "L2",
+          locName: "Point",
+          lat: 44.42,
+          lng: -68.62,
+          obsDt: "2026-06-22 08:00",
+          subId: "S300",
+        }),
+      ],
+      null,
+      new Map(),
+    );
+
+    const osprey = activity.get("ospre1")!;
+    expect(osprey.lastSubId).toBe("S300");
+    expect(osprey.places.find((p) => p.locId === "L1")?.subId).toBe("S200");
+    expect(osprey.places.find((p) => p.locId === "L2")?.subId).toBe("S300");
+  });
+
+  it("keeps checklist ID strictly with latest report and does not backfill older ID (CODEX13 finding 1)", () => {
+    // Order 1: Older report has subId, newer report has none
+    const rows1 = [
+      obs({
+        speciesCode: "ospre1",
+        comName: "Osprey",
+        locId: "L1",
+        locName: "Harbor",
+        lat: 44.4,
+        lng: -68.6,
+        obsDt: "2026-06-20 08:00",
+        subId: "S100",
+      }),
+      obs({
+        speciesCode: "ospre1",
+        comName: "Osprey",
+        locId: "L2",
+        locName: "Point",
+        lat: 44.42,
+        lng: -68.62,
+        obsDt: "2026-06-22 08:00",
+      }),
+    ];
+    const act1 = aggregate(rows1, null, new Map()).get("ospre1")!;
+    expect(act1.lastLat).toBe(44.42);
+    expect(act1.lastObsDt).toBe("2026-06-22 08:00");
+    expect(act1.lastSubId).toBeNull();
+    expect(act1.places.find((p) => p.locId === "L1")?.subId).toBe("S100");
+    expect(act1.places.find((p) => p.locId === "L2")?.subId).toBeNull();
+
+    // Order 2: Reverse order in input
+    const rows2 = [rows1[1], rows1[0]];
+    const act2 = aggregate(rows2, null, new Map()).get("ospre1")!;
+    expect(act2.lastLat).toBe(44.42);
+    expect(act2.lastObsDt).toBe("2026-06-22 08:00");
+    expect(act2.lastSubId).toBeNull();
+    expect(act2.places.find((p) => p.locId === "L1")?.subId).toBe("S100");
+    expect(act2.places.find((p) => p.locId === "L2")?.subId).toBeNull();
+
+    // Same place: newer report has no subId -> place subId must be null
+    const rowsPlace = [
+      obs({
+        speciesCode: "ospre1",
+        comName: "Osprey",
+        locId: "L1",
+        locName: "Harbor",
+        lat: 44.4,
+        lng: -68.6,
+        obsDt: "2026-06-20 08:00",
+        subId: "S100",
+      }),
+      obs({
+        speciesCode: "ospre1",
+        comName: "Osprey",
+        locId: "L1",
+        locName: "Harbor",
+        lat: 44.4,
+        lng: -68.6,
+        obsDt: "2026-06-21 08:00",
+      }),
+    ];
+    const actPlace = aggregate(rowsPlace, null, new Map()).get("ospre1")!;
+    expect(actPlace.places.find((p) => p.locId === "L1")?.subId).toBeNull();
+  });
 });
 
 describe("rankPlaces", () => {
