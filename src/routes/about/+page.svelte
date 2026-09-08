@@ -138,6 +138,7 @@
 								location for needed and notable species now includes an inline <code>checklist ↗</code>
 								link to open the observer's eBird submission in a new tab when available,
 								matching the Field Guide species view and avoiding extra page navigation.
+								Expanded locations show the location name before Map, Directions, and checklist links.
 							</li>
 							<li>
 								<strong>Species totals at a glance</strong> — Hotspots &amp; data now

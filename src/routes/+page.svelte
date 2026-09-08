@@ -774,6 +774,7 @@
               <ul class="places">
                 {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
                   <li>
+                    <span class="pl-name">{pl.locName}</span>
                     <MapLink
                       lat={pl.lat}
                       lng={pl.lng}
@@ -781,7 +782,6 @@
                       googlePlaceId={pl.googlePlaceId}
                       subId={pl.subId}
                     />
-                    <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
                       >{#if pl.distanceKm != null}{formatDistance(
                           pl.distanceKm,
@@ -949,6 +949,7 @@
               <ul class="places">
                 {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
                   <li>
+                    <span class="pl-name">{pl.locName}</span>
                     <MapLink
                       lat={pl.lat}
                       lng={pl.lng}
@@ -956,7 +957,6 @@
                       googlePlaceId={pl.googlePlaceId}
                       subId={pl.subId}
                     />
-                    <span class="pl-name">{pl.locName}</span>
                     <span class="pl-meta"
                       >{#if pl.distanceKm != null}{formatDistance(
                           pl.distanceKm,
