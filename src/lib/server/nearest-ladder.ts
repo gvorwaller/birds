@@ -1,6 +1,6 @@
 /**
  * "How far away is the nearest current report of this species?" — answered
- * without eBird's `/data/nearest/geo/recent`, which cannot answer it
+ * by racing eBird's `/data/nearest/geo/recent` against our own region search
  * (td-73e6f9, plan docs/2026-09-01-nearest-region-ladder-plan.md).
  *
  * THE PROBLEM. That endpoint does a radial scan whose cost grows with the
@@ -15,9 +15,9 @@
  * THE REPLACEMENT. eBird's per-region species query is region-indexed and
  * answers in a fraction of a second regardless (2,071 rows for all of New
  * York: 0.45 s). We already own a global index of regions with verified
- * bounding boxes, so we can walk regions outward from home and stop early:
- * a branch-and-bound nearest-neighbour search where each region's
- * distance-to-box is a lower bound on any observation inside it.
+ * bounding boxes and seasonal occurrence data. Likely regions are probed
+ * first; each region's distance-to-box remains a lower bound on observations
+ * inside it. Only those distance bounds, never history, justify stopping early.
  *
  * WHAT IT DOES NOT CLAIM. Our seeded coverage is not the globe — 301 eBird
  * codes have no usable geography, and antimeridian regions have no usable
@@ -35,6 +35,10 @@ import {
 import { mapWithConcurrency } from "$server/concurrency";
 import { obsKey } from "$server/observations";
 import { allProximityRegions, type Region } from "$server/regions";
+import {
+  nearestOccurrencePriorities,
+  reportMonths,
+} from "$server/nearest-occurrence";
 import { distanceToBoxKm, haversineKm } from "$lib/geo";
 
 /** How many observations the callers render. The stop rule is built on it. */
@@ -65,7 +69,7 @@ export interface NearestLadderResult {
     /** Regions actually probed. */
     regions: number;
     /**
-     * Lower bound of the first region we did NOT probe. NOT a covered
+     * Smallest lower bound among regions we did NOT fully check. NOT a covered
      * radius: coverage is a set of boxes with holes in it. UI must not
      * render this as "everything within X was searched".
      */
@@ -299,19 +303,39 @@ export async function nearestSpeciesReports(
     ? AbortSignal.any([opts.signal, stopLadder.signal])
     : stopLadder.signal;
 
-  // 2. Walk our regions outward.
+  // 2. Prefer historical occurrence in the report window's months, then other
+  // seasons, unknown coverage, and loaded zeroes. Distance orders each group.
+  // History never excludes a region or proves the absence of a current report.
   const runLadder = async (): Promise<NearestLadderResult> => {
+    const startedAt = now();
     const { candidates } = await allProximityRegions();
+    const remainingMs = opts.ladderDeadlineMs - (now() - startedAt);
+    const priorities =
+      remainingMs > 0 && !ladderSignal.aborted
+        ? await nearestOccurrencePriorities(
+            candidates.map((r) => r.code),
+            speciesCode,
+            reportMonths(startedAt, back),
+            remainingMs,
+          )
+        : new Map();
     const ranked = candidates
       .map((region) => ({
         region,
         bound: pruneBoundKm(home, region),
         sortKey: sortKeyKm(home, region),
+        priority: priorities.get(region.code) ?? 2,
       }))
       .filter((c) => Number.isFinite(c.sortKey))
-      .sort((a, b) => a.sortKey - b.sortKey);
+      .sort((a, b) => a.priority - b.priority || a.sortKey - b.sortKey);
 
-    const startedAt = now();
+    // Probe order is no longer distance order. Checking just the next region
+    // could stop ahead of a closer unknown/zero region (or a box-less region).
+    const remainingBounds = new Array<number>(ranked.length + 1);
+    remainingBounds[ranked.length] = Number.POSITIVE_INFINITY;
+    for (let i = ranked.length - 1; i >= 0; i--)
+      remainingBounds[i] = Math.min(ranked[i].bound, remainingBounds[i + 1]);
+
     const byKey = new Map<string, EbirdObs>();
     let stale = false;
     let partial = false;
@@ -454,7 +478,7 @@ export async function nearestSpeciesReports(
         // prove only the single nearest observation while four rows the UI
         // renders could still be beaten by the very next region.
         const worstShown = distanceOf(home, top[LADDER_TOP_N - 1]);
-        if (next.bound > worstShown) break;
+        if (remainingBounds[cursor] > worstShown) break;
       }
       if (!next) break; // exhausted our coverage
     }
@@ -534,7 +558,10 @@ export async function nearestSpeciesReports(
     // Self-limiting in the other direction too: a species whose search burns
     // the full deadline before coming up empty gets no grace at all, so a
     // genuinely-nothing answer never becomes a slow one.
-    const graceMs = Math.max(0, opts.ladderDeadlineMs - (now() - ladderStartedAt));
+    const graceMs = Math.max(
+      0,
+      opts.ladderDeadlineMs - (now() - ladderStartedAt),
+    );
     if (graceMs === 0) return outcome.res;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const grace = new Promise<{ kind: "grace" }>((resolve) => {

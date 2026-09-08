@@ -121,6 +121,13 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Smarter nearest reports</strong> — searches now look first
+								in regions where the bird has been reported at this time of year,
+								helping find birds whose range is far from home. Regions with
+								missing history or no historical reports remain searchable;
+								results still say when closer regions could not be checked.
+							</li>
+							<li>
 								<strong>Your own theme</strong> — choose Light, Dark, Forest, Ocean,
 								or Warm Paper in Settings → Appearance. Preferences are saved per
 								account and applied before the page appears. Read-only viewers have

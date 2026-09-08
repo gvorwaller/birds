@@ -278,8 +278,42 @@ and links to eBird's map. About: one release-note line.
 - **Prod after deploy**: bkcchi from the owner's phone — total in single-digit
   seconds; /nearest resolves all targets < 40s.
 
+## Follow-up — occurrence ordering (2026-09-07, td-fba54e / td-37c962)
+
+Implemented: use the existing monthly rollups to order candidate regions
+by positive historical evidence in the recent-report window's months, then
+positive evidence in other seasons, unknown coverage, and historical zeroes.
+Distance orders regions within each group; no frequency threshold excludes a
+scarce report, and no region is removed because of history. Crossing a month or
+year boundary includes every month touched by the lookback window.
+
+The occurrence query uses exact region locations and the existing
+`(loc_code, species_code, month)` primary key. A county or hotspot does not
+establish whole-region coverage. A zero requires twelve sampled months and no
+unmatched species names; otherwise missing species evidence remains unknown.
+The query shares the search deadline and failures propagate through the existing
+lookup error handling. Fast direct answers avoid the occurrence query entirely.
+
+The stop condition now checks the minimum distance bound of **all** remaining
+regions, because the next candidate is no longer necessarily the closest.
+Unsearched historical-zero and unknown regions still count against `proven`.
+The direct eBird lookup continues to race the region search, with the deployed
+empty-search grace unchanged.
+
+Production read-only check on September 7: 3,110 of 3,369 subnational1 regions
+and 91 of 252 countries have exact frequency loads. The original ten-country
+snapshot in td-fba54e is obsolete. Historical Mountain Bluebird reports exist
+in Florida and Georgia in other months, and New Mexico and Texas in September;
+historical presence must not be confused with a recent live sighting.
+
+Read-only audit of the actual candidate builder and occurrence query: among
+3,443 searchable candidates, New Mexico moves from distance rank 282 to
+occurrence rank 8 for Mountain Bluebird from Jacksonville (August/September
+lookback). First query took 1,915 ms; a subsequent `EXPLAIN ANALYZE` took
+164 ms and confirmed use of the existing rollup primary keys. This validates
+ordering and query execution, not current eBird sightings or end-to-end latency.
+
 ## Deferred (explicit)
-- Frequency prefilter (measure PROD coverage first — own td).
 - Streaming /nearest (own td, filed at implementation).
 - Antimeridian-unsafe regions unsearchable via ladder (fast path still covers
   them); the 301 excluded codes partially covered via the 24 country probes.

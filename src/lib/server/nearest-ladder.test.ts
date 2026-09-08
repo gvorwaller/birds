@@ -24,9 +24,14 @@ const ebird = vi.hoisted(() => ({
   },
 }));
 const regions = vi.hoisted(() => ({ allProximityRegions: vi.fn() }));
+const occurrence = vi.hoisted(() => ({ nearestOccurrencePriorities: vi.fn() }));
 
 vi.mock("$server/ebird", () => ebird);
 vi.mock("$server/regions", () => regions);
+vi.mock("$server/nearest-occurrence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./nearest-occurrence")>()),
+  ...occurrence,
+}));
 
 const { nearestSpeciesReports, createProbeGate, pruneBoundKm, sortKeyKm } =
   await import("./nearest-ladder");
@@ -46,7 +51,15 @@ function boxAt(southLat: number): RegionBox {
 
 function region(code: string, southLat: number | null, centroidLat = 45) {
   return southLat == null
-    ? { code, name: code, level: "country" as const, parent: null, lat: centroidLat, lon: -81.64, box: null }
+    ? {
+        code,
+        name: code,
+        level: "country" as const,
+        parent: null,
+        lat: centroidLat,
+        lon: -81.64,
+        box: null,
+      }
     : {
         code,
         name: code,
@@ -70,7 +83,10 @@ const R = [
 
 let obsSeq = 0;
 /** An observation on home's meridian at `lat` — distance ≈ (lat-30.26)*111km. */
-function obs(lat: number, over: Partial<{ locId: string; obsDt: string }> = {}) {
+function obs(
+  lat: number,
+  over: Partial<{ locId: string; obsDt: string }> = {},
+) {
   obsSeq += 1;
   return {
     speciesCode: SP,
@@ -95,10 +111,14 @@ const ok = (data: unknown[], stale = false) => ({
 });
 
 /** Wire per-region payloads; regions absent from the map return empty. */
-function serve(byRegion: Record<string, unknown[]>, opts: { stale?: string[] } = {}) {
-  ebird.recentSpeciesInRegion.mockImplementation(
-    (_k: string, code: string) =>
-      Promise.resolve(ok(byRegion[code] ?? [], opts.stale?.includes(code) ?? false)),
+function serve(
+  byRegion: Record<string, unknown[]>,
+  opts: { stale?: string[] } = {},
+) {
+  ebird.recentSpeciesInRegion.mockImplementation((_k: string, code: string) =>
+    Promise.resolve(
+      ok(byRegion[code] ?? [], opts.stale?.includes(code) ?? false),
+    ),
   );
 }
 
@@ -108,6 +128,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   obsSeq = 0;
   regions.allProximityRegions.mockResolvedValue({ candidates: R, unsafe: [] });
+  occurrence.nearestOccurrencePriorities.mockResolvedValue(new Map());
   // Default: the direct endpoint is dead, which is what the ladder exists for.
   ebird.nearestObsOfSpecies.mockRejectedValue(
     new ebird.EbirdError("eBird did not respond within 10s.", 504),
@@ -121,6 +142,7 @@ describe("fast path", () => {
 
     expect(res.via).toBe("nearest");
     expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
+    expect(occurrence.nearestOccurrencePriorities).not.toHaveBeenCalled();
     // Sorted by OUR haversine, never the API's order.
     expect(res.rows[0].lat).toBe(31.2);
     expect(res.proven).toBe(true);
@@ -384,9 +406,12 @@ describe("bounds and probe order", () => {
     });
     serve({ R1: [obs(31.1), obs(31.2), obs(31.3), obs(31.4), obs(31.5)] });
 
-    const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      probeBudget: 3,
+    });
 
-    // Five hits and the search stopped, but a region with no usable bound was
+    // Five hits and the budget ran out, but a region with no usable bound was
     // never checked — it could hold something closer.
     expect(res.rows).toHaveLength(5);
     expect(res.proven).toBe(false);
@@ -400,12 +425,121 @@ describe("bounds and probe order", () => {
   });
 });
 
+describe("occurrence-aware search", () => {
+  it("reaches likely habitat inside a budget that distance-only ordering exhausts", async () => {
+    regions.allProximityRegions.mockResolvedValue({
+      candidates: [
+        ...Array.from({ length: 60 }, (_, i) =>
+          region(`E${i}`, 30.3 + i / 100),
+        ),
+        R[5],
+      ],
+      unsafe: [],
+    });
+    occurrence.nearestOccurrencePriorities.mockResolvedValue(
+      new Map([
+        ...Array.from({ length: 60 }, (_, i) => [`E${i}`, 3] as const),
+        ["R6", 0],
+      ]),
+    );
+    serve({ R6: [obs(41.2)] });
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      probeBudget: 3,
+    });
+    expect(ebird.recentSpeciesInRegion.mock.calls[0][1]).toBe("R6");
+    expect(res.rows).toHaveLength(1);
+    expect(res.capped).toBe(true);
+    expect(res.proven).toBe(false);
+    expect(res.searched.boundKm).toBeLessThan(100);
+  });
+
+  it("prefers seasonal then other-season positives, then unknowns and zeroes; distance breaks ties", async () => {
+    occurrence.nearestOccurrencePriorities.mockResolvedValue(
+      new Map([
+        ["R1", 3],
+        ["R2", 2],
+        ["R3", 1],
+        ["R4", 0],
+        ["R5", 0],
+        ["R6", 1],
+      ]),
+    );
+    serve({});
+    await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(ebird.recentSpeciesInRegion.mock.calls.map((c) => c[1])).toEqual([
+      "R4",
+      "R5",
+      "R3",
+      "R6",
+      "R2",
+      "R1",
+    ]);
+  });
+
+  it("does not stop behind a distant next candidate while closer unknown and historical-zero regions remain", async () => {
+    occurrence.nearestOccurrencePriorities.mockResolvedValue(
+      new Map([
+        ["R1", 2],
+        ["R2", 3],
+        ["R3", 0],
+        ["R4", 0],
+        ["R5", 0],
+        ["R6", 0],
+      ]),
+    );
+    serve({
+      R3: [obs(35.1), obs(35.2), obs(35.3), obs(35.4), obs(35.5)],
+      R1: [obs(31.1)],
+      R2: [obs(33.1)],
+    });
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(res.searched.regions).toBe(6);
+    expect(res.rows.map((o) => o.lat)).toEqual([31.1, 33.1, 35.1, 35.2, 35.3]);
+    expect(res.proven).toBe(true);
+  });
+
+  it("charges the occurrence lookup to the search deadline", async () => {
+    let clock = Date.UTC(2026, 8, 7);
+    occurrence.nearestOccurrencePriorities.mockImplementation(async () => {
+      clock += 100;
+      return new Map();
+    });
+    serve({});
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      ladderDeadlineMs: 50,
+      now: () => clock,
+    });
+    expect(occurrence.nearestOccurrencePriorities).toHaveBeenCalledWith(
+      R.map((r) => r.code),
+      SP,
+      [8, 9],
+      50,
+    );
+    expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
+    expect(res.capped).toBe(true);
+    expect(res.proven).toBe(false);
+  });
+
+  it("surfaces an occurrence lookup failure rather than manufacturing historical zeroes", async () => {
+    occurrence.nearestOccurrencePriorities.mockRejectedValue(
+      new Error("occurrence query failed"),
+    );
+    await expect(
+      nearestSpeciesReports("key", SP, HOME, 14, OPTS),
+    ).rejects.toThrow("occurrence query failed");
+    expect(ebird.recentSpeciesInRegion).not.toHaveBeenCalled();
+  });
+});
+
 describe("failure handling", () => {
   it("aborts the ladder on a rate limit from any rung", async () => {
-    ebird.recentSpeciesInRegion.mockImplementation((_k: string, code: string) =>
-      code === "R2"
-        ? Promise.reject(new ebird.EbirdError("rate limit", 429))
-        : Promise.resolve(ok([])),
+    ebird.recentSpeciesInRegion.mockImplementation(
+      (_k: string, code: string) =>
+        code === "R2"
+          ? Promise.reject(new ebird.EbirdError("rate limit", 429))
+          : Promise.resolve(ok([])),
     );
 
     const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
@@ -425,9 +559,12 @@ describe("failure handling", () => {
   });
 
   it("treats a stale cache fallback as success, not as a failure", async () => {
-    serve({ R1: [obs(31.1), obs(31.2), obs(31.3), obs(31.4), obs(31.5)] }, {
-      stale: ["R1"],
-    });
+    serve(
+      { R1: [obs(31.1), obs(31.2), obs(31.3), obs(31.4), obs(31.5)] },
+      {
+        stale: ["R1"],
+      },
+    );
     const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
     expect(res.stale).toBe(true);
     expect(res.partial).toBe(false);
@@ -445,10 +582,11 @@ describe("failure handling", () => {
   });
 
   it("records a failed rung so a closer unchecked region is not glossed over", async () => {
-    ebird.recentSpeciesInRegion.mockImplementation((_k: string, code: string) =>
-      code === "R1"
-        ? Promise.reject(new Error("timeout"))
-        : Promise.resolve(ok(code === "R4" ? [obs(37.1)] : [])),
+    ebird.recentSpeciesInRegion.mockImplementation(
+      (_k: string, code: string) =>
+        code === "R1"
+          ? Promise.reject(new Error("timeout"))
+          : Promise.resolve(ok(code === "R4" ? [obs(37.1)] : [])),
     );
     const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
     // R1 is nearer than the row we found, and we never saw inside it.
@@ -460,7 +598,10 @@ describe("failure handling", () => {
 describe("budgets and deadlines", () => {
   it("never exceeds the probe budget", async () => {
     serve({});
-    await nearestSpeciesReports("key", SP, HOME, 14, { ...OPTS, probeBudget: 4 });
+    await nearestSpeciesReports("key", SP, HOME, 14, {
+      ...OPTS,
+      probeBudget: 4,
+    });
     expect(ebird.recentSpeciesInRegion).toHaveBeenCalledTimes(4);
   });
 

@@ -223,7 +223,14 @@
 						lives — it can run for a full minute and then fail. The app
 						asks that endpoint and, if it has not answered within a few
 						seconds, searches its own region list <em>at the same time</em>
-						— first real answer wins. A region search says so: "found by
+						— first real answer wins. The region search looks first where
+						historical reports place the bird in the months covered by your
+						search, then where it has been reported in other seasons.
+						Within each group it checks closer regions first. Regions with
+						unknown history remain searchable, followed by regions with no
+						recorded historical reports. History guides the search; it does
+						not guarantee a bird is present or absent today.
+						A region search says so: "found by
 						searching N regions". Those distances are exact. What that
 						search can't claim is the whole world — a few places have no
 						usable boundary data — so when it finds nothing it says how many
