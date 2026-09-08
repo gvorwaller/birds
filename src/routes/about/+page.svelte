@@ -121,6 +121,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Clearer Field Guide help</strong> — Help now explains how to
+								read and explore “Where it is through the year” alongside the other
+								species-page tools. Nearest lifers has been removed from the menu;
+								use “Check nearest reports” on a needed species' page.
+							</li>
+							<li>
 								<strong>Smarter nearest reports</strong> — searches now look first
 								in regions where the bird has been reported at this time of year,
 								helping find birds whose range is far from home. Regions with

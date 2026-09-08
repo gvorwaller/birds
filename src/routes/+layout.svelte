@@ -71,7 +71,6 @@
 		// also a Forecast subtab now.
 		{ href: '/forecast/data', label: 'Hotspots & data', ico: '📊' },
 		{ href: '/trips', label: 'Trips', ico: '🗺️' },
-		{ href: '/nearest', label: 'Nearest lifers', ico: '🧭' },
 		{ href: '/life', label: 'Life list', ico: '🗺️' }
 	];
 	const ownerMenuItems = [

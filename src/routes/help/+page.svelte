@@ -204,40 +204,6 @@
 						the full picture.
 					</li>
 				</ul>
-				<h3>Nearest lifers</h3>
-				<ul>
-					<li>
-						<strong>Nearest lifers</strong> (menu → 🧭 Nearest lifers)
-						answers "what's the closest bird I've never seen, right now?"
-						It automatically checks your top likely targets for the current
-						month near home — any distance, last 14 days — showing the
-						closest reports with distance first, place (hotspots open their
-						page), date, and the eBird checklist. Search any other species
-						you still need; birds you've already seen get a link instead of
-						a lookup. The same check lives on each need species' own page as
-						<strong>Check nearest reports</strong>.
-					</li>
-					<li>
-						<strong>How the lookup works.</strong> eBird's own nearest-report
-						search struggles with a common bird a long way from where it
-						lives — it can run for a full minute and then fail. The app
-						asks that endpoint and, if it has not answered within a few
-						seconds, searches its own region list <em>at the same time</em>
-						— first real answer wins. The region search looks first where
-						historical reports place the bird in the months covered by your
-						search, then where it has been reported in other seasons.
-						Within each group it checks closer regions first. Regions with
-						unknown history remain searchable, followed by regions with no
-						recorded historical reports. History guides the search; it does
-						not guarantee a bird is present or absent today.
-						A region search says so: "found by
-						searching N regions". Those distances are exact. What that
-						search can't claim is the whole world — a few places have no
-						usable boundary data — so when it finds nothing it says how many
-						regions it checked and links you to eBird's map for the species,
-						rather than telling you the bird is nowhere.
-					</li>
-				</ul>
 				<h3>Life list</h3>
 				<ul>
 					<li>
@@ -367,56 +333,9 @@
 						in frequencies.
 					</li>
 					<li>
-						Species pages show a <strong>Best time of year</strong> card
-						comparing the closest loaded region with sightings against the
-						region where the bird is most frequent overall (region names
-						include their country, like "Bornholm, Denmark"). Tap either
-						place to switch the chart. “Closest” measures to the region's
-						reported extent — zero when your home is inside it — rather than
-						to a distant state or country center. The card's frequencies still
-						average the whole named region; use "Where should I go?" for county
-						and hotspot detail — it leaves a breadcrumb back to the bird and
-						the field guide. Trip stops link straight to the forecast for the
-						trip's month.
-					</li>
-					<li>
-						A <strong>"Where it is through the year"</strong> ribbon sits above
-						Best time of year: a grid of latitude band (rows) by month
-						(columns) showing how often the species was reported — each region
-						counts in the band and column of its own centre point.
-						A <strong>summary card</strong> above the chart highlights the
-						species' seasonal distribution (e.g. furthest-north vs. furthest-south
-						latitudinal shift or year-round presence) and landmarks derived directly
-						from monthly reporting rates, hedged when seasonal coverage is
-						sparse.
-						The chart automatically crops to the <strong>Species range</strong>
-						(occupied latitude bands plus one buffer row above and below), switchable via the
-						<strong>Latitudes</strong> toggle to <strong>Full globe</strong> to view all 18
-						bands from 90°N to 90°S.
-						Latitude rows are labeled with geographic landmarks on wider screens
-						and in the readout to aid orientation.
-						<strong>Equal weight</strong> counts each country once inside its
-						continent and each continent once in the world row, so one
-						heavily-birded country can't drown out the rest; regions inside a
-						country are still weighted by their own checklists. Grey means
-						birders were out looking and came up empty; a dash marks small samples —
-						under equal weighting, one or more countries below 40 checklists were excluded
-						from the average (and if every country is below 40, the cell is too thin to
-						rate); under checklists weighting, the aggregate cell itself is under 40
-						checklists, with its reporting rate still available in the readout; a diagonal
-						slash means nothing is loaded there yet — these are never the same thing.
-						Coverage is partial and the card names exactly what is loaded, so a
-						"no data" column reads as "not loaded," never as "absent." In By continent
-						view, use the continents selector to choose any subset of continents to
-						display side by side. A note below the chart names any stretch of the year
-						where every loaded region fell under 0.5% of checklists — a fixed threshold,
-						the same one the gap note always uses. Pick a band and month — tap any square
-						(or use the slider on a phone) — to open the regions behind it, sorted
-						by how often they report the bird, showing the 40 highest. Use the slider
-						or ◀ ▶ buttons for manual month scrubbing. Because the ribbon rolls up each
-						region's whole stored history into one number, it combines whatever
-						year window that region's data covers rather than a single shared
-						span.
+						For the species page's seasonal charts and recent report lookup,
+						see <strong>Field guide</strong> below: “Where it is through the year,”
+						“Best time of year,” and “Check nearest reports.”
 					</li>
 					<li>
 						Loading data signs in to eBird as you, so each user needs their own
@@ -726,6 +645,112 @@
 						species' Wikipedia notes; only admins may
 						<strong>refresh</strong> existing data. Some species legitimately
 						have taxonomy and links but no English Wikipedia article.
+					</li>
+				</ul>
+				<h3>Where it is through the year</h3>
+				<p>
+					Open <strong>Field guide</strong>, choose a species, and scroll to
+					<strong>Where it is through the year</strong>, above Best time of year.
+					This chart shows seasonal patterns in loaded historical eBird reports.
+					It does not track individual birds or show live sightings.
+				</p>
+				<ul>
+					<li>
+						<strong>Read the grid.</strong> Months run left to right, with northern
+						latitudes at the top and southern latitudes at the bottom. Darker green
+						means a higher share of checklists reported the bird. A band shifting
+						north or south across the months suggests seasonal movement; a band
+						staying at the same latitude suggests year-round presence. The summary card
+						above the chart describes patterns supported by the loaded data.
+					</li>
+					<li>
+						<strong>Choose the geography.</strong> Use <strong>World</strong> for
+						the combined view or <strong>By continent</strong> to compare continents.
+						The continents selector lets you choose which ones to show.
+						<strong>Latitudes → Species range</strong> shows occupied bands with
+						a buffer on each side; <strong>Full globe</strong> shows all bands
+						from 90°N to 90°S. Regions are assigned by their centre point, so
+						the grid is an overview rather than a precise range map. Latitude
+						labels and the readout include geographic landmarks for orientation.
+					</li>
+					<li>
+						<strong>Explore a month and place.</strong> Tap a square to see its
+						reporting rate and the regions behind that latitude band. On a phone,
+						you can also use the month slider or ◀ ▶ buttons. The region list
+						shows January–December patterns, sorted by each region's highest
+						monthly rate, with up to 40 regions available. Use <strong>Show all</strong>
+						to expand the initial eight. Tap a region to show its full-year chart
+						in <strong>Best time of year</strong> below.
+					</li>
+					<li>
+						<strong>Choose how reports are averaged.</strong> <strong>Equal weight</strong>
+						gives each country equal weight within its continent, then each
+						continent equal weight in World. Regions within a country are still
+						weighted by checklists. <strong>By checklists</strong> gives more weight
+						to places with more checklists, so heavily birded places count more.
+					</li>
+					<li>
+						<strong>Zero, small samples, and missing data differ.</strong> Grey
+						means the bird was not reported in the loaded checklists. A diagonal
+						slash means nothing is loaded. A dash marks small samples: in Equal
+						weight, one or more countries with fewer than 40 checklists were
+						excluded, and the cell cannot be rated if all were excluded. In By
+						checklists, the whole cell has fewer than 40 checklists; its rate is
+						still available in the readout. Missing data never proves absence.
+					</li>
+					<li>
+						<strong>Check the coverage.</strong> The card identifies what is loaded.
+						Each region uses its stored historical years, which may differ from
+						other regions. A gap note marks months when every loaded region is
+						below 0.5% of checklists; it does not mean the bird is absent worldwide.
+					</li>
+				</ul>
+				<h3>Best time of year</h3>
+				<ul>
+					<li>
+						Species pages show a <strong>Best time of year</strong> card
+						comparing the closest loaded region with sightings against the
+						region where the bird is most frequent overall (region names
+						include their country, like "Bornholm, Denmark"). Tap either
+						place to switch the chart. “Closest” measures to the region's
+						reported extent — zero when your home is inside it — rather than
+						to a distant state or country center. The card's frequencies still
+						average the whole named region; use "Where should I go?" for county
+						and hotspot detail — it leaves a breadcrumb back to the bird and
+						the field guide. Trip stops link straight to the forecast for the
+						trip's month.
+					</li>
+				</ul>
+				<h3>Check nearest reports</h3>
+				<ul>
+					<li>
+						Open a bird you still need in <strong>Field guide</strong>, then find
+						<strong>Nearest reports — any distance</strong> on its species page
+						and tap <strong>Check nearest reports</strong>. This searches recent
+						reports at any distance from your saved home, using the page's report
+						window (14 days by default). It requires a saved home and an eBird
+						API key; it is shown only for species not yet on your life list.
+						Results show distance, location, date, and a checklist link when available.
+					</li>
+					<li>
+						<strong>How the lookup works.</strong> eBird's own nearest-report
+						search struggles with a common bird a long way from where it
+						lives — it can run for a full minute and then fail. The app
+						asks that endpoint and, if it has not answered within a few
+						seconds, searches its own region list <em>at the same time</em>
+						— first real answer wins. The region search looks first where
+						historical reports place the bird in the months covered by your
+						search, then where it has been reported in other seasons.
+						Within each group it checks closer regions first. Regions with
+						unknown history remain searchable, followed by regions with no
+						recorded historical reports. History guides the search; it does
+						not guarantee a bird is present or absent today.
+						A region search says so: "found by
+						searching N regions". Those distances are exact. What that
+						search can't claim is the whole world — a few places have no
+						usable boundary data — so when it finds nothing it says how many
+						regions it checked and links you to eBird's map for the species,
+						rather than telling you the bird is nowhere.
 					</li>
 				</ul>
 			</div>
