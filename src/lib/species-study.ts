@@ -14,6 +14,7 @@ export interface StudyCountry {
   code: string;
   name: string;
   sourceCount: number;
+  speciesCount: number;
   wholeArea: boolean;
   beginYear: number | null;
   endYear: number | null;

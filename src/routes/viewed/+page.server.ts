@@ -20,7 +20,14 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     enabled: result.enabled,
     total: result.rows.length,
     rows: options.group === "country" ? [] : result.rows,
-    countries: options.group === "country" ? await studyCountries() : [],
+    // Stream a large not-yet-viewed count without blocking the controls.
+    // A failed query is an explicit retry state, never an empty country list.
+    countryGroups:
+      options.group === "country"
+        ? studyCountries(result.rows.map((row) => row.code))
+            .then((countries) => ({ countries, unavailable: false }))
+            .catch(() => ({ countries: [], unavailable: true }))
+        : Promise.resolve({ countries: [], unavailable: false }),
     ...options,
     openFamily: url.searchParams.get("family") ?? "",
     openCountry: url.searchParams.get("country") ?? "",

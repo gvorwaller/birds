@@ -27,7 +27,10 @@
   } = $props();
   let open = $state(false);
   let result = $state<
-    (Omit<StudyCountry, "code" | "name"> & { rows: StudySpecies[] }) | null
+    | (Omit<StudyCountry, "code" | "name" | "speciesCount"> & {
+        rows: StudySpecies[];
+      })
+    | null
   >(null);
   let message = $state("");
   let busy = $state(false);
@@ -81,9 +84,7 @@
     <span
       >{coverage.sourceCount === 0
         ? "No data loaded"
-        : result
-          ? `${result.rows.length} species`
-          : "Open to load species"}</span
+        : `${result ? result.rows.length : country.speciesCount} species`}</span
     ></summary
   >
   {#if open}

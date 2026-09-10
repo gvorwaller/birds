@@ -71,8 +71,11 @@ export async function studySpecies(
   };
 }
 
-/** Coverage metadata only: never scan the weekly frequency table to open the page. */
-export async function studyCountries(): Promise<StudyCountry[]> {
+/** Count only species in the account's already-filtered study list. */
+export async function studyCountries(
+  speciesCodes: string[],
+): Promise<StudyCountry[]> {
+  if (!speciesCodes.length) return [];
   const [countries, sources] = await Promise.all([
     countriesList(),
     query<{
@@ -92,18 +95,23 @@ export async function studyCountries(): Promise<StudyCountry[]> {
         code: c.code,
         name: c.name,
         sourceCount: 0,
+        speciesCount: 0,
         wholeArea: false,
         beginYear: null,
         endYear: null,
       } as StudyCountry,
     ]),
   );
+  const locCodes: string[] = [];
+  const countryCodes: string[] = [];
   for (const row of sources.rows) {
     const regionCode =
       row.loc_kind === "region" ? row.loc_code : row.region_code;
     const code = regionCode ? countryOf(regionCode) : null;
     const country = code ? result.get(code) : undefined;
     if (!country) continue; // Unmapped sources cannot establish country membership.
+    locCodes.push(row.loc_code);
+    countryCodes.push(country.code);
     country.sourceCount++;
     country.wholeArea ||= row.loc_kind === "region" && row.loc_code === code;
     country.beginYear =
@@ -115,7 +123,28 @@ export async function studyCountries(): Promise<StudyCountry[]> {
         ? row.end_year
         : Math.max(country.endYear, row.end_year);
   }
-  return [...result.values()];
+  if (!locCodes.length) return [];
+  // Collapse weekly rows before joining geography, then count a species once
+  // per country even when several counties/hotspots report it. The species
+  // index keeps small viewed lists from scanning the whole distribution table.
+  const counts = await queryTimed<{
+    country_code: string;
+    species_count: number;
+  }>(
+    `WITH membership AS MATERIALIZED (
+       SELECT DISTINCT species_code,loc_code FROM species_frequency
+       WHERE species_code=ANY($1::text[])
+     )
+     SELECT geography.country_code,count(DISTINCT m.species_code)::int AS species_count
+     FROM membership m JOIN unnest($2::text[],$3::text[]) AS geography(loc_code,country_code)
+       USING(loc_code)
+     GROUP BY geography.country_code`,
+    [speciesCodes, locCodes, countryCodes],
+    30000,
+  );
+  for (const row of counts.rows)
+    result.get(row.country_code)!.speciesCount = row.species_count;
+  return [...result.values()].filter((country) => country.speciesCount > 0);
 }
 
 export async function studyCountrySpecies(

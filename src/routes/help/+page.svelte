@@ -667,10 +667,12 @@
 						Families and countries are listed alphabetically; your selected sort
 						applies to the species within each group. Not-yet-viewed species sort
 						alphabetically because they have no recorded viewing dates.</li>
-					<li>Country groups load when you open them, using the app's historical eBird
+					<li>Only countries containing species in your selected study list and search
+						are shown, with distinct species counts before you open them. Country
+						groups load their species when you open them, using the app's historical eBird
 						reports from any month. A bird can appear in several countries. The dates
 						and coverage note describe the loaded data, not its complete range or
-						current presence. Countries without loaded data are marked explicitly;
+						current presence. An omitted country does not establish absence;
 						birds without mapped reports remain available in the other groupings.</li>
 					<li>Large lists show 100 species at a time with <strong>Show 100 more</strong>
 						and a visible total. Opening a species preserves the study filters and

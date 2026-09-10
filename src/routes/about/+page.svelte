@@ -125,6 +125,8 @@
 								Field Guide tab. Switch to Not yet viewed, browse collapsible bird
 								families, or open countries to explore species reported there in
 								the app's loaded historical data.
+								Country groups show only matches for your selected list and search,
+								with species counts before expanding.
 							</li>
 							<li>
 								<strong>Your species learning history</strong> — species pages now

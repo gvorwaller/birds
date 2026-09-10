@@ -1,6 +1,7 @@
 <script lang="ts">
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import { enhance } from "$app/forms";
+  import { invalidate } from "$app/navigation";
   import { studyHref } from "$lib/species-study";
   import StudySpeciesList from "$components/StudySpeciesList.svelte";
   import StudyFamilyGroups from "$components/StudyFamilyGroups.svelte";
@@ -137,24 +138,47 @@
           />
         {:else if data.group === "country"}
           <p class="study-hint muted">
-            Open a country to load species reported there in our historical
-            data, in any month. A species can appear in several countries.
-            Missing coverage does not establish absence; this is not a complete
-            range map. Species without mapped reports remain available in No
-            grouping and Bird family.
+            Only countries with species in your selected study list and search
+            are shown. Counts are distinct species reported in our loaded data,
+            in any month. Open a country to browse them; a species can appear in
+            several countries. Missing coverage does not establish absence; this
+            is not a complete range map. Species without mapped reports remain
+            available in No grouping and Bird family.
           </p>
-          {#each data.countries as country (country.code)}
-            <StudyCountryGroup
-              {country}
-              {returnTo}
-              status={data.status}
-              sort={data.sort}
-              q={data.q}
-              accountId={data.accountId}
-              initiallyOpen={data.openCountry === country.code}
-              focusCode={data.focusCode}
-            />
-          {/each}
+          {#await data.countryGroups}
+            <p role="status">
+              Finding matching countries and counting species…
+            </p>
+          {:then groups}
+            {#if groups.unavailable}
+              <p role="alert">Could not load matching countries.</p>
+              <button
+                type="button"
+                onclick={() => invalidate("app:species-views")}
+                >Retry country counts</button
+              >
+            {:else if !groups.countries.length}
+              <p>
+                No countries have mapped reports for species in this study list{data.q
+                  ? " matching your search"
+                  : ""}. You can still browse them with No grouping or Bird
+                family.
+              </p>
+            {:else}
+              {#each groups.countries as country (country.code)}
+                <StudyCountryGroup
+                  {country}
+                  {returnTo}
+                  status={data.status}
+                  sort={data.sort}
+                  q={data.q}
+                  accountId={data.accountId}
+                  initiallyOpen={data.openCountry === country.code}
+                  focusCode={data.focusCode}
+                />
+              {/each}
+            {/if}
+          {/await}
         {:else}
           <StudySpeciesList
             rows={data.rows}

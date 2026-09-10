@@ -10,7 +10,12 @@ import {
 } from "./species-study";
 
 const code = "study" + randomUUID().replaceAll("-", "").slice(0, 8);
-const locs = ["LstudyUS" + randomUUID(), "LstudyCA" + randomUUID()];
+const secondCode = "count" + randomUUID().replaceAll("-", "").slice(0, 8);
+const locs = [
+  "LstudyUS" + randomUUID(),
+  "LstudyCA" + randomUUID(),
+  "LstudyCA" + randomUUID(),
+];
 let owner: number, viewer: number;
 beforeAll(async () => {
   if (
@@ -46,6 +51,17 @@ beforeAll(async () => {
     );
   }
   await recordSpeciesView(owner, code, randomUUID());
+  await query(
+    "INSERT INTO taxonomy_cache(species_code,com_name,sci_name,family,category) VALUES($1,'Second study taxon','Second study taxon','Study family','species')",
+    [secondCode],
+  );
+  await query(
+    "INSERT INTO species_frequency(loc_code,species_code,week,freq) VALUES($1,$2,1,0.1)",
+    [locs[0], secondCode],
+  );
+  await query("UPDATE frequency_fetch SET n_species=2 WHERE loc_code=$1", [
+    locs[0],
+  ]);
   // A field observation must never exclude the viewer from Not yet viewed.
   await query("INSERT INTO seen_species(user_id,species_code) VALUES($1,$2)", [
     viewer,
@@ -59,7 +75,9 @@ afterAll(async () => {
   await query("DELETE FROM users WHERE id=ANY($1::int[])", [
     [owner, viewer].filter(Boolean),
   ]);
-  await query("DELETE FROM taxonomy_cache WHERE species_code=$1", [code]);
+  await query("DELETE FROM taxonomy_cache WHERE species_code=ANY($1::text[])", [
+    [code, secondCode],
+  ]);
 });
 describe("study lists on real PostgreSQL", () => {
   it("uses actual account history for the complement, independently of shared owner and life list", async () => {
@@ -109,10 +127,11 @@ describe("study lists on real PostgreSQL", () => {
     ).toHaveLength(0);
   }, 20000);
   it("provides coverage separately from membership, and no matching reports are not invented", async () => {
-    const countries = await studyCountries();
+    const countries = await studyCountries([code]);
     expect(countries.find((c) => c.code === "US")).toMatchObject({
       sourceCount: expect.any(Number),
       beginYear: expect.any(Number),
+      speciesCount: 1,
     });
     const elsewhere = await studyCountrySpecies(
       owner,
@@ -124,4 +143,33 @@ describe("study lists on real PostgreSQL", () => {
     expect(elsewhere.rows).toHaveLength(0);
     expect(elsewhere.locCodes.length).toBeGreaterThan(0);
   }, 20000);
+  it("shows only matching countries and counts each species once across weeks and locations", async () => {
+    const countries = await studyCountries([code]);
+    expect(countries.map((c) => [c.code, c.speciesCount])).toEqual([
+      ["CA", 1],
+      ["US", 1],
+    ]);
+    expect(await studyCountries([])).toEqual([]);
+    expect(await studyCountries(["no-mapped-study-species"])).toEqual([]);
+    const twoSpecies = await studyCountries([code, secondCode]);
+    expect(twoSpecies.map((c) => [c.code, c.speciesCount])).toEqual([
+      ["CA", 1],
+      ["US", 2],
+    ]);
+  });
+  it("country counts follow viewed/unviewed membership, account identity and search", async () => {
+    for (const [account, status, expected] of [
+      [owner, "viewed", 2],
+      [owner, "unviewed", 0],
+      [viewer, "viewed", 0],
+      [viewer, "unviewed", 2],
+    ] as const) {
+      const rows = (await studySpecies(account, code, status, true)).rows;
+      expect(await studyCountries(rows.map((r) => r.code))).toHaveLength(
+        expected,
+      );
+    }
+    const noMatches = await studySpecies(owner, "%", "viewed", true);
+    expect(await studyCountries(noMatches.rows.map((r) => r.code))).toEqual([]);
+  });
 });
