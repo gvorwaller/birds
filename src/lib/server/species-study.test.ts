@@ -174,7 +174,7 @@ describe("study lists on real PostgreSQL", () => {
   });
   it("large-list counting agrees with small-list counts and omits empty countries", async () => {
     // Retired/unmapped history codes contribute no countries. Include enough
-    // to exercise the bounded large-list strategy against the real DB.
+    // to verify large inputs use the same complete summary as small lists.
     const unmapped = Array.from({ length: 251 }, (_, i) => `unmappedstudy${i}`);
     expect(
       (await studyCountries([code, secondCode, ...unmapped])).map((c) => [
@@ -186,4 +186,32 @@ describe("study lists on real PostgreSQL", () => {
       ["US", 2],
     ]);
   }, 30000);
+  it("uses the same normalized country mapping for counts and expanded coverage", async () => {
+    try {
+      await query(
+        "UPDATE frequency_fetch SET region_code=' ca-on ' WHERE loc_code=$1",
+        [locs[1]],
+      );
+      expect(
+        (await studyCountries([code])).map((c) => [c.code, c.speciesCount]),
+      ).toEqual([
+        ["CA", 1],
+        ["US", 1],
+      ]);
+      const expanded = await studyCountrySpecies(
+        owner,
+        code,
+        "viewed",
+        true,
+        "CA",
+      );
+      expect(expanded.rows.map((r) => r.code)).toEqual([code]);
+      expect(expanded.locCodes).toContain(locs[1]);
+    } finally {
+      await query(
+        "UPDATE frequency_fetch SET region_code='CA-ON' WHERE loc_code=$1",
+        [locs[1]],
+      );
+    }
+  });
 });

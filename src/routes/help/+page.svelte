@@ -670,7 +670,8 @@
 					<li>Only countries containing species in your selected study list and search
 						are shown, with distinct species counts before you open them. Country
 						groups load their species when you open them, using the app's historical eBird
-						reports from any month. A bird can appear in several countries. The dates
+						reports from any month. Country membership updates automatically when
+						report data changes. A bird can appear in several countries. The dates
 						and coverage note describe the loaded data, not its complete range or
 						current presence. An omitted country does not establish absence;
 						birds without mapped reports remain available in the other groupings.</li>
