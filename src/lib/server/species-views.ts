@@ -96,6 +96,7 @@ export interface ViewedSpecies extends SpeciesView {
   name: string | null;
   scientificName: string | null;
   current: boolean;
+  family: string | null;
 }
 export async function viewedSpecies(
   userId: number,
@@ -116,9 +117,10 @@ export async function viewedSpecies(
       com_name: string | null;
       sci_name: string | null;
       current: boolean;
+      family: string | null;
     }
   >(
-    `SELECT h.species_code,h.first_viewed_at,h.last_viewed_at,t.com_name,t.sci_name,
+    `SELECT h.species_code,h.first_viewed_at,h.last_viewed_at,t.com_name,t.sci_name,t.family,
             COALESCE(t.category='species',false) AS current
        FROM species_view_history h LEFT JOIN taxonomy_cache t USING(species_code)
       WHERE h.user_id=$1 AND ($2='' OR h.species_code ILIKE $3 OR t.com_name ILIKE $3 OR t.sci_name ILIKE $3)
@@ -132,6 +134,7 @@ export async function viewedSpecies(
       name: r.com_name,
       scientificName: r.sci_name,
       current: r.current,
+      family: r.family,
       ...toView(r),
     })),
   };

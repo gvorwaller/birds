@@ -1,27 +1,43 @@
 <script lang="ts">
+  import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import { enhance } from "$app/forms";
-  import { viewedDate } from "$lib/species-views";
-  import ViewedBadge from "$components/ViewedBadge.svelte";
+  import { studyHref } from "$lib/species-study";
+  import StudySpeciesList from "$components/StudySpeciesList.svelte";
+  import StudyFamilyGroups from "$components/StudyFamilyGroups.svelte";
+  import StudyCountryGroup from "$components/StudyCountryGroup.svelte";
   import type { PageData, ActionData } from "./$types";
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let dialog: HTMLDialogElement;
   const returnTo = $derived(
-    encodeURIComponent(
-      "/viewed?" + new URLSearchParams({ q: data.q, sort: data.sort }),
-    ),
+    studyHref({
+      q: data.q,
+      sort: data.sort,
+      group: data.group,
+      status: data.status,
+    }),
   );
+  function statusChanged(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (select.value === "unviewed") {
+      const form = select.form!;
+      (form.elements.namedItem("sort") as HTMLSelectElement).value = "name";
+      (form.elements.namedItem("group") as HTMLSelectElement).value = "family";
+    }
+    select.form?.requestSubmit();
+  }
 </script>
 
 <svelte:head><title>Viewed species — birds</title></svelte:head>
 <div class="page">
   <header class="page-head">
     <a href="/species">← Field guide</a>
-    <h1>Viewed species</h1>
+    <h1>📖 Field guide</h1>
     <p class="sub">
-      Species pages you have opened in this account. Viewing a page is separate
-      from seeing a bird in the field.
+      Organize your study by what you have viewed, bird family, or country.
+      Viewing a page is separate from seeing a bird in the field.
     </p>
   </header>
+  <FieldGuideTabs active="viewed" />
   <section class="card">
     <div class="controls">
       <p>Recording is <strong>{data.enabled ? "on" : "paused"}</strong>.</p>
@@ -43,8 +59,26 @@
     {#if form?.error}<p role="alert">{form.error}</p>{/if}
     {#if form?.message}<p role="status">{form.message}</p>{/if}
     <form method="GET" action="/viewed" class="filters">
+      <label class="sort"
+        >Study list<select
+          name="status"
+          value={data.status}
+          onchange={statusChanged}
+        >
+          <option value="viewed">Viewed species</option><option value="unviewed"
+            >Not yet viewed</option
+          >
+        </select></label
+      >
+      <label class="sort"
+        >Group by<select name="group" value={data.group}>
+          <option value="none">No grouping</option><option value="family"
+            >Bird family</option
+          ><option value="country">Country</option>
+        </select></label
+      >
       <label
-        >Search viewed species<input
+        >Search species in this list<input
           type="search"
           name="q"
           value={data.q}
@@ -53,9 +87,9 @@
       >
       <label class="sort"
         >Sort<select name="sort" value={data.sort}
-          ><option value="recent">Most recently viewed</option><option
-            value="name">Alphabetical</option
-          ></select
+          >{#if data.status === "viewed"}<option value="recent"
+              >Most recently viewed</option
+            >{/if}<option value="name">Alphabetical</option></select
         ></label
       >
       <button type="submit">Apply</button>
@@ -63,40 +97,72 @@
   </section>
   <section class="card">
     <h2>
-      {data.rows.length} viewed species{data.q ? " matching your search" : ""}
+      {data.total}
+      {data.status === "viewed"
+        ? "viewed species"
+        : "species not yet viewed"}{data.q ? " matching your search" : ""}
     </h2>
-    {#if !data.rows.length}
+    {#if data.status === "unviewed"}
+      <p class="study-hint muted">
+        Current species with no recorded page visit in this account. Visits
+        before tracking began, while paused, or since cleared are not recorded
+        here. This is independent of your life list.
+      </p>
+    {/if}
+    {#if !data.total}
       <p>
         {data.q
-          ? "No viewed species match this search."
-          : "No species recorded yet. Open a species page in Field Guide to start exploring."}
+          ? "No species match this search in your study list."
+          : data.status === "viewed"
+            ? "No species recorded yet. Open a species page in Field Guide to start exploring."
+            : "Every current species has a recorded view in this account."}
       </p>
-      <a href={data.q ? "/viewed" : "/species"}
+      <a
+        class="empty-link"
+        href={data.q ? studyHref({ ...data, q: "" }) : "/species"}
         >{data.q ? "Clear search" : "Explore Field guide"}</a
       >
     {:else}
-      <ul class="viewed-list">
-        {#each data.rows as row (row.code)}
-          <li>
-            <div class="name">
-              {#if row.current}<a
-                  href={`/species/${row.code}?returnTo=${returnTo}`}
-                  >{row.name}</a
-                >
-              {:else}<strong>{row.name ?? row.code}</strong><span class="muted"
-                  >Not in the current species taxonomy</span
-                >{/if}
-              <ViewedBadge view={row} />
-            </div>
-            {#if row.scientificName}<em>{row.scientificName}</em>{/if}
-            <p class="dates">
-              First viewed {viewedDate(row.firstViewedAt)}<br />Last viewed {viewedDate(
-                row.lastViewedAt,
-              )}
-            </p>
-          </li>
-        {/each}
-      </ul>
+      {#key returnTo + ":" + data.accountId}
+        {#if data.group === "family"}
+          <p class="study-hint muted">
+            Open a bird family to browse its species. Families are alphabetical;
+            the selected sort applies within each family.
+          </p>
+          <StudyFamilyGroups
+            rows={data.rows}
+            {returnTo}
+            openFamily={data.openFamily}
+            focusCode={data.focusCode}
+          />
+        {:else if data.group === "country"}
+          <p class="study-hint muted">
+            Open a country to load species reported there in our historical
+            data, in any month. A species can appear in several countries.
+            Missing coverage does not establish absence; this is not a complete
+            range map. Species without mapped reports remain available in No
+            grouping and Bird family.
+          </p>
+          {#each data.countries as country (country.code)}
+            <StudyCountryGroup
+              {country}
+              {returnTo}
+              status={data.status}
+              sort={data.sort}
+              q={data.q}
+              accountId={data.accountId}
+              initiallyOpen={data.openCountry === country.code}
+              focusCode={data.focusCode}
+            />
+          {/each}
+        {:else}
+          <StudySpeciesList
+            rows={data.rows}
+            {returnTo}
+            focusCode={data.focusCode}
+          />
+        {/if}
+      {/key}
     {/if}
   </section>
   <p class="muted">
@@ -175,8 +241,7 @@
     border-color: var(--border);
   }
   .controls,
-  .filters,
-  .name {
+  .filters {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -225,28 +290,13 @@
   }
   button,
   .page-head > a,
-  .name a {
+  .empty-link {
     min-height: 48px;
     display: inline-flex;
     align-items: center;
   }
-  .viewed-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-  li {
-    padding: 12px 0;
-    border-top: 1px solid var(--border);
-    overflow-wrap: anywhere;
-  }
-  .dates {
-    color: var(--muted);
-    font-size: 0.85rem;
-    margin-top: 6px;
-  }
-  .name a {
-    font-weight: 700;
+  .study-hint {
+    margin-bottom: 12px;
   }
   dialog {
     background: var(--card);

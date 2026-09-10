@@ -121,6 +121,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Organize your bird study</strong> — Viewed species is now a
+								Field Guide tab. Switch to Not yet viewed, browse collapsible bird
+								families, or open countries to explore species reported there in
+								the app's loaded historical data.
+							</li>
+							<li>
 								<strong>Your species learning history</strong> — species pages now
 								remember that you viewed them, separately from your life list.
 								Open Viewed species from Field Guide to search your history and see

@@ -650,7 +650,7 @@
 				<h3>Viewed species — your learning history</h3>
 				<p>
 					Opening a species page records it in your account's
-					<a href="/viewed">Viewed species</a> collection, also linked from Field Guide.
+					<a href="/viewed">Viewed species</a> collection, also available as a Field Guide tab.
 					<strong>Viewed in app</strong> means you opened its page;
 					<strong>Seen</strong> still means it is on your life list. The viewed
 					indicator appears after saving, and also appears in Field Guide results.
@@ -658,6 +658,23 @@
 				<ul>
 					<li>Search your collection by name or code, sort by most recent or
 						alphabetically, and see first/last viewed dates (shown in UTC).</li>
+					<li>Use <strong>Study list</strong> to switch between Viewed species and
+						<strong>Not yet viewed</strong>. Not yet viewed means no recorded page visit
+						in this account, independently of Seen/Need on your life list. It includes
+						visits from before tracking began, while paused, or since cleared.</li>
+					<li>Use <strong>Group by → Bird family</strong> for collapsible classification
+						groups, or <strong>Country</strong> to study birds reported in a place.
+						Families and countries are listed alphabetically; your selected sort
+						applies to the species within each group. Not-yet-viewed species sort
+						alphabetically because they have no recorded viewing dates.</li>
+					<li>Country groups load when you open them, using the app's historical eBird
+						reports from any month. A bird can appear in several countries. The dates
+						and coverage note describe the loaded data, not its complete range or
+						current presence. Countries without loaded data are marked explicitly;
+						birds without mapped reports remain available in the other groupings.</li>
+					<li>Large lists show 100 species at a time with <strong>Show 100 more</strong>
+						and a visible total. Opening a species preserves the study filters and
+						group in its return link. Open and close groups to keep the list manageable.</li>
 					<li>History belongs to the signed-in account, including family viewers.
 						It follows that account across devices. People sharing a login share
 						its history; your owner's shared life list stays separate.</li>

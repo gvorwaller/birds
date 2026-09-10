@@ -32,9 +32,12 @@ async function run(scopeId: number, path: string): Promise<GuideLoad> {
 }
 
 describe("Field guide nav-active invariant", () => {
-  it("exact /species only — detail pages never light the drawer item", () => {
+  it("browse and viewed tabs light Field Guide, while detail pages do not", () => {
     expect(isFieldGuideActive("/species")).toBe(true);
     expect(isFieldGuideActive("/species/")).toBe(true);
+    expect(isFieldGuideActive("/viewed")).toBe(true);
+    expect(isFieldGuideActive("/viewed/")).toBe(true);
+    expect(isFieldGuideActive("/viewed-other")).toBe(false);
     expect(isFieldGuideActive("/species/margod")).toBe(false);
     expect(isFieldGuideActive("/species/margod/")).toBe(false);
     expect(isFieldGuideActive("/")).toBe(false);

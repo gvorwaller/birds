@@ -1,4 +1,5 @@
 <script lang="ts">
+  import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import ViewedBadge from "$components/ViewedBadge.svelte";
   import Badge from "$components/Badge.svelte";
   import {
@@ -96,6 +97,8 @@
     <a class="history-link" href="/viewed">◉ Viewed species</a>
     {#if data.viewedUnavailable}<p role="status">Viewing history is temporarily unavailable.</p>{/if}
   </header>
+
+  <FieldGuideTabs active="browse" />
 
   <section class="card">
     <form method="GET" action="/species" class="searchform">

@@ -3,17 +3,28 @@ import type { Actions, PageServerLoad } from "./$types";
 import {
   clearSpeciesViews,
   setSpeciesViewTracking,
-  viewedSpecies,
 } from "$server/species-views";
+import { studyCountries, studySpecies } from "$server/species-study";
+import { studyOptions } from "$lib/species-study";
 
 export const load: PageServerLoad = async ({ locals, url, depends }) => {
   depends("app:species-views");
-  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
-  const sort = url.searchParams.get("sort") === "name" ? "name" : "recent";
+  const options = studyOptions(url.searchParams);
+  const result = await studySpecies(
+    locals.user!.id,
+    options.q,
+    options.status,
+    options.sort === "name",
+  );
   return {
-    ...(await viewedSpecies(locals.user!.id, q, sort === "name")),
-    q,
-    sort,
+    enabled: result.enabled,
+    total: result.rows.length,
+    rows: options.group === "country" ? [] : result.rows,
+    countries: options.group === "country" ? await studyCountries() : [],
+    ...options,
+    openFamily: url.searchParams.get("family") ?? "",
+    openCountry: url.searchParams.get("country") ?? "",
+    focusCode: url.searchParams.get("focus") ?? "",
     accountId: locals.user!.id,
   };
 };
