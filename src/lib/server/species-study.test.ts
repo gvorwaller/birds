@@ -172,4 +172,18 @@ describe("study lists on real PostgreSQL", () => {
     const noMatches = await studySpecies(owner, "%", "viewed", true);
     expect(await studyCountries(noMatches.rows.map((r) => r.code))).toEqual([]);
   });
+  it("large-list counting agrees with small-list counts and omits empty countries", async () => {
+    // Retired/unmapped history codes contribute no countries. Include enough
+    // to exercise the bounded large-list strategy against the real DB.
+    const unmapped = Array.from({ length: 251 }, (_, i) => `unmappedstudy${i}`);
+    expect(
+      (await studyCountries([code, secondCode, ...unmapped])).map((c) => [
+        c.code,
+        c.speciesCount,
+      ]),
+    ).toEqual([
+      ["CA", 1],
+      ["US", 2],
+    ]);
+  }, 30000);
 });

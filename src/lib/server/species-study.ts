@@ -103,7 +103,7 @@ export async function studyCountries(
     ]),
   );
   const locCodes: string[] = [];
-  const countryCodes: string[] = [];
+  const sourcesByCountry = new Map<string, string[]>();
   for (const row of sources.rows) {
     const regionCode =
       row.loc_kind === "region" ? row.loc_code : row.region_code;
@@ -111,7 +111,9 @@ export async function studyCountries(
     const country = code ? result.get(code) : undefined;
     if (!country) continue; // Unmapped sources cannot establish country membership.
     locCodes.push(row.loc_code);
-    countryCodes.push(country.code);
+    const countrySources = sourcesByCountry.get(country.code) ?? [];
+    countrySources.push(row.loc_code);
+    sourcesByCountry.set(country.code, countrySources);
     country.sourceCount++;
     country.wholeArea ||= row.loc_kind === "region" && row.loc_code === code;
     country.beginYear =
@@ -124,6 +126,36 @@ export async function studyCountries(
         : Math.max(country.endYear, row.end_year);
   }
   if (!locCodes.length) return [];
+  if (speciesCodes.length > 250) {
+    // Large lists use the already-bounded country membership query. A global
+    // country/species join over all weekly rows spills into expensive sorts
+    // on production. This changes execution strategy, never the result set.
+    // Keep concurrency at two so study reads leave room for other app work.
+    const selected = new Set(speciesCodes);
+    const pending = [...sourcesByCountry];
+    let next = 0;
+    let stopped = false;
+    const countCountries = async () => {
+      try {
+        while (!stopped && next < pending.length) {
+          const [countryCode, locations] = pending[next++];
+          const membership = await queryTimed<{ species_code: string }>(
+            "SELECT DISTINCT species_code FROM species_frequency WHERE loc_code=ANY($1::text[])",
+            [locations],
+            15000,
+          );
+          result.get(countryCode)!.speciesCount = membership.rows.filter(
+            (row) => selected.has(row.species_code),
+          ).length;
+        }
+      } catch (error) {
+        stopped = true;
+        throw error;
+      }
+    };
+    await Promise.all([countCountries(), countCountries()]);
+    return [...result.values()].filter((country) => country.speciesCount > 0);
+  }
   // Collapse weekly rows before joining geography, then count a species once
   // per country even when several counties/hotspots report it. The species
   // index keeps small viewed lists from scanning the whole distribution table.
@@ -135,11 +167,12 @@ export async function studyCountries(
        SELECT DISTINCT species_code,loc_code FROM species_frequency
        WHERE species_code=ANY($1::text[])
      )
-     SELECT geography.country_code,count(DISTINCT m.species_code)::int AS species_count
-     FROM membership m JOIN unnest($2::text[],$3::text[]) AS geography(loc_code,country_code)
-       USING(loc_code)
-     GROUP BY geography.country_code`,
-    [speciesCodes, locCodes, countryCodes],
+     SELECT split_part(CASE WHEN f.loc_kind='region' THEN f.loc_code ELSE f.region_code END,'-',1)
+              AS country_code,count(DISTINCT m.species_code)::int AS species_count
+     FROM membership m JOIN frequency_fetch f USING(loc_code)
+     WHERE f.loc_code=ANY($2::text[])
+     GROUP BY 1`,
+    [speciesCodes, locCodes],
     30000,
   );
   for (const row of counts.rows)
