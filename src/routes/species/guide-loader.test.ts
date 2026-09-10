@@ -13,7 +13,8 @@ const dbUp = await query("SELECT 1")
 /** The loader takes a SvelteKit event; only locals + url are read. */
 function event(scopeId: number, path: string) {
   return {
-    locals: { scopeId },
+    locals: { scopeId, user: { id: scopeId } },
+    depends: () => {},
     url: new URL(`http://localhost${path}`),
   } as unknown as Parameters<typeof load>[0];
 }

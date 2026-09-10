@@ -1,3 +1,5 @@
+import { speciesViewsFor } from "$server/species-views";
+import type { SpeciesView } from "$lib/species-views";
 import type { PageServerLoad } from "./$types";
 import {
   guideCounts,
@@ -20,7 +22,8 @@ import { guideLocationCoverage } from "$server/guide-location";
  * Every role reads it (enrichment is communal, badges are scope-personal);
  * GET-driven so results are linkable/restorable.
  */
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, depends }) => {
+  depends("app:species-views");
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
   // Unknown tags are dropped, not errored — stale links degrade gracefully.
   const tags = [
@@ -57,7 +60,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       countsP,
     ]);
   }
+  let viewed: Record<string, SpeciesView> = {};
+  let viewedUnavailable = false;
+  try { viewed = await speciesViewsFor(locals.user!.id, results.map(r => r.species_code)); }
+  catch { viewedUnavailable = true; }
   return {
+    viewed,
+    viewedUnavailable,
     q,
     tags,
     active,

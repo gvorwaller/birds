@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
+import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
 import { dev } from '$app/environment';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
@@ -73,7 +74,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		});
 	}
 
-	// Read-only viewers: personal appearance is the only settings exception.
+	// Viewers may write their own appearance and browsing history, never owner data.
 	if (event.locals.user?.role === 'viewer') {
 		const method = event.request.method;
 		// td-0753d0: viewers may POST load_enrichment (first-time species data,
@@ -87,7 +88,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
 		// Keep private settings/actions blocked; appearance changes only this user.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance) {
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction)) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// The separate appearance page never loads the credential-bearing page.

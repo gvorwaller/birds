@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SpeciesViewed from "$components/SpeciesViewed.svelte";
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
@@ -357,6 +358,11 @@
           data.seen.first_seen,
         ).toLocaleDateString()}{/if}
     </p>
+    {#if data.user && data.taxon.category === 'species'}
+      {#key `${data.user.id}:${data.taxon.species_code}`}
+        <SpeciesViewed code={data.taxon.species_code} accountId={data.user.id} />
+      {/key}
+    {/if}
   </header>
 
   {#if data.hasGallery}

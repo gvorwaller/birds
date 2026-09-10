@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ViewedBadge from "$components/ViewedBadge.svelte";
   import Badge from "$components/Badge.svelte";
   import {
     TAG_DIMENSIONS,
@@ -92,6 +93,8 @@
         ? ` and ${data.counts.annotated} have AI field craft`
         : ""}.
     </p>
+    <a class="history-link" href="/viewed">◉ Viewed species</a>
+    {#if data.viewedUnavailable}<p role="status">Viewing history is temporarily unavailable.</p>{/if}
   </header>
 
   <section class="card">
@@ -259,6 +262,7 @@
               <span class="row-main">
                 <span class="name">
                   {r.com_name}
+                  {#if data.viewed[r.species_code]}<ViewedBadge view={data.viewed[r.species_code]} />{/if}
                   {#if r.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
                       kind="need"
                       label="Need"
@@ -347,6 +351,7 @@
 </div>
 
 <style>
+  .history-link { display:inline-flex; align-items:center; min-height:48px; }
   .page {
     max-width: 860px;
     margin: 0 auto;

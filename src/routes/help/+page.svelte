@@ -647,6 +647,29 @@
 						have taxonomy and links but no English Wikipedia article.
 					</li>
 				</ul>
+				<h3>Viewed species — your learning history</h3>
+				<p>
+					Opening a species page records it in your account's
+					<a href="/viewed">Viewed species</a> collection, also linked from Field Guide.
+					<strong>Viewed in app</strong> means you opened its page;
+					<strong>Seen</strong> still means it is on your life list. The viewed
+					indicator appears after saving, and also appears in Field Guide results.
+				</p>
+				<ul>
+					<li>Search your collection by name or code, sort by most recent or
+						alphabetically, and see first/last viewed dates (shown in UTC).</li>
+					<li>History belongs to the signed-in account, including family viewers.
+						It follows that account across devices. People sharing a login share
+						its history; your owner's shared life list stays separate.</li>
+					<li>Only displayed pages count. Hover previews and background refreshes
+						do not. History begins with this feature; earlier visits are not reconstructed.
+						If saving fails, the page remains usable and offers <strong>Retry</strong>.</li>
+					<li><strong>Pause recording</strong> keeps existing history; Resume records
+						future visits. <strong>Clear history</strong> asks for confirmation and
+						removes your viewing records, leaving your life list unchanged.
+						Species removed from the current taxonomy remain listed by code when
+						their name is no longer available.</li>
+				</ul>
 				<h3>Where it is through the year</h3>
 				<p>
 					Open <strong>Field guide</strong>, choose a species, and scroll to

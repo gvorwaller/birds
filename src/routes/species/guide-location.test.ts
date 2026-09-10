@@ -22,7 +22,8 @@ const codes = [A, B, C, ...distractors];
 
 function event(path: string, scopeId: number) {
   return {
-    locals: { scopeId },
+    locals: { scopeId, user: { id: scopeId } },
+    depends: () => {},
     url: new URL(`http://localhost${path}`),
   } as Parameters<typeof load>[0];
 }

@@ -121,6 +121,13 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Your species learning history</strong> — species pages now
+								remember that you viewed them, separately from your life list.
+								Open Viewed species from Field Guide to search your history and see
+								first/last viewed dates. History is personal to each account, with
+								pause and clear controls.
+							</li>
+							<li>
 								<strong>Clearer Field Guide help</strong> — Help now explains how to
 								read and explore “Where it is through the year” alongside the other
 								species-page tools. Nearest lifers has been removed from the menu;
