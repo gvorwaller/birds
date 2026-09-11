@@ -93,8 +93,9 @@ export const load: PageServerLoad = async ({ locals }) => {
       home_label: string | null;
       home_google_place_id: string | null;
       near_me_radius_km: number | null;
+      share_life_list: boolean;
     }>(
-      `SELECT home_lat, home_lon, home_label, home_google_place_id, near_me_radius_km
+      `SELECT home_lat, home_lon, home_label, home_google_place_id, near_me_radius_km, share_life_list
 			   FROM users WHERE id = $1`,
       [userId],
     ),
@@ -148,6 +149,8 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
 
   return {
+    accountId: userId,
+    shareLifeList: user.rows[0]?.share_life_list ?? false,
     ebird: {
       api_key_set: row?.api_key_set ?? false,
       login_set: row?.login_set ?? false,
@@ -224,6 +227,32 @@ async function ensureEbirdRow(userId: number): Promise<void> {
 }
 
 export const actions: Actions = {
+  share_life_list: async ({ locals, request }) => {
+    if (!locals.user) return fail(401, { error: "Sign in to change sharing." });
+    if (locals.user.role === "viewer")
+      return fail(403, {
+        error: "Only the life-list owner can change sharing.",
+      });
+    const form = await request.formData();
+    if (form.get("accountId") !== String(locals.user.id))
+      return fail(409, {
+        error: "Your account changed. Reload Settings before saving.",
+      });
+    const choice = form.get("share_life_list");
+    if (choice !== null && choice !== "on")
+      return fail(400, { error: "Choose whether to share your life list." });
+    await query("UPDATE users SET share_life_list=$1 WHERE id=$2", [
+      choice === "on",
+      locals.user.id,
+    ]);
+    return {
+      ok: true as const,
+      message:
+        choice === "on"
+          ? "Your life list is now shared with signed-in Birds users."
+          : "Life-list sharing is off. Existing family access is unchanged.",
+    };
+  },
   save_api_key: async ({ locals, request }) => {
     const userId = locals.user!.id;
     const form = await request.formData();

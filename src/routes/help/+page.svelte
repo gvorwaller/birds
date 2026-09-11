@@ -218,6 +218,21 @@
 						a time on each sync, and exotic or not-countable birds are
 						labeled, never hidden.
 					</li>
+					<li>
+						Use the <strong>Life list</strong> picker to view lists shared by other
+						signed-in Birds users. Their map, dates, locations, and checklist links
+						are read-only. Switching lists applies to this page; species pages and
+						Seen/Need badges still use your usual life list. Returning from a bird
+						page keeps the selected list.
+					</li>
+					<li>
+						To share yours, enable <strong>Share my life list</strong> in
+						<a href="/settings#life-list-sharing">Settings → Life-list sharing</a>
+						and save. Sharing starts off. Turning it off removes your list from
+						other users' picker and blocks new shared-list requests. Existing family
+						access remains available; family viewers cannot change the owner's
+						sharing setting. There is no public life-list link.
+					</li>
 				</ul>
 				<h3>Hotspot pages</h3>
 				<ul>

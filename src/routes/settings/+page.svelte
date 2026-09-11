@@ -175,7 +175,7 @@
 <div class="page">
   <header class="page-head">
     <h1>Settings</h1>
-    <p class="sub">Appearance, eBird credentials, home location, and syncs</p>
+    <p class="sub">Appearance, life-list sharing, eBird credentials, home location, and syncs</p>
   </header>
 
   {#if form && "message" in form && form.message}
@@ -189,6 +189,26 @@
     <h2>Appearance</h2>
     <p>Choose Light, Dark, Forest, Ocean, or Warm Paper for your account.</p>
     <a href="/settings/appearance">Choose your theme →</a>
+  </section>
+
+  <section class="card" id="life-list-sharing">
+    <h2>Life-list sharing</h2>
+    <p class="muted" id="life-sharing-description">
+      Allow other signed-in Birds users to browse your species, first-seen dates,
+      locations, map pins, and checklist links. Your name appears in the Life list
+      picker. They can view your list but cannot change it. Sharing starts off;
+      you can turn it off here at any time. Existing family access is separate.
+    </p>
+    <form method="POST" action="?/share_life_list" use:enhance={track("sharing", { reset: false })}>
+      <input type="hidden" name="accountId" value={data.accountId} />
+      <label class="sharing-choice">
+        <input type="checkbox" name="share_life_list" checked={data.shareLifeList}
+          aria-describedby="life-sharing-description" />
+        Share my life list
+      </label>
+      <button type="submit" disabled={busy === "sharing"}>Save sharing</button>
+    </form>
+    <p class="muted">Browse available lists on the <a href="/life">Life list page</a>.</p>
   </section>
 
   <section class="card">
@@ -756,6 +776,14 @@
 </div>
 
 <style>
+  .sharing-choice {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 48px;
+    cursor: pointer;
+  }
+  .sharing-choice input { width: 20px; height: 20px; }
   .page {
     max-width: 720px;
     margin: 0 auto;

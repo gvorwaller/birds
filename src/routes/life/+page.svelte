@@ -10,7 +10,7 @@
   let { data }: { data: PageData } = $props();
 
   // AGY advisory: segmented Map|Timeline on mobile (Timeline default),
-  // side-by-side on desktop (CSS shows both ≥64rem regardless of the tab).
+  // side-by-side on desktop (CSS shows both ≥1024px regardless of the tab).
   let view = $state<"timeline" | "map">("timeline");
   let regionFilter = $state<string | null>(null);
   let speciesQuery = $state("");
@@ -67,6 +67,16 @@
     dateToInput = "";
     regionFilter = null;
   }
+
+  // A new owner starts with the full list, rather than inheriting filters
+  // chosen for a different person's sightings.
+  let previousListId: number | undefined;
+  $effect(() => {
+    if (previousListId !== data.selectedUser.id) {
+      previousListId = data.selectedUser.id;
+      clearFilters();
+    }
+  });
 
   // State chips sorted by lifer count desc (AGY advisory).
   const regionChips = $derived.by(() => {
@@ -156,7 +166,7 @@
           .map(
             (l) =>
               `<li style="margin-bottom:4px">` +
-              `<a href="/species/${encodeURIComponent(l.species_code)}?returnTo=${encodeURIComponent("/life")}" style="color:#084298;font-weight:600">${escapeHtml(l.com_name)}</a>` +
+              `<a href="/species/${encodeURIComponent(l.species_code)}?returnTo=${encodeURIComponent(data.listHref)}" style="color:#084298;font-weight:600">${escapeHtml(l.com_name)}</a>` +
               ` <span style="color:#555">${escapeHtml(fmtDate(l.first_seen))}</span>` +
               (l.sub_id
                 ? ` · <a href="https://ebird.org/checklist/${encodeURIComponent(l.sub_id)}" target="_blank" rel="noopener" style="color:#0a5c43">checklist ↗</a>`
@@ -197,12 +207,12 @@
 </script>
 
 <svelte:head>
-  <title>Life list — birds</title>
+  <title>{data.isOtherList ? `${data.selectedUser.name}'s life list` : "Life list"} — birds</title>
 </svelte:head>
 
 <div class="page">
   <header class="page-head">
-    <h1>Life list</h1>
+    <h1>{data.isOtherList ? `${data.selectedUser.name}’s life list` : "Life list"}</h1>
     <p class="sub">
       {total} lifer{total === 1 ? "" : "s"}{#if syncedOn}&nbsp;· synced {syncedOn}{/if}
       ·
@@ -212,13 +222,34 @@
     </p>
   </header>
 
-  {#if !data.isViewer && data.syncStatus === "error"}
+  <section class="card list-picker" aria-label="Choose a life list">
+    <form method="GET" action="/life">
+      <label for="life-list-owner">Life list</label>
+      <div class="picker-controls">
+        <select id="life-list-owner" name="user" value={data.selectedUser.id}>
+          {#each data.listChoices as choice (choice.id)}
+            <option value={choice.id}>{choice.label}</option>
+          {/each}
+        </select>
+        <button type="submit">View list</button>
+      </div>
+    </form>
+    <p class="muted picker-note">
+      Lists shared by other Birds users appear here.
+      {#if data.canManage}<a href="/settings#life-list-sharing">Share my life list</a>{/if}
+    </p>
+    {#if data.isOtherList}
+      <p class="picker-note"><strong>Read-only life list.</strong> Species pages use your usual life list.</p>
+    {/if}
+  </section>
+
+  {#if data.canManage && data.syncStatus === "error"}
     <p class="syncnote">
       ⚠ The last life-list sync failed{data.syncError
         ? ` — ${data.syncError}`
         : ""} · showing the last synced list. <a href="/settings">Settings</a>
     </p>
-  {:else if !data.isViewer && syncStale}
+  {:else if data.canManage && syncStale}
     <p class="syncnote">
       ⚠ Life list last synced {syncedOn} — re-sync from
       <a href="/settings">Settings</a> to pick up new lifers.
@@ -227,8 +258,8 @@
 
   {#if total === 0}
     <section class="card">
-      {#if data.isViewer}
-        <p class="muted">This page needs the account owner's life list.</p>
+      {#if !data.canManage}
+        <p class="muted">No lifers have been added to this list yet.</p>
       {:else}
         <p class="muted">
           Sync your life list to plot where you got each lifer — set up the
@@ -366,7 +397,9 @@
     <div class="split">
       <section class="card mapcard" class:hidden-mobile={view !== "map"}>
         {#if points.length > 0}
-          <ObsMap {points} />
+          {#key data.selectedUser.id}
+            <ObsMap {points} />
+          {/key}
         {:else}
           <p class="muted">
             {filtered.length === 0
@@ -394,7 +427,11 @@
           </div>
         {:else if !hasFilters && (pending > 0 || negatives > 0 || noLocRows > 0)}
           <div class="muted disclose">
-            {#if pending > 0 && !data.hasCreds}
+            {#if !data.canManage}
+              {#if pending + negatives > 0}
+                <p>{pending + negatives} location{pending + negatives === 1 ? " has" : "s have"} no map pin.</p>
+              {/if}
+            {:else if pending > 0 && !data.hasCreds}
               <p>
                 {pending} location{pending === 1 ? " needs" : "s need"} an eBird sign-in
                 sync to plot.
@@ -416,7 +453,7 @@
                 again to plot more pins.
               </p>
             {/if}
-            {#if negatives > 0}
+            {#if data.canManage && negatives > 0}
               <p>
                 {negatives} location{negatives === 1 ? " has" : "s have"} no map pin.
               </p>
@@ -424,7 +461,7 @@
             {#if noLocRows > 0}
               <p>
                 {noLocRows} lifer{noLocRows === 1 ? "" : "s"} predate location tracking
-                — the next sync fills them in.
+                {#if data.canManage}— the next sync fills them in.{/if}
               </p>
             {/if}
           </div>
@@ -453,7 +490,7 @@
                   </span>
                   <span class="what">
                     <a
-                      href={`/species/${l.species_code}?returnTo=${encodeURIComponent("/life")}`}
+                      href={`/species/${l.species_code}?returnTo=${encodeURIComponent(data.listHref)}`}
                     >
                       {l.com_name}
                     </a>
@@ -487,6 +524,20 @@
 </div>
 
 <style>
+  .list-picker form { display: grid; gap: 0.4rem; }
+  .list-picker label { font-weight: 600; }
+  .picker-controls { display: flex; gap: 0.6rem; align-items: stretch; }
+  .picker-controls select {
+    flex: 1; min-width: 0; min-height: 48px; font: inherit;
+    color: var(--text); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.5rem;
+  }
+  .picker-controls button {
+    min-height: 48px; font: inherit; font-weight: 600; padding: 0.5rem 0.8rem;
+    background: var(--accent); color: var(--on-accent);
+    border: 1px solid var(--accent); border-radius: 8px; cursor: pointer;
+  }
+  .picker-note { margin: 0.65rem 0 0; }
   .page {
     max-width: 72rem;
     margin: 0 auto;
@@ -706,7 +757,7 @@
     min-height: 320px;
   }
   /* Mobile: segmented control switches panels. Desktop: both visible. */
-  @media (max-width: 63.99rem) {
+  @media (max-width: 1023px) {
     .search-fields {
       grid-template-columns: 1fr 1fr;
     }
@@ -720,7 +771,11 @@
       display: none;
     }
   }
-  @media (min-width: 64rem) {
+  @media (max-width: 639px) {
+    .search-fields { grid-template-columns: minmax(0, 1fr); }
+    .date-field { min-width: 0; }
+  }
+  @media (min-width: 1024px) {
     .seg {
       display: none;
     }

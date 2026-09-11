@@ -121,6 +121,12 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Share your life list</strong> — opt in from Settings so other
+								signed-in Birds users can explore your map and timeline. Use the
+								Life list picker to browse shared lists. Sharing starts off and
+								can be turned off at any time.
+							</li>
+							<li>
 								<strong>Organize your bird study</strong> — Viewed species is now a
 								Field Guide tab. Switch to Not yet viewed, browse collapsible bird
 								families, or open countries to explore species reported there in
