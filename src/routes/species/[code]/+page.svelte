@@ -51,6 +51,15 @@
   // --- Species enrichment (About card) ------------------------------------
   let aboutExpanded = $state(false);
   let refreshBusy = $state(false);
+  let ribbonExpanded = $state(false);
+  let disclosureSpecies: string | undefined;
+  $effect(() => {
+    const code = data.taxon.species_code;
+    if (code !== disclosureSpecies) {
+      disclosureSpecies = code;
+      ribbonExpanded = false;
+    }
+  });
   const en = $derived(data.enrichment);
 
   // Track a queued manual refresh so the layout job chip picks it up.
@@ -502,15 +511,20 @@
        null` (nothing loaded yet) renders nothing, `ok: false` renders a
        one-line failure, and only `ok, grid` renders the chart. -->
   {#if data.ribbon.ok && data.ribbon.grid}
-    <section class="card" aria-labelledby="ribh">
-      <h2 id="ribh">Where it is through the year</h2>
+    <details class="card ribbon-disclosure" bind:open={ribbonExpanded}>
+      <summary>
+        <h2 id="ribh">Where it is through the year</h2>
+        <span class="disclosure-label" aria-hidden="true">{ribbonExpanded ? "Hide" : "Show"}</span>
+      </summary>
+      <!-- Keep the chart mounted: closing retains month/view/drill state, and
+           its ResizeObserver measures the available width on reopening. -->
       <MigrationRibbon
         grid={data.ribbon.grid}
         speciesCode={data.taxon.species_code}
         speciesName={data.taxon.com_name}
         onchartregion={onChartRegion}
       />
-    </section>
+    </details>
   {:else if !data.ribbon.ok}
     <section class="card">
       <h2>Where it is through the year</h2>
@@ -1032,6 +1046,25 @@
 </div>
 
 <style>
+  .ribbon-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .ribbon-disclosure > summary::-webkit-details-marker { display: none; }
+  .ribbon-disclosure > summary::before { content: "▸"; flex: none; }
+  .ribbon-disclosure[open] > summary::before { content: "▾"; }
+  .ribbon-disclosure > summary h2 { flex: 1; margin: 0; }
+  .ribbon-disclosure[open] > summary { margin-bottom: 0.75rem; }
+  .ribbon-disclosure > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+  .disclosure-label { color: var(--muted); font-size: 0.85rem; }
   .page {
     max-width: 1100px;
     margin: 0 auto;

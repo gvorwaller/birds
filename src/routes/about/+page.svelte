@@ -121,6 +121,11 @@
 					<div class="version-body">
 						<ul>
 							<li>
+								<strong>Less scrolling on species pages</strong> — the seasonal
+								distribution chart starts collapsed. Tap “Where it is through the year”
+								to open it; closing and reopening keeps your chart selections.
+							</li>
+							<li>
 								<strong>Share your life list</strong> — opt in from Settings so other
 								signed-in Birds users can explore your map and timeline. Use the
 								Life list picker to browse shared lists. Sharing starts off and

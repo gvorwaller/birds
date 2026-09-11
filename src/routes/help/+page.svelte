@@ -709,6 +709,8 @@
 				<p>
 					Open <strong>Field guide</strong>, choose a species, and scroll to
 					<strong>Where it is through the year</strong>, above Best time of year.
+					The section starts collapsed; tap its heading to show or hide the chart.
+					Closing it keeps your chart selections while you stay on this species.
 					This chart shows seasonal patterns in loaded historical eBird reports.
 					It does not track individual birds or show live sightings.
 				</p>
