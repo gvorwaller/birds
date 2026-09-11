@@ -30,6 +30,7 @@
             >Not yet viewed</span
           >{/if}
       </div>
+      {#if row.matchedBandingCode}<p class="muted">Banding code: {row.matchedBandingCode}</p>{/if}
       {#if row.scientificName}<em>{row.scientificName}</em>{/if}
       <p class="muted family">{row.family ?? "Family unavailable"}</p>
       {#if row.view}<p class="muted dates">

@@ -120,7 +120,8 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
-							<li>
+							<li><strong>Taxonomy for study</strong> — explore orders, families, and species in a new Field Guide tab, with two-way species links and personal Viewed badges. Filter by family, search banding codes, and choose taxonomic sorting. Browse species now shows result totals and pages of 100 so every match stays reachable. Family descriptions now populate automatically from matched Wikipedia sources, with a separate AI source-support check, linked attribution, automatic retries and refreshes, and Admin coverage and pause/resume controls.</li>
+                            <li>
 								<strong>Less scrolling on species pages</strong> — the seasonal
 								distribution chart starts collapsed. Tap “Where it is through the year”
 								to open it; closing and reopening keeps your chart selections.

@@ -17,7 +17,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       locals.user.id,
       q,
       status,
-      sort === "name",
+      sort === "taxonomic" ? "taxonomic" : sort === "name",
       country,
     );
     return json(

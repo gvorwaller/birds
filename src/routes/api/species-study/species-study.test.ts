@@ -57,3 +57,10 @@ it("surfaces failed country reads as retryable errors, not empty results", async
     status: 503,
   });
 });
+
+it("forwards explicit taxonomic sorting to country expansion", async () => {
+  vi.mocked(getRegion).mockResolvedValue({level:"country"} as Awaited<ReturnType<typeof getRegion>>);
+  vi.mocked(studyCountrySpecies).mockResolvedValue({rows:[],locCodes:[],wholeArea:false,beginYear:null,endYear:null});
+  await GET(event("accountId=2&country=US&status=unviewed&sort=taxonomic"));
+  expect(studyCountrySpecies).toHaveBeenCalledWith(2,"","unviewed","taxonomic","US");
+});

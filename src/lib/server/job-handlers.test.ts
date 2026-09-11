@@ -1,3 +1,4 @@
+vi.mock('$server/taxonomy-reference', () => ({taxonomySummary: vi.fn(async () => ({total:40,missing:2,ordered:38,banding:10}))}));
 /**
  * Handler dispatch + termination-path tests. ensureFrequencies and the queue
  * primitives are mocked; what's pinned here is the CONTRACT between them:
@@ -1193,6 +1194,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
     expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key");
     expect(mocks.completeJob.mock.calls[0][2]).toEqual({
       taxa: 42,
+      metadata: {species:40,classified:38,ordered:38,withBandingCodes:10},
       photosMatched: 5,
       photosUnmatched: 1,
     });

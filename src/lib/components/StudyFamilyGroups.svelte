@@ -6,13 +6,15 @@
     returnTo,
     openFamily = "",
     focusCode = "",
+    taxonomic = false,
   }: {
     rows: StudySpecies[];
     returnTo: string;
     openFamily?: string;
     focusCode?: string;
+    taxonomic?: boolean;
   } = $props();
-  const groups = $derived(familyGroups(rows));
+  const groups = $derived(familyGroups(rows, taxonomic));
   let expanded = $state(new Set<string>());
   const isOpen = (name: string) => expanded.has(name) || name === openFamily;
 </script>

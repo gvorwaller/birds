@@ -28,7 +28,8 @@ export type JobType =
 	| 'enrich_species'
 	| 'scan_enrichment'
 	| 'enrich_species_media'
-	| 'enrich_species_inat';
+	| 'enrich_species_inat'
+	| 'enrich_families';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -38,7 +39,8 @@ export type JobType =
  */
 export const RECURRING_TYPES: ReadonlySet<string> = new Set([
 	'scan_need_alerts',
-	'scan_enrichment'
+	'scan_enrichment',
+	'enrich_families'
 ]);
 
 export type JobEventAction =
@@ -157,6 +159,7 @@ export async function claimNextJob(): Promise<JobRow | null> {
 		  WHERE id = (SELECT id FROM jobs
 		               WHERE status = 'pending'
 		                 AND NOT cancel_requested
+		                 AND (type <> 'enrich_families' OR EXISTS(SELECT 1 FROM family_enrichment_control WHERE singleton AND NOT paused AND (blocked_until IS NULL OR blocked_until<=NOW())))
 		                 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
 		               ORDER BY enqueued_at
 		               LIMIT 1

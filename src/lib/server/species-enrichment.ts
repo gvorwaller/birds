@@ -756,6 +756,7 @@ export async function enrichOneNow(
 }
 
 export interface GuideResult {
+ matched_banding_code?: string | null;
 	species_code: string;
 	com_name: string;
 	sci_name: string;
@@ -787,16 +788,17 @@ export interface GuideResult {
  *    INNER JOIN to taxonomy (requires enrichment row).
  *
  * Combined with DISTINCT ON to keep each species' best-ranked candidate,
- * then a location-presence intersection and deterministic ORDER + LIMIT 50.
+ * then a location-presence intersection and deterministic ordering and explicit pagination.
  * Photo metadata is joined only for that final result set. Location-only
  * searches include taxonomy species even when they have no enrichment.
  */
-export async function searchEnrichment(
+export async function searchGuide(
 	q: string,
 	tags: readonly string[],
 	seenUserId: number,
-	locationCodes: readonly string[] | null = null
-): Promise<GuideResult[]> {
+	locationCodes: readonly string[] | null = null,
+ options: { family?: string; sort?: 'relevance' | 'name' | 'taxonomic'; page?: number } = {}
+): Promise<{ rows: GuideResult[]; total: number }> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
 	const escaped = query_.replace(/[%_\\]/g, (m) => `\\${m}`);
@@ -806,18 +808,20 @@ export async function searchEnrichment(
 
 	// $8=null means anywhere; [] means selected geography has no loaded data.
 	// Intersect before LIMIT so out-of-area hits cannot displace valid matches.
-	type Row = GuideResult & { name_tier: number; rank: number };
+	const orderBy = options.sort === 'taxonomic' ? 'taxon_order NULLS LAST, com_name, species_code' : options.sort === 'name' ? 'com_name, species_code' : 'name_tier, rank DESC NULLS LAST, com_name, species_code';
+ type Row = GuideResult & { name_tier: number; rank: number; total_matches: number; taxon_order: string | null };
 	const r = await query<Row>(
 		`WITH regional_species AS MATERIALIZED (
 		   SELECT DISTINCT species_code FROM species_month_freq
 		   WHERE loc_code = ANY($8::text[]) AND num > 0
 		 )
 		 SELECT matches.*, photo.photo FROM (
-		 SELECT * FROM (
+		 SELECT *, count(*) OVER()::int AS total_matches FROM (
 		   SELECT DISTINCT ON (species_code) *
 		   FROM (
 		     /* Leg 1: taxonomy name/code — the "never empty" leg */
-		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
+ CASE WHEN tc.banding_codes @> ARRAY[upper($5)] THEN upper($5) ELSE NULL END AS matched_banding_code,
 		            COALESCE(se.tags, '{}') AS tags,
 		            se.iucn_status, se.field_craft,
 		            (ss.species_code IS NOT NULL) AS seen,
@@ -825,40 +829,42 @@ export async function searchEnrichment(
 		            se.wiki_fetched_at::text AS wiki_fetched_at,
 		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
 		            CASE
-		              WHEN tc.species_code = $5         THEN 0
+		              WHEN tc.species_code = $5 THEN 0
+ WHEN tc.banding_codes @> ARRAY[upper($5)] THEN 1
 		              WHEN lower(tc.com_name) = $5
-		                OR lower(tc.sci_name) = $5      THEN 1
+		                OR lower(tc.sci_name) = $5      THEN 2
 		              WHEN tc.com_name ILIKE $6
-		                OR tc.sci_name ILIKE $6         THEN 2
-		              ELSE                                   3
+		                OR tc.sci_name ILIKE $6         THEN 3
+		              ELSE                                   4
 		            END AS name_tier,
 		            0::float4 AS rank
 		       FROM taxonomy_cache tc
 		       LEFT JOIN species_enrichment se USING (species_code)
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
-		      WHERE tc.category = 'species'
-		        AND ($1::bool OR ($8::text[] IS NOT NULL AND $4::text[] = '{}'))
+		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
+		        AND ($1::bool OR (($8::text[] IS NOT NULL OR $9::text IS NOT NULL) AND $4::text[] = '{}'))
 		        AND (NOT $1::bool OR tc.species_code = $5
-		             OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
+		             OR tc.banding_codes @> ARRAY[upper($5)] OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
 		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
 
 		     UNION ALL
 
 		     /* Leg 2: enrichment prose/tag — FTS + tag AND semantics */
-		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
+		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
+ CASE WHEN tc.banding_codes @> ARRAY[upper($5)] THEN upper($5) ELSE NULL END AS matched_banding_code,
 		            se.tags, se.iucn_status, se.field_craft,
 		            (ss.species_code IS NOT NULL) AS seen,
 		            se.wiki_status,
 		            se.wiki_fetched_at::text AS wiki_fetched_at,
 		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
-		            4 AS name_tier,
+		            5 AS name_tier,
 		            ts_rank_cd(se.search_tsv, websearch_to_tsquery('english', $2)) AS rank
 		       FROM species_enrichment se
 		       JOIN taxonomy_cache tc USING (species_code)
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = se.species_code
-		      WHERE tc.category = 'species'
+		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
 		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
 		        AND (NOT $1::bool
 		             OR se.search_tsv @@ websearch_to_tsquery('english', $2))
@@ -866,8 +872,8 @@ export async function searchEnrichment(
 		   ORDER BY species_code, name_tier, rank DESC
 		 ) deduped
 		 WHERE $8::text[] IS NULL OR species_code IN (SELECT species_code FROM regional_species)
-		 ORDER BY name_tier, rank DESC NULLS LAST, com_name, species_code
-		 LIMIT 50
+		 ORDER BY ${orderBy}
+		 LIMIT $10 OFFSET $11
 		 ) matches
 		 LEFT JOIN LATERAL (
 		   SELECT json_build_object('url', COALESCE(thumbnail_url, media_url),
@@ -876,10 +882,15 @@ export async function searchEnrichment(
 		   FROM species_media WHERE species_code = matches.species_code AND kind = 'photo'
 		   ORDER BY rank LIMIT 1
 		 ) photo ON true
-		 ORDER BY name_tier, rank DESC NULLS LAST, com_name, species_code`,
-		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes]
+		 ORDER BY ${orderBy}`,
+		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes, options.family || null, options.page == null ? null : 100, options.page == null ? 0 : (options.page-1)*100]
 	);
-	return r.rows.map(({ name_tier: _t, rank: _r, ...row }) => row);
+	return { total: r.rows[0]?.total_matches ?? 0, rows: r.rows.map(({ name_tier: _t, rank: _r, total_matches: _n, taxon_order: _o, ...row }) => row) };
+}
+
+/** Complete result access for existing internal callers. UI uses searchGuide pagination. */
+export async function searchEnrichment(q: string, tags: readonly string[], seenUserId: number, locationCodes: readonly string[] | null = null): Promise<GuideResult[]> {
+ return (await searchGuide(q, tags, seenUserId, locationCodes)).rows;
 }
 
 /**

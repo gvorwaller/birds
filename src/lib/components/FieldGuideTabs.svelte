@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { active }: { active: "browse" | "viewed" } = $props();
+  let { active }: { active: "browse" | "viewed" | "taxonomy" } = $props();
 </script>
 
 <nav class="tabs" aria-label="Field guide sections">
@@ -13,6 +13,7 @@
     class:active={active === "viewed"}
     aria-current={active === "viewed" ? "page" : undefined}>Viewed species</a
   >
+  <a href="/taxonomy" class:active={active === "taxonomy"} aria-current={active === "taxonomy" ? "page" : undefined}>Taxonomy</a>
 </nav>
 
 <style>
@@ -24,6 +25,8 @@
   }
   a {
     flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
     min-height: 48px;
     padding: 12px 8px;
     display: flex;

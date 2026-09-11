@@ -83,20 +83,21 @@
           type="search"
           name="q"
           value={data.q}
-          placeholder="Name or species code"
+          placeholder="Name, species or banding code"
         /></label
       >
       <label class="sort"
         >Sort<select name="sort" value={data.sort}
           >{#if data.status === "viewed"}<option value="recent"
               >Most recently viewed</option
-            >{/if}<option value="name">Alphabetical</option></select
+            >{/if}<option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select
         ></label
       >
       <button type="submit">Apply</button>
     </form>
   </section>
   <section class="card">
+    {#if !data.taxonomyAvailable}<p role="status">Taxonomic ordering awaits a taxonomy refresh.</p>{/if}
     <h2>
       {data.total}
       {data.status === "viewed"
@@ -127,11 +128,11 @@
       {#key returnTo + ":" + data.accountId}
         {#if data.group === "family"}
           <p class="study-hint muted">
-            Open a bird family to browse its species. Families are alphabetical;
-            the selected sort applies within each family.
+            Open a bird family to browse its species. Families follow taxonomic order when selected; otherwise they are alphabetical. The selected sort also applies within each family.
           </p>
           <StudyFamilyGroups
             rows={data.rows}
+            taxonomic={data.sort === "taxonomic"}
             {returnTo}
             openFamily={data.openFamily}
             focusCode={data.focusCode}

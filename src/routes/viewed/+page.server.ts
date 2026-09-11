@@ -1,3 +1,4 @@
+import { taxonomySummary } from '$server/taxonomy-reference';
 import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import {
@@ -14,9 +15,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     locals.user!.id,
     options.q,
     options.status,
-    options.sort === "name",
+    options.sort === "taxonomic" ? "taxonomic" : options.sort === "name",
   );
+  const taxonomy = await taxonomySummary();
   return {
+    taxonomyAvailable: taxonomy.ordered > 0,
     enabled: result.enabled,
     total: result.rows.length,
     rows: options.group === "country" ? [] : result.rows,

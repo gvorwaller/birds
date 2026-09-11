@@ -1,3 +1,4 @@
+import { ensureFamilyEnrichment } from '$server/family-enrichment';
 /**
  * birds-worker — the dedicated eBird load process (PM2 app `birds-worker`).
  * Plan: docs/2026-08-15-ebird-worker-job-queue-plan.md §5.
@@ -95,6 +96,8 @@ async function main(): Promise<void> {
 	await markWorkerStarted(process.pid, VERSION);
 	console.log(`[birds-worker] started pid=${process.pid} version=${VERSION}`);
 
+	await ensureFamilyEnrichment();
+	let familyCheckedAt = Date.now();
 	let draining = false;
 	let currentJobId: number | null = null;
 	const ctx = {
@@ -137,6 +140,10 @@ async function main(): Promise<void> {
 
 	for (;;) {
 		if (draining) break;
+		if(Date.now()-familyCheckedAt>60_000) {
+			familyCheckedAt=Date.now();
+			await ensureFamilyEnrichment().catch(()=>console.error("[birds-worker] family reconciliation failed"));
+		}
 		const paused = await workerPauseRequested();
 		if (paused) {
 			if (!reportedPaused) {

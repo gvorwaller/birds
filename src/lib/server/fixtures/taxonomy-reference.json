@@ -1,0 +1,129 @@
+[
+  {
+    "sciName": "Anas platyrhynchos",
+    "comName": "Mallard",
+    "speciesCode": "mallar3",
+    "category": "species",
+    "taxonOrder": 545.0,
+    "bandingCodes": [
+      "MALL"
+    ],
+    "comNameCodes": [],
+    "sciNameCodes": [
+      "ANPL"
+    ],
+    "order": "Anseriformes",
+    "familyCode": "anatid1",
+    "familyComName": "Ducks, Geese, and Waterfowl",
+    "familySciName": "Anatidae"
+  },
+  {
+    "sciName": "Aythya americana",
+    "comName": "Redhead",
+    "speciesCode": "redhea",
+    "category": "species",
+    "taxonOrder": 667.0,
+    "bandingCodes": [
+      "REDH"
+    ],
+    "comNameCodes": [],
+    "sciNameCodes": [
+      "AYAM"
+    ],
+    "order": "Anseriformes",
+    "familyCode": "anatid1",
+    "familyComName": "Ducks, Geese, and Waterfowl",
+    "familySciName": "Anatidae"
+  },
+  {
+    "sciName": "Ardea herodias",
+    "comName": "Great Blue Heron",
+    "speciesCode": "grbher3",
+    "category": "species",
+    "taxonOrder": 7753.0,
+    "bandingCodes": [
+      "GBHE"
+    ],
+    "comNameCodes": [
+      "GBWH"
+    ],
+    "sciNameCodes": [
+      "ARHE"
+    ],
+    "order": "Pelecaniformes",
+    "familyCode": "ardeid1",
+    "familyComName": "Herons, Egrets, and Bitterns",
+    "familySciName": "Ardeidae"
+  },
+  {
+    "sciName": "Pandion haliaetus",
+    "comName": "Osprey",
+    "speciesCode": "osprey",
+    "category": "species",
+    "taxonOrder": 7832.0,
+    "bandingCodes": [
+      "OSPR"
+    ],
+    "comNameCodes": [],
+    "sciNameCodes": [
+      "PAHA"
+    ],
+    "order": "Accipitriformes",
+    "familyCode": "pandio1",
+    "familyComName": "Osprey",
+    "familySciName": "Pandionidae"
+  },
+  {
+    "sciName": "Apteryx australis australis",
+    "comName": "Southern Brown Kiwi (South I.)",
+    "speciesCode": "sobkiw2",
+    "category": "issf",
+    "taxonOrder": 22.0,
+    "bandingCodes": [],
+    "comNameCodes": [
+      "SBKI"
+    ],
+    "sciNameCodes": [
+      "APAU"
+    ],
+    "order": "Apterygiformes",
+    "familyCode": "aptery1",
+    "familyComName": "Kiwis",
+    "familySciName": "Apterygidae",
+    "reportAs": "sobkiw1"
+  },
+  {
+    "sciName": "Alopochen mauritiana",
+    "comName": "Mauritius Shelduck",
+    "speciesCode": "maushe1",
+    "category": "species",
+    "taxonOrder": 419.0,
+    "bandingCodes": [],
+    "comNameCodes": [
+      "MASH"
+    ],
+    "sciNameCodes": [
+      "ALMA"
+    ],
+    "order": "Anseriformes",
+    "familyCode": "anatid1",
+    "familyComName": "Ducks, Geese, and Waterfowl",
+    "familySciName": "Anatidae",
+    "extinct": true,
+    "extinctYear": 0
+  },
+  {
+    "sciName": "Paradisaeidae sp.",
+    "comName": "bird-of-paradise sp.",
+    "speciesCode": "bird-o1",
+    "category": "spuh",
+    "taxonOrder": 20666.0,
+    "bandingCodes": [],
+    "comNameCodes": [],
+    "sciNameCodes": [],
+    "order": "Passeriformes",
+    "familyCode": "paradi7",
+    "familyComName": "Birds-of-Paradise",
+    "familySciName": "Paradisaeidae"
+  }
+]

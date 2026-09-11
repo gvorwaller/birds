@@ -1,3 +1,4 @@
+import { replaceTaxonomy } from '$server/taxonomy-sync';
 /**
  * eBird API v2 client. Public-data endpoints only (taxonomy, recent obs,
  * notable, hotspots) — personal data comes from ebird-account.ts (web login).
@@ -574,50 +575,10 @@ export async function countries(apiKey: string): Promise<CachedResult<EbirdRegio
 	);
 }
 
-interface TaxonEntry {
-	sciName: string;
-	comName: string;
-	speciesCode: string;
-	category: string;
-	familyComName?: string;
-	familySciName?: string;
-}
-
-/** Full taxonomy pull (~17k rows) into taxonomy_cache. Re-run quarterly or on demand. */
+/** Full taxonomy pull, validated before atomic replacement. */
 export async function syncTaxonomy(apiKey: string): Promise<number> {
-	// Exempt from the module ceiling: this is a multi-megabyte download on the
-	// worker, not a request path, and 45 s would be far too tight.
-	const taxa = await ebirdFetch<TaxonEntry[]>('/ref/taxonomy/ebird?fmt=json', apiKey, {
-		deadlineMs: 180_000
-	});
-	if (!Array.isArray(taxa) || taxa.length === 0) {
-		throw new EbirdError('Taxonomy endpoint returned no rows — aborting sync.');
-	}
-	await withTransaction(async (client) => {
-		await client.query('DELETE FROM taxonomy_cache');
-		// Batch inserts: 500 rows per statement keeps parameter counts sane.
-		const BATCH = 500;
-		for (let i = 0; i < taxa.length; i += BATCH) {
-			const slice = taxa.slice(i, i + BATCH);
-			const values: string[] = [];
-			const params: unknown[] = [];
-			slice.forEach((t, j) => {
-				const o = j * 5;
-				values.push(`($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5})`);
-				params.push(t.speciesCode, t.comName, t.sciName, t.category, t.familyComName ?? null);
-			});
-			await client.query(
-				`INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
-				 VALUES ${values.join(',')}
-				 ON CONFLICT (species_code) DO UPDATE
-				   SET com_name = EXCLUDED.com_name, sci_name = EXCLUDED.sci_name,
-				       category = EXCLUDED.category, family = EXCLUDED.family`,
-				params
-			);
-		}
-		await client.query(`UPDATE taxonomy_cache SET fetched_at = NOW()`);
-	});
-	return taxa.length;
+ const payload = await ebirdFetch<unknown>('/ref/taxonomy/ebird?fmt=json', apiKey, { deadlineMs: 180_000 });
+ return replaceTaxonomy(payload);
 }
 
 export async function taxonomyCount(): Promise<number> {

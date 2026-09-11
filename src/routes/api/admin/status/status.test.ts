@@ -21,6 +21,7 @@ describe("GET /api/admin/status", () => {
 
   it("returns uncached lightweight status to an admin", async () => {
     mockedStatus.mockResolvedValue({
+      families: {paused:false,blocked_until:null,reason:null,total:0,ready:0,pending:0,noSource:0,errors:0,issues:[]},
       now: "2026-08-23T16:00:00.000Z",
       worker: {
         alive: true,
@@ -41,6 +42,7 @@ describe("GET /api/admin/status", () => {
 
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toMatchObject({
+      families: {paused:false,blocked_until:null,reason:null,total:0,ready:0,pending:0,noSource:0,errors:0,issues:[]},
       now: "2026-08-23T16:00:00.000Z",
       worker: { alive: true, state: "idle" },
       jobs: [],

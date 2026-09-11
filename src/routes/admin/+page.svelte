@@ -19,6 +19,7 @@
   let manualRefreshError = $state<string | null>(null);
   let liveRefreshError = $state<string | null>(null);
   let liveStatus = $state<AdminLiveStatus | null>(null);
+  let liveFamilies = $derived(liveStatus?.families ?? data.families);
   let liveWorker = $derived(liveStatus?.worker ?? data.worker);
   let liveJobs = $derived(liveStatus?.jobs ?? data.jobs);
   let lastRefreshedAt = $derived(liveStatus?.now ?? data.now);
@@ -64,7 +65,7 @@
     if (liveTimer) clearTimeout(liveTimer);
     const delay = isWorkerControlTransitioning(liveWorker)
       ? POLL_ACTIVE_MS
-      : nextIntervalMs(liveJobs);
+      : nextIntervalMs(liveJobs) ?? (liveWorker.alive && !liveWorker.pauseRequested && !liveFamilies.paused ? 15_000 : null);
     liveTimer = delay == null ? null : setTimeout(refreshLiveStatus, delay);
   }
 
@@ -264,7 +265,24 @@
   </div>
 
   {#if activeTab === "status"}
-  <CollapsibleCard id="worker" title="Worker">
+  <section class="card family-enrichment" aria-labelledby="family-enrichment-heading">
+      <h2 id="family-enrichment-heading">Family descriptions</h2>
+      <p>{liveFamilies.ready} of {liveFamilies.total} families have descriptions · {liveFamilies.pending} awaiting enrichment · {liveFamilies.noSource} without a usable source · {liveFamilies.errors} needing retry.</p>
+      <p>{liveFamilies.paused ? 'Family enrichment is paused.' : liveFamilies.blocked_until && Date.parse(liveFamilies.blocked_until)>Date.now() ? 'Family enrichment is waiting for a service cooldown.' : 'Family enrichment is automatic.'} {liveFamilies.reason ?? ''}</p>
+      <p class="muted">Uses the Enrichment model and appears in AI &amp; Cost. Pause takes effect after the current call. The main worker pause also applies.</p>
+      <form method="POST" action="?/family_enrichment" use:enhance>
+        <button name="intent" value={liveFamilies.paused ? 'resume' : 'pause'}>{liveFamilies.paused ? 'Resume family enrichment' : 'Pause family enrichment'}</button>
+        <button class="secondary" name="intent" value="retry">Retry family gaps</button>
+      </form>
+      {#if form?.kind === 'family_enrichment'}<p role="status">{'error' in form ? form.error : form.message}</p>{/if}
+      {#if liveFamilies.issues.length}
+        <details><summary>Families needing attention ({liveFamilies.issues.length})</summary>
+          {#each liveFamilies.issues as issue}<p><a href={'/taxonomy?family='+encodeURIComponent(issue.code)}>{issue.name}</a>: {issue.error} · Next retry {issue.nextAttempt ? new Date(issue.nextAttempt).toLocaleString() : 'pending'}</p>{/each}
+        </details>
+      {/if}
+    </section>
+
+    <CollapsibleCard id="worker" title="Worker">
     {#if data.startupsLastHour > 3}
       <p class="error">
         ⚠ {data.startupsLastHour} worker startups in the last hour — likely a
@@ -820,6 +838,14 @@
 {/if}
 
 <style>
+  .family-enrichment { padding: 1rem; margin-block: 1rem; background:var(--card); border:1px solid var(--border); border-radius:8px; }
+  .family-enrichment h2 { font-size:1.1rem; margin:0 0 0.75rem; }
+  .family-enrichment p { margin:0.7rem 0; line-height:1.5; }
+  .family-enrichment button { min-height:48px; padding:10px 16px; font-size:1rem; font-weight:600; border:1px solid var(--accent); border-radius:8px; background:var(--accent); color:var(--on-accent); cursor:pointer; }
+  .family-enrichment button.secondary { background:var(--card); color:var(--accent); }
+  .family-enrichment summary { min-height:48px; padding-block:12px; cursor:pointer; }
+  .family-enrichment form { display:flex; flex-wrap:wrap; gap:0.75rem; }
+
   .page {
     max-width: 960px;
     margin: 0 auto;

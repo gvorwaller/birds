@@ -569,7 +569,7 @@
 					<li>
 						<strong>Search anything</strong> — a name ("godwit"), or words
 						from how you'd describe a bird ("granary trees", "probes
-						mudflats"). Name matches always rank first.
+						mudflats"). With Relevance selected, exact species and banding codes rank before names, then prose matches.
 					</li>
 					<li>
 						<strong>Filter by location</strong> — choose a Country and, optionally,
@@ -662,6 +662,11 @@
 						have taxonomy and links but no English Wikipedia article.
 					</li>
 				</ul>
+                <h3>Taxonomy — explore bird relationships</h3>
+                <p>The <a href="/taxonomy">Taxonomy</a> tab explains orders, families, genera, species, and reporting categories. Open an order and a family to see its current species and counts. Family labels on species pages link here; species links return to the detail page, preserving your place in the taxonomy browser.</p>
+                <p>Classification comes from cached eBird taxonomy. Family descriptions are filled automatically in the background from Wikipedia articles matched to scientific family names through Wikidata. AI writes a source-grounded study summary and separately checks its claims against the source. These summaries are not human-reviewed; their source revision and license are linked. Missing sources and pending descriptions are labeled. Admin shows coverage and failures, with family-only pause/resume and retry controls; the main worker pause also applies. Successful descriptions refresh after six months, and changed classifications are rechecked. Failed refreshes keep the previous description. Opening a family does not mark its species Viewed. Your badges remain personal to your account.</p>
+                <p>In Browse species, combine the Bird family filter with location, tags, and search. Choose Relevance, Alphabetical, or Taxonomic order. Results are paginated in groups of 100, with totals and Previous/Next links; all matching species remain reachable. Taxonomic ordering awaits a taxonomy refresh if the metadata has not been loaded.</p>
+                <p>Browse species, Taxonomy, and Viewed species accept exact banding codes, ignoring case (for example, OSPR for Osprey). Source codes may be ambiguous; all matching species remain available. Codes are taken from eBird, never generated from names. This release does not remap sightings or change Seen/Need calculations after taxonomy changes.</p>
 				<h3>Viewed species — your learning history</h3>
 				<p>
 					Opening a species page records it in your account's
@@ -679,9 +684,7 @@
 						visits from before tracking began, while paused, or since cleared.</li>
 					<li>Use <strong>Group by → Bird family</strong> for collapsible classification
 						groups, or <strong>Country</strong> to study birds reported in a place.
-						Families and countries are listed alphabetically; your selected sort
-						applies to the species within each group. Not-yet-viewed species sort
-						alphabetically because they have no recorded viewing dates.</li>
+						Countries remain alphabetical. Choose Taxonomic order to put related species together and order families taxonomically. Otherwise families remain alphabetical. Not-yet-viewed species default to alphabetical sorting.</li>
 					<li>Only countries containing species in your selected study list and search
 						are shown, with distinct species counts before you open them. Country
 						groups load their species when you open them, using the app's historical eBird

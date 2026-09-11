@@ -1,3 +1,4 @@
+import { setFamilyPaused, retryFamilyGaps } from '$server/family-enrichment';
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
@@ -121,6 +122,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
   const now = new Date();
   return {
+    families: liveStatus.families,
     now: liveStatus.now,
     worker: liveStatus.worker,
     workerHistory: historyRes.rows,
@@ -218,6 +220,15 @@ export interface CompareColumn {
 }
 
 export const actions: Actions = {
+  family_enrichment: async ({locals,request}) => {
+    if(locals.user?.role !== 'admin') return fail(403,{kind:'family_enrichment' as const,error:'Admins only.'});
+    const intent=(await request.formData()).get('intent');
+    if(!['pause','resume','retry'].includes(String(intent))) return fail(400,{kind:'family_enrichment' as const,error:'Unknown family action.'});
+    try {
+      if(intent==='retry') await retryFamilyGaps(); else await setFamilyPaused(intent==='pause');
+      return {kind:'family_enrichment' as const,message:intent==='pause'?'Family enrichment will pause after the current call.':intent==='resume'?'Family enrichment resumed.':'Family gaps scheduled for retry.'};
+    } catch { return fail(500,{kind:'family_enrichment' as const,error:'Family control could not be updated. Try again.'}); }
+  },
   set_worker_pause: async ({ locals, request }) => {
     if (locals.user?.role !== "admin")
       return fail(403, { kind: "worker_pause" as const, error: "Admins only." });

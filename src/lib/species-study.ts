@@ -7,6 +7,8 @@ export interface StudySpecies {
   name: string | null;
   scientificName: string | null;
   family: string | null;
+  taxonOrder?: number | null;
+  matchedBandingCode?: string | null;
   current: boolean;
   view: SpeciesView | null;
 }
@@ -30,7 +32,7 @@ export function studyOptions(params: URLSearchParams) {
         ? "family"
         : "none";
   const sort =
-    status === "unviewed" || params.get("sort") === "name" ? "name" : "recent";
+    params.get("sort") === "taxonomic" ? "taxonomic" : status === "unviewed" || params.get("sort") === "name" ? "name" : "recent";
   return {
     status,
     group,
@@ -44,7 +46,7 @@ export function studyHref(options: ReturnType<typeof studyOptions>) {
     "/viewed?" + new URLSearchParams({ status, group, sort, q }).toString()
   );
 }
-export function familyGroups(rows: StudySpecies[]) {
+export function familyGroups(rows: StudySpecies[], taxonomic = false) {
   const groups = new Map<string, StudySpecies[]>();
   for (const row of rows) {
     const name = row.family?.trim() || "Family unavailable";
@@ -53,6 +55,13 @@ export function familyGroups(rows: StudySpecies[]) {
     groups.set(name, members);
   }
   return [...groups]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a, ar], [b, br]) => {
+      if (taxonomic) {
+        const first = (r: StudySpecies[]) => Math.min(...r.map(x => x.taxonOrder ?? Infinity));
+        const diff = first(ar) - first(br);
+        if (diff) return diff;
+      }
+      return a.localeCompare(b);
+    })
     .map(([name, rows]) => ({ name, rows }));
 }

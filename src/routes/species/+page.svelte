@@ -54,6 +54,8 @@
   function toggleHref(tag: string): string {
     const p = new URLSearchParams();
     if (data.q) p.set("q", data.q);
+    if (data.family) p.set("family",data.family);
+    p.set("sort",data.sort);
     if (data.country) p.set("country", data.country);
     if (data.region) p.set("region", data.region);
     const next = selected.has(tag)
@@ -67,6 +69,9 @@
   function detailHref(code: string): string {
     const back = new URLSearchParams();
     if (data.q) back.set("q", data.q);
+    if (data.family) back.set("family",data.family);
+    back.set("sort",data.sort);
+    back.set("page",String(data.page));
     if (data.country) back.set("country", data.country);
     if (data.region) back.set("region", data.region);
     for (const t of data.tags) back.append("tags", t);
@@ -115,6 +120,11 @@
         />
         <button type="submit">Search</button>
       </div>
+      <div class="location-fields">
+        <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" name="family" value={data.family}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
+        <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" name="sort" value={data.sort}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
+      </div>
+      {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
       <div class="location-fields">
         <div class="location-field">
           <label for="guide-country">Country</label>
@@ -238,6 +248,8 @@
       </section>
     {:else}
       <section class="card results">
+        <p>Showing {(data.page-1)*100+1}–{(data.page-1)*100+data.results.length} of {data.total} matching species</p>
+        <nav class="pagination" aria-label="Results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
         {#each data.results as r (r.species_code)}
           <article class="result">
             <a class="row" href={detailHref(r.species_code)}>
@@ -271,6 +283,7 @@
                       label="Need"
                     />{/if}
                 </span>
+                {#if r.matched_banding_code}<span class="muted">Banding code: {r.matched_banding_code}</span>{/if}
                 <span class="muted sci"
                   ><em>{r.sci_name}</em>{#if r.family}
                     · {r.family}{/if}
@@ -322,16 +335,12 @@
           </article>
         {/each}
       </section>
-      {#if data.results.length === 50}
-        <p class="muted trunc">
-          Showing the first 50 matches — narrow the search.
-        </p>
-      {/if}
+      <nav class="pagination" aria-label="More results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
     {/if}
   {:else}
     <section class="card">
       <p class="muted">
-        Choose a location, pick tags above, or type a search — try
+        Choose a family or location, pick tags above, or type a search — try
         <a href="/species?tags=habitat%3Amudflat&tags=tide%3Alow"
           >mudflat birds at low tide</a
         >
@@ -354,6 +363,8 @@
 </div>
 
 <style>
+ .pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin:12px 0; }
+ .pagination a { min-height:48px; display:inline-flex; align-items:center; }
   .history-link { display:inline-flex; align-items:center; min-height:48px; }
   .page {
     max-width: 860px;
@@ -612,10 +623,6 @@
     .chip:hover {
       border-color: var(--accent);
     }
-  }
-  .trunc {
-    text-align: center;
-    margin: 4px 0 16px;
   }
   .attribution {
     text-align: center;

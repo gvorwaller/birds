@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { taxonomyHref } from "$lib/taxonomy";
   import SpeciesViewed from "$components/SpeciesViewed.svelte";
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
@@ -362,7 +363,8 @@
     <p class="sub">
       <em>{data.taxon.sci_name}</em> · eBird code
       <code>{data.taxon.species_code}</code>
-      {#if data.taxon.family}· {data.taxon.family}{/if}
+      {#if data.taxon.family}· {#if data.taxon.family_code}<a class="taxonomy-link" href={taxonomyHref(data.taxon.family_code,data.taxon.species_code)}>{data.taxon.family}</a>{:else}{data.taxon.family}{/if}{/if}
+      {#if data.taxon.order_name}· <a class="taxonomy-link" href={taxonomyHref(null,undefined,data.taxon.order_name)}>{data.taxon.order_name}</a>{/if}
       {#if data.seen?.first_seen}· first seen {new Date(
           data.seen.first_seen,
         ).toLocaleDateString()}{/if}
@@ -1046,6 +1048,7 @@
 </div>
 
 <style>
+  .taxonomy-link { display:inline-flex; align-items:center; min-height:48px; }
   .ribbon-disclosure > summary {
     display: flex;
     align-items: center;

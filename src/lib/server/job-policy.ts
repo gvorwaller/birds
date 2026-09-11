@@ -356,7 +356,8 @@ const TYPE_NAMES: Record<string, string> = {
 	enrich_species: 'Species data',
 	scan_enrichment: 'Enrichment scan (system)',
 	enrich_species_media: 'Species media',
-	enrich_species_inat: 'Species confusion data'
+	enrich_species_inat: 'Species confusion data',
+	enrich_families: 'Family descriptions'
 };
 
 export function displayName(
@@ -373,7 +374,7 @@ export function displayName(
 }
 
 /** Recurring singleton types that sit 'pending' between runs by design. */
-const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts']);
+const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts', 'enrich_families']);
 
 /**
  * A recurring singleton parked until its NEXT scheduled run (td-b7d021,

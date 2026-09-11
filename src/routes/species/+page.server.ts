@@ -1,9 +1,10 @@
+import { taxonomySummary } from '$server/taxonomy-reference';
 import { speciesViewsFor } from "$server/species-views";
 import type { SpeciesView } from "$lib/species-views";
 import type { PageServerLoad } from "./$types";
 import {
   guideCounts,
-  searchEnrichment,
+  searchGuide,
   type GuideResult,
 } from "$server/species-enrichment";
 import { ALL_TAGS } from "$lib/species-tags";
@@ -50,21 +51,32 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const coverage = locationCode
     ? await guideLocationCoverage(locationCode)
     : null;
-  const active = q.length > 0 || tags.length > 0 || !!locationCode;
+  const taxonomy = await taxonomySummary();
+  const family = url.searchParams.get('family') ?? '';
+  if (family && !taxonomy.families.some(f => f.code === family)) error(400, 'Choose a recognized bird family.');
+  const requestedSort = url.searchParams.get('sort');
+  const sort = requestedSort === 'name' || requestedSort === 'taxonomic' ? requestedSort : 'relevance';
+  const rawPage = url.searchParams.get('page') ?? '1';
+  if (!/^[1-9][0-9]*$/.test(rawPage) || !Number.isSafeInteger(Number(rawPage)) || Number(rawPage)>21474836) error(400,'Invalid results page.');
+  const page = Number(rawPage);
+  const active = !!family || q.length > 0 || tags.length > 0 || !!locationCode;
 
   const countsP = guideCounts();
   let results: GuideResult[] = [];
+  let total = 0;
   if (active) {
-    [results] = await Promise.all([
-      searchEnrichment(q, tags, locals.scopeId!, coverage?.locCodes ?? null),
-      countsP,
-    ]);
+    const found = await searchGuide(q, tags, locals.scopeId!, coverage?.locCodes ?? null, {family,sort,page});
+    results = found.rows; total = found.total;
+    if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
+  const pageHref = (n:number) => { const p = new URLSearchParams(url.searchParams); p.set('page',String(n)); return '/species?' + p; };
   let viewed: Record<string, SpeciesView> = {};
   let viewedUnavailable = false;
   try { viewed = await speciesViewsFor(locals.user!.id, results.map(r => r.species_code)); }
   catch { viewedUnavailable = true; }
   return {
+    family, sort, page, total, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
+    previous: page>1 ? pageHref(page-1) : null, next: page*100<total ? pageHref(page+1) : null,
     viewed,
     viewedUnavailable,
     q,

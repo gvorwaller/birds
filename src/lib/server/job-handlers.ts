@@ -1,3 +1,5 @@
+import { runFamilyEnrichment, ensureFamilyEnrichment } from './family-enrichment';
+import { taxonomySummary } from '$server/taxonomy-reference';
 /**
  * Worker-side job execution. One handler per job type; every handler performs
  * its own terminal transition (complete/retry/fail/cancel/requeue) using the
@@ -2335,6 +2337,7 @@ async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<vo
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
 		switch (job.type) {
+			case 'enrich_families': await runFamilyEnrichment(job,ctx); return;
 			case 'load_hotspots':
 			case 'load_region':
 			case 'refresh_loc':
@@ -2451,7 +2454,9 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 					}
 					const taxa = await syncTaxonomy(apiKey);
 					const rematch = await rematchPhotoLinks();
-					return { taxa, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched };
+					const metadata = await taxonomySummary();
+					await ensureFamilyEnrichment(true);
+                    return { taxa, metadata: { species: metadata.total, classified: metadata.total-metadata.missing, ordered: metadata.ordered, withBandingCodes: metadata.banding }, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched };
 				});
 				return;
 			}

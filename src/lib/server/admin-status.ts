@@ -1,3 +1,4 @@
+import { familyEnrichmentStatus } from "./family-enrichment";
 import { listJobs, workerHealth } from "$server/jobs";
 import {
   displayName,
@@ -41,6 +42,7 @@ export interface AdminWorker {
 }
 
 export interface AdminLiveStatus {
+  families: Awaited<ReturnType<typeof familyEnrichmentStatus>>;
   now: string;
   worker: AdminWorker;
   jobs: AdminJob[];
@@ -76,9 +78,14 @@ export function decorateAdminJob(job: JobRow, now: Date): AdminJob {
 /** Lightweight Admin data used by the active-job poll and the full page load. */
 export async function adminLiveStatus(): Promise<AdminLiveStatus> {
   const now = new Date();
-  const [worker, jobs] = await Promise.all([workerHealth(), listJobs(50)]);
+  const [worker, jobs, families] = await Promise.all([
+    workerHealth(),
+    listJobs(50),
+    familyEnrichmentStatus(),
+  ]);
 
   return {
+    families,
     now: now.toISOString(),
     worker: {
       alive: worker.alive,

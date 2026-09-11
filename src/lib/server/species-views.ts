@@ -97,11 +97,13 @@ export interface ViewedSpecies extends SpeciesView {
   scientificName: string | null;
   current: boolean;
   family: string | null;
+  taxonOrder?: number | null;
+  matchedBandingCode?: string | null;
 }
 export async function viewedSpecies(
   userId: number,
   search: string,
-  alphabetical: boolean,
+  alphabetical: boolean | "taxonomic",
 ) {
   const user = await query<{ record_species_views: boolean }>(
     "SELECT record_species_views FROM users WHERE id=$1",
@@ -118,13 +120,16 @@ export async function viewedSpecies(
       sci_name: string | null;
       current: boolean;
       family: string | null;
+      taxon_order: number | null;
+      matched_banding_code: string | null;
     }
   >(
-    `SELECT h.species_code,h.first_viewed_at,h.last_viewed_at,t.com_name,t.sci_name,t.family,
+    `SELECT h.species_code,h.first_viewed_at,h.last_viewed_at,t.com_name,t.sci_name,t.family,t.taxon_order::float8 AS taxon_order,
+ CASE WHEN t.banding_codes @> ARRAY[upper($2)] THEN upper($2) END AS matched_banding_code,
             COALESCE(t.category='species',false) AS current
        FROM species_view_history h LEFT JOIN taxonomy_cache t USING(species_code)
-      WHERE h.user_id=$1 AND ($2='' OR h.species_code ILIKE $3 OR t.com_name ILIKE $3 OR t.sci_name ILIKE $3)
-      ORDER BY ${alphabetical ? "COALESCE(t.com_name,h.species_code),h.species_code" : "h.last_viewed_at DESC,h.species_code"}`,
+      WHERE h.user_id=$1 AND ($2='' OR h.species_code ILIKE $3 OR t.com_name ILIKE $3 OR t.sci_name ILIKE $3 OR t.banding_codes @> ARRAY[upper($2)])
+      ORDER BY ${alphabetical === "taxonomic" ? "t.taxon_order NULLS LAST,COALESCE(t.com_name,h.species_code),h.species_code" : alphabetical ? "COALESCE(t.com_name,h.species_code),h.species_code" : "h.last_viewed_at DESC,h.species_code"}`,
     [userId, search, `%${escaped}%`],
   );
   return {
@@ -135,6 +140,8 @@ export async function viewedSpecies(
       scientificName: r.sci_name,
       current: r.current,
       family: r.family,
+      taxonOrder: r.taxon_order,
+      matchedBandingCode: r.matched_banding_code,
       ...toView(r),
     })),
   };

@@ -12,8 +12,8 @@ export async function studySpecies(
   userId: number,
   search: string,
   status: StudyStatus,
-  alphabetical: boolean,
-) {
+  alphabetical: boolean | "taxonomic",
+): Promise<{enabled:boolean;rows:StudySpecies[]}> {
   if (status === "viewed") {
     const result = await viewedSpecies(userId, search, alphabetical);
     return {
@@ -25,6 +25,8 @@ export async function studySpecies(
             name: row.name,
             scientificName: row.scientificName,
             family: row.family,
+            taxonOrder: row.taxonOrder,
+            matchedBandingCode: row.matchedBandingCode,
             current: row.current,
             view: {
               firstViewedAt: row.firstViewedAt,
@@ -45,12 +47,15 @@ export async function studySpecies(
     com_name: string;
     sci_name: string;
     family: string | null;
+    taxon_order: number | null;
+    matched_banding_code: string | null;
   }>(
-    `SELECT t.species_code,t.com_name,t.sci_name,t.family FROM taxonomy_cache t
+    `SELECT t.species_code,t.com_name,t.sci_name,t.family,t.taxon_order::float8 AS taxon_order,
+ CASE WHEN t.banding_codes @> ARRAY[upper($2)] THEN upper($2) END AS matched_banding_code FROM taxonomy_cache t
      WHERE t.category='species'
        AND NOT EXISTS (SELECT 1 FROM species_view_history h WHERE h.user_id=$1 AND h.species_code=t.species_code)
-       AND ($2='' OR t.species_code ILIKE $3 OR t.com_name ILIKE $3 OR t.sci_name ILIKE $3)
-     ORDER BY t.com_name,t.species_code`,
+       AND ($2='' OR t.species_code ILIKE $3 OR t.com_name ILIKE $3 OR t.sci_name ILIKE $3 OR t.banding_codes @> ARRAY[upper($2)])
+     ORDER BY ${alphabetical === "taxonomic" ? "t.taxon_order NULLS LAST," : ""}t.com_name,t.species_code`,
     [userId, search, `%${escaped}%`],
   );
   return {
@@ -62,6 +67,8 @@ export async function studySpecies(
           name: row.com_name,
           scientificName: row.sci_name,
           family: row.family,
+          taxonOrder: row.taxon_order,
+          matchedBandingCode: row.matched_banding_code,
           current: true,
           view: null,
         }) satisfies StudySpecies,
@@ -126,7 +133,7 @@ export async function studyCountrySpecies(
   userId: number,
   search: string,
   status: StudyStatus,
-  alphabetical: boolean,
+  alphabetical: boolean | "taxonomic",
   country: string,
 ) {
   const [result, membership] = await Promise.all([

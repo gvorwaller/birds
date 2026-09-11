@@ -24,12 +24,15 @@ vi.mock("$lib/db", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
+  familyPause: vi.fn(),
+  familyRetry: vi.fn(),
   nudgeEnrichmentScan: vi.fn(),
   setWorkerPauseRequested: vi.fn(),
   generateSpeciesAnnotation: vi.fn(),
   aiStageInputFor: vi.fn(),
   similarCandidatesFor: vi.fn(),
 }));
+vi.mock("$server/family-enrichment",()=>({setFamilyPaused:mocks.familyPause,retryFamilyGaps:mocks.familyRetry}));
 vi.mock("$server/job-handlers", () => ({ nudgeEnrichmentScan: mocks.nudgeEnrichmentScan }));
 vi.mock("$server/jobs", () => ({ setWorkerPauseRequested: mocks.setWorkerPauseRequested }));
 vi.mock("$server/admin-status", () => ({ adminLiveStatus: vi.fn() }));
@@ -442,4 +445,21 @@ describe("run_compare", () => {
     expect(done.ok).toBe(true);
     expect(mocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1); // the 409 spent nothing
   });
+});
+
+describe('family enrichment controls',()=>{
+ it('rejects non-admin controls without mutations',async()=>{
+  mocks.familyPause.mockClear();mocks.familyRetry.mockClear();
+  for(const intent of ['pause','resume','retry']) {
+   const r=await actions.family_enrichment!({...VIEWER,request:req({intent})} as never);
+   expect(r).toMatchObject({status:403});
+  }
+  expect(mocks.familyPause).not.toHaveBeenCalled();expect(mocks.familyRetry).not.toHaveBeenCalled();
+ });
+ it('allows admin pause, resume and gap retry, rejects unknown intent',async()=>{
+  await actions.family_enrichment!({...ADMIN,request:req({intent:'pause'})} as never);expect(mocks.familyPause).toHaveBeenLastCalledWith(true);
+  await actions.family_enrichment!({...ADMIN,request:req({intent:'resume'})} as never);expect(mocks.familyPause).toHaveBeenLastCalledWith(false);
+  await actions.family_enrichment!({...ADMIN,request:req({intent:'retry'})} as never);expect(mocks.familyRetry).toHaveBeenCalled();
+  expect(await actions.family_enrichment!({...ADMIN,request:req({intent:'invalid'})} as never)).toMatchObject({status:400});
+ });
 });

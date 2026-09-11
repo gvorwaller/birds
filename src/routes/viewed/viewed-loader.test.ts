@@ -1,3 +1,4 @@
+vi.mock('$server/taxonomy-reference',()=>({taxonomySummary:vi.fn(async()=>({ordered:1}))}));
 import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("$server/species-study", () => ({
   studySpecies: vi.fn(),

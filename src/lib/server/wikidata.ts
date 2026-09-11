@@ -380,3 +380,16 @@ export function parseSparqlBindings(
 	}
 	return out;
 }
+
+/** Exact scientific name AND family rank; ambiguous identities are not guessed. */
+export async function fetchWikidataFamily(scientificName: string, opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}) {
+ if (!/^[A-Za-z][A-Za-z .-]{2,60}$/.test(scientificName)) throw new Error('Invalid family scientific name');
+ const rows = await runSparql(`SELECT DISTINCT ?item ?article WHERE {
+ ?item wdt:P225 "${scientificName}"; wdt:P105 wd:Q35409.
+ OPTIONAL { ?article schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }
+ }`, opts);
+ const ids = [...new Set(rows.map(r => r.item?.value).filter(Boolean))];
+ if (ids.length !== 1) return null;
+ const titles = [...new Set(rows.map(r => titleFromArticleUrl(r.article?.value ?? null)).filter((v): v is string => !!v))];
+ return { qid: ids[0]!.split('/').pop()!, title: titles.length === 1 ? titles[0] : null };
+}
