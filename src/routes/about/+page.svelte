@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Strongest region this month</strong> — the seasonal chart now names the region with the highest reporting rate for your selected month, among the available regions with 40 or more checklists. Tap it to chart the region’s year. When the search is limited to 40 regions, the readout says so.</li>
 							<li><strong>Special interest species</strong> — save birds you want to find, photograph or revisit. Your personal collection follows your account across devices, supports search and removal, and can filter Field Guide results. It stays separate from your life list and viewing history.</li>
 							<li><strong>Family description gaps</strong> — improved scientific-name and redirect matching, scoped species/genus sources for sparse family pages, complete source attribution, and retries for selected gaps that preserve current descriptions.</li>
 							<li><strong>Taxonomy for study</strong> — explore orders, families, and species in a new Field Guide tab, with two-way species links and personal Viewed badges. Filter by family, search banding codes, and choose taxonomic sorting. Browse species now shows result totals and pages of 100 so every match stays reachable. Family descriptions now populate automatically from Animal Diversity Web or matched Wikipedia sources, with Sonnet 5 drafting and checking, reliable passage-based evidence, source-specific attribution, automatic retries and refreshes, and separate Admin model and pause/resume controls.</li>

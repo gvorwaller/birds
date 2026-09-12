@@ -1,6 +1,22 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 3.7 (2026-09-04). Rev 3.7: the phone sticky offset names `--bottomnav-h`, not `--nav-h`. Rev 3.6: the phone readout sticks to the viewport bottom (CC1 Safari drive P2, in the Rev 3.4 ledger). Rev 3.5: two re-check P2s (unseed lock, phone hint copy) in the Rev 3.4 ledger. Rev 3.4: CODEX1's TD-C gate (REJECT at 5fbc0d7)
+**Status:** BUILD SPEC rev 4 (2026-09-12). Rev 4 adds the strongest-region readout for `td-7d86c7`; earlier revision notes below are historical and do not override subsequently accepted UI changes.
+
+## Rev 4 — strongest region for the selected month
+
+Execution queue: epic `td-81a92d`, within `td-1775b4`: strongest region (`td-7d86c7`), checklist counts (`td-e7a96d`), relative colour (`td-b92412`), then migration estimate comment (`td-4b5248`). This revision implements only the first item. Preserve the collapsed chart, neutral small-sample dashes, continent checkbox selector, empirical summaries, and removal of the player.
+
+- Add a fourth readout line from the successful drill response for the current species, latitude band and continent. Select the highest `curve[month - 1].freq` among fetched rows with that month's `n >= 40`. Annual peak must not choose the winner; equal rates use ascending region code for a stable result. Preserve a qualifying 0% as a reported zero.
+- If no row qualifies, say **Strongest: none with 40+ checklists**. This describes sample availability; leave the aggregate cell's zero/thin/unknown readout unchanged.
+- The existing endpoint returns up to 40 regions ordered by annual peak. When capped, label the line **Strongest of 40 shown** (including the none case). How-it-works and Help explain that a region outside this set may be stronger in the selected month.
+- Hide the line while loading or on error. Guard the displayed response by species/band/continent identity as well as loading state, including before the fetch effect runs. Month changes recompute locally; cache hits and late requests retain the existing generation protection.
+- Use a native button with a >=48px target and visible keyboard focus. Reuse the drill-row chart callback, selected-row feedback, and Best time of year scrolling. Expand the initial eight rows if the selected region would otherwise be hidden.
+- Update the mockup oracle, Help and About. Pin month-vs-peak selection, 39/40 threshold, no eligible rows, valid zero, stable ties and non-mutation. Run focused ribbon tests, check/build, and WebKit at phone and desktop widths, including chart action and loading/error behavior.
+- No new database fields or endpoint changes. Validation evidence belongs on the task and in the devlog; commit/deploy are separate owner actions.
+
+## Historical revision notes
+
+Rev 3.7 (2026-09-04): Rev 3.7: the phone sticky offset names `--bottomnav-h`, not `--nav-h`. Rev 3.6: the phone readout sticks to the viewport bottom (CC1 Safari drive P2, in the Rev 3.4 ledger). Rev 3.5: two re-check P2s (unseed lock, phone hint copy) in the Rev 3.4 ledger. Rev 3.4: CODEX1's TD-C gate (REJECT at 5fbc0d7)
 found the mockup oracle itself never carried the owner's P1-7 phone rule (rows own the
 band, the scrubber owns the month, 48px rows in every phone view) and ordered the
 readout's small-sample line before the zero line; oracle corrected, contract restated
@@ -15,7 +31,7 @@ was NOT READY, 7 P1 + 12 P2 + 3 P3; every checkable finding was verified by CC1
 against the seed, the code and the test file before folding (all CONFIRMED).
 The two owner decisions CODEX1 flagged were made 2026-09-03 and match the
 defaults written here (obey cs.md; thin countries excluded and the cell hatched).
-Nothing in `src/` has changed.
+That statement described the original planning stage; implementation has since landed.
 
 ## Rev 3.4 changes (2026-09-03, CODEX1 deploy gate on TD-C: REJECT, all verified)
 

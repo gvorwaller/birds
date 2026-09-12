@@ -44,12 +44,14 @@ import {
 	reduce,
 	resolveDrillLoad,
 	scopeText,
+	strongestRegion,
 	selectedContinentIds,
 	setMonth,
 	transitionToContinentView,
 	type RibbonCellClient,
 	type RibbonGridClient,
 	type RibbonRegionsClient,
+	type RibbonRegionRowClient,
 	type RibbonState
 } from './migration-ribbon';
 
@@ -1621,3 +1623,48 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 	});
 });
 
+
+
+describe('strongest region for the selected month', () => {
+	function row(locCode: string, january: number, february: number, n = 40): RibbonRegionRowClient {
+		return {
+			locCode, label: locCode, country: 'US', column: 'NAE', band: 40,
+			curve: Array.from({ length: 12 }, (_, i) => ({ month: i + 1, freq: i === 0 ? january : february, n })),
+			weeks: [], peak: Math.max(january, february), best: null, peakPhrase: null, good: [], migration: null
+		};
+	}
+
+	it('ranks by the selected month rather than annual peak, without sorting the drill list', () => {
+		const annualPeak = row('US-A', 0.9, 0.01);
+		const february = row('US-B', 0.1, 0.4);
+		const rows = Object.freeze([annualPeak, february]);
+		expect(strongestRegion(rows, 1)).toBe(annualPeak);
+		expect(strongestRegion(rows, 2)).toBe(february);
+		expect(rows).toEqual([annualPeak, february]);
+	});
+
+	it('uses the selected month sample count and includes exactly 40 checklists', () => {
+		const thin = row('US-A', 0.9, 0.9, 39);
+		thin.curve[0].n = 100;
+		const eligible = row('US-B', 0.1, 0.1, 40);
+		expect(strongestRegion([thin, eligible], 1)).toBe(thin);
+		expect(strongestRegion([thin, eligible], 2)).toBe(eligible);
+	});
+
+	it('returns none for empty, unsurveyed or only thin samples', () => {
+		expect(strongestRegion([], 2)).toBeNull();
+		expect(strongestRegion([row('US-A', 0.9, 0.9, 39), row('US-B', 0, 0, 0)], 2)).toBeNull();
+	});
+
+	it('keeps a well-sampled zero eligible', () => {
+		const zero = row('US-A', 0, 0);
+		expect(strongestRegion([zero, row('US-B', 0.9, 0.9, 39)], 2)).toBe(zero);
+	});
+
+	it('breaks equal-rate ties by region code regardless of response order', () => {
+		const a = row('US-A', 0.2, 0.2);
+		const b = row('US-B', 0.2, 0.2);
+		expect(strongestRegion([b, a], 2)).toBe(a);
+		expect(strongestRegion([a, b], 2)).toBe(a);
+	});
+});

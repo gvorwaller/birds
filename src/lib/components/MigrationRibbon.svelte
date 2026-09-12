@@ -51,6 +51,7 @@
 		readout,
 		reduce,
 		scopeText,
+		strongestRegion,
 		setMonth,
 		transitionToContinentView,
 		boundedCacheSet,
@@ -474,6 +475,16 @@
 	let drillLoading = $state(false);
 	let drillNote = $state('');
 	let selectedRegionCode = $state<string | null>(null);
+	const drillIdentity = $derived(
+		`${speciesCode}|${drillCacheKey(ribbonState.band, ribbonState.cont ?? 'ALL')}`
+	);
+	let loadedDrillIdentity = $state<string | null>(null);
+	// Identity guards the render before the fetch effect has set its loading flag.
+	const strongestReady = $derived(
+		loadedDrillIdentity === drillIdentity && !drillLoading && !drillError
+	);
+	const strongest = $derived(strongestReady ? strongestRegion(drillRows, ribbonState.month) : null);
+	const strongestLabel = $derived(drillCapped ? `Strongest of ${drillRows.length} shown` : 'Strongest');
 
 	$effect(() => {
 		void speciesCode;
@@ -484,6 +495,8 @@
 		const species = speciesCode;
 		const band = ribbonState.band;
 		const cont = ribbonState.cont ?? 'ALL';
+		const identity = drillIdentity;
+		loadedDrillIdentity = null;
 		// The drill identity changed: whatever was charted from a PREVIOUS
 		// cell's rows no longer applies here (CODEX1 P2-3) — "Now charting…"
 		// and the highlighted row must not survive a band/continent/species
@@ -504,6 +517,7 @@
 			drillCapped = begin.regions.capped;
 			drillError = null;
 			drillLoading = false;
+			loadedDrillIdentity = identity;
 			return;
 		}
 		const gen = begin.gen;
@@ -537,12 +551,14 @@
 			drillRows = result.regions.rows;
 			drillTotal = result.regions.total;
 			drillCapped = result.regions.capped;
+			loadedDrillIdentity = identity;
 		})();
 		return () => controller.abort();
 	});
 
 	function onDrillRowClick(row: RibbonRegionRowClient) {
 		selectedRegionCode = row.locCode;
+		if (drillRows.indexOf(row) >= 8) ribbonState.drillExpanded = true;
 		drillNote = `Now charting ${row.label} below`;
 		onchartregion(row);
 	}
@@ -608,6 +624,21 @@
 		<span class="r2">{currentReadout.line2}</span>
 		{#if currentReadout.line3}
 			<span class="r3" title={currentReadout.title3}>{currentReadout.line3}</span>
+		{/if}
+		{#if strongestReady}
+			{#if strongest}
+				{@const region = strongest}
+				<button
+					type="button"
+					class="strongest"
+					onclick={() => onDrillRowClick(region)}
+					title="Chart this region in Best time of year"
+				>
+					{strongestLabel}: {region.label} · {pct(region.curve[ribbonState.month - 1].freq)} in {MSHORT[ribbonState.month - 1]}
+				</button>
+			{:else}
+				<span class="r3 strongest-none">{strongestLabel}: none with {LOW_N}+ checklists</span>
+			{/if}
 		{/if}
 	</div>
 	<span class="sr-only" aria-live="polite">{srAnnounce}</span>
@@ -968,6 +999,11 @@
 		<details class="how" open={wide}>
 			<summary>How these numbers are calculated</summary>
 			<p class="peer-scope" id="rbscope">{currentScope}</p>
+			<p class="peer-scope">Strongest names the region with the highest reporting rate for the
+				selected month, among regions with at least {LOW_N} checklists that month. Tap it to
+				chart the region's year. The search uses up to 40 regions, chosen by their highest
+				monthly rate across the year; when capped, a region outside those 40 may be stronger
+				in the selected month. Equal rates are resolved by region code.</p>
 			{#if grid.meta.unmappedCountries.length > 0}
 				<p class="muted">
 					Data omitted for {grid.meta.unmappedCountries.length} countries not yet assigned to a
@@ -1164,6 +1200,23 @@
 		display: block;
 		color: var(--muted);
 		font-size: 0.85rem;
+	}
+	.strongest {
+		min-height: 48px;
+		min-width: 48px;
+		padding: 6px 0;
+		border: 0;
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		text-align: left;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+	.strongest:focus-visible {
+		outline: 2px solid var(--text);
+		outline-offset: 2px;
 	}
 	.sr-only {
 		position: absolute;

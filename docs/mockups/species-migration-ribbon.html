@@ -171,7 +171,10 @@
     .rlayout > .readout { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--nav-h) + 12px); align-self: start; }
     .rlayout > .legend  { grid-column: 2; grid-row: 2; align-self: start; }
   }
-</style>
+
+    .readout .strongest { min-height:48px; min-width:48px; padding:6px 0; border:0; background:transparent; color:var(--text); font:inherit; text-align:left; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+    .readout .strongest:focus-visible { outline:2px solid var(--text); outline-offset:2px; }
+  </style>
 </head>
 <body>
 
@@ -627,6 +630,13 @@
   }
 
   // ---------- readout ----------
+  function drillRegions() {
+    return regions
+      .filter((r) => r.band === state.band && (!state.cont || r.cont === state.cont))
+      .filter((r) => r.cells.some((c) => c.n > 0))
+      .slice().sort((a, b) => Math.max(...b.cells.map((c) => c.f)) - Math.max(...a.cells.map((c) => c.f)) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  }
+
   function renderReadout() {
     const el = document.getElementById('readout');
     if (state.band === null || !state.month) { el.innerHTML = '<span class="idle">Tap a cell, or use ← → ↑ ↓ with the chart focused.</span>'; return; }
@@ -660,7 +670,14 @@
       line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
     }
     if (c.heldBack) line3 += ` <span class="r3" style="color:#58151c">${c.heldBack} preview region${c.heldBack === 1 ? '' : 's'} not counted</span>`;
-    el.innerHTML = line1 + line2 + line3;
+    const rs = drillRegions();
+    const strongest = rs.slice(0, 40).filter((r) => !r.preview && r.cells[state.month - 1].n >= LOW_N)
+      .sort((a, b) => b.cells[state.month - 1].f - a.cells[state.month - 1].f || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))[0];
+    const strongestLabel = rs.length > 40 ? 'Strongest of 40 shown' : 'Strongest';
+    const line4 = c.preview ? '' : strongest
+      ? `<button type="button" class="strongest" data-region="${esc(strongest.code)}" title="Chart this region in Best time of year">${strongestLabel}: ${esc(strongest.name)}, ${esc(COUNTRY[strongest.country] || strongest.country)} · ${pct(strongest.cells[state.month - 1].f)} in ${MSHORT[state.month - 1]}</button>`
+      : `<span class="r3">${strongestLabel}: none with 40+ checklists</span>`;
+    el.innerHTML = line1 + line2 + line3 + line4;
     const jump = document.getElementById('toDrill');
     if (jump) { jump.hidden = c.empty || nreg === 0; jump.textContent = `See the ${nreg} region${nreg === 1 ? '' : 's'} behind this ↓`; }
   }
@@ -681,6 +698,7 @@
     document.getElementById('scope').textContent =
       `Loaded: ${real.length} regions in ${countries.length} countries across ${conts.length} continents (${conts.map((c) => c[1]).join(', ')}). ` +
       (missing.length ? `Nothing loaded yet for ${missing.join(' or ')}, so those columns read "no data", not "absent". ` : '') +
+      'Strongest selects the highest rate in the selected month among regions with 40+ checklists that month. It searches up to 40 regions chosen by annual peak; another region outside those 40 may be stronger this month. Equal rates use region code. Tap it to chart the region’s year. ' +
       'North America is drawn as two columns, west and east of 100°W, because one column blurred the Atlantic coast with the empty interior. ' +
       'Each region counts in the band of its centre point, so a very tall region sits in one band only — Nunavut spans 32 degrees of latitude. ' +
       'Colour follows how often birders report a species, which also rises and falls with how easy it is to see and hear, so a band can dim without the bird going anywhere. ' +
@@ -723,16 +741,13 @@
   function renderDrill() {
     const el = document.getElementById('drill');
     if (state.band === null) { el.innerHTML = ''; return; }
-    let rs = regions
-      .filter((r) => r.band === state.band && (!state.cont || r.cont === state.cont))
-      .filter((r) => r.cells.some((c) => c.n > 0)); // a slashed cell must not list rows
+    const rs = drillRegions(); // a slashed cell must not list rows
     const where = bandLabel(state.band) + (state.cont ? ', ' + CONT_NAME[state.cont] : '');
     if (!rs.length) {
       el.innerHTML = `<h3>Inside ${esc(where)}</h3><p class="dsub">No regions loaded in this band${state.cont ? ' for ' + esc(CONT_NAME[state.cont]) : ''} yet. ${state.view === 'world' ? '' : 'Loading this continent would fill it in.'}</p>`;
       return;
     }
     const peakOf = (r) => Math.max(...r.cells.map((c) => c.f));
-    rs = rs.slice().sort((a, b) => peakOf(b) - peakOf(a));
     const capped = rs.slice(0, 40);
     const shown = state.drillExpanded ? capped : capped.slice(0, 8);
     const W = 240, cw = W / 12;
@@ -921,14 +936,20 @@
     if (e.target.closest && e.target.closest('#drillMore')) { state.drillExpanded = true; render(); return; }
     const b = e.target.closest && e.target.closest('[data-region]');
     if (!b) return;
-    state.region = b.dataset.region;
-    // The destination card can be 2,000px away (CODEX1 P2-4): say what happened
-    // and go there.
+    chartRegion(b.dataset.region);
+  });
+  document.getElementById('readout').addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-region]');
+    if (b) chartRegion(b.dataset.region);
+  });
+  function chartRegion(code) {
+    state.region = code;
+    if (drillRegions().slice(0, 40).findIndex((r) => r.code === code) >= 8) state.drillExpanded = true;
     const r = regionByCode(state.region);
     state.drillNote = r ? `Now charting ${r.name} below` : '';
     render();
     document.getElementById('besth').scrollIntoView({ block: 'start', behavior: REDUCED ? 'auto' : 'smooth' });
-  });
+  }
   document.getElementById('toDrill').addEventListener('click', () => {
     if (!state.drillOpen) { state.drillOpen = true; render(); }
     document.getElementById('drill').scrollIntoView({ block: 'start', behavior: REDUCED ? 'auto' : 'smooth' });

@@ -749,6 +749,14 @@
 						in <strong>Best time of year</strong> below.
 					</li>
 					<li>
+						<strong>Find the strongest region this month.</strong> The readout names the
+						region with the highest reporting rate among those with at least 40 checklists
+						in the selected month. Tap that line to chart its year. This searches the same
+						up to 40 regions as the list, chosen by annual peak; another region outside
+						those 40 may be stronger this month. “None with 40+ checklists” means the
+						available regions lack enough checklists, not that the bird is absent.
+					</li>
+					<li>
 						<strong>Choose how reports are averaged.</strong> <strong>Equal weight</strong>
 						gives each country equal weight within its continent, then each
 						continent equal weight in World. Regions within a country are still

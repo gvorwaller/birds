@@ -702,6 +702,28 @@ export interface RibbonRegionsClient {
 	capped: boolean;
 }
 
+/** Highest selected-month rate among the fetched regions with enough checklists.
+ * Annual peak only determines which rows the server returns, never this ranking.
+ * A reported zero is eligible; missing and thin samples are not. */
+export function strongestRegion(
+	rows: readonly RibbonRegionRowClient[],
+	month: number
+): RibbonRegionRowClient | null {
+	let best: RibbonRegionRowClient | null = null;
+	for (const row of rows) {
+		const stat = row.curve[month - 1];
+		if (!stat || stat.n < LOW_N) continue;
+		if (
+			!best ||
+			stat.freq > best.curve[month - 1].freq ||
+			(stat.freq === best.curve[month - 1].freq && row.locCode < best.locCode)
+		) {
+			best = row;
+		}
+	}
+	return best;
+}
+
 // ---------------------------------------------------------------------------
 // View state
 // ---------------------------------------------------------------------------
