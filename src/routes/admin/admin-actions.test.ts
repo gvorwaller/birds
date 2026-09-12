@@ -32,7 +32,7 @@ const mocks = vi.hoisted(() => ({
   aiStageInputFor: vi.fn(),
   similarCandidatesFor: vi.fn(),
 }));
-vi.mock("$server/family-enrichment",()=>({setFamilyPaused:mocks.familyPause,retryFamilyGaps:mocks.familyRetry}));
+vi.mock("$server/family-enrichment",()=>({setFamilyPaused:mocks.familyPause,retryFamilyGaps:mocks.familyRetry,FamilyRetrySelectionError:class extends Error {}}));
 vi.mock("$server/job-handlers", () => ({ nudgeEnrichmentScan: mocks.nudgeEnrichmentScan }));
 vi.mock("$server/jobs", () => ({ setWorkerPauseRequested: mocks.setWorkerPauseRequested }));
 vi.mock("$server/admin-status", () => ({ adminLiveStatus: vi.fn() }));
@@ -471,3 +471,10 @@ it("persists family model separately from species enrichment", async () => {
  expect(result.message).toContain("Family descriptions");
  expect(dbCalls.find(c=>c.text.includes("ON CONFLICT (key) DO UPDATE"))?.params[0]).toBe("ai.model.family-enrichment");
 });
+
+ it("passes an explicit family selection to retry and reports the actual count",async()=>{
+ mocks.familyRetry.mockResolvedValueOnce(['ansera1']);
+ const result=await actions.family_enrichment!({...ADMIN,request:req({intent:'retry_selected',family_code:'ansera1'})} as never);
+ expect(mocks.familyRetry).toHaveBeenCalledWith(['ansera1']);
+ expect(result).toMatchObject({message:'1 family gaps scheduled for retry. Current descriptions were preserved.'});
+ });

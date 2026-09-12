@@ -278,7 +278,14 @@
       {#if form?.kind === 'family_enrichment'}<p role="status">{'error' in form ? form.error : form.message}</p>{/if}
       {#if liveFamilies.issues.length}
         <details><summary>Families needing attention ({liveFamilies.issues.length})</summary>
-          {#each liveFamilies.issues as issue}<p><a href={'/taxonomy?family='+encodeURIComponent(issue.code)}>{issue.name}</a>: {issue.error} · Next retry {issue.nextAttempt ? new Date(issue.nextAttempt).toLocaleString() : 'pending'}</p>{/each}
+          <form method="POST" action="?/family_enrichment" use:enhance>
+            {#each liveFamilies.issues as issue}
+              <div class="family-issue"><label><input type="checkbox" name="family_code" value={issue.code} /> Select {issue.name}</label>
+                <p><a href={'/taxonomy?family='+encodeURIComponent(issue.code)}>{issue.name}</a>: {issue.error} · Next retry {issue.nextAttempt ? new Date(issue.nextAttempt).toLocaleString() : 'pending'}</p>
+              </div>
+            {/each}
+            <button name="intent" value="retry_selected">Retry selected family gaps</button>
+          </form>
         </details>
       {/if}
     </section>
@@ -839,6 +846,8 @@
 {/if}
 
 <style>
+  .family-issue label { display: flex; align-items: center; gap: 0.75rem; min-height: 48px; font-size: 1rem; cursor: pointer; }
+  .family-issue input { width: 24px; height: 24px; }
   .family-enrichment { padding: 1rem; margin-block: 1rem; background:var(--card); border:1px solid var(--border); border-radius:8px; }
   .family-enrichment h2 { font-size:1.1rem; margin:0 0 0.75rem; }
   .family-enrichment p { margin:0.7rem 0; line-height:1.5; }

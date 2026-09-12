@@ -63,8 +63,10 @@
           <h3>{paragraph.topic}</h3><p>{paragraph.text}</p>
         {/each}
         <p class="muted">AI summary, automatically checked against the source; not human-reviewed.
-          Adapted from <a href={note.source.url} target="_blank" rel="noopener">{note.source.attribution}: {note.source.title}</a>,
-          <a href={note.source.licenseUrl} target="_blank" rel="noopener">{note.source.license}</a>.
+          {#each note.sources as source}
+            Adapted from <a href={source.url} target="_blank" rel="noopener">{source.attribution}: {source.title}</a>,
+            <a href={source.licenseUrl} target="_blank" rel="noopener">{source.license}</a>.
+          {/each}
           Generated {note.generatedAt ? new Date(note.generatedAt).toLocaleDateString() : ''}.
         </p>
         {#if note.stale}<p class="muted">Showing the previous description while an updated version is pending.</p>{/if}

@@ -1,4 +1,4 @@
-import { setFamilyPaused, retryFamilyGaps } from '$server/family-enrichment';
+import { setFamilyPaused, retryFamilyGaps, FamilyRetrySelectionError } from '$server/family-enrichment';
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
@@ -227,12 +227,17 @@ export interface CompareColumn {
 export const actions: Actions = {
   family_enrichment: async ({locals,request}) => {
     if(locals.user?.role !== 'admin') return fail(403,{kind:'family_enrichment' as const,error:'Admins only.'});
-    const intent=(await request.formData()).get('intent');
-    if(!['pause','resume','retry'].includes(String(intent))) return fail(400,{kind:'family_enrichment' as const,error:'Unknown family action.'});
+    const familyForm=await request.formData();
+    const intent=familyForm.get('intent');
+    if(!['pause','resume','retry','retry_selected'].includes(String(intent))) return fail(400,{kind:'family_enrichment' as const,error:'Unknown family action.'});
     try {
+      if(intent==='retry_selected') {
+        const selected=await retryFamilyGaps(familyForm.getAll('family_code').map(String));
+        return {kind:'family_enrichment' as const,message:`${selected.length} family gaps scheduled for retry. Current descriptions were preserved.`};
+      }
       if(intent==='retry') await retryFamilyGaps(); else await setFamilyPaused(intent==='pause');
       return {kind:'family_enrichment' as const,message:intent==='pause'?'Family enrichment will pause after the current call.':intent==='resume'?'Family enrichment resumed.':'Family gaps scheduled for retry.'};
-    } catch { return fail(500,{kind:'family_enrichment' as const,error:'Family control could not be updated. Try again.'}); }
+    } catch (error) { if(error instanceof FamilyRetrySelectionError) return fail(400,{kind:'family_enrichment' as const,error:error.message}); return fail(500,{kind:'family_enrichment' as const,error:'Family control could not be updated. Try again.'}); }
   },
   set_worker_pause: async ({ locals, request }) => {
     if (locals.user?.role !== "admin")

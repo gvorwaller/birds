@@ -382,6 +382,16 @@ export function parseSparqlBindings(
 }
 
 /** Exact scientific name AND family rank; ambiguous identities are not guessed. */
+export async function fetchWikidataTaxonCandidates(scientificName: string, rank: 'family' | 'genus' | 'species', opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}) {
+ if (!/^[A-Za-z][A-Za-z .-]{2,100}$/.test(scientificName)) throw new Error('Invalid scientific name');
+ const rankId = { family: 'Q35409', genus: 'Q34740', species: 'Q7432' }[rank];
+ const rows = await runSparql(`SELECT DISTINCT ?item ?article WHERE {
+ ?item wdt:P225 "${scientificName}"; wdt:P105 wd:${rankId}.
+ FILTER EXISTS { ?item wdt:P171* wd:Q5113. }
+ OPTIONAL { ?article schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }
+ }`, opts);
+ return rows.map(r => ({ qid: r.item?.value?.split('/').pop() ?? '', title: titleFromArticleUrl(r.article?.value ?? null) })).filter(r => /^Q\d+$/.test(r.qid));
+}
 export async function fetchWikidataFamily(scientificName: string, opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}) {
  if (!/^[A-Za-z][A-Za-z .-]{2,60}$/.test(scientificName)) throw new Error('Invalid family scientific name');
  const rows = await runSparql(`SELECT DISTINCT ?item ?article WHERE {

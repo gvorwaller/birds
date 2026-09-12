@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Family description gaps</strong> — improved scientific-name and redirect matching, scoped species/genus sources for sparse family pages, complete source attribution, and retries for selected gaps that preserve current descriptions.</li>
 							<li><strong>Taxonomy for study</strong> — explore orders, families, and species in a new Field Guide tab, with two-way species links and personal Viewed badges. Filter by family, search banding codes, and choose taxonomic sorting. Browse species now shows result totals and pages of 100 so every match stays reachable. Family descriptions now populate automatically from Animal Diversity Web or matched Wikipedia sources, with Sonnet 5 drafting and checking, reliable passage-based evidence, source-specific attribution, automatic retries and refreshes, and separate Admin model and pause/resume controls.</li>
                             <li>
 								<strong>Less scrolling on species pages</strong> — the seasonal

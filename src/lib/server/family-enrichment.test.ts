@@ -59,12 +59,13 @@ const attempt = (result: unknown) => ({
 const deps = () => ({
   ...familyDependencies,
   adw: vi.fn().mockResolvedValue(null),
-  resolve: vi.fn().mockResolvedValue({ qid: "Q1", title: "Osprey" }),
+  candidates: vi.fn().mockResolvedValue([{ qid: "Q1", title: "Osprey" }]),
   article: vi.fn().mockResolvedValue({
     title: "Osprey",
     revId: 1,
-    extract: source.text.repeat(4),
-    sections: [],
+    text: source.text.repeat(4),
+    qid: "Q1",
+    disambiguation: false,
   }),
   generate: vi.fn().mockResolvedValue(attempt(draft)),
   verify: vi.fn().mockResolvedValue(attempt({ supported: true, reason: "" })),
@@ -264,7 +265,7 @@ it("preserves previous description if grounding audit fails", async () => {
 });
 it("records no source without an AI call and allows retrying gaps", async () => {
   const d = deps();
-  d.resolve.mockResolvedValue(null);
+  d.candidates.mockResolvedValue([]);
   await runFamilyEnrichment(await job(), ctx, d);
   expect((await familyReference("pandio1")).note?.status).toBe("no_source");
   expect(d.generate).not.toHaveBeenCalled();
@@ -301,7 +302,7 @@ it("rate-limits the entire family lane and pauses on AI credentials", async () =
 });
 it("does not confuse source permission errors with AI credential failures", async () => {
   const d = deps();
-  d.resolve.mockRejectedValue(
+  d.candidates.mockRejectedValue(
     Object.assign(Error("Forbidden"), { status: 403 }),
   );
   await runFamilyEnrichment(await job(), ctx, d);
@@ -314,7 +315,7 @@ it("honors drain before source or paid calls", async () => {
   const d = deps();
   const j = await job();
   await runFamilyEnrichment(j, { isDraining: () => true }, d);
-  expect(d.resolve).not.toHaveBeenCalled();
+  expect(d.candidates).not.toHaveBeenCalled();
   expect(
     (await query("SELECT status,attempts FROM jobs WHERE id=$1", [j.id]))
       .rows[0],
@@ -521,7 +522,7 @@ it("ADW source works independently of Wikidata and publishes provider-specific a
     licenseUrl: "https://creativecommons.org/licenses/by-nc-sa/3.0/",
   });
   await runFamilyEnrichment(await job(), ctx, d);
-  expect(d.resolve).not.toHaveBeenCalled();
+  expect(d.candidates).not.toHaveBeenCalled();
   expect((await familyReference("pandio1")).note?.source?.attribution).toBe(
     "Test Author, ADW",
   );
@@ -635,4 +636,60 @@ it("upgrades stale pipeline checkpoints while retaining the published descriptio
  await reconcileFamilyInputs();
  const row=(await query("SELECT content,pending_source,pending_draft,status,next_attempt_at<=NOW() AS due FROM family_enrichment WHERE family_code='pandio1'")).rows[0];
  expect(row).toEqual({content:draft,pending_source:null,pending_draft:null,status:"pending",due:true});
+});
+
+it("selectively retries gaps while preserving every current publication and rejecting unknown codes", async () => {
+  await query("UPDATE family_enrichment SET status='ready',published_hash=input_hash,content=$1,source=$2,generated_at=NOW(),next_attempt_at=NOW()+interval '180 days'", [JSON.stringify(draft),JSON.stringify(source)]);
+  const baseline=(await query("SELECT * FROM family_enrichment WHERE family_code<>'pandio1' ORDER BY family_code")).rows;
+  await query("UPDATE family_enrichment SET status='no_source',published_hash=NULL,pending_source=$1 WHERE family_code='pandio1'",[JSON.stringify(source)]);
+  await expect(retryFamilyGaps(['pandio1','notarealfamily'])).rejects.toThrow('Unknown family');
+  const readyCode=String(baseline[0].family_code);
+  expect(await retryFamilyGaps(['pandio1',readyCode])).toEqual(['pandio1']);
+  expect((await query("SELECT * FROM family_enrichment WHERE family_code<>'pandio1' ORDER BY family_code")).rows).toEqual(baseline);
+  expect((await query("SELECT pending_source,pending_draft,failures FROM family_enrichment WHERE family_code='pandio1'")).rows[0]).toEqual({pending_source:null,pending_draft:null,failures:0});
+  expect((await query("SELECT count(*)::int AS n FROM family_enrichment_diagnostics WHERE family_code='pandio1' AND outcome='retry_snapshot'")).rows[0].n).toBeGreaterThan(0);
+});
+it("does not reset a source while a family worker holds an active attempt", async()=>{
+  await job();
+  await expect(retryFamilyGaps(['pandio1'])).rejects.toThrow('being processed');
+});
+it("exposes every source attribution but no source prose to the browser",async()=>{
+  const sources=[{...source,title:'Cassowary',scope:{rank:'genus',scientificName:'Casuarius',members:[]}}, {...source,title:'Emu',scope:{rank:'species',scientificName:'Dromaius novaehollandiae',members:[]}}];
+  await query("UPDATE family_enrichment SET content=$1,source=$2,status='ready',published_hash=input_hash WHERE family_code='pandio1'",[JSON.stringify(draft),JSON.stringify({...source,documents:sources})]);
+  const result=await familyReference('pandio1');
+  expect(result.note?.sources.map(s=>s.title)).toEqual(['Cassowary','Emu']);
+  expect(JSON.stringify(result)).not.toContain(source.text);
+});
+
+it.runIf(process.env.BIRDS_FAMILY_REMEDIATION_LIVE === '1')('live Sonnet verifies scoped and sparse remediation sources', async()=>{
+  const {readFileSync,writeFileSync}=await import('node:fs');
+  const reports=JSON.parse(readFileSync(process.env.BIRDS_FAMILY_SOURCE_REPORT ?? '.local/family-remediation-final-sources.json','utf8')).report;
+  const baseline=JSON.parse(readFileSync('.local/family-remediation-baseline.json','utf8'));
+  const j=await job();const results=[];
+  for(const code of ['casuar1','steato1','yelfly10']) {
+    const source=reports.find((r:{code:string})=>r.code===code).source;
+    expect(source).not.toBeNull();
+    const name=baseline.targets.find((r:{code:string})=>r.code===code).scientificName;
+    let generated=await familyDependencies.generate(j.id,name,source);
+    let audit=await familyDependencies.verify(j.id,name,source,generated.result);
+    for(let repair=0;!audit.result.supported&&repair<2;repair++) {
+      generated=await familyDependencies.generate(j.id,name,source,{draft:generated.result,feedback:audit.result.reason});
+      audit=await familyDependencies.verify(j.id,name,source,generated.result);
+    }
+    results.push({code,source,draft:generated.result,audit:audit.result,model:generated.servedModel,verifier:audit.servedModel});
+    writeFileSync('.local/family-remediation-live-ai.json',JSON.stringify(results,null,2));
+    expect(audit.result.supported,audit.result.reason).toBe(true);
+    expect(generated.servedModel).toBe('claude-sonnet-5');expect(audit.servedModel).toBe('claude-sonnet-5');
+  }
+  const control=results[1];
+  const falseDraft={paragraphs:[{topic:'Impossible ability',text:'These birds fly faster than light and breathe fire to melt mountains.',evidence:[familyPassageId(control.source)]}]};
+  expect((await familyDependencies.verify(j.id,'Steatornithidae',control.source,falseDraft)).result.supported).toBe(false);
+  function familyPassageId(source:FamilySource){return source.documents?.length?'D1P1':'P1';}
+},360_000);
+
+it('can retry an expired failed refresh while retaining its last published description',async()=>{
+ await query("UPDATE family_enrichment SET status='error',published_hash=input_hash,generated_at=NOW()-interval '181 days',content=$1,source=$2 WHERE family_code='pandio1'",[JSON.stringify(draft),JSON.stringify(source)]);
+ expect(await retryFamilyGaps(['pandio1'])).toEqual(['pandio1']);
+ const row=(await query("SELECT status,content,source FROM family_enrichment WHERE family_code='pandio1'")).rows[0];
+ expect(row).toEqual({status:'pending',content:draft,source});
 });

@@ -1,12 +1,17 @@
 /** Automatic family reference enrichment. One family per durable scheduler run,
  * with paid-call checkpoints, FIFO fairness, and independent persistent pause. */
-import { fetchAdwFamily } from "./animal-diversity";
 import { EnrichmentAiError } from "./ai-enrichment";
 import { createHash } from "node:crypto";
 import { query, withTransaction } from "$lib/db";
 import { taxonomySummary, type TaxonomyFamily } from "./taxonomy-reference";
-import { fetchWikidataFamily, isRateLimitedError } from "./wikidata";
-import { fetchArticlePlaintext, revisionPermalink } from "./wikipedia";
+import { isRateLimitedError } from "./wikidata";
+import {
+  discoverFamilySources,
+  sourceDependencies,
+  FAMILY_RESOLVER_VERSION,
+  FamilySourceInterrupted,
+  type DiscoveryDiagnostic,
+} from "./family-source-discovery";
 import {
   FamilySourceInsufficient,
   FamilyValidationError,
@@ -27,6 +32,8 @@ import { scrubStoredValue, type JobRow } from "./job-policy";
 class FamilyAuditError extends Error {}
 const DAY = 86400_000;
 const KEY = "system:family-enrichment";
+// Existing publication compatibility contract. Resolver/prompt improvements
+// record their own version on new sources; never invalidate all successes here.
 export const FAMILY_PROMPT_VERSION = "2";
 interface FamilyState {
   family_code: string;
@@ -81,11 +88,69 @@ export async function setFamilyPaused(paused: boolean) {
   );
   if (!paused) await ensureFamilyEnrichment(true);
 }
-export async function retryFamilyGaps() {
-  await query(
-    "UPDATE family_enrichment SET next_attempt_at=NOW(),failures=0 WHERE status IN ('error','no_source')",
-  );
+export class FamilyRetrySelectionError extends Error {}
+export async function retryFamilyGaps(codes?: string[]) {
+  if (
+    codes &&
+    (!codes.length || codes.some((code) => !/^[a-z0-9]+$/.test(code)))
+  )
+    throw new FamilyRetrySelectionError("Select valid family codes.");
+  const selected = await withTransaction(async (c) => {
+    await c.query("LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE");
+    if (
+      (
+        await c.query(
+          "SELECT 1 FROM jobs WHERE type='enrich_families' AND status='running' LIMIT 1",
+        )
+      ).rowCount
+    )
+      throw new FamilyRetrySelectionError(
+        "A family is being processed. Pause family enrichment and retry after the current family finishes.",
+      );
+    if (codes) {
+      const known = await c.query(
+        "SELECT DISTINCT family_code FROM taxonomy_cache WHERE category='species' AND family_code=ANY($1::text[])",
+        [codes],
+      );
+      if (known.rows.length !== new Set(codes).size)
+        throw new FamilyRetrySelectionError(
+          "Unknown family code in retry selection.",
+        );
+    }
+    const rows = await c.query<FamilyState>(
+      `SELECT e.* FROM family_enrichment e WHERE status IN ('error','no_source')
+      AND (published_hash IS DISTINCT FROM input_hash OR generated_at<=NOW()-interval '180 days')
+      AND ($1::text[] IS NULL OR family_code=ANY($1))
+      AND EXISTS(SELECT 1 FROM taxonomy_cache t WHERE t.category='species' AND t.family_code=e.family_code)
+      FOR UPDATE`,
+      [codes ?? null],
+    );
+    for (const row of rows.rows) {
+      await c.query(
+        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft,diagnostics)
+        VALUES($1,$2,$3,'retry_snapshot',$4,$5,$6)`,
+        [
+          row.family_code,
+          row.input_hash,
+          FAMILY_RESOLVER_VERSION,
+          row.pending_source,
+          row.pending_draft,
+          JSON.stringify([{ detail: row.last_error }]),
+        ],
+      );
+      await c.query(
+        `UPDATE family_enrichment SET status='pending',last_error=NULL,next_attempt_at=NOW(),failures=0,pending_source=CASE WHEN $2 THEN NULL ELSE pending_source END,pending_draft=CASE WHEN $2 THEN NULL ELSE pending_draft END,pending_model=CASE WHEN $2 THEN NULL ELSE pending_model END WHERE family_code=$1`,
+        [
+          row.family_code,
+          row.status === "no_source" ||
+            row.pending_source?.resolverVersion !== FAMILY_RESOLVER_VERSION,
+        ],
+      );
+    }
+    return rows.rows.map((r) => r.family_code);
+  });
   await ensureFamilyEnrichment(true);
+  return selected;
 }
 export async function familyReference(code: string) {
   const [counts, note, control] = await Promise.all([
@@ -120,6 +185,17 @@ export async function familyReference(code: string) {
                 fetchedAt: row.source.fetchedAt,
               }
             : null,
+          sources: row.source
+            ? (row.source.documents ?? [row.source]).map((source) => ({
+                title: source.title,
+                url: source.url,
+                attribution: source.attribution ?? "Wikipedia contributors",
+                license: source.license ?? "CC BY-SA 4.0",
+                licenseUrl:
+                  source.licenseUrl ??
+                  "https://creativecommons.org/licenses/by-sa/4.0/",
+              }))
+            : [],
           generatedAt: row.generated_at,
           status: row.status,
           stale:
@@ -221,59 +297,32 @@ export async function reconcileFamilyInputs() {
   return families;
 }
 export const familyDependencies = {
-  adw: fetchAdwFamily,
-  resolve: fetchWikidataFamily,
-  article: fetchArticlePlaintext,
+  ...sourceDependencies,
   generate: generateFamilyDescription,
   verify: verifyFamilyDescription,
 };
 export async function collectFamilySource(
   family: TaxonomyFamily,
   deps = familyDependencies,
-): Promise<FamilySource | null> {
-  if (!family.scientificName) return null;
-  // Prefer a complete ADW family account where available; otherwise Wikipedia.
-  // One source per summary keeps source scope and adaptation licensing explicit.
-  let adwError: unknown;
-  try {
-    const adw = await deps.adw(family.scientificName);
-    if (adw) return adw;
-  } catch (error) {
-    if (isRateLimitedError(error)) throw error;
-    adwError = error;
-  }
-  const unavailable = () => {
-    if (adwError) throw adwError;
-    return null;
-  };
-  const match = await deps.resolve(family.scientificName);
-  if (!match) return unavailable();
-  // A family may redirect to its sole species' page. Require the actual family
-  // name in that page, and instruct the audit never to generalize species traits.
-  const article = await deps.article(match.title ?? family.scientificName);
-  if (!article || !Number.isInteger(article.revId) || article.revId <= 0)
-    return unavailable();
-  const text = [
-    article.extract,
-    ...article.sections.map((s) => s.title + "\n" + s.text),
-  ].join("\n\n");
-  if (
-    text.length < 250 ||
-    !text.toLowerCase().includes(family.scientificName.toLowerCase())
-  )
-    return unavailable();
-  return {
-    provider: "wikipedia",
-    attribution: "Wikipedia contributors",
-    license: "CC BY-SA 4.0",
-    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
-    title: article.title,
-    url: revisionPermalink(article.title, article.revId),
-    revision: article.revId,
-    qid: match.qid,
-    fetchedAt: new Date().toISOString(),
-    text,
-  };
+  members?: string[],
+  diagnostics: DiscoveryDiagnostic[] = [],
+  shouldStop?: () => Promise<boolean>,
+) {
+  const currentMembers =
+    members ??
+    (
+      await query<{ sci_name: string }>(
+        "SELECT sci_name FROM taxonomy_cache WHERE category='species' AND family_code=$1 ORDER BY sci_name",
+        [family.code],
+      )
+    ).rows.map((r) => r.sci_name);
+  return discoverFamilySources(
+    family,
+    currentMembers,
+    deps,
+    diagnostics,
+    shouldStop,
+  );
 }
 interface FamilyContext {
   isDraining(): boolean;
@@ -351,6 +400,7 @@ export async function runFamilyEnrichment(
     job.id,
     family.name ?? family.code,
   ]);
+  const discovery: DiscoveryDiagnostic[] = [];
   let stage = "Source retrieval";
   try {
     let source = due.pending_source;
@@ -358,8 +408,16 @@ export async function runFamilyEnrichment(
       source = await depsSource();
       if (!source) {
         await query(
-          "UPDATE family_enrichment SET status='no_source',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',last_error='No unambiguous, usable family source found' WHERE family_code=$1 AND input_hash=$2",
-          [family.code, due.input_hash],
+          "UPDATE family_enrichment SET status='no_source',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',last_error=$3 WHERE family_code=$1 AND input_hash=$2",
+          [
+            family.code,
+            due.input_hash,
+            discovery
+              .filter((d) => d.outcome !== "accepted")
+              .map((d) => `${d.candidate}: ${d.detail}`)
+              .join("; ")
+              .slice(0, 3000) || "No verified source found",
+          ],
         );
         await finish({ family: family.code, outcome: "no_source" }, 1000);
         return;
@@ -399,6 +457,18 @@ export async function runFamilyEnrichment(
       draft,
     );
     if (!checked.result.supported) {
+      await query(
+        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft,diagnostics)
+        VALUES($1,$2,$3,'audit_rejected',$4,$5,$6)`,
+        [
+          family.code,
+          due.input_hash,
+          FAMILY_RESOLVER_VERSION,
+          source,
+          draft,
+          JSON.stringify(scrubStoredValue([{ detail: checked.result.reason }])),
+        ],
+      );
       await query(
         "UPDATE family_enrichment SET pending_draft=$2 WHERE family_code=$1",
         [
@@ -473,7 +543,13 @@ export async function runFamilyEnrichment(
       1000,
     );
   } catch (err) {
+    if (err instanceof FamilySourceInterrupted) return;
     if (err instanceof FamilySourceInsufficient) {
+      await query(
+        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft)
+        SELECT family_code,input_hash,$2,'insufficient_source',pending_source,pending_draft FROM family_enrichment WHERE family_code=$1`,
+        [family.code, FAMILY_RESOLVER_VERSION],
+      );
       await query(
         "UPDATE family_enrichment SET status='no_source',last_error='Source lacks enough supported family information',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',pending_source=NULL,pending_draft=NULL,pending_model=NULL WHERE family_code=$1 AND input_hash=$2",
         [family.code, due.input_hash],
@@ -537,6 +613,29 @@ export async function runFamilyEnrichment(
     );
   }
   async function depsSource() {
-    return collectFamilySource(family, deps);
+    let collected: FamilySource | null = null;
+    try {
+      collected = await collectFamilySource(
+        family,
+        deps,
+        undefined,
+        discovery,
+        () => stop("Finding family sources"),
+      );
+      return collected;
+    } finally {
+      await query(
+        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,diagnostics)
+        VALUES($1,$2,$3,$4,$5,$6)`,
+        [
+          family.code,
+          due.input_hash,
+          FAMILY_RESOLVER_VERSION,
+          collected ? "source_found" : "source_unavailable",
+          collected,
+          JSON.stringify(discovery),
+        ],
+      );
+    }
   }
 }
