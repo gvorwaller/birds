@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
+import { isSpecialInterestRequest } from '$lib/special-interest';
 import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
 import { dev } from '$app/environment';
@@ -74,7 +75,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		});
 	}
 
-	// Viewers may write their own appearance and browsing history, never owner data.
+	// Viewers may write their own appearance, browsing history and Special interest, never owner data.
 	if (event.locals.user?.role === 'viewer') {
 		const method = event.request.method;
 		// td-0753d0: viewers may POST load_enrichment (first-time species data,
@@ -88,7 +89,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
 		// Keep private settings/actions blocked; appearance changes only this user.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction)) {
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method)) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// The separate appearance page never loads the credential-bearing page.

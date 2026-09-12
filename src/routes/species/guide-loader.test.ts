@@ -35,6 +35,8 @@ describe("Field guide nav-active invariant", () => {
   it("browse and viewed tabs light Field Guide, while detail pages do not", () => {
     expect(isFieldGuideActive("/species")).toBe(true);
     expect(isFieldGuideActive("/species/")).toBe(true);
+    expect(isFieldGuideActive("/special-interest")).toBe(true);
+    expect(isFieldGuideActive("/special-interest-other")).toBe(false);
     expect(isFieldGuideActive("/viewed")).toBe(true);
     expect(isFieldGuideActive("/viewed/")).toBe(true);
     expect(isFieldGuideActive("/viewed-other")).toBe(false);

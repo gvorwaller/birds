@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { active }: { active: "browse" | "viewed" | "taxonomy" } = $props();
+  let { active }: { active: "browse" | "viewed" | "taxonomy" | "interest" } = $props();
 </script>
 
 <nav class="tabs" aria-label="Field guide sections">
@@ -13,12 +13,14 @@
     class:active={active === "viewed"}
     aria-current={active === "viewed" ? "page" : undefined}>Viewed species</a
   >
+  <a href="/special-interest" class:active={active === "interest"} aria-current={active === "interest" ? "page" : undefined}>Special interest</a>
   <a href="/taxonomy" class:active={active === "taxonomy"} aria-current={active === "taxonomy" ? "page" : undefined}>Taxonomy</a>
 </nav>
 
 <style>
   .tabs {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     margin-bottom: 16px;
     border-bottom: 2px solid var(--border);
@@ -30,6 +32,7 @@
     min-height: 48px;
     padding: 12px 8px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: center;
     text-align: center;
@@ -46,5 +49,8 @@
   a.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
+  }
+  @media (min-width: 640px) {
+    .tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 </style>

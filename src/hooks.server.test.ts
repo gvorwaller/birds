@@ -9,7 +9,7 @@ vi.mock("$server/session", () => ({ validateSession: vi.fn(), SESSION_COOKIE_NAM
 vi.mock("$server/access", () => ({ scopeOwnerId: vi.fn() }));
 vi.mock("$env/dynamic/private", () => ({ env: {} }));
 
-import { isPublicPath } from "./hooks.server";
+import { handle, isPublicPath } from "./hooks.server";
 
 describe("isPublicPath", () => {
   it("share links are public by prefix — the token is the credential", () => {
@@ -31,4 +31,22 @@ describe("isPublicPath", () => {
       expect(isPublicPath(p), p).toBe(false);
     }
   });
+});
+
+it("lets a viewer set personal interest without allowing adjacent or owner mutations", async () => {
+  for (const [path,method,expected] of [
+    ['/api/special-interest','POST',200],
+    ['/api/special-interest-extra','POST',403],
+    ['/api/special-interest','DELETE',403],
+    ['/settings?/save_api_key','POST',403],
+    ['/trips?/create','POST',403],
+  ] as const) {
+    const url = new URL('http://localhost'+path);
+    const resolve = vi.fn(async () => new Response('resolved'));
+    const event = {url, request:new Request(url,{method}), locals:{user:{id:2,role:'viewer'},scopeId:1}, cookies:{get:()=>undefined}};
+    const response = await handle({event,resolve} as unknown as Parameters<typeof handle>[0]);
+    expect(response.status).toBe(expected);
+    await response.text();
+    expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
+  }
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { taxonomyHref } from "$lib/taxonomy";
+  import SpecialInterestToggle from "$components/SpecialInterestToggle.svelte";
   import SpeciesViewed from "$components/SpeciesViewed.svelte";
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
@@ -371,6 +372,8 @@
     </p>
     {#if data.user && data.taxon.category === 'species'}
       {#key `${data.user.id}:${data.taxon.species_code}`}
+        <SpecialInterestToggle code={data.taxon.species_code} name={data.taxon.com_name} accountId={data.user.id} initialSaved={data.interest} />
+        <a class="taxonomy-link" href="/special-interest">My Special interest species</a>
         <SpeciesViewed code={data.taxon.species_code} accountId={data.user.id} />
       {/key}
     {/if}

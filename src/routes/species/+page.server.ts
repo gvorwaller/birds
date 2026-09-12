@@ -1,3 +1,4 @@
+import { specialInterestFor } from "$server/special-interest";
 import { taxonomySummary } from '$server/taxonomy-reference';
 import { speciesViewsFor } from "$server/species-views";
 import type { SpeciesView } from "$lib/species-views";
@@ -25,6 +26,8 @@ import { guideLocationCoverage } from "$server/guide-location";
  */
 export const load: PageServerLoad = async ({ locals, url, depends }) => {
   depends("app:species-views");
+  depends("app:special-interest");
+  const interestOnly = url.searchParams.get("interest") === "1";
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
   // Unknown tags are dropped, not errored — stale links degrade gracefully.
   const tags = [
@@ -59,13 +62,13 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const rawPage = url.searchParams.get('page') ?? '1';
   if (!/^[1-9][0-9]*$/.test(rawPage) || !Number.isSafeInteger(Number(rawPage)) || Number(rawPage)>21474836) error(400,'Invalid results page.');
   const page = Number(rawPage);
-  const active = !!family || q.length > 0 || tags.length > 0 || !!locationCode;
+  const active = interestOnly || !!family || q.length > 0 || tags.length > 0 || !!locationCode;
 
   const countsP = guideCounts();
   let results: GuideResult[] = [];
   let total = 0;
   if (active) {
-    const found = await searchGuide(q, tags, locals.scopeId!, coverage?.locCodes ?? null, {family,sort,page});
+    const found = await searchGuide(q, tags, locals.scopeId!, coverage?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined});
     results = found.rows; total = found.total;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
@@ -74,7 +77,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   let viewedUnavailable = false;
   try { viewed = await speciesViewsFor(locals.user!.id, results.map(r => r.species_code)); }
   catch { viewedUnavailable = true; }
+  let interests: string[] | null;
+  try { interests = await specialInterestFor(locals.user!.id, results.map(r => r.species_code)); }
+  catch { interests = null; }
   return {
+    interestOnly, interests,
     family, sort, page, total, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
     previous: page>1 ? pageHref(page-1) : null, next: page*100<total ? pageHref(page+1) : null,
     viewed,

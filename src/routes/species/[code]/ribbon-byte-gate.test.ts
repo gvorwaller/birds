@@ -45,6 +45,7 @@ function loadEvent(scopeId: number, code: string) {
     locals: { scopeId, user: { id: scopeId, role: "admin" } },
     params: { code },
     url: new URL(`http://localhost/species/${code}`),
+    depends: () => {},
   } as unknown as Parameters<typeof load>[0];
 }
 

@@ -1,3 +1,4 @@
+import { specialInterestFor } from "$server/special-interest";
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import {
@@ -40,7 +41,8 @@ import {
   SPECIES_DEFAULT_DIST_KM,
 } from "$lib/species-context";
 
-export const load: PageServerLoad = async ({ locals, params, url, request }) => {
+export const load: PageServerLoad = async ({ locals, params, url, request, depends }) => {
+  depends("app:special-interest");
   const userId = locals.scopeId!; // the data owner this account reads
   const code = params.code;
   const hasGallery = (await ownerGalleryUrl(userId)) != null;
@@ -87,7 +89,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
     (c) => c.speciesCode,
   )?.speciesCode;
 
-  const [seen, photos, userRow, backSpecies] = await Promise.all([
+  const [seen, photos, userRow, backSpecies, interest] = await Promise.all([
     query<{ first_seen: string | null; source: string }>(
       "SELECT first_seen, source FROM seen_species WHERE user_id = $1 AND species_code = $2",
       [userId, code],
@@ -110,6 +112,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
           [backSpeciesCode],
         )
       : Promise.resolve({ rows: [] as { com_name: string }[] }),
+    specialInterestFor(locals.user!.id, [code]).then(codes => codes.includes(code)).catch(() => null),
   ]);
   // Unknown code (stale link, retired taxon) keeps the generic label rather
   // than inventing a name.
@@ -289,6 +292,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request }) => 
 
   return {
     taxon: t,
+    interest,
     enrichment,
     sampleMedia,
     similar,

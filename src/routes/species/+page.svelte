@@ -53,6 +53,7 @@
   /** Toggle URL for a tag chip — GET-driven, restorable, no client state. */
   function toggleHref(tag: string): string {
     const p = new URLSearchParams();
+    if (data.interestOnly) p.set("interest", "1");
     if (data.q) p.set("q", data.q);
     if (data.family) p.set("family",data.family);
     p.set("sort",data.sort);
@@ -68,6 +69,7 @@
 
   function detailHref(code: string): string {
     const back = new URLSearchParams();
+    if (data.interestOnly) back.set("interest", "1");
     if (data.q) back.set("q", data.q);
     if (data.family) back.set("family",data.family);
     back.set("sort",data.sort);
@@ -104,12 +106,15 @@
   </header>
 
   <FieldGuideTabs active="browse" />
+  {#if data.interests === null}<p role="status">Special interest badges are temporarily unavailable.</p>{/if}
+  {#if data.interestOnly}<p>Your saved species matching the filters below. <a href="/special-interest">Open the complete collection</a>, including any retired species.</p>{/if}
 
   <section class="card">
     <form method="GET" action="/species" class="searchform">
       {#each data.tags as t (t)}
         <input type="hidden" name="tags" value={t} />
       {/each}
+      <label class="interest-filter"><input type="checkbox" name="interest" value="1" checked={data.interestOnly} onchange={(e) => e.currentTarget.form?.requestSubmit()} /> Special interest only</label>
       <div class="search-entry">
         <input
           type="search"
@@ -233,6 +238,8 @@
             <a href="/settings">Settings</a> or load a forecast area on
             <a href="/forecast/data">Hotspots &amp; data</a>.
           </p>
+        {:else if data.interestOnly}
+          <p>No saved species match these filters. Save birds with ☆ Special interest on their species pages, or <a href="/special-interest">open your complete collection</a>.</p>
         {:else}
           <p class="muted">
             No species match{data.q ? ` "${data.q}"` : ""}{data.tags.length > 0
@@ -277,6 +284,7 @@
               <span class="row-main">
                 <span class="name">
                   {r.com_name}
+                  {#if data.interests?.includes(r.species_code)}<span class="interest-badge">★ Special interest</span>{/if}
                   {#if data.viewed[r.species_code]}<ViewedBadge view={data.viewed[r.species_code]} />{/if}
                   {#if r.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
                       kind="need"
@@ -363,6 +371,9 @@
 </div>
 
 <style>
+  .interest-filter { display:flex; align-items:center; gap:8px; min-height:48px; cursor:pointer; }
+  .interest-filter input { width:24px; height:24px; min-height:24px; }
+  .interest-badge { font-size:0.8rem; color:var(--text); font-weight:600; }
  .pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin:12px 0; }
  .pagination a { min-height:48px; display:inline-flex; align-items:center; }
   .history-link { display:inline-flex; align-items:center; min-height:48px; }
