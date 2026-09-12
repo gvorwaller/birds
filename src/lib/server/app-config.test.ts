@@ -124,3 +124,15 @@ describe("setConfig", () => {
     expect(dbCalls).toHaveLength(1);
   });
 });
+
+it("family model accepts Sonnet 5 independently and rejects weaker models", async () => {
+  queryHandler = () => ({ rows: [] });
+  await setConfig(CONFIG_KEYS.familyEnrichmentModel, {
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+  });
+  expect(dbCalls.at(-1)?.params[0]).toBe(CONFIG_KEYS.familyEnrichmentModel);
+  await expect(
+    setConfig(CONFIG_KEYS.familyEnrichmentModel, HAIKU),
+  ).rejects.toThrow(/Sonnet 5/);
+});

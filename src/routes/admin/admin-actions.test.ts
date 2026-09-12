@@ -210,6 +210,7 @@ describe("set_ai_model", () => {
       { surface: "enrichmnet", model: "claude-haiku-4-5" },
       { surface: "enrichment", model: "claude-nonexistent-9" },
       { surface: "enrichment", model: "claude-opus-4-8" }, // pricing-only
+      { surface: "familyEnrichment", model: "claude-haiku-4-5" },
     ]) {
       const r = (await actions.set_ai_model({ ...ADMIN, request: req(fields) } as never)) as {
         status: number;
@@ -462,4 +463,11 @@ describe('family enrichment controls',()=>{
   await actions.family_enrichment!({...ADMIN,request:req({intent:'retry'})} as never);expect(mocks.familyRetry).toHaveBeenCalled();
   expect(await actions.family_enrichment!({...ADMIN,request:req({intent:'invalid'})} as never)).toMatchObject({status:400});
  });
+});
+
+it("persists family model separately from species enrichment", async () => {
+ const result=await actions.set_ai_model({...ADMIN,request:req({surface:"familyEnrichment",model:"claude-sonnet-5"})} as never) as {ok:boolean;message:string};
+ expect(result.ok).toBe(true);
+ expect(result.message).toContain("Family descriptions");
+ expect(dbCalls.find(c=>c.text.includes("ON CONFLICT (key) DO UPDATE"))?.params[0]).toBe("ai.model.family-enrichment");
 });

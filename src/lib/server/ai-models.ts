@@ -222,9 +222,12 @@ export const PRICING_ONLY_MODELS: ModelEntry[] = [
 
 const ALL_MODELS = [...SELECTABLE_MODELS, ...PRICING_ONLY_MODELS];
 
+export const FAMILY_MODEL_IDS: readonly string[] = ['claude-sonnet-5', 'claude-opus-5'];
+
 /** Compiled defaults — the values the constants used to be. */
 export const DEFAULT_MODEL_IDS = {
 	enrichment: 'claude-opus-5',
+	familyEnrichment: 'claude-sonnet-5',
 	guidance: 'claude-sonnet-4-6'
 } as const;
 

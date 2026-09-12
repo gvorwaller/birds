@@ -41,7 +41,7 @@ const draft = {
     {
       topic: "Traits",
       text: "These fish-eating birds have hooked bills and long wings.",
-      evidence: ["fish-eating birds with hooked bills and long wings."],
+      evidence: ["P1"],
     },
   ],
 };
@@ -58,6 +58,7 @@ const attempt = (result: unknown) => ({
 });
 const deps = () => ({
   ...familyDependencies,
+  adw: vi.fn().mockResolvedValue(null),
   resolve: vi.fn().mockResolvedValue({ qid: "Q1", title: "Osprey" }),
   article: vi.fn().mockResolvedValue({
     title: "Osprey",
@@ -491,10 +492,147 @@ it("retains a paid draft when the verification service is temporarily unavailabl
   expect((await familyReference("pandio1")).note?.status).toBe("ready");
 });
 
-it('treats insufficient evidence as a source gap and retries source discovery later',async()=>{
- const d=deps();d.generate.mockRejectedValue(new FamilySourceInsufficient('Insufficient evidence'));
- await runFamilyEnrichment(await job(),ctx,d);
- expect(d.verify).not.toHaveBeenCalled();
- expect((await familyReference('pandio1')).note?.status).toBe('no_source');
- expect((await query("SELECT pending_source,next_attempt_at>NOW()+interval '29 days' AS deferred FROM family_enrichment WHERE family_code='pandio1'")).rows[0]).toEqual({pending_source:null,deferred:true});
+it("treats insufficient evidence as a source gap and retries source discovery later", async () => {
+  const d = deps();
+  d.generate.mockRejectedValue(
+    new FamilySourceInsufficient("Insufficient evidence"),
+  );
+  await runFamilyEnrichment(await job(), ctx, d);
+  expect(d.verify).not.toHaveBeenCalled();
+  expect((await familyReference("pandio1")).note?.status).toBe("no_source");
+  expect(
+    (
+      await query(
+        "SELECT pending_source,next_attempt_at>NOW()+interval '29 days' AS deferred FROM family_enrichment WHERE family_code='pandio1'",
+      )
+    ).rows[0],
+  ).toEqual({ pending_source: null, deferred: true });
+});
+
+it("ADW source works independently of Wikidata and publishes provider-specific attribution", async () => {
+  const d = deps();
+  d.adw.mockResolvedValue({
+    ...source,
+    provider: "adw",
+    revision: null,
+    qid: null,
+    attribution: "Test Author, ADW",
+    license: "CC BY-NC-SA 3.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+  });
+  await runFamilyEnrichment(await job(), ctx, d);
+  expect(d.resolve).not.toHaveBeenCalled();
+  expect((await familyReference("pandio1")).note?.source?.attribution).toBe(
+    "Test Author, ADW",
+  );
+});
+it("falls back to Wikipedia after an ADW outage, but preserves rate-limit cooldowns", async () => {
+  const d = deps();
+  d.adw.mockRejectedValue(Error("Source unavailable"));
+  await runFamilyEnrichment(await job(), ctx, d);
+  expect((await familyReference("pandio1")).note?.status).toBe("ready");
+});
+it("exposes evidence diagnostics without discarding the last good description", async () => {
+  const { FamilyValidationError } = await import("./family-enrichment-ai");
+  const d = deps();
+  await runFamilyEnrichment(await job(), ctx, d);
+  await query(
+    "UPDATE family_enrichment SET next_attempt_at=NOW() WHERE family_code='pandio1'",
+  );
+  d.generate.mockRejectedValue(
+    new FamilyValidationError(
+      "Draft paragraph 1: evidence must reference existing source passage IDs",
+    ),
+  );
+  await runFamilyEnrichment(await job(), ctx, d);
+  expect((await familyReference("pandio1")).note?.content).toEqual(draft);
+  expect(
+    (
+      await query(
+        "SELECT last_error FROM family_enrichment WHERE family_code='pandio1'",
+      )
+    ).rows[0].last_error,
+  ).toMatch(/Draft paragraph 1/);
+});
+it.runIf(process.env.BIRDS_FAMILY_FIX_LIVE === "1")(
+  "live Sonnet regression: prior failures and ADW account with unsupported-claim control",
+  async () => {
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const { fetchAdwFamily } = await import("./animal-diversity");
+    const { fetchArticlePlaintext, revisionPermalink } =
+      await import("./wikipedia");
+    const j = await job();
+    const heron = JSON.parse(
+      readFileSync(".local/family-source-ardeid1.json", "utf8"),
+    );
+    const adw = await fetchAdwFamily("Alcedinidae");
+    expect(adw).not.toBeNull();
+    const article = (await fetchArticlePlaintext("Screamer"))!;
+    const screamer: FamilySource = {
+      title: article.title,
+      url: revisionPermalink(article.title, article.revId),
+      revision: article.revId,
+      qid: null,
+      fetchedAt: new Date().toISOString(),
+      text: [
+        article.extract,
+        ...article.sections.map((s) => s.title + "\n" + s.text),
+      ].join("\n\n"),
+    };
+    const results = [];
+    for (const [name, source] of [
+      ["Ardeidae", heron],
+      ["Alcedinidae", adw],
+      ["Anhimidae", screamer],
+    ] as [string, FamilySource][]) {
+      const generated = await familyDependencies.generate(j.id, name, source);
+      const checked = await familyDependencies.verify(
+        j.id,
+        name,
+        source,
+        generated.result,
+      );
+      results.push({
+        name,
+        source: source.title,
+        provider: source.provider ?? "wikipedia",
+        draft: generated.result,
+        audit: checked.result,
+        model: generated.servedModel,
+        verifier: checked.servedModel,
+      });
+      console.log("LIVE FIX", name, generated.servedModel, checked.result);
+      writeFileSync(
+        ".local/family-fix-live-results.json",
+        JSON.stringify(results, null, 2),
+      );
+      expect(checked.result.supported).toBe(true);
+    }
+    const bad = {
+      paragraphs: [
+        {
+          topic: "Food",
+          text: "Every kingfisher eats only fish and never eats insects.",
+          evidence: ["P1"],
+        },
+      ],
+    };
+    const rejected = await familyDependencies.verify(
+      j.id,
+      "Alcedinidae",
+      adw!,
+      bad,
+    );
+    console.log("LIVE UNSUPPORTED CONTROL", rejected.result);
+    expect(rejected.result.supported).toBe(false);
+  },
+  750_000,
+);
+
+it("upgrades stale pipeline checkpoints while retaining the published description", async () => {
+ const d=deps();await runFamilyEnrichment(await job(),ctx,d);
+ await query("UPDATE family_enrichment SET input_hash='previous-pipeline',pending_source=$1,pending_draft=$2,next_attempt_at=NOW()+interval '1 year' WHERE family_code='pandio1'",[source,draft]);
+ await reconcileFamilyInputs();
+ const row=(await query("SELECT content,pending_source,pending_draft,status,next_attempt_at<=NOW() AS due FROM family_enrichment WHERE family_code='pandio1'")).rows[0];
+ expect(row).toEqual({content:draft,pending_source:null,pending_draft:null,status:"pending",due:true});
 });

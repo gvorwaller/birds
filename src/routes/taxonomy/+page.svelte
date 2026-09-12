@@ -63,8 +63,8 @@
           <h3>{paragraph.topic}</h3><p>{paragraph.text}</p>
         {/each}
         <p class="muted">AI summary, automatically checked against the source; not human-reviewed.
-          Adapted from <a href={note.source.url} target="_blank" rel="noopener">Wikipedia contributors: {note.source.title}</a>,
-          <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+          Adapted from <a href={note.source.url} target="_blank" rel="noopener">{note.source.attribution}: {note.source.title}</a>,
+          <a href={note.source.licenseUrl} target="_blank" rel="noopener">{note.source.license}</a>.
           Generated {note.generatedAt ? new Date(note.generatedAt).toLocaleDateString() : ''}.
         </p>
         {#if note.stale}<p class="muted">Showing the previous description while an updated version is pending.</p>{/if}

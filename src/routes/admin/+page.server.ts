@@ -8,6 +8,7 @@ import { nudgeEnrichmentScan } from "$server/job-handlers";
 import {
   SELECTABLE_MODELS,
   DEFAULT_MODEL_IDS,
+  FAMILY_MODEL_IDS,
   dollarsForRow,
   modelById,
   rateFor,
@@ -54,6 +55,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     gallerySource,
     usage,
     enrichmentCfg,
+    familyEnrichmentCfg,
     guidanceCfg,
     quickPickRes,
   ] = await Promise.all([
@@ -101,6 +103,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       provider: "anthropic",
       model: DEFAULT_MODEL_IDS.enrichment,
     }),
+    getConfig(CONFIG_KEYS.familyEnrichmentModel, { provider: "anthropic", model: DEFAULT_MODEL_IDS.familyEnrichment }),
     getConfig(CONFIG_KEYS.guidanceModel, {
       provider: "anthropic",
       model: DEFAULT_MODEL_IDS.guidance,
@@ -145,8 +148,10 @@ export const load: PageServerLoad = async ({ locals }) => {
           outPerMTok: rate?.outPerMTok ?? null,
         };
       }),
+      familyModelIds: FAMILY_MODEL_IDS,
       current: {
         enrichment: resolveModel(enrichmentCfg, DEFAULT_MODEL_IDS.enrichment).id,
+        familyEnrichment: resolveModel(familyEnrichmentCfg, DEFAULT_MODEL_IDS.familyEnrichment).id,
         guidance: resolveModel(guidanceCfg, DEFAULT_MODEL_IDS.guidance).id,
       },
       usage,
@@ -297,6 +302,8 @@ export const actions: Actions = {
     const key =
       surface === "enrichment"
         ? CONFIG_KEYS.enrichmentModel
+        : surface === "familyEnrichment"
+          ? CONFIG_KEYS.familyEnrichmentModel
         : surface === "guidance"
           ? CONFIG_KEYS.guidanceModel
           : null;
@@ -315,7 +322,7 @@ export const actions: Actions = {
       ok: true as const,
       surface,
       model,
-      message: `${surface === "enrichment" ? "Enrichment" : "Guidance"} now uses ${entry?.label ?? model} — future calls only; nothing is regenerated.`,
+      message: `${surface === "enrichment" ? "Enrichment" : surface === "familyEnrichment" ? "Family descriptions" : "Guidance"} now uses ${entry?.label ?? model} — future calls only; nothing is regenerated.`,
     };
   },
 

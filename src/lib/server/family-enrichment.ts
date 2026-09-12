@@ -1,5 +1,6 @@
 /** Automatic family reference enrichment. One family per durable scheduler run,
  * with paid-call checkpoints, FIFO fairness, and independent persistent pause. */
+import { fetchAdwFamily } from "./animal-diversity";
 import { EnrichmentAiError } from "./ai-enrichment";
 import { createHash } from "node:crypto";
 import { query, withTransaction } from "$lib/db";
@@ -8,6 +9,7 @@ import { fetchWikidataFamily, isRateLimitedError } from "./wikidata";
 import { fetchArticlePlaintext, revisionPermalink } from "./wikipedia";
 import {
   FamilySourceInsufficient,
+  FamilyValidationError,
   generateFamilyDescription,
   verifyFamilyDescription,
   type FamilyDescription,
@@ -25,7 +27,7 @@ import { scrubStoredValue, type JobRow } from "./job-policy";
 class FamilyAuditError extends Error {}
 const DAY = 86400_000;
 const KEY = "system:family-enrichment";
-export const FAMILY_PROMPT_VERSION = "1";
+export const FAMILY_PROMPT_VERSION = "2";
 interface FamilyState {
   family_code: string;
   input_hash: string;
@@ -108,6 +110,11 @@ export async function familyReference(code: string) {
           source: row.source
             ? {
                 title: row.source.title,
+                attribution: row.source.attribution ?? "Wikipedia contributors",
+                license: row.source.license ?? "CC BY-SA 4.0",
+                licenseUrl:
+                  row.source.licenseUrl ??
+                  "https://creativecommons.org/licenses/by-sa/4.0/",
                 url: row.source.url,
                 revision: row.source.revision,
                 fetchedAt: row.source.fetchedAt,
@@ -214,6 +221,7 @@ export async function reconcileFamilyInputs() {
   return families;
 }
 export const familyDependencies = {
+  adw: fetchAdwFamily,
   resolve: fetchWikidataFamily,
   article: fetchArticlePlaintext,
   generate: generateFamilyDescription,
@@ -224,13 +232,27 @@ export async function collectFamilySource(
   deps = familyDependencies,
 ): Promise<FamilySource | null> {
   if (!family.scientificName) return null;
+  // Prefer a complete ADW family account where available; otherwise Wikipedia.
+  // One source per summary keeps source scope and adaptation licensing explicit.
+  let adwError: unknown;
+  try {
+    const adw = await deps.adw(family.scientificName);
+    if (adw) return adw;
+  } catch (error) {
+    if (isRateLimitedError(error)) throw error;
+    adwError = error;
+  }
+  const unavailable = () => {
+    if (adwError) throw adwError;
+    return null;
+  };
   const match = await deps.resolve(family.scientificName);
-  if (!match) return null;
+  if (!match) return unavailable();
   // A family may redirect to its sole species' page. Require the actual family
   // name in that page, and instruct the audit never to generalize species traits.
   const article = await deps.article(match.title ?? family.scientificName);
   if (!article || !Number.isInteger(article.revId) || article.revId <= 0)
-    return null;
+    return unavailable();
   const text = [
     article.extract,
     ...article.sections.map((s) => s.title + "\n" + s.text),
@@ -239,8 +261,12 @@ export async function collectFamilySource(
     text.length < 250 ||
     !text.toLowerCase().includes(family.scientificName.toLowerCase())
   )
-    return null;
+    return unavailable();
   return {
+    provider: "wikipedia",
+    attribution: "Wikipedia contributors",
+    license: "CC BY-SA 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
     title: article.title,
     url: revisionPermalink(article.title, article.revId),
     revision: article.revId,
@@ -325,6 +351,7 @@ export async function runFamilyEnrichment(
     job.id,
     family.name ?? family.code,
   ]);
+  let stage = "Source retrieval";
   try {
     let source = due.pending_source;
     if (!source) {
@@ -343,6 +370,7 @@ export async function runFamilyEnrichment(
       );
     }
     if (await stop("Writing " + family.name)) return;
+    stage = "AI drafting";
     let draft = due.pending_draft,
       model = due.pending_model;
     const rejectedDraft = draft?.audit ? draft : null;
@@ -363,6 +391,7 @@ export async function runFamilyEnrichment(
       );
     }
     if (await stop("Checking source support for " + family.name)) return;
+    stage = "AI source-support audit";
     const checked = await deps.verify(
       job.id,
       family.scientificName!,
@@ -388,6 +417,7 @@ export async function runFamilyEnrichment(
           String(scrubStoredValue(checked.result.reason)).slice(0, 1500),
       );
     }
+    stage = "Saving family description";
     // Re-read taxonomy before publishing: a concurrent sync may have changed it.
     await reconcileFamilyInputs();
     const published = await withTransaction(async (client) => {
@@ -469,9 +499,9 @@ export async function runFamilyEnrichment(
       ? "AI credentials need attention; resume after correcting them"
       : rate
         ? "Source or AI service requested a cooldown"
-        : e instanceof FamilyAuditError
+        : e instanceof FamilyAuditError || e instanceof FamilyValidationError
           ? e.message
-          : "Family source or generation failed; automatic retry scheduled";
+          : `${stage} failed${e instanceof EnrichmentAiError ? ` (HTTP ${e.status})` : ""}; automatic retry scheduled`;
     await withTransaction(async (c) => {
       await c.query(
         `UPDATE family_enrichment SET status='error',last_error=$3,failures=$4,attempted_at=NOW(),

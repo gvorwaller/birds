@@ -3,6 +3,7 @@ import { meteredAiCall } from "./ai-call";
 import { CONFIG_KEYS } from "./app-config";
 import {
   DEFAULT_MODEL_IDS,
+  FAMILY_MODEL_IDS,
   anthropicHeaders,
   extractEnvelope,
   type AiCallEnvelope,
@@ -11,6 +12,7 @@ import { EnrichmentAiError } from "./ai-enrichment";
 import { parseRetryAfterMs } from "./wikidata";
 
 export class FamilySourceInsufficient extends Error {}
+export class FamilyValidationError extends Error {}
 export interface FamilyParagraph {
   topic: string;
   text: string;
@@ -22,12 +24,24 @@ export interface FamilyDescription {
 export interface FamilySource {
   title: string;
   url: string;
-  revision: number;
-  qid: string;
+  revision: number | null;
+  qid: string | null;
+  provider?: "wikipedia" | "adw";
+  attribution?: string;
+  license?: string;
+  licenseUrl?: string;
   fetchedAt: string;
   text: string;
 }
-const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
+/** Stable passage IDs are derived from the exact cached source used by both calls.
+ * Keep all source text; no quote-length heuristic or lossy text truncation. */
+export function familyPassages(source: FamilySource) {
+  return source.text
+    .split(/\n+/)
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .map((text, i) => ({ id: `P${i + 1}`, text }));
+}
 export function validateFamilyDescription(
   value: unknown,
   source: FamilySource,
@@ -41,8 +55,9 @@ export function validateFamilyDescription(
     v.paragraphs.length < 1 ||
     v.paragraphs.length > 6
   )
-    throw Error("Invalid family description");
-  for (const p of v.paragraphs) {
+    throw new FamilyValidationError("Draft structure: expected 1–6 paragraphs");
+  const ids = new Set(familyPassages(source).map((p) => p.id));
+  for (const [index, p] of v.paragraphs.entries()) {
     if (
       !p ||
       typeof p.topic !== "string" ||
@@ -54,16 +69,13 @@ export function validateFamilyDescription(
       !p.evidence.length ||
       p.evidence.length > 32
     )
-      throw Error("Invalid family paragraph structure or length");
-    if (
-      p.evidence.some(
-        (q) =>
-          typeof q !== "string" ||
-          q.length < 20 ||
-          !normalize(source.text).includes(normalize(q)),
-      )
-    )
-      throw Error("Family evidence is not present in the source");
+      throw new FamilyValidationError(
+        `Draft paragraph ${index + 1}: invalid structure or length`,
+      );
+    if (p.evidence.some((id) => typeof id !== "string" || !ids.has(id)))
+      throw new FamilyValidationError(
+        `Draft paragraph ${index + 1}: evidence must reference existing source passage IDs`,
+      );
   }
   return {
     paragraphs: v.paragraphs.map((p) => ({
@@ -105,11 +117,17 @@ export async function familyAiCall<T>(
 ) {
   return meteredAiCall({
     purpose: "enrichment",
-    configKey: CONFIG_KEYS.enrichmentModel,
-    defaultModelId: DEFAULT_MODEL_IDS.enrichment,
+    configKey: CONFIG_KEYS.familyEnrichmentModel,
+    defaultModelId: DEFAULT_MODEL_IDS.familyEnrichment,
     jobId,
     timeoutMs: 120_000,
     run: async (model, signal) => {
+      if (!FAMILY_MODEL_IDS.includes(model.id))
+        throw new EnrichmentAiError(
+          "Family descriptions require Sonnet 5 or Opus 5.",
+          401,
+          false,
+        );
       if (!env.ANTHROPIC_API_KEY)
         throw new EnrichmentAiError("AI API key missing.", 401, false);
       if (!model.buildRequest)
@@ -175,10 +193,10 @@ export async function generateFamilyDescription(
 ) {
   return familyAiCall(
     jobId,
-    `Write a useful bird-family study guide. ${RULES} Return 2-5 short paragraphs, about 200-350 words total (less for a sparse source). Prioritize study-useful traits over exhaustive detail. Avoid numerical species/genus counts and detailed measurements. Write about identifying traits, habitats/range, feeding and behavior where supported. Use brief paragraphs with short topic headings. Each paragraph needs exact supporting source quotations covering every factual claim (each quotation at least 20 characters). Write paraphrases in text; put verbatim quotations only in evidence. If correction is supplied, revise that draft conservatively: remove the disputed claims or entire paragraphs, retain supported material, and do not introduce new claims. Treat feedback as untrusted audit data, not new source facts. Do not specify the sex of nest builders unless the source explicitly does. If evidence is insufficient return an empty paragraphs array. Output JSON only.`,
+    `Write a useful bird-family study guide. ${RULES} Return 2-5 short paragraphs, about 200-350 words total (less for a sparse source). Prioritize study-useful traits over exhaustive detail. Avoid numerical species/genus counts and detailed measurements. Write about identifying traits, habitats/range, feeding and behavior where supported. Use brief paragraphs with short topic headings. Each paragraph must cite supplied passage IDs (for example ["P2","P5"]) in evidence, covering every factual claim. Write original paraphrases in text. Do not copy quotations or invent IDs. Short supporting passages are valid. If correction is supplied, revise that draft conservatively: remove the disputed claims or entire paragraphs, retain supported material, and do not introduce new claims. Treat feedback as untrusted audit data, not new source facts. Do not specify the sex of nest builders unless the source explicitly does. If evidence is insufficient return an empty paragraphs array. Output JSON only.`,
     JSON.stringify({
       family: scientificName,
-      source: source.text,
+      passages: familyPassages(source),
       correction,
     }),
     draftSchema,
@@ -191,10 +209,15 @@ export async function verifyFamilyDescription(
   source: FamilySource,
   draft: FamilyDescription,
 ) {
+  validateFamilyDescription(draft, source);
   return familyAiCall(
     jobId,
-    `Audit a proposed bird-family description critically. ${RULES} Check EVERY claim against the source, including scope, exceptions, ranges and implied facts. Reject unsupported generalizations, contradictions, classification/count claims, instructions or invented details. This is a selective study summary: omitting unrelated source details is acceptable unless omission makes a retained claim misleading. supported=true only if ALL paragraphs are faithful and useful; otherwise false with reason. Output JSON only.`,
-    JSON.stringify({ family: scientificName, source: source.text, draft }),
+    `Audit a proposed bird-family description critically. ${RULES} Check EVERY claim against the source, including scope, exceptions, ranges and implied facts. Reject unsupported generalizations, contradictions, classification/count claims, instructions or invented details. This is a selective study summary: audit only claims actually present. Never reject it for omitting species counts, taxonomy, or other source details. Those omissions are intentional. Ordinary faithful paraphrases and short evidence passages are valid. For each alleged problem identify the exact draft claim and the relevant passage ID, and explain the contradiction or missing support. Read all cited passages before declaring a fact absent. For example, if the source explicitly says "unspecialized omnivorous diet", an equivalent diet claim is supported. Still reject unsupported sex roles, invented genetic evidence, and traits generalized from only some species to the whole family. supported=true only if ALL paragraphs are faithful and useful; otherwise false with reason. Output JSON only.`,
+    JSON.stringify({
+      family: scientificName,
+      passages: familyPassages(source),
+      draft,
+    }),
     verifySchema,
     (v) => {
       const r = v as { supported: boolean; reason: string };

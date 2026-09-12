@@ -18,10 +18,11 @@
  * would never fire and no fallback would happen at all.
  */
 import { query, queryTimed } from '$lib/db';
-import { SELECTABLE_MODELS } from './ai-models';
+import { SELECTABLE_MODELS, FAMILY_MODEL_IDS } from './ai-models';
 
 export const CONFIG_KEYS = {
 	enrichmentModel: 'ai.model.enrichment',
+	familyEnrichmentModel: 'ai.model.family-enrichment',
 	guidanceModel: 'ai.model.guidance'
 } as const;
 
@@ -40,6 +41,8 @@ export interface ModelConfigValue {
  */
 const VALIDATORS: Record<string, (value: unknown) => string | null> = {
 	[CONFIG_KEYS.enrichmentModel]: validateModelValue,
+	[CONFIG_KEYS.familyEnrichmentModel]: (value) => validateModelValue(value) ??
+		(FAMILY_MODEL_IDS.includes((value as ModelConfigValue).model) ? null : 'family descriptions require Sonnet 5 or Opus 5'),
 	[CONFIG_KEYS.guidanceModel]: validateModelValue
 };
 

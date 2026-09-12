@@ -30,9 +30,10 @@
   // AI & Cost tab (docs/2026-08-26-admin-ai-tab-ui-AGY.md). Tab choice is
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
-  type Surface = "enrichment" | "guidance";
+  type Surface = "enrichment" | "familyEnrichment" | "guidance";
   let activeTab = $state<"status" | "ai">("status");
   const SURFACES: { key: Surface; title: string; blurb: string }[] = [
+    { key: "familyEnrichment", title: "Family descriptions", blurb: "Drafting and source checks; Sonnet 5 or Opus 5" },
     { key: "enrichment", title: "Enrichment", blurb: "worker batch jobs" },
     { key: "guidance", title: "Guidance", blurb: "live trip requests" },
   ];
@@ -269,7 +270,7 @@
       <h2 id="family-enrichment-heading">Family descriptions</h2>
       <p>{liveFamilies.ready} of {liveFamilies.total} families have descriptions · {liveFamilies.pending} awaiting enrichment · {liveFamilies.noSource} without a usable source · {liveFamilies.errors} needing retry.</p>
       <p>{liveFamilies.paused ? 'Family enrichment is paused.' : liveFamilies.blocked_until && Date.parse(liveFamilies.blocked_until)>Date.now() ? 'Family enrichment is waiting for a service cooldown.' : 'Family enrichment is automatic.'} {liveFamilies.reason ?? ''}</p>
-      <p class="muted">Uses the Enrichment model and appears in AI &amp; Cost. Pause takes effect after the current call. The main worker pause also applies.</p>
+      <p class="muted">Uses its own Family descriptions model setting in AI &amp; Cost (Sonnet 5 by default). Pause takes effect after the current call. The main worker pause also applies.</p>
       <form method="POST" action="?/family_enrichment" use:enhance>
         <button name="intent" value={liveFamilies.paused ? 'resume' : 'pause'}>{liveFamilies.paused ? 'Resume family enrichment' : 'Pause family enrichment'}</button>
         <button class="secondary" name="intent" value="retry">Retry family gaps</button>
@@ -585,7 +586,7 @@
       <div class="surface-section">
         <h3>{surface.title} <span class="muted">— {surface.blurb}</span></h3>
         <div class="model-options">
-          {#each data.ai.models as m (m.id)}
+          {#each data.ai.models.filter(m => surface.key !== "familyEnrichment" || data.ai.familyModelIds.includes(m.id)) as m (m.id)}
             {@const isActive = m.id === data.ai.current[surface.key]}
             <button
               type="button"
