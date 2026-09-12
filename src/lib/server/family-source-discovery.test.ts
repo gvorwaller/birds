@@ -206,7 +206,107 @@ it("stops between source requests when the user pauses", async () => {
   expect(d.candidates).not.toHaveBeenCalled();
 });
 
-it('requires a positive source revision for stable attribution',async()=>{
- const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({query:{pages:[{title:'Corvidae',extract:prose,revisions:[{revid:0}],pageprops:{wikibase_item:'Q1'}}]}})));
- expect(await fetchFamilyArticle('Corvidae',{fetcher})).toBeNull();
+it("requires a positive source revision for stable attribution", async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        query: {
+          pages: [
+            {
+              title: "Corvidae",
+              extract: prose,
+              revisions: [{ revid: 0 }],
+              pageprops: { wikibase_item: "Q1" },
+            },
+          ],
+        },
+      }),
+    ),
+  );
+  expect(await fetchFamilyArticle("Corvidae", { fetcher })).toBeNull();
+});
+
+it("allows explicitly labeled selected examples only when the editorial caller requests them", async () => {
+  const d = deps();
+  d.candidates.mockImplementation(async (name, rank) =>
+    rank === "family" || name.startsWith("Dromaius")
+      ? []
+      : [{ qid: "Q1", title: name }],
+  );
+  const members = [
+    "Casuarius casuarius",
+    "Casuarius bennetti",
+    "Dromaius novaehollandiae",
+  ];
+  const source = await discoverFamilySources(
+    family,
+    members,
+    d,
+    [],
+    undefined,
+    { allowScopedExamples: true },
+  );
+  expect(source?.documents).toHaveLength(1);
+  expect(source?.coverage).toEqual({
+    coveredMembers: members.slice(0, 2),
+    uncoveredMembers: members.slice(2),
+  });
+});
+
+it("records omitted members when an explicit example budget stops source collection", async () => {
+  const d = deps();
+  d.candidates.mockImplementation(async (name, rank) =>
+    rank === "family" ? [] : [{ qid: "Q1", title: name }],
+  );
+  const members = ["Casuarius casuarius", "Dromaius novaehollandiae"];
+  const diagnostics: Parameters<typeof discoverFamilySources>[3] = [];
+  const source = await discoverFamilySources(
+    family,
+    members,
+    d,
+    diagnostics,
+    undefined,
+    { allowScopedExamples: true, maxExampleDocuments: 1 },
+  );
+  expect(source?.documents).toHaveLength(1);
+  expect(source?.coverage).toEqual({
+    coveredMembers: [members[0]],
+    uncoveredMembers: [members[1]],
+  });
+  expect(
+    d.candidates.mock.calls.some(([name]) => name.startsWith("Dromaius")),
+  ).toBe(false);
+  expect(diagnostics.some((d) => d.detail.includes("explicit limit 1"))).toBe(
+    true,
+  );
+  await expect(
+    discoverFamilySources(family, members, d, [], undefined, {
+      maxExampleDocuments: 1,
+    }),
+  ).rejects.toThrow("requires scoped examples");
+});
+
+it("can prefer individual species when a useful genus account is still too generic for an editorial improvement", async () => {
+  const d = deps();
+  const members = ["Casuarius casuarius", "Casuarius bennetti"];
+  const source = await discoverFamilySources(
+    family,
+    members,
+    d,
+    [],
+    undefined,
+    {
+      allowScopedExamples: true,
+      preferMemberAccounts: true,
+      preferSpeciesAccounts: true,
+      maxExampleDocuments: 6,
+    },
+  );
+  expect(source?.documents?.map((d) => d.scope.scientificName)).toEqual(
+    members,
+  );
+  expect(d.candidates.mock.calls.map(([, rank]) => rank)).toEqual([
+    "species",
+    "species",
+  ]);
 });

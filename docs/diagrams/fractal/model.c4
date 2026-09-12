@@ -1,0 +1,147 @@
+// Authored from the Birds local checkout; see README.md for scope and evidence.
+specification {
+  element experience
+  element service
+  element component
+  element database
+  element system
+  element external
+  relationship uses
+}
+model {
+  browser = experience "Browser & installed app" {
+    description "Explore birds, plan trips and receive notifications. The service worker uses network requests; offline pages are not cached."
+    metadata { uid "browser" fractalColor "#759EB5" evidence ["src/routes/+layout.svelte", "src/service-worker.ts", "src/lib/google-maps.ts"] }
+  }
+  web = service "Birds web app" {
+    description "SvelteKit serves pages and actions, reads stored data and calls providers for interactive requests. Configured as the birds PM2 process."
+    metadata { uid "web" fractalColor "#739886" evidence ["package.json", "ecosystem.config.cjs", "src/hooks.server.ts"] }
+    access = component "Session & access" {
+      description "Validate sessions, select the data owner and restrict viewer writes. Public health and token-share routes have separate access rules."
+      metadata { uid "web.access" fractalColor "#739886" evidence ["src/hooks.server.ts", "src/lib/server/session.ts", "src/lib/server/access.ts"] }
+    }
+    discovery = component "Discovery & field guide" {
+      description "Compare recent reports with the life list. Browse taxonomy, species knowledge, historical frequency and personal study history."
+      metadata { uid "web.discovery" fractalColor "#739886" evidence ["src/routes/+page.server.ts", "src/routes/species/+page.server.ts", "src/routes/species/[code]/+page.server.ts", "src/lib/server/needs.ts", "src/lib/server/forecast.ts", "src/lib/server/species-study.ts"] }
+    }
+    planning = component "Trips & field conditions" {
+      description "Save trips and stops, compute recent needs, and request weather, tides and AI field tips. Share links use explicit tokens."
+      metadata { uid "web.planning" fractalColor "#739886" evidence ["src/routes/trips/[id]/+page.server.ts", "src/lib/server/trips.ts", "src/lib/server/trip-shares.ts", "src/lib/server/ai-guidance.ts"] }
+    }
+    operations = component "Settings & admin" {
+      description "Queue sync work, manage encrypted eBird credentials, refresh photo links, control worker pause and inspect AI usage."
+      metadata { uid "web.operations" fractalColor "#739886" evidence ["src/routes/settings/+page.server.ts", "src/routes/admin/+page.server.ts", "src/lib/server/jobs.ts", "src/lib/server/crypto.ts"] }
+    }
+  }
+  worker = service "Background worker" {
+    description "A separate Node process executes durable jobs one at a time. A PostgreSQL advisory lock enforces a single active worker."
+    metadata { uid "worker" fractalColor "#B59669" evidence ["src/worker/index.ts", "scripts/build-worker.mjs", "ecosystem.config.cjs"] }
+    control = component "Claim, schedule & recover" {
+      description "Claim ready jobs, maintain heartbeats, reconcile recurring work and dispatch handlers. Honor persistent pause and drain requests; recover interrupted work."
+      metadata { uid "worker.control" fractalColor "#B59669" evidence ["src/worker/index.ts", "src/lib/server/jobs.ts", "src/lib/server/job-handlers.ts", "backend/db/migrations/0036_worker_pause.sql"] }
+    }
+    sync = component "eBird sync & frequencies" {
+      description "Sync life lists and taxonomy; load authenticated bar-chart data in resumable batches. Store reporting coverage alongside frequency values."
+      metadata { uid "worker.sync" fractalColor "#B59669" evidence ["src/lib/server/job-handlers.ts", "src/lib/server/ebird-account.ts", "src/lib/server/barchart.ts", "src/lib/server/taxonomy-sync.ts"] }
+    }
+    knowledge = component "Species & family enrichment" {
+      description "Resolve source material, fetch natural history and media references, and generate metered AI annotations. Family source handling includes local edits."
+      metadata { uid "worker.knowledge" fractalColor "#B59669" evidence ["src/lib/server/job-handlers.ts", "src/lib/server/species-enrichment.ts", "src/lib/server/family-enrichment.ts", "src/lib/server/ai-call.ts"] }
+    }
+    alerts = component "Nearby need alerts" {
+      description "Scan notable reports against each eligible user life list, apply alert policy, send Web Push and record delivery outcomes."
+      metadata { uid "worker.alerts" fractalColor "#B59669" evidence ["src/lib/server/job-handlers.ts", "src/lib/need-alerts-policy.ts", "src/lib/server/push.ts"] }
+    }
+  }
+  db = database "PostgreSQL" {
+    description "One shared database stores user records, reference data, provider caches, durable jobs and usage. Children are logical table groups, not separate databases."
+    metadata { uid "db" fractalColor "#9A91C4" evidence ["src/lib/db.ts", "backend/db/migrations/0001_schema.sql", "backend/db/migrations/0015_job_queue.sql"] }
+    personal = database "Accounts & birding records" {
+      description "Users, sessions, encrypted eBird credentials, life lists, trips, viewing history and push subscriptions. Access is scoped in application code."
+      metadata { uid "db.personal" fractalColor "#9A91C4" evidence ["backend/db/migrations/0001_schema.sql", "backend/db/migrations/0017_web_push.sql", "backend/db/migrations/0052_species_view_history.sql", "src/lib/server/access.ts"] }
+    }
+    reference = database "Reference data & caches" {
+      description "Taxonomy, species and family knowledge, weekly frequency, coverage, geographic rollups and provider caches. Photo records store links, not uploaded media."
+      metadata { uid "db.reference" fractalColor "#9A91C4" evidence ["backend/db/migrations/0011_species_frequency.sql", "backend/db/migrations/0020_species_enrichment.sql", "backend/db/migrations/0049_frequency_month_rollup.sql", "backend/db/migrations/0058_family_enrichment.sql", "src/lib/server/gallery.ts"] }
+    }
+    jobs = database "Jobs & worker status" {
+      description "Jobs, progress events, retry state, worker heartbeat and persistent pause. This database queue connects the web process to the worker."
+      metadata { uid "db.jobs" fractalColor "#9A91C4" evidence ["backend/db/migrations/0015_job_queue.sql", "backend/db/migrations/0036_worker_pause.sql", "src/lib/server/jobs.ts"] }
+    }
+    usage = database "AI configuration & usage" {
+      description "Runtime model settings and a metered attempt ledger record usage and outcomes for worker enrichment and interactive guidance."
+      metadata { uid "db.usage" fractalColor "#9A91C4" evidence ["backend/db/migrations/0034_ai_config_usage.sql", "src/lib/server/ai-call.ts", "src/lib/server/ai-usage.ts"] }
+    }
+  }
+  providers = system "External services" {
+    description "A visual grouping of independently operated services. Calls go directly to each provider; this is not a shared gateway or one trust domain."
+    metadata { uid "providers" fractalColor "#899DA9" evidence ["src/lib/server/ebird.ts", "src/lib/server/ai-enrichment.ts", "src/lib/server/geocode.ts", "src/lib/server/push.ts"] }
+    ebird = external "eBird & Cornell login" {
+      description "API v2 supplies observations, hotspots and taxonomy. Authenticated web endpoints supply life-list CSV and historical bar-chart TSV."
+      metadata { uid "providers.ebird" fractalColor "#899DA9" evidence ["src/lib/server/ebird.ts", "src/lib/server/ebird-account.ts", "src/lib/server/barchart.ts"] }
+    }
+    sources = external "Natural history & media" {
+      description "Wikidata, Wikipedia, Commons, iNaturalist, xeno-canto and Animal Diversity Web supply source content, identifiers and media references."
+      metadata { uid "providers.sources" fractalColor "#899DA9" evidence ["src/lib/server/job-handlers.ts", "src/lib/server/species-enrichment.ts", "src/lib/server/family-source-discovery.ts", "src/lib/server/animal-diversity.ts"] }
+    }
+    ai = external "Anthropic" {
+      description "Messages API generates annotations, family descriptions and field tips. Runtime settings select models; metered calls record usage."
+      metadata { uid "providers.ai" fractalColor "#899DA9" evidence ["src/lib/server/ai-enrichment.ts", "src/lib/server/ai-guidance.ts", "src/lib/server/family-enrichment-ai.ts", "src/lib/server/ai-call.ts"] }
+    }
+    geo = external "Maps, weather & tides" {
+      description "Google Maps supplies client maps and server place lookup. NWS supplies weather; NOAA supplies tide stations and predictions. These are separate services."
+      metadata { uid "providers.geo" fractalColor "#899DA9" evidence ["src/lib/google-maps.ts", "src/lib/server/geocode.ts", "src/lib/server/weather.ts", "src/lib/server/tides.ts"] }
+    }
+    gallery = external "gaylon.photos" {
+      description "Public gallery JSON supplies photo metadata and CDN links. Original images remain with the photo service."
+      metadata { uid "providers.gallery" fractalColor "#899DA9" evidence ["src/lib/server/gallery.ts"] }
+    }
+    push = external "Web Push services" {
+      description "Browser push endpoints deliver encrypted notifications to enrolled devices. Provider identity depends on the subscription."
+      metadata { uid "providers.push" fractalColor "#899DA9" evidence ["src/lib/server/push.ts", "src/service-worker.ts"] }
+    }
+  }
+  browser .uses web.access "Pages & actions" { metadata { uid "browser--web.access" } }
+  web.access .uses web.discovery "Scoped requests" { metadata { uid "web.access--web.discovery" } }
+  web.access .uses web.planning "Scoped requests" { metadata { uid "web.access--web.planning" } }
+  web.access .uses web.operations "Role-gated actions" { metadata { uid "web.access--web.operations" } }
+  web.access .uses db.personal "Database access" { metadata { uid "web.access--db.personal" } }
+  web.discovery .uses db.personal "Database access" { metadata { uid "web.discovery--db.personal" } }
+  web.discovery .uses db.reference "Database access" { metadata { uid "web.discovery--db.reference" } }
+  web.discovery .uses providers.ebird "Provider calls" { metadata { uid "web.discovery--providers.ebird" } }
+  web.discovery .uses providers.geo "Provider calls" { metadata { uid "web.discovery--providers.geo" } }
+  web.discovery .uses db.jobs "Database access" { metadata { uid "web.discovery--db.jobs" } }
+  web.discovery .uses providers.sources "Provider calls" { metadata { uid "web.discovery--providers.sources" } }
+  web.planning .uses db.personal "Database access" { metadata { uid "web.planning--db.personal" } }
+  web.planning .uses db.reference "Database access" { metadata { uid "web.planning--db.reference" } }
+  web.planning .uses providers.ebird "Provider calls" { metadata { uid "web.planning--providers.ebird" } }
+  web.planning .uses providers.geo "Provider calls" { metadata { uid "web.planning--providers.geo" } }
+  web.planning .uses providers.ai "Provider calls" { metadata { uid "web.planning--providers.ai" } }
+  web.planning .uses db.usage "Database access" { metadata { uid "web.planning--db.usage" } }
+  web.operations .uses db.personal "Database access" { metadata { uid "web.operations--db.personal" } }
+  web.operations .uses db.jobs "Database access" { metadata { uid "web.operations--db.jobs" } }
+  web.operations .uses db.usage "Database access" { metadata { uid "web.operations--db.usage" } }
+  web.operations .uses providers.gallery "Provider calls" { metadata { uid "web.operations--providers.gallery" } }
+  web.operations .uses providers.ai "Provider calls" { metadata { uid "web.operations--providers.ai" } }
+  web.operations .uses db.reference "Database access" { metadata { uid "web.operations--db.reference" } }
+  browser .uses providers.geo "Map rendering" { metadata { uid "browser--providers.geo" } }
+  worker.control .uses db.jobs "Database access" { metadata { uid "worker.control--db.jobs" } }
+  worker.control .uses worker.sync "Dispatch jobs" { metadata { uid "worker.control--worker.sync" } }
+  worker.control .uses worker.knowledge "Dispatch jobs" { metadata { uid "worker.control--worker.knowledge" } }
+  worker.control .uses worker.alerts "Dispatch jobs" { metadata { uid "worker.control--worker.alerts" } }
+  worker.sync .uses providers.ebird "Provider calls" { metadata { uid "worker.sync--providers.ebird" } }
+  worker.sync .uses db.personal "Database access" { metadata { uid "worker.sync--db.personal" } }
+  worker.sync .uses db.reference "Database access" { metadata { uid "worker.sync--db.reference" } }
+  worker.knowledge .uses providers.sources "Provider calls" { metadata { uid "worker.knowledge--providers.sources" } }
+  worker.knowledge .uses providers.ai "Provider calls" { metadata { uid "worker.knowledge--providers.ai" } }
+  worker.knowledge .uses db.reference "Database access" { metadata { uid "worker.knowledge--db.reference" } }
+  worker.knowledge .uses db.usage "Database access" { metadata { uid "worker.knowledge--db.usage" } }
+  worker.alerts .uses providers.ebird "Provider calls" { metadata { uid "worker.alerts--providers.ebird" } }
+  worker.alerts .uses db.personal "Database access" { metadata { uid "worker.alerts--db.personal" } }
+  worker.alerts .uses providers.push "Provider calls" { metadata { uid "worker.alerts--providers.push" } }
+  providers.push .uses browser "Deliver push" { metadata { uid "providers.push--browser" } }
+  worker.sync .uses db.jobs "Database access" { metadata { uid "worker.sync--db.jobs" } }
+  worker.knowledge .uses db.jobs "Database access" { metadata { uid "worker.knowledge--db.jobs" } }
+  worker.alerts .uses db.jobs "Database access" { metadata { uid "worker.alerts--db.jobs" } }
+}
+views { view index { include * } }

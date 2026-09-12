@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "id": "birds",
+  "title": "Birds",
+  "description": "Find birds, plan trips and build shared reference knowledge.",
+  "provenance": "Authored 2026-09-11 from the local Birds checkout at e4cfe74 plus existing uncommitted family-enrichment and UI edits. Evidence is relative to the Birds repository. Current means present in inspected source, not verified deployment or live provider health. Process placement follows ecosystem.config.cjs and active callers. This is a selective architecture overview, not an exhaustive inventory; see README.md.",
+  "boundaries": [
+    {
+      "id": "device",
+      "title": "User device",
+      "description": "Browser and service worker execute on the user device.",
+      "kind": "execution",
+      "members": [
+        "browser"
+      ],
+      "color": "#759EB5"
+    },
+    {
+      "id": "application",
+      "title": "Server application",
+      "description": "Configured web and worker processes execute server-side. This is execution placement, not database privilege isolation.",
+      "kind": "execution",
+      "members": [
+        "web",
+        "web.access",
+        "web.discovery",
+        "web.planning",
+        "web.operations",
+        "worker",
+        "worker.control",
+        "worker.sync",
+        "worker.knowledge",
+        "worker.alerts"
+      ],
+      "color": "#739886"
+    },
+    {
+      "id": "storage",
+      "title": "Shared persistence",
+      "description": "Logical groups reside in the same PostgreSQL database; access scopes are enforced by application code.",
+      "kind": "storage",
+      "members": [
+        "db",
+        "db.personal",
+        "db.reference",
+        "db.jobs",
+        "db.usage"
+      ],
+      "color": "#9A91C4"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "overview",
+      "title": "The big picture",
+      "description": "Two application processes share PostgreSQL and call external providers.",
+      "expanded": [],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "requests",
+      "title": "Inside the web app",
+      "description": "Follow scoped requests through discovery, trip planning and operator controls.",
+      "scope": "web",
+      "expanded": [
+        "web"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "background",
+      "title": "Inside background work",
+      "description": "One worker claims durable jobs and dispatches sync, enrichment and alerts.",
+      "scope": "worker",
+      "expanded": [
+        "worker"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "boundaries",
+      "title": "Execution boundaries",
+      "description": "Distinguish user-device execution, server processes and shared persistence.",
+      "expanded": [],
+      "proposed": false,
+      "lens": "trust"
+    }
+  ]
+}

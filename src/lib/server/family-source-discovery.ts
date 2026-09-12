@@ -48,7 +48,22 @@ export async function discoverFamilySources(
   deps = sourceDependencies,
   diagnostics: DiscoveryDiagnostic[] = [],
   shouldStop?: () => Promise<boolean>,
+  options: {
+    allowScopedExamples?: boolean;
+    preferMemberAccounts?: boolean;
+    preferSpeciesAccounts?: boolean;
+    maxExampleDocuments?: number;
+  } = {},
 ): Promise<FamilySource | null> {
+  if (
+    options.maxExampleDocuments !== undefined &&
+    (!options.allowScopedExamples ||
+      !Number.isInteger(options.maxExampleDocuments) ||
+      options.maxExampleDocuments < 1)
+  )
+    throw Error(
+      "An explicit example-document limit requires scoped examples and a positive integer",
+    );
   if (!family.scientificName) return null;
   const record = (
     candidate: string,
@@ -175,19 +190,30 @@ export async function discoverFamilySources(
       return null;
     }
   }
-  const familyDoc = await lookup(family.scientificName, "family", members);
+  const familyDoc = options.preferMemberAccounts
+    ? null
+    : await lookup(family.scientificName, "family", members);
   let documents: FamilySourceDocument[] = familyDoc ? [familyDoc] : [];
   if (!documents.length && members.length) {
     // Each current genus must be represented. A single source about one genus
     // cannot silently stand in for a larger family (e.g. cassowaries AND emu).
     const genera = [...new Set(members.map((m) => m.split(" ")[0]))].sort();
     for (const genus of genera) {
+      if (
+        options.maxExampleDocuments !== undefined &&
+        documents.length >= options.maxExampleDocuments
+      )
+        break;
       const subset = members.filter((m) => m.split(" ")[0] === genus);
       const document =
         subset.length === 1
           ? ((await lookup(subset[0], "species", subset)) ??
-            (await lookup(genus, "genus", subset)))
-          : await lookup(genus, "genus", subset);
+            (options.preferSpeciesAccounts
+              ? null
+              : await lookup(genus, "genus", subset)))
+          : options.preferSpeciesAccounts
+            ? null
+            : await lookup(genus, "genus", subset);
       if (document) {
         documents.push(document);
         continue;
@@ -197,11 +223,24 @@ export async function discoverFamilySources(
       const speciesDocuments: FamilySourceDocument[] = [];
       if (subset.length > 1)
         for (const species of subset) {
+          if (
+            options.maxExampleDocuments !== undefined &&
+            documents.length + speciesDocuments.length >=
+              options.maxExampleDocuments
+          )
+            break;
           const speciesDoc = await lookup(species, "species", [species]);
-          if (!speciesDoc) break;
+          if (!speciesDoc) {
+            if (options.allowScopedExamples) continue;
+            break;
+          }
           speciesDocuments.push(speciesDoc);
         }
       if (speciesDocuments.length !== subset.length) {
+        if (options.allowScopedExamples) {
+          documents.push(...speciesDocuments);
+          continue;
+        }
         documents = [];
         break;
       }
@@ -212,10 +251,25 @@ export async function discoverFamilySources(
     if (transient) throw transient;
     return null;
   }
+  const coveredMembers = [
+    ...new Set(documents.flatMap((document) => document.scope.members)),
+  ];
+  const uncoveredMembers = members.filter(
+    (member) => !coveredMembers.includes(member),
+  );
+  if (options.maxExampleDocuments !== undefined && uncoveredMembers.length)
+    record(
+      family.scientificName,
+      "accepted",
+      `Selected examples from ${documents.length} source accounts (explicit limit ${options.maxExampleDocuments}); ${uncoveredMembers.length} current species are outside source coverage. The summary must label its examples.`,
+    );
   return {
     ...documents[0],
     documents,
     members,
     resolverVersion: FAMILY_RESOLVER_VERSION,
+    ...(uncoveredMembers.length
+      ? { coverage: { coveredMembers, uncoveredMembers } }
+      : {}),
   };
 }
