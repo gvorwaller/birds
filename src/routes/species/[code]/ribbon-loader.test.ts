@@ -54,16 +54,16 @@ async function noKeyUserId(): Promise<number> {
 describe.runIf(dbUp)("species/[code] loader — ribbon discriminated result (td-c6b113)", () => {
   beforeEach(() => mockedSpeciesRibbon.mockReset());
 
-  it("ribbon: {ok:true, grid:null} when speciesRibbon resolves with nothing loaded", async () => {
+  it("ribbon: {ok:true, gridJson:null} when speciesRibbon resolves with nothing loaded", async () => {
     const CODE = "rbldnul9";
     await seedTaxon(CODE);
     const uid = await noKeyUserId();
     mockedSpeciesRibbon.mockResolvedValue(null);
     try {
       const data = (await load(loadEvent(uid, CODE))) as unknown as {
-        ribbon: { ok: boolean; grid: unknown };
+        ribbon: { ok: boolean; gridJson: unknown };
       };
-      expect(data.ribbon).toEqual({ ok: true, grid: null });
+      expect(data.ribbon).toEqual({ ok: true, gridJson: null });
     } finally {
       await query("DELETE FROM taxonomy_cache WHERE species_code = $1", [CODE]);
     }
@@ -102,9 +102,9 @@ describe.runIf(dbUp)("species/[code] loader — ribbon discriminated result (td-
     mockedSpeciesRibbon.mockResolvedValue(fakeGrid);
     try {
       const data = (await load(loadEvent(uid, CODE))) as unknown as {
-        ribbon: { ok: boolean; grid: unknown };
+        ribbon: { ok: boolean; gridJson: unknown };
       };
-      expect(data.ribbon).toEqual({ ok: true, grid: fakeGrid });
+      expect(data.ribbon).toEqual({ ok: true, gridJson: JSON.stringify(fakeGrid) });
     } finally {
       await query("DELETE FROM taxonomy_cache WHERE species_code = $1", [CODE]);
     }

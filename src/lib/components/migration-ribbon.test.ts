@@ -10,6 +10,13 @@
 import { describe, expect, it } from 'vitest';
 import {
 	BANDS,
+	colourBinIndex,
+	ribbonPeak,
+	relativeLegend,
+	RELATIVE_BINS,
+	ribbonColourKey,
+	parseRibbonColour,
+	type RibbonPeak,
 	COLUMNS,
 	CONTINENTS,
 	DRILL_ERROR_MESSAGE,
@@ -88,7 +95,8 @@ function emptyGrid(speciesCode = 'testsp'): RibbonGridClient {
 }
 
 function baseState(overrides: Partial<RibbonState> = {}): RibbonState {
-	return { ...initialState(false), ...overrides };
+	// Most reducer/readout fixtures exercise an explicitly selected World view.
+	return { ...initialState(false), view: 'world', cont: null, ...overrides };
 }
 
 // ---------------------------------------------------------------------------
@@ -136,23 +144,23 @@ describe('bandLabel', () => {
 
 describe('fillFor', () => {
 	it('a low-sample cell fills with the dash sentinel', () => {
-		const cell: RibbonCellClient = { f: 0.2, n: 39, state: 'reported', low: true, excluded: 0 };
+		const cell: RibbonCellClient = { f: 0.2, num: 7.8, n: 39, state: 'reported', low: true, excluded: 0 };
 		expect(fillFor(cell)).toBe('dash');
 	});
 	it('a normal cell fills with its bin token', () => {
-		const cell: RibbonCellClient = { f: 0, n: 39, state: 'zero', low: false, excluded: 0 };
+		const cell: RibbonCellClient = { f: 0, num: 0, n: 39, state: 'zero', low: false, excluded: 0 };
 		expect(fillFor(cell)).toBe('var(--rb-0)');
 	});
 	it('null (nothing loaded) is the slash sentinel', () => {
 		expect(fillFor(null)).toBe('slash');
 	});
 	it("a 'thin' cell fills with dash too, and never touches binIndex (TD-B deploy gate)", () => {
-		const cell: RibbonCellClient = { f: 0, n: 200, state: 'thin', low: true, excluded: 2 };
+		const cell: RibbonCellClient = { f: 0, num: 0, n: 200, state: 'thin', low: true, excluded: 2 };
 		expect(fillFor(cell)).toBe('dash');
 		expect(fillFor(cell)).not.toContain('--rb-');
 	});
 	it('mixed eligible + excluded countries (n=10,000, low=true, excluded=1) fills with dash', () => {
-		const cell: RibbonCellClient = { f: 0.25, n: 10000, state: 'reported', low: true, excluded: 1 };
+		const cell: RibbonCellClient = { f: 0.25, num: 2500, n: 10000, state: 'reported', low: true, excluded: 1 };
 		expect(fillFor(cell)).toBe('dash');
 	});
 });
@@ -175,14 +183,14 @@ describe('readout', () => {
 
 	it('checklists low (server `low`, small n) -> "20% reporting rate · small sample"', () => {
 		const grid = emptyGrid();
-		grid.modes.checklists.world[b][0] = { f: 0.2, n: 20, state: 'reported', low: true, excluded: 0 };
+		grid.modes.checklists.world[b][0] = { f: 0.2, num: 4, n: 20, state: 'reported', low: true, excluded: 0 };
 		const r = readout(grid, { ...state, weight: 'checklists' });
 		expect(r.line2).toBe('20% reporting rate · small sample');
 	});
 
 	it('zero -> "0% — surveyed, no reports"', () => {
 		const grid = emptyGrid();
-		grid.modes.equal.world[b][0] = { f: 0, n: 500, state: 'zero', low: false, excluded: 0 };
+		grid.modes.equal.world[b][0] = { f: 0, num: 0, n: 500, state: 'zero', low: false, excluded: 0 };
 		const r = readout(grid, state);
 		expect(r.line2).toBe('0% — surveyed, no reports');
 	});
@@ -195,7 +203,7 @@ describe('readout', () => {
 	// under either weighting.
 	it("a surveyed zero with n<40 is a plain zero under BOTH weightings (server's `low` is always false for zero — CC1 P2-2)", () => {
 		const grid = emptyGrid();
-		const cell = { f: 0, n: 39, state: 'zero' as const, low: false, excluded: 0 };
+		const cell = { f: 0, num: 0, n: 39, state: 'zero' as const, low: false, excluded: 0 };
 		grid.modes.equal.world[b][0] = cell;
 		grid.modes.checklists.world[b][0] = cell;
 		expect(readout(grid, state).line2).toBe('0% — surveyed, no reports');
@@ -206,6 +214,7 @@ describe('readout', () => {
 		const grid = emptyGrid();
 		grid.modes.equal.world[b][0] = {
 			f: 0.161167,
+			num: 105945.2576,
 			n: 439972,
 			state: 'reported',
 			low: false,
@@ -214,8 +223,8 @@ describe('readout', () => {
 		grid.regionCounts[b] = COLUMNS.map((c) => (c === 'NAW' || c === 'NAE' ? 1 : 0));
 		const r = readout(grid, state);
 		expect(r.line2).toBe('16% average reporting rate');
-		expect(r.line3).toBe('equal weight · 2 regions · 440K checklists');
-		expect(r.title3).toBe('439,972 checklists');
+		expect(r.line3).toBe('106K of 440K checklists reported it · equal weight · 2 regions');
+		expect(r.title3).toBe('105,945 of 439,972 checklists reported it');
 		expect(r.line2).not.toContain('of checklists');
 	});
 
@@ -223,6 +232,7 @@ describe('readout', () => {
 		const grid = emptyGrid();
 		grid.modes.checklists.world[b][0] = {
 			f: 0.2408,
+			num: 105945.2576,
 			n: 439972,
 			state: 'reported',
 			low: false,
@@ -234,25 +244,25 @@ describe('readout', () => {
 
 	it("equal + excluded>0 -> the small-sample-with-exclusions line (P2-2)", () => {
 		const grid = emptyGrid();
-		grid.modes.equal.world[b][0] = { f: 0.15, n: 300, state: 'reported', low: true, excluded: 1 };
+		grid.modes.equal.world[b][0] = { f: 0.15, num: 45, n: 300, state: 'reported', low: true, excluded: 1 };
 		grid.regionCounts[b] = COLUMNS.map((c) => (c === 'NAE' ? 3 : 0));
 		const r = readout(grid, state);
 		expect(r.line2).toBe('15% average reporting rate · small sample');
-		expect(r.line3).toBe('1 country under 40 checklists left out · 3 regions · 300 checklists');
+		expect(r.line3).toBe('45 of 300 checklists reported it · equal weight · 3 regions · 1 country under 40 checklists left out');
 	});
 
 	it('equal + mixed eligible and excluded countries (n=10,000, excluded=1, low=true) preserves valid aggregate rate with country exclusion note', () => {
 		const grid = emptyGrid();
-		grid.modes.equal.world[b][0] = { f: 0.05, n: 10000, state: 'reported', low: true, excluded: 1 };
+		grid.modes.equal.world[b][0] = { f: 0.05, num: 500, n: 10000, state: 'reported', low: true, excluded: 1 };
 		grid.regionCounts[b] = COLUMNS.map((c) => (c === 'NAE' ? 10 : 0));
 		const r = readout(grid, state);
 		expect(r.line2).toBe('5% average reporting rate · small sample');
-		expect(r.line3).toBe('1 country under 40 checklists left out · 10 regions · 10K checklists');
+		expect(r.line3).toBe('500 of 10K checklists reported it · equal weight · 10 regions · 1 country under 40 checklists left out');
 	});
 
 	it("'thin' -> surveyed-but-unratable copy, f is never printed as a rate (TD-B deploy gate)", () => {
 		const grid = emptyGrid();
-		grid.modes.equal.world[b][0] = { f: 0, n: 200, state: 'thin', low: true, excluded: 2 };
+		grid.modes.equal.world[b][0] = { f: 0, num: 0, n: 200, state: 'thin', low: true, excluded: 2 };
 		grid.regionCounts[b] = COLUMNS.map((c) => (c === 'NAE' ? 5 : 0));
 		const r = readout(grid, state);
 		expect(r.line2).toBe('Surveyed — too few checklists to rate');
@@ -405,17 +415,17 @@ describe('initialState / applyWide', () => {
 		expect(s.contView).toBe('ALL');
 		expect(s.cont).toBe('NAE');
 	});
-	it('phone: world/NAE/null', () => {
+	it('phone: cont/ALL/NAE', () => {
 		const s = initialState(false);
-		expect(s.view).toBe('world');
-		expect(s.contView).toBe('NAE');
-		expect(s.cont).toBeNull();
+		expect(s.view).toBe('cont');
+		expect(s.contView).toBe('ALL');
+		expect(s.cont).toBe('NAE');
 	});
-	it('initialState with defaultCol queues primary continent on phone', () => {
+	it('initialState selects the primary column within all continents on every screen', () => {
 		const s = initialState(false, 'EU');
-		expect(s.view).toBe('world');
-		expect(s.contView).toBe('EU');
-		expect(s.cont).toBeNull();
+		expect(s.view).toBe('cont');
+		expect(s.contView).toBe('ALL');
+		expect(s.cont).toBe('EU');
 
 		const wide = initialState(true, 'EU');
 		expect(wide.view).toBe('cont');
@@ -425,6 +435,7 @@ describe('initialState / applyWide', () => {
 	it('applyWide is a no-op once the user has touched the view toggle', () => {
 		const s = baseState({ view: 'world', cont: null, viewTouched: true });
 		expect(applyWide(s, true)).toEqual(s);
+		expect(applyWide(s, false)).toEqual(s);
 	});
 	it('applyWide flips the view when untouched', () => {
 		const s = baseState({ view: 'world', cont: null, viewTouched: false });
@@ -432,12 +443,12 @@ describe('initialState / applyWide', () => {
 		expect(wide.view).toBe('cont');
 		expect(wide.contView).toBe('ALL');
 	});
-	it('applyWide with defaultCol preserves world view on phone and queues continent', () => {
+	it('applyWide applies the same all-continents default on both widths', () => {
 		const s = baseState({ view: 'world', cont: null, viewTouched: false });
 		const phone = applyWide(s, false, 'EU');
-		expect(phone.view).toBe('world');
-		expect(phone.contView).toBe('EU');
-		expect(phone.cont).toBeNull();
+		expect(phone.view).toBe('cont');
+		expect(phone.contView).toBe('ALL');
+		expect(phone.cont).toBe('EU');
 
 		const wide = applyWide(s, true, 'EU');
 		expect(wide.view).toBe('cont');
@@ -445,9 +456,8 @@ describe('initialState / applyWide', () => {
 		expect(wide.cont).toBe('EU');
 	});
 	it('World -> By continent state transition from initialState(false) preserves visible-selection invariant (td-1a47a7, CODEX13 P1-1)', () => {
-		// Phone/tablet initialState begins in World view with primary continent queued in contView ('EU')
-		// and all 8 columns in selectedConts
-		const s = initialState(false, 'EU');
+		// An explicit World selection retains all columns for switching back.
+		const s: RibbonState = { ...initialState(false, 'EU'), view: 'world', cont: null, contView: 'EU' };
 		expect(s.view).toBe('world');
 		expect(s.contView).toBe('EU');
 		expect(s.selectedConts).toEqual([...COLUMNS]);
@@ -582,6 +592,7 @@ describe('chartAria', () => {
 		const grid = emptyGrid();
 		grid.modes.equal.world[bandIndex(40)][8] = {
 			f: 0.06,
+			num: 30,
 			n: 500,
 			state: 'reported',
 			low: false,
@@ -595,6 +606,7 @@ describe('chartAria', () => {
 		const grid = emptyGrid();
 		grid.modes.equal.world[bandIndex(40)][0] = {
 			f: 0,
+			num: 0,
 			n: 200,
 			state: 'thin',
 			low: true,
@@ -610,6 +622,7 @@ describe('chartAria', () => {
 		const grid = emptyGrid();
 		grid.modes.equal.world[bandIndex(40)][8] = {
 			f: 0.06,
+			num: 30,
 			n: 500,
 			state: 'reported',
 			low: false,
@@ -804,6 +817,7 @@ describe('occupiedBands & activeBands', () => {
 			for (let m = 0; m < 12; m++) {
 				grid.modes.equal.world[bi][m] = {
 					f: 0.1,
+					num: 50,
 					n: 500,
 					state: 'reported',
 					low: false,
@@ -837,9 +851,9 @@ describe('occupiedBands & activeBands', () => {
 		const ciSA = COLUMNS.indexOf('SA');
 
 		// NAE at 40° in June
-		grid.modes.equal.cols[b40][ciNAE][5] = { f: 0.3, n: 500, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[b40][ciNAE][5] = { f: 0.3, num: 150, n: 500, state: 'reported', low: false, excluded: 0 };
 		// SA at -30° in December
-		grid.modes.equal.cols[bMinus30][ciSA][11] = { f: 0.3, n: 500, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[bMinus30][ciSA][11] = { f: 0.3, num: 150, n: 500, state: 'reported', low: false, excluded: 0 };
 
 		// In All continents mode, s.cont is typically non-null ('NAE'), but contView is 'ALL'
 		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
@@ -860,9 +874,9 @@ describe('occupiedBands & activeBands', () => {
 		const b40 = bandIndex(40);
 		const b30 = bandIndex(30);
 		// Core presence at 40°
-		grid.modes.equal.world[b40][5] = { f: 0.1, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b40][5] = { f: 0.1, num: 100, n: 1000, state: 'reported', low: false, excluded: 0 };
 		// Sub-0.5% vagrant report at 30° (below PRESENT = 0.005)
-		grid.modes.equal.world[b30][5] = { f: 0.002, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b30][5] = { f: 0.002, num: 2, n: 1000, state: 'reported', low: false, excluded: 0 };
 
 		const s = baseState({ view: 'world' });
 		const bands = occupiedBands(grid, s);
@@ -890,7 +904,7 @@ describe('migrationSummary', () => {
 	it('reports correct column count and headline for continent subsets (td-1a47a7)', () => {
 		const grid = emptyGrid();
 		const b50 = bandIndex(50);
-		grid.modes.equal.world[b50][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][5] = { f: 0.4, num: 400, n: 1000, state: 'reported', low: false, excluded: 0 };
 		const sAll = baseState({ view: 'cont', contView: 'ALL', selectedConts: [...COLUMNS] });
 		const summaryAll = migrationSummary(grid, sAll);
 		expect(summaryAll.headline).toBe('All Continents Overview');
@@ -906,10 +920,10 @@ describe('migrationSummary', () => {
 		const grid = emptyGrid();
 		const b50 = bandIndex(50);
 		// In NAW (col 0) at band 50 in Jun/Jul
-		grid.modes.equal.cols[b50][0][5] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
-		grid.modes.equal.cols[b50][0][6] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
-		grid.modes.equal.world[b50][5] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
-		grid.modes.equal.world[b50][6] = { f: 0.5, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[b50][0][5] = { f: 0.5, num: 500, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.cols[b50][0][6] = { f: 0.5, num: 500, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][5] = { f: 0.5, num: 500, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][6] = { f: 0.5, num: 500, n: 1000, state: 'reported', low: false, excluded: 0 };
 
 		// NA selection draws 2 columns (NAW, NAE) -> Overview mode with NA-specific overview copy
 		const sNA = baseState({ view: 'cont', contView: 'ALL', selectedConts: ['NAW', 'NAE'] });
@@ -931,13 +945,13 @@ describe('migrationSummary', () => {
 		const grid = emptyGrid();
 		// North at band 50 (June/July)
 		const b50 = bandIndex(50);
-		grid.modes.equal.world[b50][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
-		grid.modes.equal.world[b50][6] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][5] = { f: 0.4, num: 400, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b50][6] = { f: 0.4, num: 400, n: 1000, state: 'reported', low: false, excluded: 0 };
 
 		// South at band 10 (Jan/Dec)
 		const b10 = bandIndex(10);
-		grid.modes.equal.world[b10][0] = { f: 0.3, n: 1000, state: 'reported', low: false, excluded: 0 };
-		grid.modes.equal.world[b10][11] = { f: 0.3, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b10][0] = { f: 0.3, num: 300, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b10][11] = { f: 0.3, num: 300, n: 1000, state: 'reported', low: false, excluded: 0 };
 
 		const s = baseState({ view: 'world' });
 		const summary = migrationSummary(grid, s);
@@ -952,7 +966,7 @@ describe('migrationSummary', () => {
 		const grid = emptyGrid();
 		const b40 = bandIndex(40);
 		for (let m = 0; m < 12; m++) {
-			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+			grid.modes.equal.world[b40][m] = { f: 0.25, num: 250, n: 1000, state: 'reported', low: false, excluded: 0 };
 		}
 		const s = baseState({ view: 'world' });
 		const summary = migrationSummary(grid, s);
@@ -966,7 +980,7 @@ describe('migrationSummary', () => {
 		const grid = emptyGrid();
 		const b40 = bandIndex(40);
 		// Single June observation
-		grid.modes.equal.world[b40][5] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b40][5] = { f: 0.25, num: 250, n: 1000, state: 'reported', low: false, excluded: 0 };
 
 		const s = baseState({ view: 'world' });
 		const summary = migrationSummary(grid, s);
@@ -983,7 +997,7 @@ describe('migrationSummary', () => {
 		const b40 = bandIndex(40);
 		// May, June, July only
 		for (let m = 4; m <= 6; m++) {
-			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+			grid.modes.equal.world[b40][m] = { f: 0.25, num: 250, n: 1000, state: 'reported', low: false, excluded: 0 };
 		}
 
 		const s = baseState({ view: 'world' });
@@ -998,7 +1012,7 @@ describe('migrationSummary', () => {
 	it('refuses to summarize All continents with an equatorial world landmark and points at a continent (P1-2)', () => {
 		const grid = emptyGrid();
 		const b40 = bandIndex(40);
-		grid.modes.equal.world[b40][5] = { f: 0.4, n: 1000, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[b40][5] = { f: 0.4, num: 400, n: 1000, state: 'reported', low: false, excluded: 0 };
 		const s = baseState({ view: 'cont', contView: 'ALL', cont: 'NAE' });
 		const summary = migrationSummary(grid, s);
 		expect(summary.hasData).toBe(true);
@@ -1011,7 +1025,7 @@ describe('migrationSummary', () => {
 		const grid = emptyGrid();
 		const b40 = bandIndex(40);
 		for (let m = 0; m < 8; m++) {
-			grid.modes.equal.world[b40][m] = { f: 0.25, n: 1000, state: 'reported', low: false, excluded: 0 };
+			grid.modes.equal.world[b40][m] = { f: 0.25, num: 250, n: 1000, state: 'reported', low: false, excluded: 0 };
 		}
 		const s = baseState({ view: 'world' });
 		const summary = migrationSummary(grid, s);
@@ -1066,6 +1080,7 @@ describe('primaryContinent', () => {
 		for (let m = 4; m < 8; m++) {
 			grid.modes.equal.cols[bi40][ciNAE][m] = {
 				f: 0.45,
+				num: 450,
 				n: 1000,
 				state: 'reported',
 				low: false,
@@ -1082,6 +1097,7 @@ describe('primaryContinent', () => {
 		for (let m = 0; m < 12; m++) {
 			grid.modes.equal.cols[bi50][ciEU][m] = {
 				f: 0.6,
+				num: 300,
 				n: 500,
 				state: 'reported',
 				low: false,
@@ -1211,7 +1227,7 @@ describe('td-2c7a0b: iPhone heatmap cell selection hit-testing & boundaries', ()
 		expect(picked.month).toBe(6);
 	});
 
-	it('iPhone Safari 390px WebKit viewport: World view (phone default) hit-tests all 12 months & bands (AC 7)', () => {
+	it('iPhone Safari 390px WebKit viewport: World view (explicit selection) hit-tests all 12 months & bands (AC 7)', () => {
 		// 390px iPhone viewport: availWidth = 390 - 36 (gutter) - 12 (padding) = 342px
 		const s = baseState({ view: 'world', cont: null });
 		const gIPhone = geometry(s, 342, false, true); // phone = true
@@ -1269,6 +1285,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (let m = 4; m < 8; m++) {
 			grid.modes.equal.world[bi40][m] = {
 				f: 0.5,
+				num: 50,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1279,6 +1296,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [11, 0, 1]) {
 			grid.modes.equal.world[bi10][m] = {
 				f: 0.4,
+				num: 40,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1289,6 +1307,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [2, 3]) {
 			grid.modes.equal.world[bi20][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1299,6 +1318,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [8, 9]) {
 			grid.modes.equal.world[bi20][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1329,6 +1349,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (let m = 0; m < 12; m++) {
 			grid.modes.equal.world[bi40][m] = {
 				f: 0.35,
+				num: 35,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1357,6 +1378,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [5, 6]) {
 			grid.modes.equal.world[biNorth20][m] = {
 				f: 0.6,
+				num: 60,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1367,6 +1389,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [11, 0]) {
 			grid.modes.equal.world[biSouth30][m] = {
 				f: 0.6,
+				num: 60,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1377,6 +1400,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [2, 3]) {
 			grid.modes.equal.world[biEq0][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1387,6 +1411,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [8, 9]) {
 			grid.modes.equal.world[biEq0][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1426,6 +1451,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [11, 0]) {
 			grid.modes.equal.world[biNorth20][m] = {
 				f: 0.6,
+				num: 60,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1436,6 +1462,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [5, 6]) {
 			grid.modes.equal.world[biSouth30][m] = {
 				f: 0.6,
+				num: 60,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1446,6 +1473,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [2, 3]) {
 			grid.modes.equal.world[biEq0][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1456,6 +1484,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		for (const m of [8, 9]) {
 			grid.modes.equal.world[biEq0][m] = {
 				f: 0.3,
+				num: 30,
 				n: 100,
 				state: 'reported',
 				low: false,
@@ -1555,9 +1584,10 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		const grid = emptyGrid();
 		const bi40 = bandIndex(40);
 		// Add some observations so hasAnyData is true
-		grid.modes.equal.world[bi40][5] = { f: 0.15, n: 100, state: 'reported', low: false, excluded: 0 };
+		grid.modes.equal.world[bi40][5] = { f: 0.15, num: 15, n: 100, state: 'reported', low: false, excluded: 0 };
 		grid.modes.equal.cols[bi40][COLUMNS.indexOf('EU')][5] = {
 			f: 0.2,
+			num: 20,
 			n: 100,
 			state: 'reported',
 			low: false,
@@ -1565,6 +1595,7 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 		};
 		grid.modes.equal.cols[bi40][COLUMNS.indexOf('AF')][5] = {
 			f: 0.1,
+			num: 10,
 			n: 100,
 			state: 'reported',
 			low: false,
@@ -1598,9 +1629,9 @@ describe('Structured Field-Guide Seasonal Summary cards', () => {
 
 	it('initialState(false) preserves all-continents drawnColumns on transition to By continent (CODEX13 P1-1)', () => {
 		const sPhone = initialState(false, 'EU');
-		expect(sPhone.view).toBe('world');
+		expect(sPhone.view).toBe('cont');
 		expect(sPhone.selectedConts).toEqual([...COLUMNS]);
-		expect(drawnColumns(sPhone)).toEqual([]);
+		expect(drawnColumns(sPhone)).toEqual([...COLUMNS]);
 
 		// Transition to By continent:
 		const targetCols =
@@ -1667,4 +1698,81 @@ describe('strongest region for the selected month', () => {
 		expect(strongestRegion([b, a], 2)).toBe(a);
 		expect(strongestRegion([a, b], 2)).toBe(a);
 	});
+});
+
+
+describe('N-of-M readout (td-e7a96d)', () => {
+  for (const weight of ['equal','checklists'] as const) {
+    it(`prints numerator independently from the ${weight} rate with full counts in the title`, () => {
+      const grid = emptyGrid();
+      const b = bandIndex(40);
+      grid.regionCounts[b][0] = 19;
+      grid.modes[weight].world[b][0] = {f: weight === 'equal' ? 0.16 : 878 / 1200000, num:878, n:1200000, state:'reported',low:false,excluded:0};
+      const r = readout(grid, baseState({weight,band:40,month:1,cont:null}));
+      expect(r.line3).toBe(`878 of 1.2M checklists reported it · ${weight === 'equal' ? 'equal weight · ' : ''}19 regions`);
+      expect(r.title3).toBe('878 of 1,200,000 checklists reported it');
+    });
+    it(`keeps the surveyed-zero branch under ${weight}`, () => {
+      const grid = emptyGrid();
+      grid.modes[weight].world[bandIndex(40)][0] = {f:0,num:0,n:1200000,state:'zero',low:false,excluded:0};
+      const r = readout(grid,baseState({weight,band:40,month:1,cont:null}));
+      expect(r.line2).toBe('0% — surveyed, no reports');
+      expect(r.line3).toBe('0 of 1.2M checklists · 0 regions');
+      expect(r.title3).toBe('0 of 1,200,000 checklists reported it');
+    });
+  }
+});
+
+
+describe('relative ribbon colour (td-b92412)', () => {
+  const peak: RibbonPeak = {f:1, band:50, column:'NAE', month:2, low:false};
+  it('uses exclusive 5/20/40/70 percent boundaries and caps regions above the grid peak', () => {
+    for (const [f, bin] of [[0,0],[0.04999,1],[0.05,2],[0.19999,2],[0.2,3],[0.39999,3],[0.4,4],[0.69999,4],[0.7,5],[1,5],[2,5]]) {
+      expect(colourBinIndex(f,'relative',peak)).toBe(bin);
+    }
+    expect(colourBinIndex(0.02,'absolute',peak)).toBe(2);
+    expect(colourBinIndex(0.02,'relative',{...peak,f:0.02})).toBe(5);
+  });
+  it('finds column and World maxima for each weighting, including hidden bands and months', () => {
+    const grid=emptyGrid();
+    grid.modes.equal.cols[bandIndex(50)][COLUMNS.indexOf('NAE')][1]={f:0.024,num:24,n:1000,state:'reported',low:false,excluded:0};
+    grid.modes.equal.world[bandIndex(-40)][11]={f:0.03,num:30,n:1000,state:'reported',low:false,excluded:0};
+    grid.modes.checklists.cols[bandIndex(70)][COLUMNS.indexOf('AS')][0]={f:0.7,num:7,n:10,state:'reported',low:true,excluded:0};
+    expect(ribbonPeak(grid,'equal')).toEqual({f:0.03,band:-40,column:null,month:12,low:false});
+    expect(ribbonPeak(grid,'checklists')).toEqual({f:0.7,band:70,column:'AS',month:1,low:true});
+    grid.modes.equal.world[bandIndex(-40)][11]=null;
+    expect(ribbonPeak(grid,'equal')).toEqual({...peak,f:0.024});
+  });
+  it('breaks ties deterministically and ignores all-thin placeholders, zeros and unknowns', () => {
+    const grid=emptyGrid();
+    expect(ribbonPeak(grid,'equal')).toBeNull();
+    grid.modes.equal.world[0][0]={f:0,num:0,n:100,state:'zero',low:false,excluded:0};
+    grid.modes.equal.world[1][0]={f:0,num:5,n:30,state:'thin',low:true,excluded:2};
+    expect(ribbonPeak(grid,'equal')).toBeNull();
+    const cell={f:0.2,num:20,n:100,state:'reported' as const,low:false,excluded:0};
+    grid.modes.equal.cols[2][0][2]=cell;
+    grid.modes.equal.cols[2][1][0]=cell;
+    grid.modes.equal.world[2][0]=cell;
+    grid.modes.equal.cols[3][0][0]=cell;
+    expect(ribbonPeak(grid,'equal')).toEqual({f:0.2,band:60,column:'NAW',month:3,low:false});
+  });
+  it('preserves zero, thin, unknown and low-sample rendering; absent peak never invents a scale', () => {
+    expect(fillFor(null,'relative',peak)).toBe('slash');
+    expect(fillFor({f:0,num:0,n:100,state:'zero',low:false,excluded:0},'relative',null)).toBe('var(--rb-0)');
+    expect(fillFor({f:0,num:3,n:20,state:'thin',low:true,excluded:1},'relative',peak)).toBe('dash');
+    expect(fillFor({f:0.5,num:5,n:10,state:'reported',low:true,excluded:0},'relative',peak)).toBe('dash');
+    expect(colourBinIndex(0.1,'relative',null)).toBe(binIndex(0.1));
+  });
+  it('states the absolute peak, real geography, weighting, and sample limitation', () => {
+    expect(relativeLegend({...peak,f:0.024},'equal')).toBe('Relative to this bird’s peak: 2.4% in 50–60°N, North America, east of 100°W, Feb · equal weight.');
+    expect(relativeLegend({...peak,f:0.0000123,column:null,low:true},'checklists')).toBe('Relative to this bird’s peak: 0.00123% in 50–60°N, All continents, Feb · by checklists · small sample.');
+    expect(relativeLegend(null,'equal')).toBe('Relative colour unavailable — no positive reporting rate in the loaded grid. Using absolute colours.');
+    expect(RELATIVE_BINS.map(b=>b.label)).toEqual(['0% — surveyed, no reports','<5% of peak','5–20% of peak','20–40% of peak','40–70% of peak','70%+ of peak']);
+  });
+  it('defaults to Absolute and isolates saved settings by viewer identity', () => {
+    for(const value of [null,'','unknown','RELATIVE'])expect(parseRibbonColour(value)).toBe('absolute');
+    expect(parseRibbonColour('relative')).toBe('relative');
+    expect(ribbonColourKey(12)).toBe('birds:ribbon-colour:12');
+    expect(ribbonColourKey(12)).not.toBe(ribbonColourKey(13));
+  });
 });

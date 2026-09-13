@@ -276,6 +276,13 @@
               <button type="button" id="wEffort" aria-pressed="false">By checklists</button>
             </div>
           </div>
+          <div>
+            <span class="seg-label" id="colourLbl">Colour</span>
+            <div class="seg" role="group" aria-labelledby="colourLbl">
+              <button type="button" id="colourAbsolute" aria-pressed="true">Absolute</button>
+              <button type="button" id="colourRelative" aria-pressed="false">Relative</button>
+            </div>
+          </div>
           <label class="chk"><input type="checkbox" id="prevChk"> Coverage preview</label>
         </div>
 
@@ -381,11 +388,11 @@
 
   const state = {
     species: 'osprey',
-    view: (WIDE ? 'cont' : 'world'), // owner decision C: World on phones, By continent wider
+    view: 'cont', // owner default: all continents on every screen
     weight: 'place',      // 'place' | 'effort'
     band: 40,             // selected band lower edge, or null
-    cont: (WIDE ? 'NAE' : null), // continent of the SELECTED cell (readout/drill); home is east of 100°W
-    contView: (WIDE ? 'ALL' : 'NAE'), // continent PICKER: 'ALL' draws every column, a key draws one full-width grid (owner, 2026-09-03)
+    cont: 'NAE', // continent of the SELECTED cell (readout/drill); home is east of 100°W
+    contView: 'ALL', // continent PICKER: 'ALL' draws every column, a key draws one full-width grid (owner, 2026-09-03)
     month: 7,
     region: HOME,         // region selected in the drill panel, feeds Best time of year
     preview: false,
@@ -403,15 +410,34 @@
   function applyWide(w) {
     const how = document.getElementById('how'); if (how) how.open = w;
     if (state.viewTouched) return;
-    state.view = w ? 'cont' : 'world';
-    state.contView = w ? 'ALL' : 'NAE';
-    state.cont = w ? (state.cont || 'NAE') : null;
-    pressPair(w ? 'vCont' : 'vWorld', w ? 'vWorld' : 'vCont', true);
+    state.view = 'cont';
+    state.contView = 'ALL';
+    state.cont = state.cont || 'NAE';
+    pressPair('vCont', 'vWorld', true);
   }
 
   // ---------- helpers ----------
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const binFor = (f) => { for (const b of BINS) if (f <= b.max) return b; return BINS[BINS.length - 1]; };
+  const binFor = (f) => { if (f === 0) return BINS[0]; for (const b of BINS.slice(1)) if (f < b.max) return b; return BINS[BINS.length - 1]; };
+  const RELATIVE_LABELS = ['0% — surveyed, no reports', '<5% of peak', '5–20% of peak', '20–40% of peak', '40–70% of peak', '70%+ of peak'];
+  let colourMode = 'absolute', colourPeak = null;
+  try { if(localStorage.getItem('birds:mockup:ribbon-colour') === 'relative') colourMode = 'relative'; } catch {}
+  function findColourPeak() {
+    let peak = null;
+    for (const band of BANDS) for (const cont of [...CONTS.map(c=>c[0]), null]) for(let m=0;m<12;m++) {
+      const c=cellAt(band,cont,m);
+      if(!c.empty && !c.preview && c.f>(peak?.f || 0)) peak={f:c.f,band,cont,m,low:(c.n<LOW_N || (c.excluded || 0)>0)};
+    }
+    return peak;
+  }
+  function colourFor(f) {
+    if(colourMode === 'absolute' || f===0) return binFor(f).color;
+    if(!colourPeak) return binFor(f).color;
+    const edges=[0,0.05,0.2,0.4,0.7,Infinity];
+    for(let i=1;i<edges.length;i++) if(f<colourPeak.f*edges[i])return BINS[i].color;
+    return BINS[5].color;
+  }
+
   const pct = (f) => (f === 0 ? '0%' : f < 0.01 ? '<1%' : Math.round(f * 100) + '%');
   const fmtN = (n) => Math.round(n).toLocaleString('en-US');
   const bandLabel = (lo) => (lo >= 0 ? `${lo}–${lo + 10}°N` : `${Math.abs(lo + 10)}–${Math.abs(lo)}°S`);
@@ -450,7 +476,7 @@
   function weighted(rs, m) {
     let num = 0, den = 0;
     for (const r of rs) { const c = r.cells[m]; if (c.n > 0) { num += c.f * c.n; den += c.n; } }
-    return den > 0 ? { f: num / den, n: den } : { f: 0, n: 0, empty: true };
+    return den > 0 ? { f: num / den, num, n: den } : { f: 0, n: 0, empty: true };
   }
   /**
    * Preview rows are invented, so they must NEVER be averaged into a real
@@ -474,10 +500,10 @@
     }
     const byCountry = new Map();
     for (const r of use) { if (!byCountry.has(r.country)) byCountry.set(r.country, []); byCountry.get(r.country).push(r); }
-    const vals = []; let n = 0, excluded = 0;
-    for (const rs of byCountry.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } vals.push(w.f); n += w.n; }
+    const vals = []; let num = 0, n = 0, excluded = 0;
+    for (const rs of byCountry.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } vals.push(w.f); num += w.num; n += w.n; }
     if (!vals.length) return { f: 0, n: 0, empty: true };
-    return { f: vals.reduce((a, b) => a + b, 0) / vals.length, n, preview: isPreview, heldBack: real.length ? prev.length : 0, excluded };
+    return { f: vals.reduce((a, b) => a + b, 0) / vals.length, num, n, preview: isPreview, heldBack: real.length ? prev.length : 0, excluded };
   }
   function worldCell(band, m) {
     const all = [];
@@ -499,14 +525,14 @@
     const held = real.length ? prev.length : 0;
     const byBase = new Map();
     for (const r of use) { const b = baseOf(r.cont); if (!byBase.has(b)) byBase.set(b, new Map()); const bc = byBase.get(b); if (!bc.has(r.country)) bc.set(r.country, []); bc.get(r.country).push(r); }
-    const parts = []; let n = 0, excluded = 0;
+    const parts = []; let num = 0, n = 0, excluded = 0;
     for (const bc of byBase.values()) {
       const cv = [];
-      for (const rs of bc.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } cv.push(w.f); n += w.n; }
+      for (const rs of bc.values()) { const w = weighted(rs, m); if (w.empty) continue; if (!isPreview && w.n < LOW_N) { excluded++; continue; } cv.push(w.f); num += w.num; n += w.n; }
       if (cv.length) parts.push(cv.reduce((a, b) => a + b, 0) / cv.length);
     }
     if (!parts.length) return { f: 0, n: 0, empty: true };
-    return { f: parts.reduce((a, b) => a + b, 0) / parts.length, n, preview: isPreview, heldBack: held, excluded };
+    return { f: parts.reduce((a, b) => a + b, 0) / parts.length, num, n, preview: isPreview, heldBack: held, excluded };
   }
   const cellAt = (band, cont, m) => (cont ? contCell(band, cont, m) : worldCell(band, m));
 
@@ -542,12 +568,15 @@
     }
     // A small sample of ZERO reports is still zero, not faint presence (GROK P2-13).
     const low = !c.preview && ((c.n > 0 && c.n < LOW_N && c.f > 0) || (c.excluded || 0) > 0);
-    const fill = low ? 'url(#hatch)' : binFor(c.f).color;
+    const fill = low ? 'url(#hatch)' : colourFor(c.f);
     const extra = c.preview ? ' stroke="#6c757d" stroke-width="1" stroke-dasharray="2 2"' : '';
     return `<rect x="${x}" y="${y}" width="${Math.max(1, w - 1)}" height="${Math.max(1, h - 1)}" fill="${fill}"${extra}/>`;
   }
 
   function render() {
+    colourPeak = findColourPeak();
+    pressPair('colourAbsolute', 'colourRelative', colourMode === 'absolute');
+    renderLegend();
     const g = geom();
     const H = g.headH + BANDS.length * g.rowH;
     let s = `<defs><pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#e3f3ec"/><line x1="0" y1="0" x2="0" y2="6" stroke="#0a5c43" stroke-width="2"/></pattern></defs>`;
@@ -651,23 +680,25 @@
     // wrapped to six lines at 336px and made the reader decode "mean" first).
     const line1 = `<span class="r1">${esc(bandLabel(state.band))} · ${state.cont ? esc(CONT_NAME[state.cont]) : 'All continents'} · ${MSHORT[state.month - 1]}</span>`;
     const regs = `${nreg} region${nreg === 1 ? '' : 's'}`;
+    const countTitle = `${fmtN(c.num)} of ${fmtN(c.n)} checklists reported it`;
+    const counts = `${compact(c.num)} of ${compact(c.n)} checklists`;
     let line2, line3 = '';
     if (c.empty) line2 = `<span class="r2">No data — nothing loaded here</span>`;
     else if (c.preview) { line2 = `<span class="r2">${pct(c.f)} · preview only, not eBird data</span>`; line3 = `<span class="r3">${regs}</span>`; }
     // Small sample only when something WAS reported: a zero with n < 40 is a zero
     // (server classify: low never set on a zero cell; CODEX1 TD-C gate P2-2).
-    else if (c.f > 0 && c.n < LOW_N) { line2 = `<span class="r2">${pct(c.f)} reporting rate · small sample</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
+    else if (c.f > 0 && c.n < LOW_N) { line2 = `<span class="r2">${pct(c.f)} reporting rate · small sample</span>`; line3 = `<span class="r3" title="${countTitle}">${counts} reported it · ${regs}</span>`; }
     else if (state.weight === 'place' && (c.excluded || 0) > 0) {
       line2 = `<span class="r2">${pct(c.f)} average reporting rate · small sample</span>`;
-      line3 = `<span class="r3">${c.excluded} countr${c.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out · ${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
+      line3 = `<span class="r3" title="${countTitle}">${counts} reported it · equal weight · ${regs} · ${c.excluded} countr${c.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out</span>`;
     }
-    else if (c.f === 0) { line2 = `<span class="r2">0% — surveyed, no reports</span>`; line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`; }
+    else if (c.f === 0) { line2 = `<span class="r2">0% — surveyed, no reports</span>`; line3 = `<span class="r3" title="${countTitle}">${counts} · ${regs}</span>`; }
     else if (state.weight === 'place') {
       line2 = `<span class="r2">${pct(c.f)} average reporting rate</span>`;
-      line3 = `<span class="r3"><span title="${state.cont ? 'Countries count equally' : 'Countries and continents count equally'}">equal weight</span> · ${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
+      line3 = `<span class="r3" title="${countTitle}">${counts} reported it · equal weight · ${regs}</span>`;
     } else {
       line2 = `<span class="r2">${pct(c.f)} of checklists reported it</span>`;
-      line3 = `<span class="r3">${regs} · <span title="${fmtN(c.n)} checklists">${compact(c.n)} checklists</span></span>`;
+      line3 = `<span class="r3" title="${countTitle}">${counts} reported it · ${regs}</span>`;
     }
     if (c.heldBack) line3 += ` <span class="r3" style="color:#58151c">${c.heldBack} preview region${c.heldBack === 1 ? '' : 's'} not counted</span>`;
     const rs = drillRegions();
@@ -684,7 +715,8 @@
 
   function renderLegend() {
     document.getElementById('legend').innerHTML =
-      BINS.map((b) => `<span class="l"><span class="sw" style="background:${b.color}"></span>${b.label}</span>`).join('') +
+      (colourMode==='relative' ? `<p style="flex-basis:100%;margin:0">${colourPeak ? `Relative to this bird’s peak: ${(colourPeak.f*100).toLocaleString('en-US',{maximumSignificantDigits:3})}% in ${bandLabel(colourPeak.band)}, ${colourPeak.cont ? CONT_NAME[colourPeak.cont] : 'All continents'}, ${MSHORT[colourPeak.m]} · ${state.weight==='place'?'equal weight':'by checklists'}${colourPeak.low?' · small sample':''}.` : 'Relative colour unavailable — no positive reporting rate in the loaded grid. Using absolute colours.'} Readout rates and counts stay absolute.</p>` : '') +
+      BINS.map((b,i) => `<span class="l"><span class="sw" style="background:${b.color}"></span>${colourMode==='relative'&&colourPeak?RELATIVE_LABELS[i]:b.label}</span>`).join('') +
       `<span class="l"><span class="sw hatch"></span>small sample (under ${LOW_N} checklists)</span>` +
       `<span class="l"><span class="sw nodata"></span>no data (nothing loaded here)</span>` +
       (state.preview ? `<span class="l"><span class="sw prev"></span>preview (nothing loaded here)</span>` : '');
@@ -698,6 +730,8 @@
     document.getElementById('scope').textContent =
       `Loaded: ${real.length} regions in ${countries.length} countries across ${conts.length} continents (${conts.map((c) => c[1]).join(', ')}). ` +
       (missing.length ? `Nothing loaded yet for ${missing.join(' or ')}, so those columns read "no data", not "absent". ` : '') +
+      'Relative colour compares the grid and region strips with the highest cell rate across all months, bands, continental columns and World under the selected averaging method. View selections do not rescale it; regions can exceed that aggregate peak. Numbers stay absolute. ' +
+      'The N-of-M line gives the reported-checklist and total-checklist volumes contributing to the cell. Reported counts are rounded estimates from reporting frequencies and checklist totals. Equal weight averages country and continent rates, so its percentage need not equal N divided by M; excluded countries contribute to neither count. ' +
       'Strongest selects the highest rate in the selected month among regions with 40+ checklists that month. It searches up to 40 regions chosen by annual peak; another region outside those 40 may be stronger this month. Equal rates use region code. Tap it to chart the region’s year. ' +
       'North America is drawn as two columns, west and east of 100°W, because one column blurred the Atlantic coast with the empty interior. ' +
       'Each region counts in the band of its centre point, so a very tall region sits in one band only — Nunavut spans 32 degrees of latitude. ' +
@@ -756,7 +790,7 @@
       r.cells.forEach((c, m) => {
         const x = m * cw;
         if (c.n === 0) bars += `<rect x="${x + 0.5}" y="0.5" width="${cw - 1}" height="13" fill="#fff" stroke="#adb5bd" stroke-dasharray="2 2"/>`;
-        else bars += `<rect x="${x}" y="0" width="${cw - 1}" height="14" fill="${binFor(c.f).color}"${c.n < LOW_N && !r.preview ? ' stroke="#0a5c43" stroke-width="1" stroke-dasharray="1 1"' : ''}${r.preview ? ' stroke="#6c757d" stroke-dasharray="2 2"' : ''}/>`;
+        else bars += `<rect x="${x}" y="0" width="${cw - 1}" height="14" fill="${colourFor(c.f)}"${c.n < LOW_N && !r.preview ? ' stroke="#0a5c43" stroke-width="1" stroke-dasharray="1 1"' : ''}${r.preview ? ' stroke="#6c757d" stroke-dasharray="2 2"' : ''}/>`;
       });
       return `<button type="button" class="drow${r.code === state.region ? ' on' : ''}" data-region="${r.code}">
         <span class="dn">${esc(r.name)}<br><span class="dc">${esc(COUNTRY[r.country] || r.country)}${r.preview ? ' · preview' : ''}</span></span>
@@ -925,6 +959,9 @@
     const onMq = (e) => { applyWide(e.matches); render(); };
     if (wideMq.addEventListener) wideMq.addEventListener('change', onMq); else if (wideMq.addListener) wideMq.addListener(onMq);
   }
+  for(const [id,mode] of [['colourAbsolute','absolute'],['colourRelative','relative']]) document.getElementById(id).addEventListener('click',()=>{
+    colourMode=mode;try{localStorage.setItem('birds:mockup:ribbon-colour',mode);}catch{} render();
+  });
   document.getElementById('wPlace').addEventListener('click', () => { state.weight = 'place'; pressPair('wPlace', 'wEffort', true); render(); });
   document.getElementById('wEffort').addEventListener('click', () => { state.weight = 'effort'; pressPair('wEffort', 'wPlace', true); render(); });
   document.getElementById('prevChk').addEventListener('change', (e) => { state.preview = e.target.checked; buildIndex(); renderLegend(); render(); });

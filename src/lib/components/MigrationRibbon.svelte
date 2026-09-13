@@ -30,7 +30,13 @@
 		HOME_COLUMN,
 		BINS,
 		bandLabel,
-		binIndex,
+		colourBinIndex,
+		RELATIVE_BINS,
+		ribbonPeak,
+		relativeLegend,
+		ribbonColourKey,
+		parseRibbonColour,
+		type RibbonColourMode,
 		pct,
 		activeBands,
 		applyWide,
@@ -70,19 +76,18 @@
 		grid,
 		speciesCode,
 		speciesName,
+		viewerId,
 		onchartregion
 	}: {
 		grid: RibbonGridClient;
 		speciesCode: string;
 		speciesName: string;
+		viewerId: number | null;
 		onchartregion: (row: RibbonRegionRowClient) => void;
 	} = $props();
 
-	// ---- Breakpoint / reduced-motion sampling (owner decision, CODEX1 P1-7 /
-	// P2-5): World under 1024px, By continent at >=1024px, following
-	// `matchMedia`, re-sampled once after first paint (Safari can add the
-	// scrollbar after this script runs), and never again once the user
-	// touches the View toggle. ------------------------------------------------
+	// Breakpoints control layout and geometry. The initial view is By continent
+	// with all columns at every width; explicit user view choices survive resizing.
 	let wide = $state(false);
 	/** Below 640px (spec rev 3.3 TD-C, P1-1, td-2c7a0b) — sampled independently from
 	 * `wide`, NOT derived as `!wide`, since 640-1023px (tablet) keeps the
@@ -95,6 +100,26 @@
 	let ribbonState = $state<RibbonState>(initialState(false));
 	let lastSpecies = $state<string | null>(null);
 	let fullGlobe = $state(false);
+	let storedColour = $state<RibbonColourMode>('absolute');
+	let colourViewer = $state<number | null>(null);
+	const colourMode = $derived(colourViewer === viewerId ? storedColour : 'absolute');
+	const currentPeak = $derived(ribbonPeak(grid, ribbonState.weight));
+	const colourBins = $derived(colourMode === 'relative' && currentPeak ? RELATIVE_BINS : BINS);
+	const peakCaption = $derived(relativeLegend(currentPeak, ribbonState.weight));
+	$effect(() => {
+		const id = viewerId;
+		let saved: RibbonColourMode = 'absolute';
+		try { if (id !== null) saved = parseRibbonColour(localStorage.getItem(ribbonColourKey(id))); }
+		catch { /* Storage may be unavailable; the control still works for this visit. */ }
+		storedColour = saved;
+		colourViewer = id;
+	});
+	function setColour(mode: RibbonColourMode) {
+		storedColour = mode;
+		colourViewer = viewerId;
+		try { if (viewerId !== null) localStorage.setItem(ribbonColourKey(viewerId), mode); }
+		catch { /* Keep the user's choice in memory when browser storage is blocked. */ }
+	}
 	const currentBands = $derived(activeBands(grid, ribbonState, fullGlobe));
 	const summary = $derived(migrationSummary(grid, ribbonState));
 	const drawnCols = $derived(drawnColumns(ribbonState));
@@ -766,6 +791,13 @@
 					>
 				</div>
 			</div>
+			<div>
+				<span class="seg-label" id="rbcolourLbl">Colour</span>
+				<div class="seg" role="group" aria-labelledby="rbcolourLbl">
+					<button type="button" aria-pressed={colourMode === 'absolute'} onclick={() => setColour('absolute')}>Absolute</button>
+					<button type="button" aria-pressed={colourMode === 'relative'} onclick={() => setColour('relative')}>Relative</button>
+				</div>
+			</div>
 		</div>
 
 		<!-- Composite widget (spec TD-C): role="group" + aria-roledescription make this a
@@ -777,7 +809,7 @@
 			tabindex="0"
 			role="group"
 			aria-roledescription="migration ribbon"
-			aria-describedby="rbreadout rbkeys"
+			aria-describedby="rbreadout rbkeys rbcolourLegend"
 			aria-labelledby="ribh"
 			onkeydown={onRibbonKeydown}
 		>
@@ -858,7 +890,7 @@
 									{#each ML as _m, m (m)}
 										{@const cell = grid.modes[ribbonState.weight].cols[origBi][colIdx][m]}
 										{@const x = (ci * 12 + m) * geom.cellW}
-										{@const fill = fillFor(cell)}
+										{@const fill = fillFor(cell, colourMode, currentPeak)}
 										{#if fill === 'slash'}
 											<rect
 												x={x + 0.5}
@@ -906,7 +938,7 @@
 								{#each ML as _m, m (m)}
 									{@const cell = grid.modes[ribbonState.weight].world[origBi][m]}
 									{@const x = m * geom.cellW}
-									{@const fill = fillFor(cell)}
+									{@const fill = fillFor(cell, colourMode, currentPeak)}
 									{#if fill === 'slash'}
 										<rect
 											x={x + 0.5}
@@ -999,6 +1031,18 @@
 		<details class="how" open={wide}>
 			<summary>How these numbers are calculated</summary>
 			<p class="peer-scope" id="rbscope">{currentScope}</p>
+			<p class="peer-scope">Absolute colour uses fixed reporting-rate bands. Relative colour compares
+				the grid and region strips with this bird's highest cell rate across all months,
+				latitude bands, continental columns and World, using the current averaging method.
+				Changing the visible geography does not rescale it. Individual regions can exceed
+				the aggregate grid peak. A small-sample peak is labelled; zero, small-sample dashes
+				and missing data keep their meaning. The colour choice is saved for your account
+				in this browser. Numbers always show absolute rates and counts.</p>
+			<p class="peer-scope">The N-of-M line counts the reported checklists and total checklists
+				contributing to this cell. Reported counts are rounded estimates from reporting
+				frequencies and checklist totals. Under Equal weight, the percentage averages country
+				and continent rates, so it need not equal N divided by M. Countries left out of that
+				average contribute to neither count.</p>
 			<p class="peer-scope">Strongest names the region with the highest reporting rate for the
 				selected month, among regions with at least {LOW_N} checklists that month. Tap it to
 				chart the region's year. The search uses up to 40 regions, chosen by their highest
@@ -1017,8 +1061,11 @@
 		<p class="muted" style="margin:0">Data from <a href="https://ebird.org">eBird.org</a>.</p>
 	</div>
 
-	<div class="legend" aria-label="Legend">
-		{#each BINS as bin, i (bin.label)}
+	<div class="legend" id="rbcolourLegend" aria-label="Legend">
+		{#if colourMode === 'relative'}
+			<p class="peak-caption">{peakCaption} Readout rates and counts stay absolute.</p>
+		{/if}
+		{#each colourBins as bin, i (bin.label)}
 			<span class="l"><span class="sw" style="background: var(--rb-{i})"></span>{bin.label}</span>
 		{/each}
 		{#if ribbonState.weight === 'checklists'}
@@ -1065,7 +1112,7 @@
 									{#if c.n === 0}
 										<rect x={x + 0.5} y="0.5" width={cw - 1} height="13" fill="var(--card)" stroke="var(--rb-slash)" stroke-dasharray="2 2" />
 									{:else}
-										<rect {x} y="0" width={cw - 1} height="14" fill="var(--rb-{binIndex(c.freq)})" />
+										<rect {x} y="0" width={cw - 1} height="14" fill="var(--rb-{colourBinIndex(c.freq, colourMode, currentPeak)})" />
 									{/if}
 								{/each}
 							</svg>
@@ -1513,6 +1560,10 @@
 		gap: 6px 12px;
 		font-size: 0.8rem;
 		color: var(--muted);
+	}
+	.peak-caption {
+		flex-basis: 100%;
+		margin: 0 0 4px;
 	}
 	.legend .l {
 		display: inline-flex;

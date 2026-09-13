@@ -1,10 +1,39 @@
 # Migration ribbon — build spec (td-59c2d0, three child tds)
 
-**Status:** BUILD SPEC rev 4 (2026-09-12). Rev 4 adds the strongest-region readout for `td-7d86c7`; earlier revision notes below are historical and do not override subsequently accepted UI changes.
+**Status:** BUILD SPEC rev 4 (2026-09-12). Rev 4 adds the strongest-region readout for `td-7d86c7` and the reported-checklist (`td-e7a96d`) and relative-colour (`td-b92412`) addenda; earlier revision notes below are historical and do not override subsequently accepted UI changes.
+
+## Owner amendment — all continents by default (td-b76c0e, 2026-09-12)
+
+Initial view is By continent with All continents selected on every viewport, including phones. Select the species' primary continental column for the readout within that all-column view. World remains available; explicit user choices survive resizing. This supersedes historical World-on-phone defaults below. Keep horizontal chart scrolling on narrow screens so all columns remain reachable.
+
+## Owner amendment — expanded by default (td-921f3b, 2026-09-12)
+
+“Where it is through the year” starts expanded on initial load and when navigating to a new species. Hide/Show remains available and retains chart selections while viewing that species. This supersedes the previous collapsed-default preference. Include with the pending checklist-count and relative-colour release.
+
+## Rev 4 addendum — relative colour (td-b92412, 2026-09-12)
+
+Third step of epic `td-81a92d`, layered on the uncommitted checklist-count work.
+
+- Add Colour: Absolute / Relative. Absolute is the default and keeps the fixed bins. Relative uses the current-weighting peak over every band, month and continental column plus World; selections and visibility filters do not rescale it. Positive bins have exclusive upper bounds at 5%, 20%, 40%, 70% of peak, then 70%+. Zero retains its separate bin; null/all-thin/low-sample rendering remains unchanged.
+- Peak lookup skips null, zero and all-thin placeholder rates. A valid rate flagged small-sample still participates, and the caption labels it. Ties follow north-to-south band order, declared column order then World, and January-to-December. The caption states the absolute peak rate (three significant digits), actual continental-column name, band, month and weighting; never claim a specific country from a continental aggregate.
+- Main grid and drill strips use the same scale. A region may exceed the aggregate peak and saturates the last bin. With no positive peak, explicitly state that relative colour is unavailable and Absolute colours are being used; show absolute legend bins too. This keeps positive drill regions behind an all-thin grid distinct from missing data. Zero/missing bars retain their normal appearance.
+- Rates, checklist counts, strongest-region choice, and chart selection remain absolute and unchanged. The preference uses `birds:ribbon-colour:<viewerId>` in localStorage, with try/catch and validation; different viewers do not inherit it. SSR starts Absolute. Storage failures keep the current visit usable. No server, schema or transport change for this feature.
+- Update oracle, Help/About and this spec. Pin all edges, whole-grid and weighting lookup, tie order, zero/thin/null, peak caption and storage key validation. Verify actual grid recolouring, unchanged readout, both weightings, persistence, viewer isolation, blocked storage and 390/1200 WebKit layouts.
+
+## Rev 4 addendum — reported-checklist counts (td-e7a96d, 2026-09-12)
+
+Second step of epic `td-81a92d`, following strongest region deployed as `5218111`.
+
+- `RibbonCell` and `RibbonCellClient` add required `num`: the sum of reported-checklist volumes from the same rows contributing to `n`. Preserve fractional stored values through aggregation; round only in display. Both column and world equal-weight cells sum qualifying countries' volumes, coalescing North America's west/east country parts before the threshold. Checklist weighting sums every surveyed row. Never compute equal-weight `num` as `f*n`.
+- All-thin equal-weight cells keep their actual excluded-country `num` and `n` totals but retain the surveyed/too-few-to-rate copy, with no fabricated percentage. Null remains unknown. Normal zero reads `0 of 1.2M checklists`; reported cells read `878 of 1.2M checklists reported it · equal weight · 19 regions` (omit equal weight in checklist mode). Preserve small-sample and country-exclusion warnings.
+- Use `compact()` for both counts, with full rounded numbers in the readout's title. These volumes originate from weekly frequency × checklist sample size, so the Help and how-it-works text identify reported counts as rounded estimates. Equal-weight percentages need not equal the count ratio. Excluded countries contribute to neither displayed total in a rated cell.
+- Strongest-region selection remains independent, using the current month's drill rows. Update the mockup oracle and Help/About. The older oracle's preview-only data remains identified as preview; no production sample fabrication or schema changes.
+- Pin numeric sums for both modes, split-country coalescing, exclusions, all-thin and zero, plus exact readout copy and full-number titles. Re-measure the real restored test DB's widest available species using the page loader and devalue + gzip, comparing the property with and without `num`; ceiling remains 40 KiB.
+- Measured on the restored test DB: Rock Pigeon was 34,235 B gzip before the count and 46,559 B with the new number under the original page serialization. Interning identical cells still exceeded the gate (45,407 B), so it was not adopted. The page now sends `{ok:true, gridJson:string|null}` and decodes once per page-data update in SSR and the browser. Lossless JSON removes the numeric-reference-table overhead: **35,663 B gzip**, only 1,428 B above the prior payload. Error results remain distinct from null/absence. The grid and every number survive unchanged; this is transport encoding, not filtering or rounding. Validate type/build and WebKit phone/desktop behavior before review.
 
 ## Rev 4 — strongest region for the selected month
 
-Execution queue: epic `td-81a92d`, within `td-1775b4`: strongest region (`td-7d86c7`), checklist counts (`td-e7a96d`), relative colour (`td-b92412`), then migration estimate comment (`td-4b5248`). This revision implements only the first item. Preserve the collapsed chart, neutral small-sample dashes, continent checkbox selector, empirical summaries, and removal of the player.
+Execution queue: epic `td-81a92d`, within `td-1775b4`: strongest region (`td-7d86c7`), checklist counts (`td-e7a96d`), relative colour (`td-b92412`), then migration estimate comment (`td-4b5248`). The original rev 4 implemented the first item; the addendum above covers the second. Preserve neutral small-sample dashes, continent checkbox selector, empirical summaries, and removal of the player.
 
 - Add a fourth readout line from the successful drill response for the current species, latitude band and continent. Select the highest `curve[month - 1].freq` among fetched rows with that month's `n >= 40`. Annual peak must not choose the winner; equal rates use ascending region code for a stable result. Preserve a qualifying 0% as a reported zero.
 - If no row qualifies, say **Strongest: none with 40+ checklists**. This describes sample availability; leave the aggregate cell's zero/thin/unknown readout unchanged.

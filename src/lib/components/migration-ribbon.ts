@@ -140,6 +140,66 @@ export function binIndex(f: number): number {
 	return BINS.length - 1;
 }
 
+export type RibbonColourMode = 'absolute' | 'relative';
+export const RELATIVE_BINS = [
+	{ max: 0, label: '0% — surveyed, no reports' },
+	{ max: 0.05, label: '<5% of peak' },
+	{ max: 0.2, label: '5–20% of peak' },
+	{ max: 0.4, label: '20–40% of peak' },
+	{ max: 0.7, label: '40–70% of peak' },
+	{ max: Infinity, label: '70%+ of peak' }
+];
+
+export interface RibbonPeak {
+	f: number;
+	band: number;
+	column: RibbonColumn | null;
+	month: number;
+	low: boolean;
+}
+
+/** Scan the whole current-weighting grid, never just the visible selection.
+ * Stable ties: north to south, declared column order then world, Jan to Dec.
+ * A low-sample reported value is still a rate; an all-thin placeholder is not. */
+export function ribbonPeak(grid: RibbonGridClient, weight: Weighting): RibbonPeak | null {
+	let peak: RibbonPeak | null = null;
+	const mode = grid.modes[weight];
+	for (let b = 0; b < BANDS.length; b++) {
+		for (let c = 0; c <= COLUMNS.length; c++) {
+			const months = c === COLUMNS.length ? mode.world[b] : mode.cols[b][c];
+			for (let m = 0; m < 12; m++) {
+				const cell = months[m];
+				if (cell && cell.state !== 'thin' && cell.f > (peak?.f ?? 0)) {
+					peak = { f: cell.f, band: BANDS[b], column: COLUMNS[c] ?? null, month: m + 1, low: cell.low };
+				}
+			}
+		}
+	}
+	return peak;
+}
+
+export function colourBinIndex(f: number, mode: RibbonColourMode, peak: RibbonPeak | null): number {
+	if (mode === 'absolute') return binIndex(f);
+	if (f === 0) return 0;
+	// With no positive grid peak, keep meaningful absolute colours (including
+	// drill regions behind all-thin aggregates). The legend explicitly says so.
+	if (!peak) return binIndex(f);
+	for (let i = 1; i < RELATIVE_BINS.length; i++) {
+		if (f < peak.f * RELATIVE_BINS[i].max) return i;
+	}
+	return RELATIVE_BINS.length - 1;
+}
+
+export function relativeLegend(peak: RibbonPeak | null, weight: Weighting): string {
+	if (!peak) return 'Relative colour unavailable — no positive reporting rate in the loaded grid. Using absolute colours.';
+	const rate = (peak.f * 100).toLocaleString('en-US', { maximumSignificantDigits: 3 });
+	return `Relative to this bird’s peak: ${rate}% in ${bandLabel(peak.band)}, ${peak.column ? COLUMN_NAMES[peak.column] : 'All continents'}, ${MSHORT[peak.month - 1]} · ${weight === 'equal' ? 'equal weight' : 'by checklists'}${peak.low ? ' · small sample' : ''}.`;
+}
+
+export const ribbonColourKey = (viewerId: number): string => `birds:ribbon-colour:${viewerId}`;
+export const parseRibbonColour = (stored: string | null): RibbonColourMode =>
+	stored === 'relative' ? 'relative' : 'absolute';
+
 export function pct(f: number): string {
 	if (f === 0) return '0%';
 	if (f < 0.01) return '<1%';
@@ -631,6 +691,8 @@ export interface RibbonCellClient {
 	 * country reached LOW_N under equal weight, so nothing voted (server
 	 * contract change, TD-B deploy gate). */
 	f: number;
+	/** Reported-checklist volume over the same contributing rows as n, not f*n. */
+	num: number;
 	/** Σ checklists surveyed, even for a 'thin' cell. */
 	n: number;
 	/** 'thin': surveyed (some country had checklists) but under equal weight
@@ -747,18 +809,16 @@ export interface RibbonState {
 	fullGlobe?: boolean;
 }
 
-/** wide: cont/ALL/NAE (By continent, All continents, home column selected).
- * phone: world/NAE/null (World view; NAE stays queued as the continent
- * picker's remembered value in case the user switches). Band 40, month 7
- * (owner decision C, mockup `state`). If `defaultCol` is provided, that
- * continent is queued as the remembered continent picker value. */
-export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonState {
+/** Start with all continental columns at every width, selecting the primary
+ * continent for the readout/drill. The viewport argument is retained for
+ * callers that also initialise responsive geometry; it no longer picks a view. */
+export function initialState(_wide: boolean, defaultCol?: RibbonColumn): RibbonState {
 	const col = defaultCol ?? HOME_COLUMN;
 	return {
-		view: wide ? 'cont' : 'world',
-		contView: wide ? 'ALL' : col,
+		view: 'cont',
+		contView: 'ALL',
 		selectedConts: [...COLUMNS],
-		cont: wide ? col : null,
+		cont: col,
 		weight: 'equal',
 		band: 40,
 		month: 7,
@@ -770,15 +830,15 @@ export function initialState(wide: boolean, defaultCol?: RibbonColumn): RibbonSt
 }
 
 /** No-op once the user has touched the view toggle (mockup `applyWide`). */
-export function applyWide(s: RibbonState, wide: boolean, defaultCol?: RibbonColumn): RibbonState {
+export function applyWide(s: RibbonState, _wide: boolean, defaultCol?: RibbonColumn): RibbonState {
 	if (s.viewTouched) return s;
 	const col = defaultCol ?? s.cont ?? HOME_COLUMN;
 	return {
 		...s,
-		view: wide ? 'cont' : 'world',
-		contView: wide ? 'ALL' : (defaultCol ?? s.contView),
+		view: 'cont',
+		contView: 'ALL',
 		selectedConts: s.selectedConts ?? [...COLUMNS],
-		cont: wide ? col : null
+		cont: col
 	};
 }
 
@@ -1057,6 +1117,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 			landmark
 		};
 	}
+	const counts = `${compact(cell.num)} of ${compact(cell.n)} checklists`;
+	const countTitle = `${fmtN(cell.num)} of ${fmtN(cell.n)} checklists reported it`;
 	// Branch on the SERVER's `low`, never on raw `n` (CC1 P2-2): under
 	// 'checklists', classify() sets `low` only when `f > 0 && n < LOW_N`, so
 	// a genuinely zero cell (`low` always false there) falls through to the
@@ -1068,8 +1130,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		return {
 			line1,
 			line2: `${pct(cell.f)} reporting rate · small sample`,
-			line3: `${regs} · ${compact(cell.n)} checklists`,
-			title3: `${fmtN(cell.n)} checklists`,
+			line3: `${counts} reported it · ${regs}`,
+			title3: countTitle,
 			nreg,
 			empty: false,
 			landmark
@@ -1079,8 +1141,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		return {
 			line1,
 			line2: `${pct(cell.f)} average reporting rate · small sample`,
-			line3: `${cell.excluded} countr${cell.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out · ${regs} · ${compact(cell.n)} checklists`,
-			title3: `${fmtN(cell.n)} checklists`,
+			line3: `${counts} reported it · equal weight · ${regs} · ${cell.excluded} countr${cell.excluded === 1 ? 'y' : 'ies'} under ${LOW_N} checklists left out`,
+			title3: countTitle,
 			nreg,
 			empty: false,
 			landmark
@@ -1090,8 +1152,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		return {
 			line1,
 			line2: '0% — surveyed, no reports',
-			line3: `${regs} · ${compact(cell.n)} checklists`,
-			title3: `${fmtN(cell.n)} checklists`,
+			line3: `${counts} · ${regs}`,
+			title3: countTitle,
 			nreg,
 			empty: false,
 			landmark
@@ -1101,8 +1163,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 		return {
 			line1,
 			line2: `${pct(cell.f)} average reporting rate`,
-			line3: `equal weight · ${regs} · ${compact(cell.n)} checklists`,
-			title3: `${fmtN(cell.n)} checklists`,
+			line3: `${counts} reported it · equal weight · ${regs}`,
+			title3: countTitle,
 			nreg,
 			empty: false,
 			landmark
@@ -1111,8 +1173,8 @@ export function readout(grid: RibbonGridClient, s: RibbonState): Readout {
 	return {
 		line1,
 		line2: `${pct(cell.f)} of checklists reported it`,
-		line3: `${regs} · ${compact(cell.n)} checklists`,
-		title3: `${fmtN(cell.n)} checklists`,
+		line3: `${counts} reported it · ${regs}`,
+		title3: countTitle,
 		nreg,
 		empty: false,
 		landmark
@@ -1236,10 +1298,15 @@ export function drillHeading(s: RibbonState): string {
  * but nothing voted; `f` is a placeholder there and MUST NOT reach `binIndex`
  * — TD-B deploy gate) — a `--rb-N` token for a normal one, or the sentinel
  * `'slash'` for nothing-loaded (rendered as a white cell with a diagonal slash). */
-export function fillFor(cell: RibbonCellOrNullClient): string {
+export function fillFor(
+	cell: RibbonCellOrNullClient,
+	mode: RibbonColourMode = 'absolute',
+	peak: RibbonPeak | null = null
+): string {
 	if (!cell) return 'slash';
 	if (cell.low || cell.state === 'thin') return 'dash';
-	return `var(--rb-${binIndex(cell.f)})`;
+	const bin = colourBinIndex(cell.f, mode, peak);
+	return `var(--rb-${bin})`;
 }
 
 // ---------------------------------------------------------------------------

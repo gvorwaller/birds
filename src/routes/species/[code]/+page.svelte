@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { decodeRibbonGrid } from "$lib/ribbon-payload";
   import { taxonomyHref } from "$lib/taxonomy";
   import SpecialInterestToggle from "$components/SpecialInterestToggle.svelte";
   import SpeciesViewed from "$components/SpeciesViewed.svelte";
@@ -44,6 +45,7 @@
   ];
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  const ribbonGrid = $derived(data.ribbon.ok ? decodeRibbonGrid(data.ribbon.gridJson) : null);
   let distanceUnit = $state<DistanceUnit>("mi");
 
   let isViewer = $derived(data.user?.role === "viewer");
@@ -53,13 +55,13 @@
   // --- Species enrichment (About card) ------------------------------------
   let aboutExpanded = $state(false);
   let refreshBusy = $state(false);
-  let ribbonExpanded = $state(false);
+  let ribbonExpanded = $state(true);
   let disclosureSpecies: string | undefined;
   $effect(() => {
     const code = data.taxon.species_code;
     if (code !== disclosureSpecies) {
       disclosureSpecies = code;
-      ribbonExpanded = false;
+      ribbonExpanded = true;
     }
   });
   const en = $derived(data.enrichment);
@@ -512,10 +514,10 @@
   {/if}
 
   <!-- Migration ribbon (build spec td-59c2d0 TD-C): a discriminated loader
-       result, never rendered as plain absence (CODEX1 P2-10) — `ok, grid:
+       result, never rendered as plain absence (CODEX1 P2-10) — `ok, gridJson:
        null` (nothing loaded yet) renders nothing, `ok: false` renders a
-       one-line failure, and only `ok, grid` renders the chart. -->
-  {#if data.ribbon.ok && data.ribbon.grid}
+       one-line failure, and only `ok, gridJson` renders the chart. -->
+  {#if data.ribbon.ok && ribbonGrid}
     <details class="card ribbon-disclosure" bind:open={ribbonExpanded}>
       <summary>
         <h2 id="ribh">Where it is through the year</h2>
@@ -524,7 +526,8 @@
       <!-- Keep the chart mounted: closing retains month/view/drill state, and
            its ResizeObserver measures the available width on reopening. -->
       <MigrationRibbon
-        grid={data.ribbon.grid}
+        grid={ribbonGrid}
+        viewerId={data.user?.id ?? null}
         speciesCode={data.taxon.species_code}
         speciesName={data.taxon.com_name}
         onchartregion={onChartRegion}

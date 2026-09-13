@@ -107,12 +107,18 @@ async function widestLoadedSpecies(): Promise<string | null> {
 
 async function measureRibbon(uid: number, code: string): Promise<number> {
   const data = (await load(loadEvent(uid, code))) as unknown as {
-    ribbon: { ok: true; grid: unknown } | { ok: false; error: string };
+    ribbon: { ok: true; gridJson: string } | { ok: false; error: string };
   };
   expect(data.ribbon.ok).toBe(true);
   if (!data.ribbon.ok) throw new Error("ribbon load failed");
   const serialized = stringify(data.ribbon);
-  return gzipSync(Buffer.from(serialized, "utf8")).length;
+  const gzipped = gzipSync(Buffer.from(serialized, "utf8")).length;
+  const grid = JSON.parse(data.ribbon.gridJson);
+  const withoutNum = JSON.parse(JSON.stringify(grid, (key, value) => key === 'num' ? undefined : value));
+  const previousBytes = gzipSync(Buffer.from(stringify({ok:true, grid:withoutNum}), 'utf8')).length;
+  const unencodedBytes = gzipSync(Buffer.from(stringify({ok:true, grid}), 'utf8')).length;
+  console.log(`[ribbon count bytes] ${code}: raw=${Buffer.byteLength(serialized)} gzip=${gzipped} previous-without-num-gzip=${previousBytes} unencoded-with-num-gzip=${unencodedBytes} delta=${gzipped - previousBytes}`);
+  return gzipped;
 }
 
 describe.runIf(dbUp)("migration ribbon SSR byte gate (td-c6b113, CODEX1 P2-8)", () => {

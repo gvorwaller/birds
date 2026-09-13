@@ -715,7 +715,7 @@
 				<p>
 					Open <strong>Field guide</strong>, choose a species, and scroll to
 					<strong>Where it is through the year</strong>, above Best time of year.
-					The section starts collapsed; tap its heading to show or hide the chart.
+					The section starts expanded; tap Hide or its heading to collapse it, then Show to reopen.
 					Closing it keeps your chart selections while you stay on this species.
 					This chart shows seasonal patterns in loaded historical eBird reports.
 					It does not track individual birds or show live sightings.
@@ -730,7 +730,7 @@
 						above the chart describes patterns supported by the loaded data.
 					</li>
 					<li>
-						<strong>Choose the geography.</strong> Use <strong>World</strong> for
+						<strong>Choose the geography.</strong> The chart starts with <strong>By continent → All continents</strong> on both phone and desktop. Use <strong>World</strong> for
 						the combined view or <strong>By continent</strong> to compare continents.
 						The continents selector lets you choose which ones to show.
 						<strong>Latitudes → Species range</strong> shows occupied bands with
@@ -757,11 +757,26 @@
 						available regions lack enough checklists, not that the bird is absent.
 					</li>
 					<li>
+						<strong>Choose the colour scale.</strong> <strong>Absolute</strong> uses fixed reporting-rate
+						bands. <strong>Relative</strong> makes seasonal changes easier to see for birds
+						with low reporting rates: colours show fractions of this bird's highest grid
+						rate under the selected averaging method. The legend names that peak's rate,
+						latitude band, continental column and month. The scale covers all loaded
+						months and geography, including hidden columns. The grid and region strips
+						share it; an individual region can exceed the aggregate peak. Readout rates
+						and counts stay absolute. This choice is saved for your account in this browser.
+					</li>
+					<li>
 						<strong>Choose how reports are averaged.</strong> <strong>Equal weight</strong>
 						gives each country equal weight within its continent, then each
 						continent equal weight in World. Regions within a country are still
 						weighted by checklists. <strong>By checklists</strong> gives more weight
 						to places with more checklists, so heavily birded places count more.
+						The <strong>N of M checklists</strong> line shows the reported and total
+						checklist volumes contributing to the selected cell. Reported counts are
+						rounded estimates from reporting frequencies and checklist totals. Under
+						Equal weight, the percentage can differ from N divided by M; countries
+						left out of the average contribute to neither count.
 					</li>
 					<li>
 						<strong>Zero, small samples, and missing data differ.</strong> Grey

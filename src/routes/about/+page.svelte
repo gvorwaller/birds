@@ -120,14 +120,16 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Relative colour for seasonal patterns</strong> — switch the ribbon between fixed reporting-rate colours and colours relative to the bird's peak. The legend identifies the peak; readout numbers stay absolute. Your choice is remembered for your account in this browser.</li>
+							<li><strong>Checklist counts in the seasonal chart</strong> — the readout now shows how many of the contributing checklists reported the bird, alongside the rate. Counts are rounded estimates; equal-weight percentages still give countries and continents equal weight.</li>
 							<li><strong>Strongest region this month</strong> — the seasonal chart now names the region with the highest reporting rate for your selected month, among the available regions with 40 or more checklists. Tap it to chart the region’s year. When the search is limited to 40 regions, the readout says so.</li>
 							<li><strong>Special interest species</strong> — save birds you want to find, photograph or revisit. Your personal collection follows your account across devices, supports search and removal, and can filter Field Guide results. It stays separate from your life list and viewing history.</li>
 							<li><strong>Family description gaps</strong> — improved scientific-name and redirect matching, scoped species/genus sources for sparse family pages, complete source attribution, and retries for selected gaps that preserve current descriptions.</li>
 							<li><strong>Taxonomy for study</strong> — explore orders, families, and species in a new Field Guide tab, with two-way species links and personal Viewed badges. Filter by family, search banding codes, and choose taxonomic sorting. Browse species now shows result totals and pages of 100 so every match stays reachable. Family descriptions now populate automatically from Animal Diversity Web or matched Wikipedia sources, with Sonnet 5 drafting and checking, reliable passage-based evidence, source-specific attribution, automatic retries and refreshes, and separate Admin model and pause/resume controls.</li>
                             <li>
-								<strong>Less scrolling on species pages</strong> — the seasonal
-								distribution chart starts collapsed. Tap “Where it is through the year”
-								to open it; closing and reopening keeps your chart selections.
+								<strong>Seasonal detail shown immediately</strong> — “Where it is through the year”
+								starts expanded on each species page, showing all continents on phone and desktop. World remains available for a combined view. Use Hide to collapse it and Show
+								to reopen it; your chart selections are preserved.
 							</li>
 							<li>
 								<strong>Share your life list</strong> — opt in from Settings so other

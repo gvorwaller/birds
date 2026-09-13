@@ -23,7 +23,8 @@ import {
   EbirdError,
 } from "$server/ebird";
 import { nearestSpeciesReports } from "$server/nearest-ladder";
-import { speciesRibbon, type RibbonGrid } from "$server/ribbon";
+import { speciesRibbon } from "$server/ribbon";
+import { encodeRibbonGrid } from "$lib/ribbon-payload";
 import { ownerGalleryUrl } from "$server/access";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import {
@@ -137,12 +138,12 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
   const teaserP = pickSpeciesTeaserState(code, { home: origin });
 
   // Migration ribbon (td-59c2d0 build spec, TD-B): a discriminated result so
-  // the page can tell "nothing loaded" (ok, grid: null) from "broken"
+  // the page can tell "nothing loaded" (ok, gridJson: null) from "broken"
   // (ok: false) — never render a load failure as plain absence (CODEX1
   // P2-10). Awaited, not streamed: the ribbon is above the fold.
-  const ribbonP: Promise<{ ok: true; grid: RibbonGrid | null } | { ok: false; error: string }> =
+  const ribbonP: Promise<{ ok: true; gridJson: string | null } | { ok: false; error: string }> =
     speciesRibbon(code).then(
-      (g) => ({ ok: true as const, grid: g }),
+      (g) => ({ ok: true as const, gridJson: encodeRibbonGrid(g) }),
       (e) => {
         console.error("[species] ribbon", e);
         return { ok: false as const, error: "ribbon" };

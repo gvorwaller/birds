@@ -164,15 +164,16 @@ describe("equalWeightCell / checklistCell / worldEqualCell (fixture vectors)", (
 
 describe("classify", () => {
   it("zero iff f===0; low = f>0 && n<LOW_N", () => {
-    expect(classify(0, 500)).toEqual({ f: 0, n: 500, state: "zero", low: false, excluded: 0 });
-    expect(classify(0.2, 39)).toEqual({
-      f: 0.2,
+    expect(classify(0, 500)).toEqual({ f: 0, num: 0, n: 500, state: "zero", low: false, excluded: 0 });
+    expect(classify(7.8, 39)).toEqual({
+      f: expect.closeTo(0.2, 12),
+      num: 7.8,
       n: 39,
       state: "reported",
       low: true,
       excluded: 0,
     });
-    expect(classify(0, 39)).toEqual({ f: 0, n: 39, state: "zero", low: false, excluded: 0 });
+    expect(classify(0, 39)).toEqual({ f: 0, num: 0, n: 39, state: "zero", low: false, excluded: 0 });
   });
 
   it("checklistCell([]) and n=0-only rows are null", () => {
@@ -349,6 +350,7 @@ describe("speciesRibbon", () => {
     const c = COLUMNS.indexOf("NAE");
     expect(grid!.modes.checklists.cols[b][c][0]).toEqual({
       f: 313.5 / 1017,
+      num: 313.5,
       n: 1017,
       state: "reported",
       low: false,
@@ -372,5 +374,40 @@ describe("speciesRibbon", () => {
     expect(grid!.meta.unmappedCountries).toEqual(["ZZ"]);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     errorSpy.mockRestore();
+  });
+});
+
+
+describe("reported-checklist volumes (td-e7a96d)", () => {
+  const rows: CountryCellInput[] = [
+    {country: "US", column: "NAW", num: 30, n: 40},
+    {country: "US", column: "NAE", num: 50, n: 60},
+    {country: "CA", column: "NAE", num: 90, n: 900},
+    {country: "FR", column: "EU", num: 10, n: 200},
+    {country: "DE", column: "EU", num: 2.5, n: 25},
+    {country: "XX", column: "EU", num: 99, n: 0}
+  ];
+  it("column and world totals sum qualifying countries while rates keep their weighting", () => {
+    const column = equalWeightCell(rows.filter(r => r.column.startsWith('NA')))!;
+    expect(column.num).toBe(170); expect(column.n).toBe(1000);
+    expect(column.f).toBeCloseTo(0.45, 12);
+    const world = worldEqualCell(rows)!;
+    expect(world.num).toBe(180); expect(world.n).toBe(1200);
+    expect(world.f).toBeCloseTo(0.25, 12);
+    expect(world.num).not.toBe(world.f * world.n);
+    expect(world.excluded).toBe(1);
+    const checklists = checklistCell(rows)!;
+    expect(checklists.num).toBe(182.5); expect(checklists.n).toBe(1225);
+    expect(checklists.f).toBeCloseTo(182.5 / 1225, 12);
+  });
+  it("retains matching numerator and denominator even when every country is too thin to rate", () => {
+    const thin: CountryCellInput[] = [
+      {country:'A',column:'NAW',num:3.5,n:10},
+      {country:'B',column:'EU',num:2,n:20}
+    ];
+    for (const aggregate of [equalWeightCell, worldEqualCell]) {
+      expect(aggregate(thin)).toMatchObject({state:'thin',f:0,num:5.5,n:30,excluded:2});
+      expect(aggregate([{country:'A',column:'EU',num:0,n:40}])).toMatchObject({state:'zero',num:0,n:40});
+    }
   });
 });

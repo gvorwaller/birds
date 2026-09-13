@@ -74,6 +74,8 @@ export interface RibbonCell {
 	 * colour bin ("surveyed, too few checklists to rate"), never a %.
 	 */
 	f: number;
+	/** Sum of reported-checklist volumes over the same rows as n; never f*n. */
+	num: number;
 	/** For 'thin', the summed n of every excluded (surveyed-but-thin) country. */
 	n: number;
 	state: RibbonCellState;
@@ -161,9 +163,10 @@ function coalesceByCountry(rows: readonly CountryCellInput[]): Map<string, { num
 	return byCountry;
 }
 
-/** zero iff f===0; low = f>0 && n<LOW_N. */
-export function classify(f: number, n: number): RibbonCell {
-	return { f, n, state: f === 0 ? 'zero' : 'reported', low: f > 0 && n < LOW_N, excluded: 0 };
+/** Classify summed checklist volumes (n > 0); zero iff num===0. */
+export function classify(num: number, n: number): RibbonCell {
+	const f = num / n;
+	return { f, num, n, state: f === 0 ? 'zero' : 'reported', low: f > 0 && n < LOW_N, excluded: 0 };
 }
 
 /**
@@ -177,6 +180,7 @@ export function equalWeightCell(rows: CountryCellInput[]): RibbonCellOrNull {
 	const byCountry = coalesceByCountry(rows);
 	if (byCountry.size === 0) return null;
 	const fs: number[] = [];
+	let num = 0;
 	let n = 0;
 	let excluded = 0;
 	for (const e of byCountry.values()) {
@@ -185,15 +189,20 @@ export function equalWeightCell(rows: CountryCellInput[]): RibbonCellOrNull {
 			continue;
 		}
 		fs.push(e.num / e.n);
+		num += e.num;
 		n += e.n;
 	}
 	if (fs.length === 0) {
 		let thinN = 0;
-		for (const e of byCountry.values()) thinN += e.n;
-		return { f: 0, n: thinN, state: 'thin', low: true, excluded };
+		let thinNum = 0;
+		for (const e of byCountry.values()) {
+			thinN += e.n;
+			thinNum += e.num;
+		}
+		return { f: 0, num: thinNum, n: thinN, state: 'thin', low: true, excluded };
 	}
 	const f = fs.reduce((a, b) => a + b, 0) / fs.length;
-	return { f, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
+	return { f, num, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
 }
 
 /** Σnum/Σn — the summed-n rule; no country is ever excluded. */
@@ -206,7 +215,7 @@ export function checklistCell(rows: CountryCellInput[]): RibbonCellOrNull {
 		n += r.n;
 	}
 	if (n === 0) return null;
-	return classify(num / n, n);
+	return classify(num, n);
 }
 
 /**
@@ -232,6 +241,7 @@ export function worldEqualCell(rows: CountryCellInput[]): RibbonCellOrNull {
 	}
 	if (byBase.size === 0) return null;
 	const contMeans: number[] = [];
+	let num = 0;
 	let n = 0;
 	let excluded = 0;
 	for (const bc of byBase.values()) {
@@ -242,17 +252,24 @@ export function worldEqualCell(rows: CountryCellInput[]): RibbonCellOrNull {
 				continue;
 			}
 			fs.push(e.num / e.n);
+			num += e.num;
 			n += e.n;
 		}
 		if (fs.length > 0) contMeans.push(fs.reduce((a, b) => a + b, 0) / fs.length);
 	}
 	if (contMeans.length === 0) {
 		let thinN = 0;
-		for (const bc of byBase.values()) for (const e of bc.values()) thinN += e.n;
-		return { f: 0, n: thinN, state: 'thin', low: true, excluded };
+		let thinNum = 0;
+		for (const bc of byBase.values()) {
+			for (const e of bc.values()) {
+				thinN += e.n;
+				thinNum += e.num;
+			}
+		}
+		return { f: 0, num: thinNum, n: thinN, state: 'thin', low: true, excluded };
 	}
 	const f = contMeans.reduce((a, b) => a + b, 0) / contMeans.length;
-	return { f, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
+	return { f, num, n, state: f === 0 ? 'zero' : 'reported', low: excluded > 0, excluded };
 }
 
 /**
