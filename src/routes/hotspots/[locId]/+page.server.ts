@@ -11,6 +11,8 @@ import { haversineKm } from "$lib/geo";
 import {
   groupRecent,
   hotspotFromCache,
+  officialHotspotCacheEntry,
+  resolveOfficialHotspot,
   hotspotMonthly,
   hotspotPlace,
   regionNames,
@@ -39,8 +41,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       : new Date().getMonth() + 1;
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
 
-  const [meta, place, freqMap, seen, home, lastLoad] = await Promise.all([
+  const [listMeta, officialCache, place, freqMap, seen, home, lastLoad] = await Promise.all([
     hotspotFromCache(locId),
+    officialHotspotCacheEntry(locId),
     hotspotPlace(locId),
     frequencyMeta([locId]),
     seenSet(scopeId),
@@ -61,6 +64,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       [locId],
     ),
   ]);
+  const officialMeta = officialCache.meta;
+  const meta = listMeta ?? officialMeta;
   const freq = freqMap.get(locId) ?? null;
 
   const locName = meta?.locName ?? freq?.locName ?? place.locName ?? null;
@@ -81,10 +86,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let days: RecentDay[] = [];
   let recentError: string | null = null;
   let recentStale = false;
-  let hasApiKey = false;
+  const apiKey = await getEbirdApiKey(scopeId);
+  let hasApiKey = !!apiKey;
   if (tab === "recent" && known) {
-    const apiKey = await getEbirdApiKey(scopeId);
-    hasApiKey = !!apiKey;
     if (apiKey) {
       try {
         const res = await recentHotspotObs(apiKey, locId, back);
@@ -105,6 +109,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   return {
     locId,
     known,
+    verified: meta?.isHotspot === true,
+    verificationStale: officialMeta != null && listMeta == null && !officialCache.fresh,
     locName,
     isHotspot: meta?.isHotspot ?? false,
     lat: meta?.lat ?? null,
@@ -152,6 +158,9 @@ export const actions: Actions = {
     const userId = locals.scopeId!;
     const locId = params.locId;
     if (!validLocId(locId)) return fail(400, { error: "Not a hotspot id." });
+    if (locals.user?.role === "viewer") {
+      return fail(403, { error: "Viewers can review hotspot data but cannot load historical data." });
+    }
     const form = await request.formData();
     const force = form.get("force") === "1";
 
@@ -159,12 +168,41 @@ export const actions: Actions = {
     if (!apiKey) {
       return fail(400, { error: "An eBird API key is required — add one in Settings." });
     }
-    const meta = await hotspotFromCache(locId);
+    const listMeta = await hotspotFromCache(locId);
+    const officialCache = await officialHotspotCacheEntry(locId);
+    const meta = listMeta ?? (officialCache.fresh ? officialCache.meta : null);
     const freq = (await frequencyMeta([locId])).get(locId);
-    const name = meta?.locName ?? freq?.locName;
-    if (!name) {
-      return fail(400, { error: "This location is not in our hotspot cache yet." });
+    let verified = meta;
+    let staleVerification = false;
+    if (!verified) {
+      try {
+        const resolved = await resolveOfficialHotspot(locId, apiKey);
+        verified = resolved.meta;
+        staleVerification = resolved.stale;
+      } catch (err) {
+        if (err instanceof EbirdError) {
+          const message =
+            err.status === 401 || err.status === 403
+              ? "eBird could not verify this hotspot because the API key is missing or invalid — check Settings."
+              : err.status === 429
+                ? "eBird is rate-limiting verification. Please retry shortly."
+                : err.message;
+          return fail(err.status === 429 ? 429 : 502, { error: message, verificationRequired: true });
+        }
+        return fail(502, {
+          error: "Could not verify this hotspot right now. Please retry verification.",
+          verificationRequired: true,
+        });
+      }
     }
+    if (!verified) {
+      return fail(422, {
+        error:
+          "eBird did not provide verified hotspot details for this ID. Try the eBird page or a Forecast search, then retry verification.",
+        verificationRequired: true,
+      });
+    }
+    const name = verified.locName!;
     const { jobId, deduped } = await enqueueJob({
       type: "load_hotspots",
       payload: {
@@ -173,7 +211,7 @@ export const actions: Actions = {
             code: locId,
             kind: "hotspot" as const,
             name,
-            regionCode: meta?.countyCode ?? meta?.stateCode ?? null,
+            regionCode: verified.countyCode ?? verified.stateCode ?? null,
           },
         ],
         force,
@@ -182,7 +220,7 @@ export const actions: Actions = {
       requestedBy: userId,
       label: `1 hotspot — ${name}`,
     });
-    return { queued: { jobId, deduped, label: name } };
+    return { queued: { jobId, deduped, label: name, staleVerification } };
   },
 
   /** Sweep every hotspot in this one's county — same helper /forecast/data

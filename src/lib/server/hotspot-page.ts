@@ -8,7 +8,11 @@
  */
 import { query } from '$lib/db';
 import { getRegion } from '$server/regions';
-import type { EbirdObs } from '$server/ebird';
+import {
+	ebirdFetchOrNull,
+	EbirdError,
+	type EbirdObs
+} from '$server/ebird';
 import {
 	FREQ_LIKELY,
 	FREQ_POSSIBLE,
@@ -34,6 +38,156 @@ export interface HotspotMeta {
 	latestObsDt: string | null;
 	/** Found in any cached hotspot payload → it's a verified eBird hotspot. */
 	isHotspot: boolean;
+}
+
+/**
+ * The official-info endpoint is deliberately a separate cache family from
+ * hotspot list results. A list match is already verified; an info response
+ * must pass the stricter ID/isHotspot/coordinate parser below before it is
+ * allowed to establish the same identity. Only positive rows are written.
+ */
+const OFFICIAL_INFO_TTL_MIN = 30 * 24 * 60;
+const OFFICIAL_INFO_KEY = (locId: string) => `hotspotInfo:${locId}`;
+
+interface OfficialHotspotInfo {
+	locId?: unknown;
+	locID?: unknown;
+	name?: unknown;
+	locName?: unknown;
+	latitude?: unknown;
+	lat?: unknown;
+	longitude?: unknown;
+	lng?: unknown;
+	isHotspot?: unknown;
+	subnational1Code?: unknown;
+	subnational2Code?: unknown;
+	countyCode?: unknown;
+	stateCode?: unknown;
+}
+
+function finiteCoordinate(value: unknown, min: number, max: number): number | null {
+	if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+		return null;
+	}
+	return value;
+}
+
+/** Parse and validate the exact official-info shape observed from eBird. */
+export function parseOfficialHotspotInfo(raw: unknown, requestedLocId: string): HotspotMeta | null {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+	const value = raw as OfficialHotspotInfo;
+	const ids = [value.locId, value.locID].filter((id): id is string => typeof id === 'string');
+	if (ids.length === 0 || ids.some((id) => id !== requestedLocId)) return null;
+	if (value.locId != null && value.locID != null && value.locId !== value.locID) return null;
+	if (value.isHotspot !== true) return null;
+	const locName =
+		typeof value.name === 'string' && value.name.trim()
+			? value.name.trim()
+			: typeof value.locName === 'string' && value.locName.trim()
+				? value.locName.trim()
+				: null;
+	const lat = finiteCoordinate(value.latitude ?? value.lat, -90, 90);
+	const lng = finiteCoordinate(value.longitude ?? value.lng, -180, 180);
+	if (!locName || lat == null || lng == null) return null;
+	const stateCode =
+		typeof value.subnational1Code === 'string' ? value.subnational1Code : typeof value.stateCode === 'string' ? value.stateCode : null;
+	const countyCode =
+		typeof value.subnational2Code === 'string' ? value.subnational2Code : typeof value.countyCode === 'string' ? value.countyCode : null;
+	return {
+		locId: requestedLocId,
+		locName,
+		lat,
+		lng,
+		countyCode,
+		stateCode,
+		numSpeciesAllTime: null,
+		latestObsDt: null,
+		isHotspot: true
+	};
+}
+
+export interface OfficialHotspotCacheEntry {
+	meta: HotspotMeta | null;
+	fetchedAt: Date | null;
+	fresh: boolean;
+}
+
+/** Cache-only official verification. Stale positive rows remain identity evidence,
+ * but callers must inspect `fresh` before skipping a verification refresh. */
+export async function officialHotspotCacheEntry(locId: string): Promise<OfficialHotspotCacheEntry> {
+	const r = await query<{ payload: unknown; fetched_at: string | Date }>(
+		'SELECT payload, fetched_at FROM ebird_cache WHERE cache_key = $1',
+		[OFFICIAL_INFO_KEY(locId)]
+	);
+	const row = r.rows[0];
+	const fetchedAt = row?.fetched_at ? new Date(row.fetched_at) : null;
+	const validTimestamp = fetchedAt != null && Number.isFinite(fetchedAt.getTime());
+	const ageMs = validTimestamp ? Date.now() - fetchedAt.getTime() : Number.POSITIVE_INFINITY;
+	const fresh = ageMs >= 0 && ageMs < OFFICIAL_INFO_TTL_MIN * 60_000;
+	return {
+		meta: parseOfficialHotspotInfo(row?.payload, locId),
+		fetchedAt: validTimestamp ? fetchedAt : null,
+		fresh
+	};
+}
+
+/** Cache-only official verification, retaining the historical simple API. */
+export async function officialHotspotFromCache(locId: string): Promise<HotspotMeta | null> {
+	return (await officialHotspotCacheEntry(locId)).meta;
+}
+
+const officialInfoInFlight = new Map<string, Promise<HotspotMeta | null>>();
+
+export interface OfficialHotspotResolution {
+	meta: HotspotMeta | null;
+	/** A valid cached identity was used after a failed refresh. */
+	stale: boolean;
+	refreshErrorStatus?: number;
+}
+
+/**
+ * Resolve one exact hotspot for an explicit owner action. The shared request
+ * intentionally has no caller AbortSignal: another page may be awaiting the
+ * same ID, and a navigation must not cancel that verification for everyone.
+ */
+export async function resolveOfficialHotspot(
+	locId: string,
+	apiKey: string
+): Promise<OfficialHotspotResolution> {
+	const cached = await officialHotspotCacheEntry(locId);
+	const cachedMeta = cached.meta;
+	if (cachedMeta && cached.fresh) return { meta: cachedMeta, stale: false };
+
+	let request = officialInfoInFlight.get(locId);
+	if (!request) {
+		request = (async () => {
+			const raw = await ebirdFetchOrNull<unknown>(
+				`/ref/hotspot/info/${encodeURIComponent(locId)}`,
+				apiKey,
+				{ nullOn: [404], deadlineMs: 15_000 }
+			);
+			const meta = parseOfficialHotspotInfo(raw, locId);
+			if (!meta) return null;
+			await query(
+				`INSERT INTO ebird_cache (cache_key, payload, fetched_at)
+				 VALUES ($1, $2, NOW())
+				 ON CONFLICT (cache_key) DO UPDATE SET payload = $2, fetched_at = NOW()`,
+				[OFFICIAL_INFO_KEY(locId), JSON.stringify(meta)]
+			);
+			return meta;
+		})().finally(() => officialInfoInFlight.delete(locId));
+		officialInfoInFlight.set(locId, request);
+	}
+
+	try {
+		const meta = await request;
+		return { meta, stale: false };
+	} catch (err) {
+		if (cachedMeta && err instanceof EbirdError) {
+			return { meta: cachedMeta, stale: true, refreshErrorStatus: err.status };
+		}
+		throw err;
+	}
 }
 
 /**
@@ -74,12 +228,18 @@ export async function hotspotFromCache(locId: string): Promise<HotspotMeta | nul
 		[locId]
 	);
 	const row = r.rows[0];
-	if (!row) return null;
+	if (
+		!row ||
+		typeof row.loc_name !== 'string' ||
+		!row.loc_name.trim() ||
+		finiteCoordinate(row.lat, -90, 90) == null ||
+		finiteCoordinate(row.lng, -180, 180) == null
+	) return null;
 	return {
 		locId,
-		locName: row.loc_name,
-		lat: row.lat,
-		lng: row.lng,
+		locName: row.loc_name.trim(),
+		lat: finiteCoordinate(row.lat, -90, 90),
+		lng: finiteCoordinate(row.lng, -180, 180),
 		countyCode: row.subnational2,
 		stateCode: row.subnational1,
 		numSpeciesAllTime: row.num_species,

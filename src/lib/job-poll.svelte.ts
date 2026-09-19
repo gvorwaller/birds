@@ -20,7 +20,7 @@ import { navigating } from '$app/state';
 import {
 	classifyPollResponse,
 	invalidateStep,
-	isActive,
+	isOutstanding,
 	isStaleNow,
 	nextIntervalMs,
 	type InvalidateState
@@ -33,6 +33,7 @@ export interface WorkerInfo {
 	version: string | null;
 	heartbeatAt: string | null;
 	currentJobId: number | null;
+	pauseRequested: boolean;
 }
 
 export interface JobInfo {
@@ -68,6 +69,13 @@ export interface JobInfo {
 	target: string | null;
 	/** Active jobs only: loc codes the job covers. */
 	locCodes?: string[];
+	presentation?: {
+		state: string;
+		label: string;
+		explanation?: string;
+		nextAction?: string;
+		nextEligibleAt?: string;
+	};
 }
 
 class JobsPoll {
@@ -98,14 +106,24 @@ class JobsPoll {
 	 * visibilitychange together, doubling polls and invalidateAll churn.
 	 */
 	#gen = 0;
+	#lastLocCodes = new Map<number, string[]>();
 
 	get active(): JobInfo[] {
-		return this.jobs.filter((j) => isActive(j));
+		return this.jobs.filter((j) => isOutstanding(j));
 	}
 	get recent(): JobInfo[] {
-		// Scheduled singletons are neither active nor "recent" — the hub shows
-		// them on their own next-scan line instead.
-		return this.jobs.filter((j) => !isActive(j) && j.scheduled !== true);
+		return this.jobs.filter((j) => !isOutstanding(j));
+	}
+
+	#relevantJob(job: JobInfo): boolean {
+		if (/^\/forecast(\/|$)/.test(location.pathname)) return true;
+		const match = location.pathname.match(/^\/hotspots\/(L\d+)(?:\/|$)/);
+		// Outside a forecast or hotspot route, retain the old global latch
+		// behavior so a completion observed elsewhere refreshes the next
+		// forecast arrival.
+		if (!match) return true;
+		const codes = job.locCodes ?? this.#lastLocCodes.get(job.id) ?? [];
+		return codes.includes(match[1]);
 	}
 
 	/** Start (or wake) the poller. Safe to call repeatedly; used by layout mount, enqueue results, and track(). */
@@ -147,8 +165,9 @@ class JobsPoll {
 			this.jobs,
 			this.jobs, // identical snapshots — only the latch can owe here
 			navigating.to != null,
-			/^\/forecast(\/|$)/.test(location.pathname),
-			Date.now()
+			/^\/(forecast|hotspots)(\/|$)/.test(location.pathname),
+			Date.now(),
+			(job) => this.#relevantJob(job as JobInfo)
 		);
 		this.#invalidate = step.state;
 		if (step.fire) void invalidateAll();
@@ -190,6 +209,9 @@ class JobsPoll {
 			if (parsed.kind === 'ok') {
 				const data = JSON.parse(text) as { worker: WorkerInfo; jobs: JobInfo[] };
 				const prev = this.jobs;
+				this.#lastLocCodes = new Map(
+					prev.filter((job) => job.locCodes?.length).map((job) => [job.id, job.locCodes ?? []])
+				);
 				this.worker = data.worker;
 				this.jobs = data.jobs;
 				this.staleSince = null;
@@ -207,8 +229,9 @@ class JobsPoll {
 					prev,
 					data.jobs,
 					navigating.to != null,
-					/^\/forecast(\/|$)/.test(location.pathname),
-					Date.now()
+					/^\/(forecast|hotspots)(\/|$)/.test(location.pathname),
+					Date.now(),
+					(job) => this.#relevantJob(job as JobInfo)
 				);
 				this.#invalidate = step.state;
 				if (step.fire) void invalidateAll();
@@ -251,4 +274,3 @@ class JobsPoll {
 }
 
 export const jobsPoll = new JobsPoll();
-

@@ -12,6 +12,7 @@
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { jobPresentationText } from "$lib/job-presentation";
   import { countryOf, regionLevel } from "$lib/region-code";
   import type { ActionData, PageData } from "./$types";
 
@@ -556,17 +557,13 @@
             {#if progress.failed > 0}
               · {progress.failed} failed
             {/if}
-            · <a href="/forecast/data">details</a>
+            · <a href="/forecast/data#background-work">details</a>
           </p>
           {#if analyzing && analyzeJob}
             {@const jTotal = analyzeJob.progress.unitsTotal ?? progress.total}
             {@const jDone = analyzeJob.progress.unitsDone ?? progress.current}
             <p class="coverage">
-              {analyzeJob.status === "pending"
-                ? analyzeJob.progress.phase === "waiting_retry"
-                  ? "Analysis hit a temporary eBird problem — it will retry automatically."
-                  : "Analysis queued — starting shortly."
-                : `Analyzing… ${jDone} of ${jTotal}${analyzeJob.progress.currentUnit ? ` · ${analyzeJob.progress.currentUnit.name}` : ""}`}
+              {jobPresentationText(analyzeJob.presentation, analyzeJob.progress)}
             </p>
             <ProgressBar value={jDone} max={jTotal} --pb-margin="0 0 10px" />
             {#if jobsPoll.isStale}

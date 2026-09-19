@@ -1,7 +1,7 @@
 # Birds UX phase 3 — review record
 
 September 19, 2026 · td-766bfd · td-3d9544 / td-d71bad · parent td-8ff597
-Status: implementation independently accepted for review; uncommitted and undeployed.
+Status: released as 334ffff with streaming repair 505382b; authenticated production acceptance passed.
 
 Specification: [recent-report evidence and personal sightings](phase-03-report-evidence.md).
 
@@ -115,9 +115,43 @@ three feature screenshots and the WebKit control screenshot. Repo check logs:
 `.local/phase03-primary-focused-tests.log`, `phase03-primary-check.log`, and
 `phase03-primary-build.log`.
 
+## Production release — September 19, 2026
+
+Owner authorized deployment and the next phase. Phase 3 was committed as
+**334ffff**, then production smoke exposed an existing streaming failure:
+nginx withheld the tail of Home's startup script while deferred eBird work
+exceeded its 60-second idle timeout. A direct origin/proxy comparison proved
+that the app emitted the complete startup script at 265 ms, while nginx never
+emitted its end and closed at 60,022 ms. This was not a browser-control issue.
+
+Follow-up **505382b** disables proxy buffering and bounds the complete place-
+detail enrichment window at 50 seconds. All base species and arrived detail
+responses survive; missing details are explicitly labeled. Late shared requests
+can finish populating cache without holding the current response open. The
+blocking DB-place hydration uses the remaining window as well. Tests cover
+stalled provider/DB work, retained rows and safe late failures. 31 focused
+regressions, check with zero errors/warnings, web/worker build and a second source review
+passed in an isolated release checkout, excluding in-progress phase 4 changes.
+
+Both releases used the standard deploy script. Live revision is **505382b**;
+DB, worker and gallery health are all `ok`. Authenticated production acceptance:
+
+- Home interactive 599 ms after shell; complete response 9,919 ms in this warm run.
+- Home and species show the actual personal Hawk first-seen checklist.
+- Nearest returns two distinct Nashville checklists with source/review labels,
+  preserves date/distance/return context, and rejects invalid windows with 400.
+- 390px controls meet 48px height and have no horizontal overflow.
+- No JavaScript page errors. Owner life-list snapshot 227; no trip/life-list writes.
+
+The warm timings prove successful delivery, not a universal upstream latency
+promise; deterministic stalled-provider tests establish the 50-second bounded behavior.
+Evidence: task `work/birds-ux/audit/phase03-production-results.json`, production
+phone capture, origin probe log, and `work/birds-ux/release-stream-*` validation
+and deployment logs. The unrelated migration 0049 comment remains untouched.
+
 ## Disposition
 
-Phase 3 td-766bfd and linked td-3d9544 / td-d71bad are ready for review. The parent
-UX epic remains in progress. Production remains phase 2B **e730c56**; phase 3
-has no commit, push or deployment. The next phase is selected from the unchanged
-implementation workflow after owner review/release instruction.
+Phase 3 td-766bfd and linked td-3d9544 / td-d71bad are released. The streaming
+repair is tracked as td-602a41. Phase 4 **td-c9e804** is implemented and accepted for review from its
+[detailed specification](phase-04-load-recovery.md). The parent UX epic remains
+in progress; phase 4 has not been committed or deployed.

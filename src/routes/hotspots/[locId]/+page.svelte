@@ -2,7 +2,9 @@
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import { enhance } from "$app/forms";
+  import { page } from "$app/state";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { jobPresentationText } from "$lib/job-presentation";
   import {
     formatDistance,
     mapsDirectionsUrl,
@@ -40,6 +42,13 @@
     if (data.returnLink.href !== "/") p.set("returnTo", data.returnLink.href);
     const s = p.toString();
     return `/hotspots/${data.locId}${s ? `?${s}` : ""}`;
+  }
+
+  function actionHref(name: "load_hotspot" | "load_area_hotspots"): string {
+    const params = new URLSearchParams(page.url.searchParams);
+    params.delete(`/${name}`);
+    const query = params.toString();
+    return `?/${name}${query ? `&${query}` : ""}`;
   }
 
   // Shared helpers prefer the stored google_place_id, then coords (GROK).
@@ -93,7 +102,7 @@
     <p class="sub"><a href={data.returnLink.href}>← {data.returnLink.label}</a></p>
     <h1>
       {data.locName ?? data.locId}
-      {#if data.isHotspot}<Badge kind="notable" label="eBird hotspot" />{/if}
+      {#if data.verified}<Badge kind="notable" label="eBird hotspot" />{/if}
     </h1>
     <p class="sub">
       {#if data.countyName}{data.countyName}{#if data.stateName},
@@ -113,15 +122,40 @@
 
   {#if !data.known}
     <section class="card">
+      {#if form && "error" in form && form.error}<p class="err" role="alert">{form.error}</p>{/if}
       <p class="muted">
-        This location isn't in our hotspot cache yet — it appears once a
-        forecast search or load touches its area. You can still view it on
+        This location has no stored place details yet. Verify it with eBird
+        before loading historical data. You can still view it on
         <a
           href={`https://ebird.org/hotspot/${data.locId}`}
           target="_blank"
           rel="noopener">eBird ↗</a
         >.
       </p>
+      <p class="muted">Try <a href={forecastHref}>Forecast recovery</a> to search nearby reported locations.</p>
+      {#if data.isViewer}
+        <p class="muted">Viewer accounts cannot verify or queue historical loads.</p>
+      {/if}
+      {#if !data.isViewer}
+        {#if data.hasApiKey}
+          <form method="POST" action={actionHref("load_hotspot")} use:enhance={() => {
+            loadBusy = true;
+            return async ({ update }) => {
+              await update();
+              loadBusy = false;
+            };
+          }}>
+            <input type="hidden" name="back" value={data.back} />
+            <input type="hidden" name="tab" value={data.tab} />
+            <input type="hidden" name="returnTo" value={data.returnLink.href} />
+            <button type="submit" disabled={loadBusy}>
+              {loadBusy ? "Verifying…" : form && "verificationRequired" in form ? "Retry verification" : "Verify hotspot and load history"}
+            </button>
+          </form>
+        {:else}
+          <p class="muted">Add an eBird API key in <a href="/settings">Settings</a> to verify this hotspot.</p>
+        {/if}
+      {/if}
     </section>
   {:else}
     <section class="card actions">
@@ -137,17 +171,41 @@
       {#if form && "error" in form && form.error}<p class="err" role="alert">{form.error}</p>{/if}
       {#if form && "queued" in form && form.queued}
         <p class="ok">
-          {form.queued.deduped ? "Already queued" : "Queued"} — progress shows below.
+          {form.queued.deduped ? "This request matches an existing load." : "History load requested."}
         </p>
+        {#if "staleVerification" in form.queued && form.queued.staleVerification}
+          <p class="muted" role="status">eBird verification could not be refreshed; this load uses cached hotspot identity and should be reverified later.</p>
+        {/if}
       {/if}
-      {#if myJob}
-        <p class="progress">
-          {myJob.status === "running" && (myJob.progress.unitsTotal ?? 0) > 0
-            ? `Loading ${myJob.progress.unitsDone ?? 0} of ${myJob.progress.unitsTotal}…`
-            : myJob.progress.phase === "waiting_retry"
-              ? "Load retrying soon…"
-              : "Load queued…"}
-          <a href="/forecast/data">details</a>
+      {#if !data.verified}
+        <p class="muted">
+        This name comes from place data and does not verify that the ID is a
+          public eBird hotspot.
+        </p>
+        {#if data.isViewer}<p class="muted">Viewer accounts cannot verify or queue historical loads.</p>{/if}
+        {#if !data.isViewer}
+          {#if data.hasApiKey}
+            <form method="POST" action={actionHref("load_hotspot")} use:enhance={() => {
+              loadBusy = true;
+              return async ({ update }) => {
+                await update();
+                loadBusy = false;
+              };
+            }}>
+              <input type="hidden" name="back" value={data.back} />
+              <input type="hidden" name="tab" value={data.tab} />
+              <input type="hidden" name="returnTo" value={data.returnLink.href} />
+              <button type="submit" disabled={loadBusy}>
+                {loadBusy ? "Verifying…" : form && "verificationRequired" in form ? "Retry verification" : "Verify hotspot and load history"}
+              </button>
+            </form>
+          {:else}
+            <p class="muted">Add an eBird API key in <a href="/settings">Settings</a> to verify this hotspot.</p>
+          {/if}
+        {/if}
+      {:else if myJob}
+        <p class="progress">{jobPresentationText(myJob.presentation, myJob.progress)}
+          <a href="/forecast/data#background-work">details</a>
         </p>
       {:else if data.freq}
         <p>
@@ -172,10 +230,10 @@
             : " — you can retry below."}
         </p>
       {/if}
-      {#if !data.isViewer && !myJob}
+      {#if data.verified && !data.isViewer && !myJob}
         <form
           method="POST"
-          action="?/load_hotspot"
+          action={actionHref("load_hotspot")}
           use:enhance={() => {
             loadBusy = true;
             return async ({ update }) => {
@@ -185,6 +243,9 @@
           }}
         >
           {#if data.freq}<input type="hidden" name="force" value="1" />{/if}
+          <input type="hidden" name="back" value={data.back} />
+          <input type="hidden" name="tab" value={data.tab} />
+          <input type="hidden" name="returnTo" value={data.returnLink.href} />
           <button type="submit" disabled={loadBusy}>
             {loadBusy
               ? "Queuing…"
@@ -204,7 +265,7 @@
              whole county is the systematic unit (td-372d2a). -->
         <form
           method="POST"
-          action="?/load_area_hotspots"
+          action={actionHref("load_area_hotspots")}
           use:enhance={() => {
             areaBusy = true;
             return async ({ update }) => {

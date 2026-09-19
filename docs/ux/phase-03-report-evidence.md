@@ -1,7 +1,7 @@
 # Birds UX phase 3 — recent-report evidence and personal sightings
 
 September 19, 2026 · Parent td-8ff597 · F14 · td-3d9544 / td-d71bad
-Status: implemented and independently accepted for review; see [review evidence](phase-03-review.md). Production remains phase 2B e730c56.
+Status: released as 334ffff, with production streaming repair 505382b; see [review and production evidence](phase-03-review.md).
 
 ## Outcome and boundary
 

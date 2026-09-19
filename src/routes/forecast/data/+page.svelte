@@ -8,6 +8,7 @@
   } from "$lib/geographic-areas";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { jobPresentationText } from "$lib/job-presentation";
   import { fmtNextScan } from "$lib/next-scan";
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
@@ -479,6 +480,13 @@
     "refresh_loc",
     "retry_loc",
   ]);
+  const pausedJobs = $derived(
+    jobsPoll.active.filter((j) => j.presentation?.state === "paused"),
+  );
+  const scheduledJobs = $derived(
+    jobsPoll.active.filter((j) => ["scheduled", "retry-scheduled", "waiting"].includes(j.presentation?.state ?? "")),
+  );
+  const recurringJobTypes = new Set(["scan_enrichment", "scan_need_alerts", "enrich_families"]);
   let activityOpen = $state<number[]>([]);
   function toggleActivity(jobId: number, open: boolean) {
     activityOpen = activityOpen.filter((id) => id !== jobId);
@@ -497,7 +505,7 @@
     const ids = [...activityOpen];
     const t = setInterval(() => {
       for (const id of ids) {
-        if (jobsPoll.active.some((j) => j.id === id && j.status === "running")) {
+        if (jobsPoll.active.some((j) => j.id === id && j.presentation?.state === "running")) {
           void loadEvents(id);
         }
       }
@@ -601,15 +609,9 @@
       {#if job}
         <!-- Live sweep progress right where it was launched, so you don't
              have to scroll up to the Background loads card. -->
-        {@const done = job.progress.unitsDone ?? 0}
-        {@const total = job.progress.unitsTotal ?? 0}
         {@const failed = job.progress.unitsFailed ?? 0}
         <span class="hsprogress">
-          {job.status === "running" && total > 0
-            ? `Loading ${Math.min(done + 1, total)} of ${total}…`
-            : total > 0
-              ? `Queued · ${total} hotspots`
-              : "Queued…"}
+          {jobPresentationText(job.presentation, job.progress)}
           {#if failed > 0}
             <span class="hsfail">· {failed} failed</span>
           {/if}
@@ -1064,7 +1066,7 @@
     </section>
   {/if}
 
-  <section class="card">
+  <section class="card" id="background-work">
     <h2>Background loads</h2>
     {#if data.nextEnrichmentScanAt}
       <p class="nextscan">
@@ -1087,6 +1089,12 @@
     {#if jobsPoll.active.length === 0}
       <p class="notice">No loads running or queued.</p>
     {:else}
+      {#if pausedJobs.length > 0}
+        <p class="jobgroup"><strong>Paused</strong> · {pausedJobs.length} job{pausedJobs.length === 1 ? "" : "s"}</p>
+      {/if}
+      {#if scheduledJobs.length > 0}
+        <p class="jobgroup"><strong>Scheduled or waiting</strong> · {scheduledJobs.length} job{scheduledJobs.length === 1 ? "" : "s"}</p>
+      {/if}
       <ul class="jobs">
         {#each jobsPoll.active as j (j.id)}
           {@const total = j.progress.unitsTotal ?? 0}
@@ -1098,19 +1106,10 @@
                 <span class="jobby">queued by {j.requestedByName}</span>
               {/if}
               <span class="jobstatus" data-color={j.statusColor}>
-                {#if j.cancelRequested}
-                  cancelling…
-                {:else if j.status === "running"}
-                  running{#if total > 0}
-                    &nbsp;— {done} of {total}{/if}
-                {:else if j.progress.phase === "waiting_retry"}
-                  retrying {j.nextRetryAt ? `at ${fmtTime(j.nextRetryAt)}` : "soon"}
-                  (attempt {j.attempts} of {j.maxAttempts})
-                {:else}
-                  queued
-                {/if}
+                {jobPresentationText(j.presentation, j.progress)}
+                {#if j.presentation?.state === "waiting" || j.presentation?.state === "retry-scheduled"}&nbsp;(attempt {j.attempts} of {j.maxAttempts}){/if}
               </span>
-              {#if !data.isViewer && !j.cancelRequested && j.type !== "scan_need_alerts"}
+              {#if !data.isViewer && j.presentation?.state !== "cancelling" && !recurringJobTypes.has(j.type)}
                 <!-- The recurring scan singleton is not cancellable (server
                      noops it too) — need alerts are disabled in Settings. -->
                 <button
@@ -1127,7 +1126,7 @@
                 </button>
               {/if}
             </div>
-            {#if j.status === "running" && total > 0}
+            {#if j.presentation?.state === "running" && total > 0}
               <ProgressBar value={done} max={total} --pb-margin="8px 0 4px" />
               {#if j.progress.currentUnit}
                 <p class="jobdetail">now: {j.progress.currentUnit.name}</p>
@@ -1143,7 +1142,7 @@
     {/if}
     {#if jobsPoll.recent.length > 0}
       <details class="history">
-        <summary>Recent loads ({jobsPoll.recent.length})</summary>
+        <summary>Recent load history (latest 15 terminal jobs)</summary>
         <ul class="jobs">
           {#each jobsPoll.recent as j (j.id)}
             <li>
@@ -1153,7 +1152,7 @@
                   <span class="jobby">queued by {j.requestedByName}</span>
                 {/if}
                 <span class="jobstatus" data-color={j.statusColor}>
-                  {j.status}{#if j.finishedAt}
+                  {j.presentation?.state ?? j.status}{#if j.finishedAt}
                     &nbsp;· {fmtDate(j.finishedAt)}
                     {fmtTime(j.finishedAt)}{/if}{#if jobDuration(j) != null}
                     &nbsp;· {fmtDuration(jobDuration(j))}{/if}

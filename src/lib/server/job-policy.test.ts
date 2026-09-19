@@ -11,6 +11,7 @@ import {
   jobLocCodes,
   jobOutcome,
   jobTarget,
+  presentJob,
   retryDelayMs,
   sanitizeErrorText,
   scrubStoredValue,
@@ -360,5 +361,63 @@ describe("isScheduledSingleton (td-b7d021 pin a: parked scans never read as queu
     expect(
       isScheduledSingleton({ ...base, progress: { phase: "waiting_retry" } } as never),
     ).toBe(false); // actually retrying keeps the honest retry copy
+  });
+});
+
+describe("presentJob (phase 4 load-state contract)", () => {
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const base = {
+    type: "load_hotspots",
+    status: "pending",
+    label: "1 hotspot — Celery Fields",
+    payload: {},
+    cancel_requested: false,
+    next_retry_at: null,
+    progress: {},
+  };
+  const context = { workerAlive: true, workerPauseRequested: false, familyPaused: false, familyBlockedUntil: null, now };
+
+  it("distinguishes queued, retry, scheduled, paused, and worker-unavailable", () => {
+    expect(presentJob({ job: base as never, ...context }).state).toBe("queued");
+    expect(
+      presentJob({
+        job: { ...base, next_retry_at: "2026-09-19T12:05:00.000Z", progress: { phase: "waiting_retry" } } as never,
+        ...context,
+      }).state,
+    ).toBe("retry-scheduled");
+    expect(
+      presentJob({ job: { ...base, next_retry_at: "2026-09-19T12:05:00.000Z" } as never, ...context }).state,
+    ).toBe("scheduled");
+    expect(presentJob({ job: base as never, ...context, workerPauseRequested: true }).state).toBe("paused");
+    expect(presentJob({ job: base as never, ...context, workerAlive: false }).state).toBe("waiting-worker");
+  });
+
+  it("keeps terminal and cancellation precedence", () => {
+    expect(presentJob({ job: { ...base, status: "succeeded" } as never, ...context }).state).toBe("complete");
+    expect(presentJob({ job: { ...base, status: "failed" } as never, ...context }).state).toBe("failed");
+    expect(presentJob({ job: { ...base, status: "cancelled" } as never, ...context }).state).toBe("cancelled");
+    expect(presentJob({ job: { ...base, cancel_requested: true } as never, ...context }).state).toBe("cancelling");
+    expect(presentJob({ job: { ...base, status: "running", cancel_requested: true } as never, ...context }).state).toBe("cancelling");
+  });
+
+  it("isolates family pause and avoids duplicate type labels", () => {
+    const family = { ...base, type: "enrich_families", label: "Family descriptions" };
+    expect(presentJob({ job: family as never, ...context, familyPaused: true }).state).toBe("paused");
+    expect(displayName(family as never)).toBe("Family descriptions");
+    expect(presentJob({ job: base as never, ...context, familyPaused: true }).state).toBe("queued");
+  });
+
+  it("gives a global pause precedence over a family-only explanation", () => {
+    const family = { ...base, type: "enrich_families", label: "Family descriptions" };
+    const result = presentJob({
+      job: family as never,
+      ...context,
+      familyPaused: true,
+      workerPauseRequested: true,
+    });
+    expect(result).toMatchObject({
+      state: "paused",
+      explanation: "The background worker is paused; queued work will resume when it is resumed.",
+    });
   });
 });

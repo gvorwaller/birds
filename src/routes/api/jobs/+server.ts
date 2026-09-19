@@ -1,12 +1,14 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listJobs, workerHealth } from '$server/jobs';
+import { familyControl } from '$server/family-enrichment';
 import {
 	displayName,
 	durationMs,
 	isScheduledSingleton,
 	jobLocCodes,
 	jobTarget,
+	presentJob,
 	statusColor,
 	type JobRow
 } from '$server/job-policy';
@@ -34,13 +36,19 @@ export interface DecoratedJob {
 	durationMs: number | null;
 	/** Region/loc identity for UI scoping (CODEX1 re-review #3); null for multi-loc loads. */
 	target: string | null;
+	presentation: ReturnType<typeof presentJob>;
 	/** ACTIVE jobs only: loc codes covered, so pages can disable per-row loads (CODEX1 re-review #5). */
 	locCodes?: string[];
 }
 
 const ACTIVE = new Set(['pending', 'running']);
 
-function decorate(job: JobRow, now: Date): DecoratedJob {
+function decorate(
+	job: JobRow,
+	now: Date,
+	worker: Awaited<ReturnType<typeof workerHealth>>,
+	family: Awaited<ReturnType<typeof familyControl>>
+): DecoratedJob {
 	return {
 		id: Number(job.id),
 		type: job.type,
@@ -62,6 +70,14 @@ function decorate(job: JobRow, now: Date): DecoratedJob {
 		finishedAt: job.finished_at ? new Date(job.finished_at).toISOString() : null,
 		durationMs: durationMs(job, now),
 		target: jobTarget(job.type, job.payload),
+		presentation: presentJob({
+			job,
+			workerAlive: worker.alive,
+			workerPauseRequested: worker.pauseRequested,
+			familyPaused: job.type === 'enrich_families' && family.paused,
+			familyBlockedUntil: job.type === 'enrich_families' ? family.blocked_until : null,
+			now
+		}),
 		// Payload projections only for ACTIVE rows — codes, never names/creds —
 		// to bound response size (history doesn't need coverage).
 		...(ACTIVE.has(job.status) ? { locCodes: jobLocCodes(job.payload) } : {})
@@ -75,9 +91,10 @@ function decorate(job: JobRow, now: Date): DecoratedJob {
  */
 export const GET: RequestHandler = async () => {
 	const now = new Date();
-	const [worker, jobs] = await Promise.all([workerHealth(), listJobs(15)]);
+	const [worker, jobs, family] = await Promise.all([workerHealth(), listJobs(15), familyControl()]);
 	return json(
 		{
+			snapshotAt: now.toISOString(),
 			worker: {
 				alive: worker.alive,
 				state: worker.state,
@@ -85,9 +102,10 @@ export const GET: RequestHandler = async () => {
 				version: worker.version,
 				startedAt: worker.startedAt?.toISOString() ?? null,
 				heartbeatAt: worker.heartbeatAt?.toISOString() ?? null,
-				currentJobId: worker.currentJobId
+				currentJobId: worker.currentJobId,
+				pauseRequested: worker.pauseRequested
 			},
-			jobs: jobs.map((j) => decorate(j, now))
+			jobs: jobs.map((j) => decorate(j, now, worker, family))
 		},
 		// Safari heuristically caches authenticated GETs — never this one
 		// (hooks set it too when unset; explicit per GROK #12).

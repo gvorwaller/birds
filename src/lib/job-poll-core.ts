@@ -9,6 +9,8 @@ export interface PolledJob {
 	/** Parked recurring singleton (next run in the future) — never active. */
 	scheduled?: boolean;
 	progress: { phase?: string; unitsDone?: number } | Record<string, never>;
+	presentationState?: string;
+	presentation?: { state?: string };
 }
 
 export interface PolledWorkerControl {
@@ -42,6 +44,15 @@ export function isActive(job: Pick<PolledJob, 'status' | 'scheduled'>): boolean 
 	return ACTIVE_STATUSES.has(job.status) && job.scheduled !== true;
 }
 
+/** Every pending/running row remains available for dedup and scoped progress. */
+export function isOutstanding(job: Pick<PolledJob, 'status'>): boolean {
+	return ACTIVE_STATUSES.has(job.status);
+}
+
+function presentationState(job: Pick<PolledJob, 'presentationState' | 'presentation'>): string {
+	return job.presentationState ?? job.presentation?.state ?? '';
+}
+
 /**
  * Stale = failing for longer than STALE_AFTER_MS. The MANAGER re-evaluates
  * this on every failed poll and stores the answer in rune state — a getter
@@ -57,10 +68,12 @@ export function isStaleNow(staleSince: number | null, now: number): boolean {
  * poll before stopping so a just-enqueued job isn't missed).
  */
 export function nextIntervalMs(jobs: readonly PolledJob[]): number | null {
-	const active = jobs.filter(isActive);
-	if (active.length === 0) return null;
-	const allWaiting = active.every(
-		(j) => j.status === 'pending' && (j.progress as { phase?: string }).phase === 'waiting_retry'
+	const outstanding = jobs.filter(isOutstanding);
+	if (outstanding.length === 0) return null;
+	const allWaiting = outstanding.every(
+		(j) =>
+			j.scheduled === true ||
+			['paused', 'retry-scheduled', 'scheduled', 'waiting'].includes(presentationState(j))
 	);
 	return allWaiting ? POLL_WAITING_MS : POLL_ACTIVE_MS;
 }
@@ -92,8 +105,8 @@ export function terminalTransitions(
 	prev: readonly PolledJob[],
 	next: readonly PolledJob[]
 ): number[] {
-	const prevActive = new Set(prev.filter(isActive).map((j) => j.id));
-	return next.filter((j) => prevActive.has(j.id) && !isActive(j)).map((j) => j.id);
+	const prevOutstanding = new Set(prev.filter(isOutstanding).map((j) => j.id));
+	return next.filter((j) => prevOutstanding.has(j.id) && !isOutstanding(j)).map((j) => j.id);
 }
 
 /**
@@ -105,16 +118,20 @@ export function shouldInvalidate(
 	prev: readonly PolledJob[],
 	next: readonly PolledJob[],
 	lastInvalidateAt: number,
-	now: number
+	now: number,
+	relevantJob: (job: PolledJob) => boolean = () => true
 ): boolean {
-	if (terminalTransitions(prev, next).length > 0) return true;
+	const prevTerminal = new Set(
+		prev.filter((job) => isOutstanding(job) && relevantJob(job)).map((job) => job.id)
+	);
+	if (next.some((job) => prevTerminal.has(job.id) && !isOutstanding(job))) return true;
 	if (now - lastInvalidateAt < INVALIDATE_THROTTLE_MS) return false;
 	const unitsOf = (jobs: readonly PolledJob[]) =>
 		jobs
-			.filter(isActive)
+			.filter((job) => isActive(job) && relevantJob(job))
 			.map((j) => `${j.id}:${(j.progress as { unitsDone?: number }).unitsDone ?? 0}`)
 			.join(',');
-	return unitsOf(prev) !== unitsOf(next) && next.some(isActive);
+	return unitsOf(prev) !== unitsOf(next) && next.some((job) => isActive(job) && relevantJob(job));
 }
 
 export interface InvalidateState {
@@ -138,9 +155,10 @@ export function invalidateStep(
 	next: readonly PolledJob[],
 	navigatingActive: boolean,
 	onForecast: boolean,
-	now: number
+	now: number,
+	relevantJob: (job: PolledJob) => boolean = () => true
 ): { fire: boolean; state: InvalidateState } {
-	const owed = state.pending || shouldInvalidate(prev, next, state.lastInvalidateAt, now);
+	const owed = state.pending || shouldInvalidate(prev, next, state.lastInvalidateAt, now, relevantJob);
 	if (owed && !navigatingActive && onForecast) {
 		return { fire: true, state: { pending: false, lastInvalidateAt: now } };
 	}

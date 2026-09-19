@@ -7,6 +7,7 @@ import {
   classifyPollResponse,
   invalidateStep,
   isActive,
+  isOutstanding,
   isStaleNow,
   isWorkerControlTransitioning,
   nextIntervalMs,
@@ -35,16 +36,22 @@ describe("nextIntervalMs", () => {
     expect(nextIntervalMs([job(1, "pending")])).toBe(POLL_ACTIVE_MS);
   });
 
-  it("polls lazily when ALL active jobs are waiting out a retry backoff", () => {
+  it("polls lazily when all outstanding jobs are paused or waiting", () => {
     expect(
-      nextIntervalMs([job(1, "pending", { phase: "waiting_retry" })]),
+      nextIntervalMs([{ ...job(1, "pending"), presentation: { state: "retry-scheduled" } }]),
     ).toBe(POLL_WAITING_MS);
     // One genuinely active job keeps the fast cadence.
     expect(
       nextIntervalMs([
-        job(1, "pending", { phase: "waiting_retry" }),
+        { ...job(1, "pending"), presentation: { state: "retry-scheduled" } },
         job(2, "running"),
       ]),
+    ).toBe(POLL_ACTIVE_MS);
+  });
+
+  it("keeps the fast cadence for a genuinely queued job even when its raw retry time is future", () => {
+    expect(
+      nextIntervalMs([{ ...job(3, "pending"), nextRetryAt: "2099-01-01", presentation: { state: "queued" } } as never]),
     ).toBe(POLL_ACTIVE_MS);
   });
 });
@@ -138,6 +145,10 @@ describe("terminalTransitions", () => {
   it("a job first seen already-terminal is not a transition", () => {
     expect(terminalTransitions([], [job(9, "failed")])).toEqual([]);
   });
+
+  it("observes a scheduled pending row becoming terminal", () => {
+    expect(terminalTransitions([{ ...job(1, "pending"), scheduled: true }], [job(1, "succeeded")])).toEqual([1]);
+  });
 });
 
 describe("invalidateStep — the owed-refresh latch (td-671082 / CODEX1)", () => {
@@ -225,6 +236,13 @@ describe("shouldInvalidate", () => {
     const next = [job(1, "running", { unitsDone: 3 })];
     expect(shouldInvalidate(prev, next, 0, t0)).toBe(false);
   });
+
+  it("scopes hotspot completion invalidation to the previous location identity", () => {
+		const prev = [{ ...job(1, "running"), locCodes: ["L1"] }, { ...job(2, "running"), locCodes: ["L2"] }] as never;
+		const next = [job(1, "succeeded"), job(2, "running")] as never;
+		expect(shouldInvalidate(prev, next, 0, t0, (j) => j.id === 1)).toBe(true);
+		expect(shouldInvalidate(prev, next, 0, t0, (j) => j.id === 2)).toBe(false);
+  });
 });
 
 describe("scheduled singletons (td-b7d021 pin a)", () => {
@@ -233,9 +251,10 @@ describe("scheduled singletons (td-b7d021 pin a)", () => {
   it("a scheduled job is never active", () => {
     expect(isActive(scheduled as never)).toBe(false);
     expect(isActive(real as never)).toBe(true);
+    expect(isOutstanding(scheduled as never)).toBe(true);
   });
-  it("scheduled-only → nextIntervalMs null (idle poll, chip dark)", () => {
-    expect(nextIntervalMs([scheduled] as never)).toBeNull();
+  it("scheduled-only → calm poll (idle chip, due transitions still observed)", () => {
+    expect(nextIntervalMs([scheduled] as never)).toBe(POLL_WAITING_MS);
     expect(nextIntervalMs([scheduled, real] as never)).not.toBeNull();
   });
 });

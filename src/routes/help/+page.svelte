@@ -221,9 +221,11 @@
 						queue it and walk away. Navigate anywhere, reload, even close the
 						tab: the load keeps going, a slim progress chip follows you around
 						the app, and <strong>Hotspots &amp; data</strong> shows every queued,
-						running and finished load (with a Cancel button). Temporary eBird
-						hiccups retry automatically; only real problems (like a wrong
-						eBird password) are surfaced for you to fix.
+						running, paused, scheduled and finished load. The status explains
+						whether a worker, retry window or pause is holding it, and available
+						loads keep their Cancel control. Temporary eBird hiccups retry
+						automatically; only real problems (like a wrong eBird password) are
+						surfaced for you to fix.
 					</li>
 					<li>
 						Until an area is fully loaded, an amber note states exactly what

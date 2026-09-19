@@ -5,6 +5,7 @@
 	import NavProgress from '$components/NavProgress.svelte';
 	import { bottomNavViewportCorrection } from '$lib/bottom-nav';
 	import { jobsPoll } from '$lib/job-poll.svelte';
+	import { jobPresentationText } from '$lib/job-presentation';
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
 	import { DEFAULT_THEME, themeDefinition } from '$lib/themes';
@@ -36,23 +37,37 @@
 	afterNavigate(() => {
 		if (data.user) jobsPoll.onNavigated();
 	});
-	const activeJob = $derived(jobsPoll.active[0] ?? null);
+	const activeJob = $derived.by(() => {
+		const visible = jobsPoll.active.filter((j) =>
+			['running', 'queued', 'retry-scheduled', 'cancelling', 'waiting-worker'].includes(j.presentation?.state ?? '')
+		);
+		return visible.find((j) => j.presentation?.state === 'running') ??
+			visible.find((j) => j.presentation?.state === 'queued') ??
+			visible.find((j) => j.presentation?.state === 'retry-scheduled') ??
+			visible[0] ?? null;
+	});
 	const jobChipText = $derived.by(() => {
 		if (!activeJob) return '';
-		const extra = jobsPoll.active.length > 1 ? ` (+${jobsPoll.active.length - 1} more)` : '';
+		const activeCount = jobsPoll.active.filter((j) =>
+			['running', 'queued', 'retry-scheduled', 'cancelling', 'waiting-worker'].includes(j.presentation?.state ?? '')
+		).length;
+		const quietCount = quietJobs.length;
+		const extra = activeCount > 1 ? ` (+${activeCount - 1} more active)` : quietCount > 0 ? ` (+${quietCount} other background)` : '';
 		const p = activeJob.progress;
-		if (activeJob.status === 'running' && (p.unitsTotal ?? 0) > 0) {
+		if (activeJob.presentation?.state === 'running' && (p.unitsTotal ?? 0) > 0) {
 			// Tier-1 (td-97b22e): the API always shipped startedAt; "running
 			// 4 min" tells you whether to wait or walk away.
 			const mins = activeJob.startedAt
 				? Math.floor((Date.now() - new Date(activeJob.startedAt).getTime()) / 60_000)
 				: 0;
 			const dur = mins >= 1 ? ` · running ${mins} min` : '';
-			return `Loading ${p.unitsDone ?? 0} of ${p.unitsTotal} — ${activeJob.displayName}${dur}${extra}`;
+			return `${jobPresentationText(activeJob.presentation, p)}${dur} — ${activeJob.displayName}${extra}`;
 		}
-		if (p.phase === 'waiting_retry') return `Load retrying soon — ${activeJob.displayName}${extra}`;
-		return `Load queued — ${activeJob.displayName}${extra}`;
+		return `${jobPresentationText(activeJob.presentation, p)} — ${activeJob.displayName}${extra}`;
 	});
+	const quietJobs = $derived(
+		jobsPoll.active.filter((j) => ['paused', 'scheduled', 'waiting'].includes(j.presentation?.state ?? ''))
+	);
 
 	// Explicit collections, not a slice of one array: primary tabs render in the
 	// top nav, the bottom nav and the drawer, while owner-only items appear in
@@ -270,7 +285,9 @@
 		<div class="ro-banner">👀 Read-only family view — exploring Gaylon's birds.</div>
 	{/if}
 	{#if data.user && activeJob && !$page.url.pathname.startsWith('/forecast')}
-		<a class="job-chip" href="/forecast/data">⏳ {jobChipText}</a>
+		<a class="job-chip" href="/forecast/data#background-work">⏳ {jobChipText}</a>
+	{:else if data.user && quietJobs.length > 0 && !$page.url.pathname.startsWith('/forecast')}
+		<a class="job-chip quiet-job" href="/forecast/data#background-work">Background work is paused or scheduled ({quietJobs.length})</a>
 	{/if}
 	{@render children()}
 </main>

@@ -11,6 +11,7 @@
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatDistance, mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
+  import { jobPresentationText } from "$lib/job-presentation";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
   import type { ActionData, PageData } from "./$types";
@@ -137,6 +138,29 @@
   // enqueue would NOT dedup against a multi-loc job containing it).
   const coveredLocs = $derived(
     new Set(jobsPoll.active.flatMap((j) => j.locCodes ?? [])),
+  );
+  const frequencyJobTypes = new Set([
+    "load_hotspots",
+    "load_region",
+    "analyze_counties",
+    "refresh_loc",
+    "retry_loc",
+  ]);
+  const relevantForecastLocs = $derived(
+    new Set([
+      ...(view?.analyzed ?? []).map((h) => h.locId),
+      ...(view?.unloadedNearby ?? []).map((h) => h.locId),
+    ]),
+  );
+  const forecastJobs = $derived(
+    jobsPoll.active.filter(
+      (j) =>
+        frequencyJobTypes.has(j.type) &&
+        (j.locCodes ?? []).some((code) => relevantForecastLocs.has(code)),
+    ),
+  );
+  const otherJobs = $derived(
+    jobsPoll.active.filter((j) => !forecastJobs.some((local) => local.id === j.id)),
   );
 
   // Outdated loaded hotspots join the pick panel as a refresh group — the
@@ -788,32 +812,23 @@
         </p>
       {/if}
 
-      {#if jobsPoll.active.length > 0}
+      {#if forecastJobs.length > 0 || otherJobs.length > 0}
         <div class="jobsbanner">
-          {#each jobsPoll.active as j (j.id)}
+          {#each forecastJobs as j (j.id)}
             {@const total = j.progress.unitsTotal ?? 0}
             {@const done = j.progress.unitsDone ?? 0}
             <div class="job">
               <span class="bulkstatus">
-                {j.displayName}
-                {#if j.status === "running" && total > 0}
-                  — {done} of {total}
-                  {#if j.progress.currentUnit}
-                    · {j.progress.currentUnit.name}
-                  {/if}
-                {:else if j.progress.phase === "waiting_retry" && j.nextRetryAt}
-                  — hit a temporary eBird problem; retrying at {fmtTime(
-                    j.nextRetryAt,
-                  )}
-                {:else if j.status === "pending"}
-                  — waiting in queue
-                {/if}
+                {j.displayName} — {jobPresentationText(j.presentation, j.progress)}
               </span>
-              {#if j.status === "running" && total > 0}
+              {#if j.presentation?.state === "running" && total > 0}
                 <ProgressBar value={done} max={total} />
               {/if}
             </div>
           {/each}
+          {#if otherJobs.length > 0}
+            <p class="muted">Other background work is listed in <a href="/forecast/data#background-work">Background work</a>.</p>
+          {/if}
           {#if jobsPoll.isStale}
             <p class="muted">
               Connection to the app lost — loads continue on the server;

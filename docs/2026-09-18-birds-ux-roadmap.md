@@ -4,7 +4,15 @@ September 18, 2026 · Integrated roadmap, refined after browser review at `8ceb9
 
 **Execution:** the owner approved phase-by-phase specification, lower-cost implementation and independent primary-agent review. See [working agreement and phase queue](ux/implementation-workflow.md) and [phase 1 specification](ux/phase-01-trip-location-identity.md), tracked as td-d22017 under td-8ff597.
 
-**Current stage:** the [broad UX review](2026-09-18-birds-ux-review.md) now includes live eBird workflows and completed worker jobs after repairing the test environment. The [first-release specification](2026-09-18-birds-ux-release-1.md) is ready for discussion. The all-ticket map below remains the single backlog index. Phase 1 is released as `582f665`; [verification record](ux/phase-01-review.md). Phase 2A [count meaning and saved context](ux/phase-02a-trip-count-context.md) is released as `0ddf28a` on September 19, tracked as td-2c866c; [review evidence](ux/phase-02a-review.md). Production health and changed-route checks passed. Phase 2B is released as `e730c56` (td-f730cf): explicit progressive hotspot comparison, visible coverage and user-applied trip ranking. Its [specification](ux/phase-02b-comparable-rankings.md) and [review record](ux/phase-02b-review.md) document 91 passing focused tests and real 246-hotspot acceptance. Owner authorized phase 2B release (`e730c56`) and phase 3. Phase 3 is implemented and independently accepted for review as td-766bfd from its [detailed specification](ux/phase-03-report-evidence.md), covering td-3d9544 / td-d71bad. Its [review record](ux/phase-03-review.md) documents 125 passing tests and real Chromium/WebKit acceptance; phase 3 remains uncommitted and undeployed.
+**Current stage:** The [broad UX review](2026-09-18-birds-ux-review.md) includes
+live eBird workflows and completed worker jobs after repairing the test environment.
+This roadmap remains the single backlog index; the
+[implementation workflow](ux/implementation-workflow.md) tracks delivery phases.
+Phases 1, 2A, 2B and 3 are released, with production currently at `505382b` after
+the verified phase 3 streaming repair. Phase 4 **td-c9e804** is implemented and independently accepted for review from its [specification](ux/phase-04-load-recovery.md) and
+[review record](ux/phase-04-review.md). It is not committed or deployed.
+Next is shared navigation context and place-preserving links.
+
 
 ## Recommendation
 

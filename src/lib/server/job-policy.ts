@@ -370,7 +370,8 @@ export function displayName(
 		job.type === 'enrich_species' &&
 		(job.payload as { aiOnly?: boolean } | null | undefined)?.aiOnly === true;
 	const base = aiOnly ? 'Species notes (AI)' : (TYPE_NAMES[job.type] ?? job.type);
-	return job.label ? `${base} — ${job.label}` : base;
+	const label = job.label.trim();
+	return !label || label.toLocaleLowerCase() === base.toLocaleLowerCase() ? base : `${base} — ${label}`;
 }
 
 /** Recurring singleton types that sit 'pending' between runs by design. */
@@ -391,6 +392,94 @@ export function isScheduledSingleton(
 	if (!job.next_retry_at || new Date(job.next_retry_at).getTime() <= now.getTime()) return false;
 	const phase = (job.progress as { phase?: string } | null)?.phase;
 	return phase !== 'waiting_retry';
+}
+
+export type JobPresentationState =
+	| 'complete'
+	| 'failed'
+	| 'cancelled'
+	| 'running'
+	| 'cancelling'
+	| 'paused'
+	| 'retry-scheduled'
+	| 'scheduled'
+	| 'waiting'
+	| 'queued'
+	| 'waiting-worker';
+
+export interface JobPresentation {
+	state: JobPresentationState;
+	label: string;
+	explanation?: string;
+	nextAction?: string;
+	nextEligibleAt?: string;
+}
+
+export interface JobPresentationInput {
+	job: Pick<
+		JobRow,
+		| 'type'
+		| 'status'
+		| 'label'
+		| 'payload'
+		| 'cancel_requested'
+		| 'next_retry_at'
+		| 'progress'
+	>;
+	workerAlive: boolean;
+	workerPauseRequested: boolean;
+	familyPaused: boolean;
+	familyBlockedUntil: string | Date | null;
+	now?: Date;
+}
+
+/**
+ * One status contract for the jobs API and every client surface. Raw queue
+ * states remain durable implementation details; this pure projection carries
+ * the reason a person should wait, retry, or open the hub.
+ */
+export function presentJob(input: JobPresentationInput): JobPresentation {
+	const { job, workerAlive, workerPauseRequested, familyPaused, familyBlockedUntil } = input;
+	const now = input.now ?? new Date();
+	const label = displayName(job);
+	if (job.status === 'succeeded') return { state: 'complete', label };
+	if (job.status === 'failed') return { state: 'failed', label, nextAction: 'Retry from the load details' };
+	if (job.status === 'cancelled') return { state: 'cancelled', label };
+	if (job.status === 'running') {
+		if (job.cancel_requested) return { state: 'cancelling', label, explanation: 'Stopping after the current work.' };
+		if (!workerAlive) {
+			return { state: 'running', label, explanation: 'Worker availability is unconfirmed; progress will catch up.' };
+		}
+		if (workerPauseRequested) {
+			return { state: 'running', label, explanation: 'Pause requested; this job will stop after the current work.' };
+		}
+		if (job.type === 'enrich_families' && familyPaused) {
+			return { state: 'running', label, explanation: 'Family descriptions are paused; current work will stop after this item.' };
+		}
+		return { state: 'running', label };
+	}
+	if (job.cancel_requested) return { state: 'cancelling', label, explanation: 'This queued job will not start.' };
+
+	const retryAt = job.next_retry_at ? new Date(job.next_retry_at) : null;
+	const retryInFuture = retryAt != null && retryAt.getTime() > now.getTime();
+	if (workerPauseRequested) {
+		return { state: 'paused', label, explanation: 'The background worker is paused; queued work will resume when it is resumed.' };
+	}
+	if (job.type === 'enrich_families' && familyPaused) {
+		return { state: 'paused', label, explanation: 'Family descriptions are paused; other loads continue normally.' };
+	}
+	const blockedUntil = familyBlockedUntil ? new Date(familyBlockedUntil) : null;
+	if (job.type === 'enrich_families' && blockedUntil && blockedUntil.getTime() > now.getTime()) {
+		return { state: 'waiting', label, explanation: 'Family descriptions are waiting for their next eligible attempt.', nextEligibleAt: blockedUntil.toISOString() };
+	}
+	if (retryInFuture && (job.progress as { phase?: string } | null)?.phase === 'waiting_retry') {
+		return { state: 'retry-scheduled', label, explanation: 'Waiting before retrying this load.', nextEligibleAt: retryAt.toISOString() };
+	}
+	if (retryInFuture) {
+		return { state: 'scheduled', label, explanation: 'Scheduled for its next eligible run.', nextEligibleAt: retryAt.toISOString() };
+	}
+	if (!workerAlive) return { state: 'waiting-worker', label, explanation: 'Waiting for the background worker to return.' };
+	return { state: 'queued', label };
 }
 
 export function durationMs(
