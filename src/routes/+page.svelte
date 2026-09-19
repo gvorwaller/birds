@@ -911,7 +911,14 @@
           Place details couldn't be loaded for these species — the birds and
           dates below are from the area reports.
         </p>
-      {:else if enrichStale}
+      {:else if enrichPartial && !needsPending}
+        <p class="muted">
+          Some place details could not be loaded. All species from the area
+          reports remain in the results, along with details already received.
+          Reload to try the remaining place details.
+        </p>
+      {/if}
+      {#if enrichStale}
         <p class="muted">
           Place details for some species came from cached reports.
         </p>

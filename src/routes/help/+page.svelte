@@ -429,13 +429,15 @@
 					</li>
 					<li>
 						<strong>Two-stage loading.</strong> Both lists appear as soon as the area
-						reports arrive, then fill in a second or two later with each needed
+						reports arrive, then fill in as eBird responds with each needed
 						species' full place breakdown — the “Show all N places” lists and the
 						place search. Until that lands, a <em>needs</em> row shows where its
 						latest report was rather than a location or report count, because the
 						feed behind it carries only that one sighting per species. Rare reports
 						show their counts straight away; that feed lists every notable sighting,
-						so its numbers are already complete.
+						so its numbers are already complete. If place details take more than 50 seconds,
+						the page keeps all area-report species and the details already received,
+						and labels the result incomplete. Reload to request the remaining details.
 					</li>
 					<li>
 						Older <code>/targets</code> links and bookmarks still work; they land on Home

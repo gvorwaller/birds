@@ -457,6 +457,18 @@ function mergeEnrichedNeed<T extends SpeciesActivity>(
   };
 }
 
+/** Stop waiting for shared cache work without cancelling another consumer's request. */
+function withinEnrichmentWindow<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const stopped = () => reject(signal.reason);
+    signal.addEventListener("abort", stopped, { once: true });
+    // Attach both handlers even if already aborted: late shared failures must
+    // never become unhandled rejections after this response has finished.
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stopped));
+    if (signal.aborted) stopped();
+  });
+}
+
 export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   needs: T[],
   apiKey: string,
@@ -465,9 +477,15 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   back: number,
   photoCounts: Map<string, number>,
   hotspotLocIds: Set<string> = new Set(),
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; deadlineMs?: number } = {},
 ): Promise<{ needs: T[]; partial: boolean; stale: boolean }> {
   if (needs.length === 0) return { needs, partial: false, stale: false };
+
+  // A per-call timeout is insufficient for multiple waves of species calls.
+  // Finish the entire deferred window before the proxy's 60s idle timeout,
+  // preserving every base row and all detail responses that actually arrived.
+  const deadline = AbortSignal.timeout(opts.deadlineMs ?? 50_000);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
 
   const dist = Math.min(Math.max(distKm, 1), 50);
   // A per-species detail call that fails (or is skipped after an abort) leaves
@@ -486,19 +504,19 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
     needs,
     SPECIES_DETAIL_CONCURRENCY,
     async (need) => {
-      if (opts.signal?.aborted) {
+      if (signal.aborted) {
         partial = true;
         return null;
       }
       try {
-        const result = await recentNearbySpeciesObs(
+        const result = await withinEnrichmentWindow(recentNearbySpeciesObs(
           apiKey,
           need.speciesCode,
           origin.lat,
           origin.lon,
           dist,
           back,
-        );
+        ), signal);
         stale = stale || result.stale;
         return result.data.map((row) => ({
           ...row,
@@ -525,9 +543,10 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   const allObs = fetched.flatMap((rows) => rows ?? []);
   let placeIds = new Map<string, string>();
   try {
-    placeIds = await hydrateEbirdLocationPlaceIds(allObs, {
+    if (signal.aborted) throw signal.reason;
+    placeIds = await withinEnrichmentWindow(hydrateEbirdLocationPlaceIds(allObs, {
       resolveMissing: false,
-    });
+    }), signal);
   } catch {
     partial = true;
   }
@@ -556,7 +575,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   // seen here so the NEXT load has them, without any request waiting on it.
   // Bounded by RUNTIME_LOOKUP_LIMIT and by the per-locId retry policy in
   // location-placeids.ts, so repeat loads do not re-attempt the same misses.
-  if (allObs.length > 0 && !opts.signal?.aborted) {
+  if (allObs.length > 0 && !signal.aborted) {
     void hydrateEbirdLocationPlaceIds(allObs, { resolveMissing: true }).catch(
       () => {},
     );

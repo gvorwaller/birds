@@ -87,6 +87,41 @@ beforeEach(() => {
 });
 
 describe("enrichNeedsWithSpeciesReports", () => {
+  it("finishes a stalled fan-out with arrived details and every original species retained", async () => {
+    const bases = Array.from({ length: 20 }, (_, i) =>
+      baseNeed([obs({ ...AREA_ROW, speciesCode: `species${i}` })]),
+    );
+    let lateReject!: (error: Error) => void;
+    const pending = new Promise<never>((_resolve, reject) => { lateReject = reject; });
+    ebird.recentNearbySpeciesObs.mockImplementation((_key: string, code: string) =>
+      code === "species0"
+        ? Promise.resolve({ data: DETAIL_ROWS.map(r => ({ ...r, speciesCode: code })), stale: false, fetchedAt: new Date() })
+        : pending,
+    );
+    const result = await enrichNeedsWithSpeciesReports(bases, "key", ORIGIN, 40, 7, new Map(), new Set(), { deadlineMs: 20 });
+    expect(result.partial).toBe(true);
+    expect(result.needs).toHaveLength(20);
+    expect(result.needs[0].locationCount).toBe(2);
+    expect(result.needs.slice(1)).toEqual(bases.slice(1));
+    expect(ebird.recentNearbySpeciesObs.mock.calls.length).toBeLessThan(20);
+    // The shared request was never given our abort signal. Late failures are
+    // handled without corrupting the already returned partial result.
+    expect(ebird.recentNearbySpeciesObs.mock.calls.every(c => c.length === 6)).toBe(true);
+    lateReject(new Error("late provider failure"));
+    await Promise.resolve();
+    expect(result.needs[0].locationCount).toBe(2);
+  });
+
+  it("bounds a stalled DB hydrate while retaining fetched reports and coordinate links", async () => {
+    ebird.recentNearbySpeciesObs.mockResolvedValue({ data: DETAIL_ROWS, stale: false, fetchedAt: new Date() });
+    placeids.hydrateEbirdLocationPlaceIds.mockImplementation(() => new Promise(() => {}));
+    const result = await enrichNeedsWithSpeciesReports([baseNeed([AREA_ROW])], "key", ORIGIN, 40, 7, new Map(), new Set(), { deadlineMs: 20 });
+    expect(result.partial).toBe(true);
+    expect(result.needs[0].locationCount).toBe(2);
+    expect(result.needs[0].places.every(p => Number.isFinite(p.lat))).toBe(true);
+    expect(placeids.hydrateEbirdLocationPlaceIds).toHaveBeenCalledTimes(1);
+  });
+
   it("merges the detail feed into the base row: places union, counts derived from it", async () => {
     const base = baseNeed([AREA_ROW]);
     expect(base.enriched).toBe(false);
