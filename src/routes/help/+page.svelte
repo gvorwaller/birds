@@ -189,6 +189,12 @@
 						hotspots and a "Where in the state" jump.
 					</li>
 					<li>
+						When the map opens, its <strong>Choose a forecast location</strong>
+						heading is brought into view. Search or tap to place a draft pin, then
+						use <strong>Forecast near …</strong> to apply it. <strong>Cancel</strong>
+						leaves the forecast and saved Home unchanged.
+					</li>
+					<li>
 						Species that concentrate at one site say
 						<strong>"mostly at …"</strong>; ones you'll bump into anywhere say
 						<strong>"widespread"</strong>. A year strip shows which month is

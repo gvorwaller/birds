@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Keyboard-ready navigation and map picking</strong> — the menu now behaves as a modal drawer: it moves focus to Close, keeps keyboard focus inside, closes with Escape, and returns you to the menu button when dismissed. Forecast’s map chooser opens at a named heading; Cancel discards its draft pin without changing the current forecast.</li>
 							<li><strong>More named return paths</strong> — Field guide, taxonomy, collections, photos, life lists, Home, Nearest reports, Alerts and Forecast now keep the filtered page and selected row when you open a bird or hotspot. Life-list paths remain private to the signed-in viewer, even while a shared list is displayed.</li>
 							<li><strong>Clear background-load recovery</strong> — hotspot history requests verify the exact eBird location before they enter the queue, while the shared status view distinguishes running, paused, scheduled, retrying, waiting for a worker, cancelled and completed work. Failed verification and incomplete coverage keep their recovery guidance visible.</li>
 							<li><strong>Home stays usable during slow report loading</strong> — controls become available with the page, while place details load separately. Slow detail requests finish with clearly marked partial coverage, keeping all area-report species and details already received.</li>

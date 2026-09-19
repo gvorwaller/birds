@@ -699,7 +699,7 @@
 
   .pick-toggle {
     margin-top: 10px;
-    min-height: 40px;
+    min-height: 48px;
     padding: 8px 14px;
     border-radius: 8px;
     border: 1px dashed var(--accent);

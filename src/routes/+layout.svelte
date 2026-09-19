@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { tick, untrack } from 'svelte';
 	import NavProgress from '$components/NavProgress.svelte';
 	import { bottomNavViewportCorrection } from '$lib/bottom-nav';
 	import { jobsPoll } from '$lib/job-poll.svelte';
@@ -14,6 +15,13 @@
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
 	let menuOpen = $state(false);
+	let menuOpener: HTMLElement | null = null;
+	let drawer = $state<HTMLElement | null>(null);
+	let topNav = $state<HTMLElement | null>(null);
+	let appMain = $state<HTMLElement | null>(null);
+	let bottomNav = $state<HTMLElement | null>(null);
+	let previousBodyOverflow: string | null = null;
+	const drawerId = 'navigation-drawer';
 	let isViewer = $derived(data.user?.role === 'viewer');
 	$effect(() => {
 		const id = data.user?.theme ?? DEFAULT_THEME;
@@ -132,6 +140,100 @@
 		return path.startsWith(href);
 	}
 
+	function drawerFocusables(): HTMLElement[] {
+		if (!drawer) return [];
+		return Array.from(
+			drawer.querySelectorAll<HTMLElement>(
+				'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
+			)
+		).filter((element) => {
+			const tabindex = element.getAttribute('tabindex');
+			const style = getComputedStyle(element);
+			const disabled = 'disabled' in element && Boolean((element as HTMLButtonElement).disabled);
+			return (
+				tabindex !== '-1' &&
+				!disabled &&
+				!element.hidden &&
+				style.visibility !== 'hidden' &&
+				element.getClientRects().length > 0
+			);
+		});
+	}
+
+	function focusDrawer(first = true) {
+		const focusables = drawerFocusables();
+		const target = first ? focusables[0] : focusables.at(-1);
+		target?.focus();
+	}
+
+	async function openMenu(event: MouseEvent) {
+		menuOpener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+		menuOpen = true;
+		await tick();
+		focusDrawer();
+	}
+
+	async function closeMenu(restoreFocus = true) {
+		menuOpen = false;
+		await tick();
+		if (restoreFocus && menuOpener?.isConnected) menuOpener.focus();
+		menuOpener = null;
+	}
+
+	function selectDrawerDestination() {
+		// Navigation owns destination focus. Restoring the old opener here can
+		// race the route change and leave focus on a hidden stale control.
+		void closeMenu(false);
+	}
+
+	$effect(() => {
+		if (!menuOpen) return;
+		const inertShell = [topNav, appMain, bottomNav].filter(
+			(element): element is HTMLElement => element !== null
+		);
+		inertShell.forEach((element) => (element.inert = true));
+		previousBodyOverflow ??= document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+
+		function onKeydown(event: KeyboardEvent) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				void closeMenu();
+				return;
+			}
+			if (event.key !== 'Tab') return;
+			const focusables = drawerFocusables();
+			if (focusables.length === 0) return;
+			const first = focusables[0];
+			const last = focusables.at(-1)!;
+			if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first.focus();
+			}
+		}
+
+		function containFocus(event: FocusEvent) {
+			if (menuOpen && drawer && event.target instanceof Node && !drawer.contains(event.target)) {
+				focusDrawer();
+			}
+		}
+
+		document.addEventListener('keydown', onKeydown);
+		document.addEventListener('focusin', containFocus);
+		return () => {
+			document.removeEventListener('keydown', onKeydown);
+			document.removeEventListener('focusin', containFocus);
+			inertShell.forEach((element) => (element.inert = false));
+			if (previousBodyOverflow !== null) {
+				document.body.style.overflow = previousBodyOverflow;
+				previousBodyOverflow = null;
+			}
+		};
+	});
+
 	/**
 	 * iOS 26 installed apps can leave visualViewport at its keyboard-sized
 	 * height after the keyboard closes. WebKit then paints `bottom: 0` at that
@@ -199,19 +301,22 @@
 	// Close the drawer whenever the route changes.
 	$effect(() => {
 		$page.url.pathname;
-		menuOpen = false;
+		untrack(() => {
+			if (menuOpen) void closeMenu(false);
+		});
 	});
 </script>
 
 <NavProgress />
 
 {#if data.user}
-	<nav class="top-nav">
+	<nav class="top-nav" bind:this={topNav}>
 		<button
 			class="hamburger"
 			aria-label="Open menu"
 			aria-expanded={menuOpen}
-			onclick={() => (menuOpen = true)}
+			aria-controls={drawerId}
+			onclick={openMenu}
 		>
 			<span></span><span></span><span></span>
 		</button>
@@ -238,11 +343,11 @@
 
 	<!-- Hamburger drawer (all sizes) -->
 	{#if menuOpen}
-		<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
-		<div class="drawer" role="dialog" aria-modal="true" aria-label="Navigation">
+		<button class="scrim" aria-label="Close menu" onclick={() => void closeMenu()}></button>
+		<div bind:this={drawer} id={drawerId} class="drawer" role="dialog" aria-modal="true" aria-label="Navigation">
 			<div class="drawer-head">
 				<span class="brand"><span>🪶</span> birds</span>
-				<button class="close" aria-label="Close menu" onclick={() => (menuOpen = false)}>✕</button>
+				<button class="close" aria-label="Close menu" onclick={() => void closeMenu()}>✕</button>
 			</div>
 			<nav class="drawer-links">
 				{#each drawerItems as item (item.href)}
@@ -250,7 +355,7 @@
 						href={item.href}
 						data-sveltekit-preload-data={preloadFor(item.href)}
 						class:active={isActive(item.href, $page.url.pathname)}
-						onclick={() => (menuOpen = false)}
+						onclick={selectDrawerDestination}
 					>
 						<span class="ico">{item.ico}</span>{item.label}
 					</a>
@@ -259,7 +364,7 @@
 				<a
 					href="/help"
 					class:active={isActive('/help', $page.url.pathname)}
-					onclick={() => (menuOpen = false)}
+					onclick={selectDrawerDestination}
 				>
 					<span class="ico">❓</span>Help
 				</a>
@@ -267,7 +372,7 @@
 				<a
 					href="/about"
 					class:active={isActive('/about', $page.url.pathname)}
-					onclick={() => (menuOpen = false)}
+					onclick={selectDrawerDestination}
 				>
 					<span class="ico">ℹ️</span>About
 				</a>
@@ -282,7 +387,7 @@
 	{/if}
 {/if}
 
-<main class:with-nav={!!data.user}>
+<main bind:this={appMain} class:with-nav={!!data.user}>
 	{#if isViewer}
 		<div class="ro-banner">👀 Read-only family view — exploring Gaylon's birds.</div>
 	{/if}
@@ -295,7 +400,7 @@
 </main>
 
 {#if data.user}
-	<nav class="bottom-nav" use:stabilizeBottomNav>
+	<nav class="bottom-nav" bind:this={bottomNav} use:stabilizeBottomNav>
 		{#each primaryItems as item (item.href)}
 			<a
 				href={item.href}
@@ -305,7 +410,7 @@
 				<span class="ico">{item.ico}</span>{item.label}
 			</a>
 		{/each}
-		<button class="more-btn" aria-label="More" onclick={() => (menuOpen = true)}>
+		<button class="more-btn" aria-label="More" aria-expanded={menuOpen} aria-controls={drawerId} onclick={openMenu}>
 			<span class="ico">☰</span>More
 		</button>
 	</nav>
@@ -333,8 +438,8 @@
 		flex-direction: column;
 		justify-content: center;
 		gap: 4px;
-		width: 44px;
-		height: 44px;
+		width: 48px;
+		height: 48px;
 		padding: 10px;
 		background: none;
 		border: none;
@@ -366,7 +471,7 @@
 	.links a,
 	.settings {
 		padding: 10px 16px;
-		min-height: 44px;
+		min-height: 48px;
 		display: inline-flex;
 		align-items: center;
 		text-decoration: none;
@@ -465,8 +570,8 @@
 		border-bottom: 1px solid var(--border);
 	}
 	.close {
-		width: 44px;
-		height: 44px;
+		width: 48px;
+		height: 48px;
 		background: none;
 		border: none;
 		font-size: 1.2rem;

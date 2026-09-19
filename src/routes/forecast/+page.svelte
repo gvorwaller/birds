@@ -2,6 +2,7 @@
   import { enhance } from "$app/forms";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { tick } from "svelte";
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import Skeleton from "$components/Skeleton.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
@@ -55,7 +56,24 @@
   const analysisPending = $derived(data.analysis != null && analysis == null);
   let showPicker = $state(false);
   let picked = $state<PickedLocation | null>(null);
+  let pickOnMapButton = $state<HTMLButtonElement | undefined>();
+  let pickerHeading = $state<HTMLHeadingElement | undefined>();
+  const pickerId = "forecast-location-picker";
   const returnLabel = $derived(page.url.searchParams.get("returnLabel") ?? "");
+
+  async function openPicker() {
+    showPicker = true;
+    await tick();
+    pickerHeading?.focus({ preventScroll: true });
+    pickerHeading?.scrollIntoView({ block: "start" });
+  }
+
+  async function dismissPicker() {
+    showPicker = false;
+    picked = null;
+    await tick();
+    pickOnMapButton?.focus();
+  }
 
   function usePicked() {
     if (!picked) return;
@@ -412,9 +430,12 @@
             value={data.placeQuery}
           />
           <button
+            bind:this={pickOnMapButton}
             type="button"
             class="secondary"
-            onclick={() => (showPicker = !showPicker)}
+            aria-expanded={showPicker}
+            aria-controls={pickerId}
+            onclick={openPicker}
           >
             📍 Pick on map
           </button>
@@ -449,7 +470,10 @@
       </div>
     </form>
     {#if showPicker}
-      <div class="picker-wrap">
+      <section id={pickerId} class="picker-wrap" aria-labelledby="forecast-location-picker-heading">
+        <h2 bind:this={pickerHeading} id="forecast-location-picker-heading" tabindex="-1">
+          Choose a forecast location
+        </h2>
         <MapPicker
           bind:selected={picked}
           initialLat={data.location?.lat ?? null}
@@ -462,13 +486,10 @@
           <button
             type="button"
             class="secondary"
-            onclick={() => {
-              showPicker = false;
-              picked = null;
-            }}>Cancel</button
+            onclick={dismissPicker}>Cancel</button
           >
         </div>
-      </div>
+      </section>
     {/if}
     {#if data.error}
       <p class="error">{data.error}</p>
@@ -1278,6 +1299,13 @@
   }
   .picker-wrap {
     margin-top: 12px;
+  }
+  .picker-wrap h2 {
+    margin: 0 0 10px;
+    font-size: 1.05rem;
+    /* The heading is the programmatic scroll target, so it—not its parent—
+       owns the fixed-navigation clearance. */
+    scroll-margin-top: calc(var(--nav-h) + 16px);
   }
   .picker-actions {
     display: flex;

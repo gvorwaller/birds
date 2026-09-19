@@ -228,6 +228,7 @@
   .search input {
     flex: 1;
     min-height: 48px;
+    font-size: 16px;
     padding: 8px 12px;
     border: 1px solid var(--border);
     border-radius: 8px;

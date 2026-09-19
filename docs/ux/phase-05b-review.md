@@ -2,8 +2,7 @@
 
 September 19, 2026 · td-750277 · Parent td-8ff597
 
-Status: independently accepted; submitted for owner review. Not committed or deployed.
-Production remains phase 5A, `c731094`.
+Status: released and production-verified as `9abbe8a`.
 
 [Detailed specification](phase-05b-navigation-adoption.md).
 
@@ -73,7 +72,10 @@ sessions were removed by the harness. The unrelated migration 0049 comment
 remains outside this phase.
 
 Evidence and executable browser checks are in the task's
-`work/birds-ux/audit/phase05b-*` files. Phase 5B remains uncommitted and
-undeployed pending owner instruction. Phase 6 covers drawer keyboard behavior,
+`work/birds-ux/audit/phase05b-*` files. Authenticated production acceptance
+repeated the Field Guide → family taxonomy → bird return, Photos return and
+Alerts return at 390px with exact source-row focus, retained filters, no page
+errors and no mutations. Public and internal health reported the exact
+`9abbe8a` revision with database, worker and gallery healthy. Phase 6 covers drawer keyboard behavior,
 map reveal/focus and touched control sizing; phase 7 covers compact Field Guide
 controls and species-section navigation. The parent UX epic remains in progress.

@@ -31,10 +31,12 @@ Phase 4 **td-c9e804** is released as `05ba3af`; its
 Phase **5A td-ea384e** is released as `c731094`; its
 [acceptance record](phase-05a-review.md) covers real browser journeys and production verification. It implements the
 [detailed specification](phase-05a-navigation-context.md): shared journey core,
-trip/hotspot/bird returns and safe place links. Phase **5B td-750277** has
-adopted the core across remaining entry points and is independently accepted in
-its [review record](phase-05b-review.md); it remains uncommitted and undeployed
-pending owner instruction. Its [detailed specification](phase-05b-navigation-adoption.md)
+trip/hotspot/bird returns and safe place links. Phase **5B td-750277** is
+released as `9abbe8a`; its [review record](phase-05b-review.md) includes
+authenticated production journey proof. Phase **6 td-f3ccda** is independently
+accepted in its [review record](phase-06-review.md), and the owner has authorized
+its production release. Its
+[keyboard shell and map reveal specification](phase-06-shell-map-controls.md)
 remains the contract.
 
 ## Phase queue
@@ -48,7 +50,7 @@ remains the contract.
 | 4 | Missing hotspot metadata recovery and clear paused/scheduled/running load states | F15; td-c9e804; [detailed specification](phase-04-load-recovery.md) |
 | 5A | Shared journey core, trip/hotspot/bird returns and safe place links | F01–F02; td-ea384e; [specification](phase-05a-navigation-context.md) |
 | 5B | Adopt journey context across remaining list/search/county entry points | F01; td-750277; [specification](phase-05b-navigation-adoption.md); [review](phase-05b-review.md) |
-| 6 | Keyboard drawer, map reveal/focus and touched control sizing | F03/F08/F09 |
+| 6 | Keyboard drawer, map reveal/focus and touched control sizing | F03/F08/F09; [specification](phase-06-shell-map-controls.md); [review](phase-06-review.md) |
 | 7 | Compact Field Guide controls and species section navigation | F04/F05; preserve full dataset and search behavior |
 | Later | Unified geographic selection, list scope and field-use trips, in independently specified slices | Existing roadmap packages B/C and remaining tickets |
 
