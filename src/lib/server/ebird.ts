@@ -32,11 +32,17 @@ export interface EbirdObs {
 	howMany?: number;
 	lat: number;
 	lng: number;
-	obsValid: boolean;
-	obsReviewed: boolean;
+	/** Undefined means the provider did not supply a review status. */
+	obsValid?: boolean;
+	obsReviewed?: boolean;
 	locationPrivate: boolean;
 	/** Checklist id ("S123456789") — present on recent/notable obs payloads. */
 	subId?: string;
+	/** Feed provenance added after cache reads; never sent upstream. */
+	source?: string;
+	/** Union of feed labels when identical copies were merged. */
+	sources?: string[];
+	fetchedAt?: string;
 }
 
 export interface CachedResult<T> {
@@ -354,15 +360,15 @@ export async function notableNearbyObs(
 	lng: number,
 	distKm: number,
 	back: number,
-	opts?: { signal?: AbortSignal }
+  opts?: { signal?: AbortSignal; deadlineMs?: number }
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
 	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, NOTABLE_TTL_MIN, () =>
 		ebirdFetch<EbirdObs[]>(
 			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
-			apiKey,
-			{ signal: opts?.signal }
+          apiKey,
+          { signal: opts?.signal, deadlineMs: opts?.deadlineMs }
 		)
 	);
 }

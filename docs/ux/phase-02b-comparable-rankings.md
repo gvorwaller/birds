@@ -1,7 +1,7 @@
 # Birds UX phase 2B — comparable hotspot rankings
 
 September 19, 2026 · Parent td-8ff597 · Finding F13
-Status: implemented and independently reviewed as td-f730cf; awaiting owner release instruction. See [review evidence](phase-02b-review.md).
+Status: implemented, reviewed and released as `e730c56` (td-f730cf). See [review evidence](phase-02b-review.md).
 
 ## Result
 

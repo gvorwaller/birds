@@ -7,9 +7,35 @@
   import { page } from "$app/state";
   import type { PageData } from "./$types";
   import type { NearestTarget } from "./+page.server";
+  import { observationIdentity } from "$lib/observation-evidence";
 
   let { data }: { data: PageData } = $props();
   let distanceUnit = $state<DistanceUnit>("mi");
+  let searchEdited = $state(false);
+  let searchScope = $state("");
+  $effect(() => {
+    const nextScope = `${data.selectedCode ?? ""}|${data.q}|${data.backDays}|${data.nearestKm}`;
+    if (nextScope !== searchScope) {
+      searchScope = nextScope;
+      searchEdited = false;
+    }
+  });
+  const backOptions = [1, 7, 14, 30];
+  const distanceOptions = ["any", 25, 50, 100, 250, 500] as const;
+  function speciesPageHref(code: string): string {
+    const params = new URLSearchParams({
+      back: String(data.backDays),
+      nearestKm: String(data.nearestKm),
+      returnTo: page.url.pathname + page.url.search,
+    });
+    return `/species/${code}?${params.toString()}`;
+  }
+  function evidenceAsOf(value: string | Date): string {
+    return new Date(value).toLocaleString("en-US", {
+      timeZone: "America/New_York", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    });
+  }
 
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -20,7 +46,7 @@
 {#snippet targetCard(t: NearestTarget)}
   <section class="card">
     <h2>
-      <a class="sp" href={`/species/${t.speciesCode}?returnTo=${encodeURIComponent("/nearest")}`}
+      <a class="sp" href={speciesPageHref(t.speciesCode)}
         >{t.comName}</a
       >
       <Badge kind="need" label="Need" />
@@ -42,10 +68,10 @@
           >
         </p>
       {:else}
-        <p class="muted">No reports in the last {data.backDays} days.</p>
+        <p class="muted">No matching reports returned by the checked feeds for the selected window and distance; other reports may be unavailable.</p>
       {/if}
     {:else}
-      {#each t.rows as o (o.locId + o.obsDt)}
+      {#each t.rows as o (observationIdentity(o))}
         <div class="nrow">
           <div class="nline1">
             {#if o.distanceKm != null}
@@ -62,8 +88,10 @@
           </div>
           <div class="nline2">
             <span class="muted">{o.obsDt}</span>
-            {#if o.howMany != null && o.howMany > 1}<span class="muted">×{o.howMany}</span>{/if}
-            {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
+            {#if o.howMany != null}<span class="muted">count {o.howMany}</span>{:else}<span class="muted">reported count unavailable</span>{/if}
+            {#if o.obsValid === true}<span class="accepted">Accepted</span>{:else if o.obsValid === false}<span class="unconf">Unconfirmed</span>{:else}<span class="muted">Review status unavailable</span>{/if}
+            {#if o.sources?.length}<span class="muted">source: {o.sources.join(" + ")}</span>{/if}
+            {#if o.fetchedAt}<span class="muted">fetched {evidenceAsOf(o.fetchedAt)}</span>{/if}
             <MapLink lat={o.lat} lng={o.lng} name={o.locName} googlePlaceId={o.googlePlaceId} />
             {#if o.subId}
               <a class="cl" href={`https://ebird.org/checklist/${o.subId}`} target="_blank" rel="noopener"
@@ -82,6 +110,8 @@
         {#if !t.proven}Some closer regions couldn't be checked.{/if}
       </p>
     {/if}
+    {#if !t.error}<p class="muted evidence-note">Showing up to five closest reports returned by the checked feeds. A finite distance is a result filter, not complete area coverage.</p>{/if}
+    {#if t.partial && !t.error}<p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>{/if}
   </section>
 {/snippet}
 
@@ -93,8 +123,8 @@
   <header class="page-head">
     <h1>Nearest lifers</h1>
     <p class="sub">
-      The closest current reports of birds you still need — any distance
-      from home. <DistanceUnitToggle bind:unit={distanceUnit} />
+      The closest current reports of birds you still need from your saved home.
+      <DistanceUnitToggle bind:unit={distanceUnit} />
     </p>
   </header>
 
@@ -118,9 +148,19 @@
           type="search"
           name="q"
           value={data.q}
+          oninput={() => (searchEdited = true)}
           placeholder="Find any species you still need"
           aria-label="Search a species you still need"
         />
+        {#if !searchEdited && !data.q && data.selectedCode}
+          <input type="hidden" name="code" value={data.selectedCode} />
+        {/if}
+        <label><span>Window</span><select name="back">
+          {#each backOptions as option}<option value={option} selected={data.backDays === option}>{option === 1 ? "Last 24 hours" : `Last ${option} days`}</option>{/each}
+        </select></label>
+        <label><span>Distance</span><select name="nearestKm">
+          {#each distanceOptions as option}<option value={option} selected={data.nearestKm === option}>{option === "any" ? "Any distance" : `Within ${formatDistance(option, distanceUnit)}`}</option>{/each}
+        </select></label>
         <button type="submit">Search</button>
       </form>
       {#if data.q.length >= 2}
@@ -135,12 +175,12 @@
                   <span class="mseen">
                     {m.comName}
                     <Badge kind="seen" label="Seen" />
-                    <a href={`/species/${m.speciesCode}?returnTo=${encodeURIComponent("/nearest")}`}
+                  <a href={speciesPageHref(m.speciesCode)}
                       >species page →</a
                     >
                   </span>
                 {:else}
-                  <a class="mpick" href={`/nearest?code=${m.speciesCode}`}
+                  <a class="mpick" href={`/nearest?code=${m.speciesCode}&back=${data.backDays}&nearestKm=${data.nearestKm}`}
                     >{m.comName} <Badge kind="need" label="Need" /></a
                   >
                 {/if}
@@ -156,7 +196,7 @@
         <p>
           You already have <strong>{data.searchedSeen.comName}</strong> — no
           lookup needed.
-          <a href={`/species/${data.searchedSeen.speciesCode}?returnTo=${encodeURIComponent("/nearest")}`}
+          <a href={speciesPageHref(data.searchedSeen.speciesCode)}
             >species page →</a
           >
         </p>
@@ -252,9 +292,32 @@
   .searchcard form {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+  .searchcard label {
+    display: grid;
+    gap: 3px;
+    font-size: 0.82rem;
+  }
+  .searchcard select {
+    appearance: none;
+    height: 48px;
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+  .searchcard select,
+  .searchcard input,
+  .searchcard button {
+    min-height: 48px;
+    font-size: 16px;
   }
   .searchcard input {
-    flex: 1;
+    flex: 1 1 240px;
     min-height: 48px;
     padding: 8px 12px;
     border: 1px solid var(--border);
@@ -364,6 +427,10 @@
     font-weight: 700;
     background: #fde8c8;
     color: #5f3700;
+  }
+  .accepted {
+    color: var(--seen-text);
+    font-weight: 700;
   }
   a.cl {
     display: inline-flex;

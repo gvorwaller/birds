@@ -11,6 +11,7 @@
   } from "$components/MigrationRibbon.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import MapLink from "$components/MapLink.svelte";
+  import RecordedSightingRow from "$components/RecordedSightingRow.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { isHotspotLocId } from "$lib/loc-id";
   import { page } from "$app/state";
@@ -28,6 +29,7 @@
   import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
   import SimilarSpeciesCard from "$components/SimilarSpeciesCard.svelte";
   import type { ActionData, PageData } from "./$types";
+  import { observationIdentity } from "$lib/observation-evidence";
 
   const MONTH_NAMES = [
     "January",
@@ -47,6 +49,16 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const ribbonGrid = $derived(data.ribbon.ok ? decodeRibbonGrid(data.ribbon.gridJson) : null);
   let distanceUnit = $state<DistanceUnit>("mi");
+  function evidenceAsOf(value: string | Date): string {
+    return new Date(value).toLocaleString("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    });
+  }
 
   let isViewer = $derived(data.user?.role === "viewer");
   // Reports are centered on the place Home was showing, or the saved home.
@@ -102,15 +114,15 @@
   // skeleton (AGY review). Navigating to a different species resets to the
   // skeleton via the derived species-code check.
   type StreamedResult<T> = { ok: true; data: T } | { ok: false; error: string };
-  function retained<T>(get: () => Promise<StreamedResult<T>> | null) {
-    let view = $state<{ code: string; res: StreamedResult<T> } | null>(null);
+  function retained<T>(get: () => Promise<StreamedResult<T>> | null, scope: () => string = () => data.taxon.species_code) {
+    let view = $state<{ key: string; res: StreamedResult<T> } | null>(null);
     $effect(() => {
-      const code = data.taxon.species_code;
+      const key = scope();
       const p = get();
       if (!p) return;
       let alive = true;
       void p.then((res) => {
-        if (alive) view = { code, res };
+        if (alive) view = { key, res };
       });
       return () => {
         alive = false;
@@ -118,12 +130,18 @@
     });
     return {
       get current() {
-        return view?.code === data.taxon.species_code ? view.res : null;
+        return view?.key === scope() ? view.res : null;
       },
     };
   }
-  const nearbyView = retained(() => data.nearby);
-  const nearestView = retained(() => data.nearest);
+  const nearbyView = retained(
+    () => data.nearby,
+    () => `${data.taxon.species_code}|nearby|${data.originLat ?? ""}|${data.originLng ?? ""}|${data.distKm}|${data.backDays}`,
+  );
+  const nearestView = retained(
+    () => data.nearest,
+    () => `${data.taxon.species_code}|nearest|${data.homeLat ?? ""}|${data.homeLng ?? ""}|${data.backDays}|${data.nearestKm}`,
+  );
   // Tide never rejects (server contract) — wrap to the same shape.
   const tideView = retained<TideResult | null>(() =>
     data.tide.then((t) => ({ ok: true as const, data: t })),
@@ -235,6 +253,11 @@
     p.set("nearest", "1");
     return `?${p.toString()}`;
   });
+  const nearestContextParams = $derived.by(() =>
+    [...page.url.searchParams.entries()].filter(([name]) =>
+      !["nearest", "back", "nearestKm"].includes(name),
+    ),
+  );
 
   const IUCN_LABELS: Record<string, string> = {
     LC: "Least Concern",
@@ -380,6 +403,17 @@
       {/key}
     {/if}
   </header>
+
+  {#if data.seen}
+    <section class="card recorded-card">
+      <h2>{isViewer ? "Family list recorded sighting" : "Your recorded sighting"}</h2>
+      <p class="muted">
+        This is your first-seen life-list record, not a complete checklist history
+        or a public accepted report.
+      </p>
+      <RecordedSightingRow row={{ speciesCode: data.taxon.species_code, comName: data.taxon.com_name, firstSeen: data.seen.first_seen, locationName: data.seen.location_name, obsCount: data.seen.obs_count, subId: data.seen.sub_id, lat: data.seen.lat, lng: data.seen.lng }} {distanceUnit} />
+    </section>
+  {/if}
 
   {#if data.hasGallery}
     <section class="card">
@@ -666,6 +700,9 @@
         <DistanceUnitToggle bind:unit={distanceUnit} />
       </div>
     </div>
+    {#if nearbyView.current?.ok && nearbyView.current.data.partial}
+      <p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>
+    {/if}
     {#if !data.hasApiKey || !data.hasOrigin}
       <p class="muted">
         {#if isViewer}
@@ -687,7 +724,7 @@
         No reports within {formatDistance(data.distKm, distanceUnit)} in this window.
       </p>
     {:else}
-      {#each nearbyView.current.data.rows as o (o.locId + o.obsDt)}
+      {#each nearbyView.current.data.rows as o (observationIdentity(o))}
         <div class="obs">
           <div class="grow">
             <div class="name">
@@ -710,9 +747,10 @@
               {/if}
             </div>
             <div class="meta">
-              {o.howMany ?? 1}
-              {(o.howMany ?? 1) === 1 ? "bird" : "birds"}
-              {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
+              {#if o.howMany != null}{o.howMany} {o.howMany === 1 ? "bird" : "birds"}{:else}<span class="muted">reported count unavailable</span>{/if}
+              {#if o.obsValid === true}<span class="accepted">Accepted</span>{:else if o.obsValid === false}<span class="unconf">Unconfirmed</span>{:else}<span class="muted">Review status unavailable</span>{/if}
+              {#if o.sources?.length}<span class="muted">source: {o.sources.join(" + ")}</span>{:else if o.source}<span class="muted">source: {o.source}</span>{/if}
+              {#if o.fetchedAt}<span class="muted">fetched {evidenceAsOf(o.fetchedAt)}</span>{/if}
               {#if o.locationPrivate}<span
                   class="privloc"
                   title="Reported from someone's personal (non-hotspot) location"
@@ -751,15 +789,34 @@
          species only; unbounded distance from the saved home. -->
     <section class="card">
       <h2>
-        Nearest reports — any distance
+        Nearest reports — {data.nearestKm === "any" ? "any distance" : `within ${formatDistance(Number(data.nearestKm), distanceUnit)}`}
         {#if nearestView.current?.ok && nearestView.current.data.stale}<Badge
             kind="stale"
             label="cached"
           />{/if}
       </h2>
+      <form method="GET" class="nearest-controls">
+        <input type="hidden" name="nearest" value="1" />
+        {#each nearestContextParams as [name, value]}
+          <input type="hidden" {name} value={value} />
+        {/each}
+        <label>Window<select name="back">
+          {#each [1, 7, 14, 30] as option}<option value={option} selected={data.backDays === option}>{option === 1 ? "Last 24 hours" : `Last ${option} days`}</option>{/each}
+        </select></label>
+        <label>Distance<select name="nearestKm">
+          {#each ["any", 25, 50, 100, 250, 500] as option}<option value={option} selected={data.nearestKm === option}>{option === "any" ? "Any distance" : `Within ${formatDistance(Number(option), distanceUnit)}`}</option>{/each}
+        </select></label>
+        <button type="submit">Check</button>
+      </form>
+      <p class="muted evidence-note">
+        Showing up to five closest reports returned by the checked feeds for
+        {data.backDays === 1 ? " the last 24 hours" : ` the last ${data.backDays} days`}
+        {data.nearestKm === "any" ? " at any distance" : ` within ${formatDistance(Number(data.nearestKm), distanceUnit)}`} from saved home. A finite distance is a result filter, not complete
+        area coverage.
+      </p>
       {#if !data.wantNearest || data.nearest == null}
         <p class="muted">
-          How far away is the closest current report? Any distance from home.
+          How far away is the closest current report in the selected window and distance?
         </p>
         <!-- Preserve every existing param (location context, back, returnTo)
              — a bare ?nearest=1 clobbered the query and silently retargeted
@@ -775,7 +832,7 @@
         {#if nearestView.current.data.via === "nearest"}
           <!-- eBird's own global lookup answered, and answered empty. -->
           <p class="muted">
-            No reports anywhere in the last {data.backDays} days.
+            No matching reports returned by the checked feeds for the selected window and distance; other reports may be unavailable.
           </p>
         {:else}
           <!-- The region search cannot see everywhere: our seeded coverage has
@@ -793,7 +850,7 @@
           </p>
         {/if}
       {:else}
-        {#each nearestView.current.data.rows as o (o.locId + o.obsDt)}
+        {#each nearestView.current.data.rows as o (observationIdentity(o))}
           <div class="nrow">
             <div class="nline1">
               {#if o.distanceKm != null}
@@ -818,10 +875,10 @@
             </div>
             <div class="nline2">
               <span class="muted">{o.obsDt}</span>
-              {#if o.howMany != null && o.howMany > 1}<span class="muted"
-                  >×{o.howMany}</span
-                >{/if}
-              {#if !o.obsValid}<span class="unconf">Unconfirmed</span>{/if}
+              {#if o.howMany != null}<span class="muted">count {o.howMany}</span>{:else}<span class="muted">reported count unavailable</span>{/if}
+              {#if o.obsValid === true}<span class="accepted">Accepted</span>{:else if o.obsValid === false}<span class="unconf">Unconfirmed</span>{:else}<span class="muted">Review status unavailable</span>{/if}
+              {#if o.sources?.length}<span class="muted">source: {o.sources.join(" + ")}</span>{:else if o.source}<span class="muted">source: {o.source}</span>{/if}
+              {#if o.fetchedAt}<span class="muted">fetched {evidenceAsOf(o.fetchedAt)}</span>{/if}
               <MapLink
                 lat={o.lat}
                 lng={o.lng}
@@ -839,6 +896,9 @@
             </div>
           </div>
         {/each}
+      {/if}
+      {#if nearestView.current?.ok && nearestView.current.data.partial}
+        <p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>
       {/if}
       <!-- How the answer was reached, when that changes what it means. The
            direct lookup covers eBird's whole database; the region search covers
@@ -1500,6 +1560,10 @@
     background: #fde8c8;
     color: #5f3700; /* 8.7:1 AAA (hotspot-page precedent) */
   }
+  .accepted {
+    color: var(--seen-text);
+    font-weight: 700;
+  }
   .privloc {
     color: var(--muted);
     font-size: 0.78rem;
@@ -1526,6 +1590,42 @@
     color: var(--accent);
     font-weight: 700;
     text-decoration: none;
+  }
+  .nearest-controls {
+    display: flex;
+    gap: 8px;
+    align-items: end;
+    flex-wrap: wrap;
+    margin: 8px 0 12px;
+  }
+  .nearest-controls label {
+    display: grid;
+    gap: 3px;
+    font-size: 0.82rem;
+  }
+  .nearest-controls select {
+    appearance: none;
+    height: 48px;
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+  .nearest-controls select,
+  .nearest-controls button {
+    min-height: 48px;
+    font-size: 16px;
+  }
+  .nearest-controls button {
+    padding: 8px 18px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 700;
   }
   .nrow {
     padding: 6px 0;

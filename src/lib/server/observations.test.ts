@@ -24,6 +24,11 @@ function obs(
 }
 
 describe("mergeSpeciesObservations", () => {
+  it("preserves the primary count, conservative status and both sources of a duplicate", () => {
+    const primary = obs({speciesCode:"fiscro",comName:"Fish Crow",locId:"L1",locName:"Park",obsDt:"2026-09-18 13:16",lat:30,lng:-81,howMany:2,subId:"S1",obsValid:true});
+    const result = mergeSpeciesObservations("fiscro",[primary],[{...primary,howMany:8,obsValid:false}]);
+    expect(result).toHaveLength(1);expect(result[0]).toMatchObject({howMany:2,obsValid:false,sources:["recent","notable"]});
+  });
   it("includes notable-only observations and de-dupes rows already in recent results", () => {
     const downtownBangor = obs({
       speciesCode: "fiscro",

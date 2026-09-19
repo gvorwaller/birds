@@ -4,6 +4,7 @@
   import HotspotComparison from "$components/HotspotComparison.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
+  import RecordedSightingRow from "$components/RecordedSightingRow.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import PlaceMatches from "$components/PlaceMatches.svelte";
   import { page } from "$app/state";
@@ -68,6 +69,14 @@
   }
 
   let notableAll = $derived(data.view?.notable ?? []);
+  let recordedRows = $derived(
+    (data.recordedSightings ?? []).filter(
+      (row) => row.inWindow && row.inRadius,
+    ),
+  );
+  let unresolvedRecordedRows = $derived(
+    (data.recordedSightings ?? []).filter((row) => row.inWindow && row.locationUnavailable),
+  );
 
   // --- Streamed enrichment (td-d561a8) --------------------------------------
   // The awaited base view renders immediately; the per-species fan-out lands
@@ -592,6 +601,31 @@
     </section>
   {/if}
 
+  <section class="card recorded-card">
+    <h2>{isViewer ? "Family list recorded sightings" : "Your recorded sightings"}</h2>
+    <p class="muted intro">
+      First-seen life-list records, not complete checklist history, and separate
+      from public totals. Recorded dates {data.recordedDateStart}–{data.recordedDateEnd}.
+    </p>
+    {#if recordedRows.length === 0}
+      <p class="muted">No recorded sightings match these dates and the selected place and radius.</p>
+    {:else}
+      {#each recordedRows as row (row.speciesCode + '|' + (row.firstSeen ?? 'undated') + '|' + (row.locId ?? row.locationName ?? 'none'))}
+        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} />
+      {/each}
+    {/if}
+    {#if unresolvedRecordedRows.length > 0}
+      <h3>Location unavailable — not included in this area's results</h3>
+      {#each unresolvedRecordedRows as row (row.speciesCode + '|' + (row.firstSeen ?? 'undated') + '|' + (row.locationName ?? 'none'))}
+        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} />
+      {/each}
+    {/if}
+    {#if (data.recordedSightings ?? []).some((row) => row.undated)}
+      <p class="muted">Undated records are available in the <a href="/life">Life list</a>.</p>
+    {/if}
+    <p class="muted"><a href="/life">See the full Life list →</a></p>
+  </section>
+
   {#if data.view}
     <section class="card search-card">
       <label class="sr-only" for="home-search"
@@ -747,9 +781,12 @@
               >
               ·
               <strong
-                >{n.totalCount} {n.totalCount === 1 ? "bird" : "birds"}</strong
+                >{n.nReports > n.missingCount ? `${n.totalCount} reported ${n.totalCount === 1 ? "bird" : "birds"}` : "reported count unavailable"}</strong
               >
               · {n.nReports} report{n.nReports === 1 ? "" : "s"}
+              {#if n.missingCount > 0} · {n.missingCount} report{n.missingCount === 1 ? "" : "s"} missing count{/if}
+              {#if n.unconfirmedCount > 0} · {n.unconfirmedCount} unconfirmed{/if}
+              {#if n.reviewUnavailableCount > 0} · {n.reviewUnavailableCount} review status unavailable{/if}
               {#if notableNearestKm != null}
                 · nearest {formatDistance(
                   notableNearestKm,
@@ -757,6 +794,7 @@
                 )}{/if}
               ·
               {n.locations.join(" · ")}
+              {#if n.sources.length > 0} · source: {n.sources.join(" + ")}{/if}
               {#if data.hasGallery && n.photoCount > 0}
                 · 📷 you have {n.photoCount}
                 {n.photoCount === 1 ? "photo" : "photos"}{/if}
@@ -789,8 +827,8 @@
                           distanceUnit,
                         )} ·
                       {/if}{pl.nReports}
-                      {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
-                      {pl.totalCount === 1 ? "bird" : "birds"} ·
+                      {pl.nReports === 1 ? "report" : "reports"} ·
+                      {pl.nReports > pl.missingCount ? `${pl.totalCount} reported ${pl.totalCount === 1 ? "bird" : "birds"}` : "reported count unavailable"}{#if pl.missingCount > 0} · {pl.missingCount} missing count{/if}{#if pl.unconfirmedCount > 0} · {pl.unconfirmedCount} unconfirmed{/if}{#if pl.reviewUnavailableCount > 0} · {pl.reviewUnavailableCount} review status unavailable{/if} ·
                       {pl.lastObsDt}</span
                     >
                   </li>
@@ -917,14 +955,17 @@
                 >
                 ·
                 <strong
-                  >{n.totalCount}
-                  {n.totalCount === 1 ? "bird" : "birds"}</strong
+                  >{n.nReports > n.missingCount ? `${n.totalCount} reported ${n.totalCount === 1 ? "bird" : "birds"}` : "reported count unavailable"}</strong
                 >
                 · {n.nReports} report{n.nReports === 1 ? "" : "s"}
+                {#if n.missingCount > 0} · {n.missingCount} report{n.missingCount === 1 ? "" : "s"} missing count{/if}
+                {#if n.unconfirmedCount > 0} · {n.unconfirmedCount} unconfirmed{/if}
+                {#if n.reviewUnavailableCount > 0} · {n.reviewUnavailableCount} review status unavailable{/if}
                 {#if nearestKm != null}
                   · nearest {formatDistance(nearestKm, distanceUnit)}{/if}
                 ·
                 {n.locations.join(" · ")}
+                {#if n.sources.length > 0} · source: {n.sources.join(" + ")}{/if}
               {:else}
                 {n.locations.join(" · ")}
                 {#if n.distanceKm != null}
@@ -964,8 +1005,8 @@
                           distanceUnit,
                         )} ·
                       {/if}{pl.nReports}
-                      {pl.nReports === 1 ? "report" : "reports"} · {pl.totalCount}
-                      {pl.totalCount === 1 ? "bird" : "birds"} ·
+                      {pl.nReports === 1 ? "report" : "reports"} ·
+                      {pl.nReports > pl.missingCount ? `${pl.totalCount} reported ${pl.totalCount === 1 ? "bird" : "birds"}` : "reported count unavailable"}{#if pl.missingCount > 0} · {pl.missingCount} missing count{/if}{#if pl.unconfirmedCount > 0} · {pl.unconfirmedCount} unconfirmed{/if}{#if pl.reviewUnavailableCount > 0} · {pl.reviewUnavailableCount} review status unavailable{/if} ·
                       {pl.lastObsDt}</span
                     >
                   </li>

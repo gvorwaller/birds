@@ -448,6 +448,13 @@
 						and link directly to the observer's public eBird report (<code>checklist ↗</code>)
 						whenever an eBird checklist ID was included with the observation.
 					</li>
+					<li>
+						<strong>Your recorded sightings.</strong> Home also shows first-seen
+						life-list records from the selected calendar dates inside your saved-home
+						radius. These records are separate from public totals and are not a
+						complete checklist history. Missing locations and undated records remain
+						available through the Life list.
+					</li>
 				</ul>
 			</div>
 		{/if}
@@ -842,12 +849,12 @@
 				<ul>
 					<li>
 						Open a bird you still need in <strong>Field guide</strong>, then find
-						<strong>Nearest reports — any distance</strong> on its species page
+						<strong>Nearest reports</strong> on its species page
 						and tap <strong>Check nearest reports</strong>. This searches recent
-						reports at any distance from your saved home, using the page's report
-						window (14 days by default). It requires a saved home and an eBird
+						reports from your saved home. Choose a 1, 7, 14, or 30-day window and
+						any distance or a finite distance. It requires a saved home and an eBird
 						API key; it is shown only for species not yet on your life list.
-						Results show distance, location, date, and a checklist link when available.
+						Results show distance, location, date, source, and a checklist link when available.
 					</li>
 					<li>
 						<strong>How the lookup works.</strong> eBird's own nearest-report

@@ -116,6 +116,17 @@ describe("aggregate", () => {
     expect(osprey.places.find((p) => p.locId === "L2")?.subId).toBe("S300");
   });
 
+  it("counts missing and conflicting review statuses at species and place levels", () => {
+    const activity = aggregate([
+      obs({ speciesCode: "ospre1", comName: "Osprey", locId: "L1", locName: "Harbor", lat: 44.4, lng: -68.6, obsDt: "2026-06-20 08:00", howMany: 2, obsValid: true }),
+      obs({ speciesCode: "ospre1", comName: "Osprey", locId: "L1", locName: "Harbor", lat: 44.4, lng: -68.6, obsDt: "2026-06-21 08:00", howMany: undefined, obsValid: false }),
+      obs({ speciesCode: "ospre1", comName: "Osprey", locId: "L2", locName: "Point", lat: 44.42, lng: -68.62, obsDt: "2026-06-22 08:00", howMany: 1, obsValid: undefined }),
+    ], null, new Map()).get("ospre1")!;
+    expect(activity).toMatchObject({ missingCount: 1, unconfirmedCount: 1, reviewUnavailableCount: 1 });
+    expect(activity.places.find((p) => p.locId === "L1")).toMatchObject({ missingCount: 1, unconfirmedCount: 1, reviewUnavailableCount: 0 });
+    expect(activity.places.find((p) => p.locId === "L2")).toMatchObject({ missingCount: 0, unconfirmedCount: 0, reviewUnavailableCount: 1 });
+  });
+
   it("keeps checklist ID strictly with latest report and does not backfill older ID (CODEX13 finding 1)", () => {
     // Order 1: Older report has subId, newer report has none
     const rows1 = [

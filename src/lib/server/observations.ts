@@ -1,11 +1,18 @@
 import type { EbirdObs } from "$server/ebird";
 import { haversineKm } from "$lib/geo";
+import {
+  observationIdentity,
+  reportStatus,
+  type ReportStatus,
+} from "$lib/observation-evidence";
 
 export interface SpeciesObservationDetail extends EbirdObs {
   distanceKm: number | null;
   googlePlaceId: string | null;
   isHotspot: boolean;
 }
+
+export { observationIdentity, reportStatus, type ReportStatus } from "$lib/observation-evidence";
 
 /**
  * Identity of one observation: species + place + timestamp.
@@ -16,8 +23,40 @@ export interface SpeciesObservationDetail extends EbirdObs {
  * Reused rather than reimplemented so the two paths cannot disagree.
  */
 export function obsKey(o: EbirdObs): string {
-  const loc = o.locId || `${o.lat.toFixed(5)},${o.lng.toFixed(5)}`;
-  return `${o.speciesCode}|${loc}|${o.obsDt}`;
+  return observationIdentity(o);
+}
+
+/** Deduplicate copies while preserving conservative status and provenance. */
+export function dedupeObservations(rows: EbirdObs[]): EbirdObs[] {
+  const byId = new Map<string, EbirdObs>();
+  for (const row of rows) {
+    const id = observationIdentity(row);
+    const prior = byId.get(id);
+    if (!prior) {
+      byId.set(id, {
+        ...row,
+        sources: [...new Set([...(row.sources ?? []), ...(row.source ? [row.source] : [])])],
+      });
+      continue;
+    }
+    const sources = [...new Set([
+      ...(prior.sources ?? []),
+      ...(prior.source ? [prior.source] : []),
+      ...(row.sources ?? []),
+      ...(row.source ? [row.source] : []),
+    ])];
+    // Explicit false wins; true is retained only when no false is present;
+    // absence stays unknown.
+    const obsValid = prior.obsValid === false || row.obsValid === false
+      ? false
+      : prior.obsValid === true || row.obsValid === true
+        ? true
+        : undefined;
+    // The first feed is primary for count/time/location payload fields. Only
+    // evidence metadata is merged from a duplicate secondary copy.
+    byId.set(id, { ...prior, obsValid, sources });
+  }
+  return [...byId.values()];
 }
 
 export function mergeSpeciesObservations(
@@ -25,16 +64,10 @@ export function mergeSpeciesObservations(
   primary: EbirdObs[],
   secondary: EbirdObs[],
 ): EbirdObs[] {
-  const merged: EbirdObs[] = [];
-  const seen = new Set<string>();
-  for (const o of [...primary, ...secondary]) {
-    if (o.speciesCode !== speciesCode) continue;
-    const key = obsKey(o);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(o);
-  }
-  return merged;
+  return dedupeObservations([
+    ...primary.filter((o) => o.speciesCode === speciesCode).map((o) => ({ ...o, source: o.source ?? "recent" })),
+    ...secondary.filter((o) => o.speciesCode === speciesCode).map((o) => ({ ...o, source: o.source ?? "notable" })),
+  ]);
 }
 
 export function speciesObservationDetails(

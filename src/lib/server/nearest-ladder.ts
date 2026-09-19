@@ -33,7 +33,7 @@ import {
   type EbirdObs,
 } from "$server/ebird";
 import { mapWithConcurrency } from "$server/concurrency";
-import { obsKey } from "$server/observations";
+import { obsKey, dedupeObservations } from "$server/observations";
 import { allProximityRegions, type Region } from "$server/regions";
 import {
   nearestOccurrencePriorities,
@@ -86,6 +86,8 @@ export interface NearestLadderResult {
    * within its coverage.
    */
   proven: boolean;
+  /** Cache timestamp for the evidence actually returned, when available. */
+  fetchedAt?: Date;
 }
 
 export interface NearestLadderOpts {
@@ -260,9 +262,12 @@ export async function nearestSpeciesReports(
   );
 
   const fromFast = (res: Awaited<ReturnType<typeof nearestObsOfSpecies>>) => {
-    const rows = [...res.data].sort(
+    const rows = dedupeObservations(res.data).sort(
       (a, b) => distanceOf(home, a) - distanceOf(home, b),
-    );
+    ).map((row) => ({
+      ...row,
+      fetchedAt: row.fetchedAt ?? res.fetchedAt.toISOString(),
+    }));
     return {
       rows: rows.slice(0, LADDER_TOP_N),
       stale: res.stale,
@@ -271,6 +276,7 @@ export async function nearestSpeciesReports(
       capped: false,
       partial: false,
       proven: true,
+      fetchedAt: res.fetchedAt,
     };
   };
 
@@ -338,6 +344,7 @@ export async function nearestSpeciesReports(
 
     const byKey = new Map<string, EbirdObs>();
     let stale = false;
+    let fetchedAt: Date | undefined;
     let partial = false;
     let capped = false;
     let probed = 0;
@@ -429,9 +436,8 @@ export async function nearestSpeciesReports(
             partial = true;
             capped = true;
             noteUnresolved(c.bound);
-            for (let i = cursor; i < ranked.length; i++)
-              noteUnresolved(ranked[i].bound);
-            return finish();
+            breakerTripped = true;
+            continue;
           }
           partial = true;
           noteUnresolved(c.bound);
@@ -446,6 +452,14 @@ export async function nearestSpeciesReports(
         }
         consecutiveFailures = 0;
         stale = stale || res.stale;
+        if ([401, 403, 429].includes(res.refreshErrorStatus ?? 0)) {
+          // cachedFetch can preserve useful rows while a refresh fails fatally.
+          // Keep this settled wave's evidence, but don't schedule another wave.
+          partial = true;
+          breakerTripped = true;
+          noteUnresolved(c.bound);
+        }
+        if (!fetchedAt || res.fetchedAt > fetchedAt) fetchedAt = res.fetchedAt;
         // A saturated payload is not the region's full contents, and eBird
         // does not order rows by distance — the closest report can be the
         // one truncated away.
@@ -460,7 +474,12 @@ export async function nearestSpeciesReports(
           // the observations of its own subnational1s, and five copies of
           // one report must not satisfy a five-hit stop rule.
           const key = obsKey(o);
-          if (!byKey.has(key)) byKey.set(key, o);
+          const report = {
+            ...o,
+            fetchedAt: o.fetchedAt ?? res.fetchedAt.toISOString(),
+          };
+          const prior = byKey.get(key);
+          byKey.set(key, prior ? dedupeObservations([prior, report])[0] : report);
         }
       }
 
@@ -506,6 +525,7 @@ export async function nearestSpeciesReports(
         partial,
         // Honest only if nothing we skipped could have beaten what we show.
         proven: unresolvedBound > worstShown,
+        fetchedAt,
       };
     }
   };

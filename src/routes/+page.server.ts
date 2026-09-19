@@ -10,6 +10,7 @@ import {
 import { geocodePlace } from "$server/geocode";
 import { galleryContextFrom } from "$server/access";
 import { streamed, type Streamed } from "$lib/streamed";
+import { recordedDateBounds, recordedSightingsForHome, type RecordedSighting } from "$server/recorded-sightings";
 import {
   BACK_OPTIONS,
   DEFAULT_BACK_DAYS,
@@ -103,6 +104,32 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
       ? { lat: u.home_lat, lng: u.home_lon, label: u.home_label ?? "Home" }
       : null;
 
+  // DB-only personal evidence. Scope is locals.scopeId, never a URL-selected
+  // account; the explicit Life picker remains the cross-owner surface.
+  const recorded = await query<RecordedSighting & {
+    first_seen: string | null;
+    species_code: string;
+    com_name: string;
+    location_name: string | null;
+    loc_id: string | null;
+    sub_id: string | null;
+    obs_count: number | null;
+  }>(
+    `SELECT ss.species_code AS "speciesCode",
+            COALESCE(tc.com_name, ss.species_code) AS "comName",
+            ss.first_seen::text AS "firstSeen", ss.location_name AS "locationName",
+            ss.loc_id AS "locId", ss.sub_id AS "subId", ss.obs_count AS "obsCount",
+            COALESCE(el.lat, llc.lat) AS lat, COALESCE(el.lng, llc.lng) AS lng
+       FROM seen_species ss
+       LEFT JOIN taxonomy_cache tc ON tc.species_code = ss.species_code
+       LEFT JOIN ebird_locations el ON el.loc_id = ss.loc_id
+       LEFT JOIN lifer_loc_coords llc
+              ON llc.user_id = ss.user_id AND llc.source_loc_id = ss.loc_id
+      WHERE ss.user_id = $1
+      ORDER BY ss.first_seen DESC NULLS LAST, ss.csv_row_num ASC`,
+    [userId],
+  );
+
   // Resolve the location: searched place → geocode; else fall back to home.
   let location: { lat: number; lng: number; label: string } | null = null;
   let error: string | null = null;
@@ -188,6 +215,14 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     // One authoritative life-list count for every state. `view.seenCount` is
     // deliberately not surfaced separately so the two cannot disagree.
     seenCount: seen.size,
+    recordedSightings: recordedSightingsForHome(
+      recorded.rows,
+      location ? { lat: location.lat, lng: location.lng } : null,
+      distKm,
+      back,
+    ),
+    recordedDateStart: recordedDateBounds(back).start,
+    recordedDateEnd: recordedDateBounds(back).end,
     photoCount: hasGallery
       ? [...photoCounts.values()].reduce((a, b) => a + b, 0)
       : 0,

@@ -677,3 +677,64 @@ describe("budgets and deadlines", () => {
     expect(res.capped).toBe(true);
   });
 });
+
+
+describe("phase 3 evidence regressions", () => {
+  it("deduplicates the direct feed before choosing five and keeps named checklists distinct", async () => {
+    const first = { ...obs(30.3), subId: "S1" };
+    const second = { ...first, subId: "S2" };
+    ebird.nearestObsOfSpecies.mockResolvedValue(ok([
+      first, { ...first, obsValid: false }, first, first, first,
+      second, { ...obs(30.4), subId: "S3" }, { ...obs(30.5), subId: "S4" },
+      { ...obs(30.6), subId: "S5" }, { ...obs(30.7), subId: "S6" },
+    ]));
+    const result = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(result.rows.map((row) => row.subId)).toEqual(["S1", "S2", "S3", "S4", "S5"]);
+    expect(result.rows[0].obsValid).toBe(false);
+  });
+
+  it("merges conflicting regional copies without relabeling an older row's fetch time", async () => {
+    const first = { ...obs(31.1), subId: "S1" };
+    const second = { ...obs(33.1), subId: "S2" };
+    const older = new Date("2026-09-18T10:00:00Z");
+    const newer = new Date("2026-09-19T10:00:00Z");
+    ebird.recentSpeciesInRegion.mockImplementation(async (_key: string, code: string) => ({
+      data: code === "R1" ? [first] : code === "R2" ? [{ ...first, obsValid: false }, second] : [],
+      stale: false,
+      fetchedAt: code === "R1" ? older : newer,
+    }));
+    const result = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0].obsValid).toBe(false);
+    expect(result.rows[0].fetchedAt).toBe(older.toISOString());
+    expect(result.rows[1].fetchedAt).toBe(newer.toISOString());
+  });
+});
+
+
+describe("fatal refresh with cached regional evidence", () => {
+  it("keeps cached rows but schedules no new wave after a stale 429", async () => {
+    ebird.recentSpeciesInRegion.mockImplementation(async (_key: string, code: string) => ({
+      data: code === "R1" ? [obs(31.1)] : [],
+      stale: code === "R1", fetchedAt: new Date(), refreshErrorStatus: code === "R1" ? 429 : undefined,
+    }));
+    const result = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(result.rows).toHaveLength(1);
+    expect(result).toMatchObject({stale:true,partial:true,capped:true});
+    expect(ebird.recentSpeciesInRegion.mock.calls.map(call => call[1])).toEqual(["R1", "R2", "R3"]);
+  });
+});
+
+
+describe("settled evidence after a fatal regional result", () => {
+  it("retains later settled rows from the same wave while stopping new waves", async () => {
+    ebird.recentSpeciesInRegion.mockImplementation(async (_key: string, code: string) => {
+      if (code === "R2") throw new ebird.EbirdError("fixture rate limit",429);
+      return ok(code === "R1" || code === "R3" ? [obs(code === "R1" ? 31.1 : 35.1)] : []);
+    });
+    const result = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+    expect(result.rows).toHaveLength(2);
+    expect(result).toMatchObject({partial:true,capped:true});
+    expect(ebird.recentSpeciesInRegion.mock.calls.map(call => call[1])).toEqual(["R1", "R2", "R3"]);
+  });
+});

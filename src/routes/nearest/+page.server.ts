@@ -3,12 +3,17 @@ import { query } from "$lib/db";
 import { getEbirdApiKey, validEbirdSpeciesCode, EbirdError } from "$server/ebird";
 import {
   createProbeGate,
-  nearestSpeciesReports,
   type ProbeGate,
 } from "$server/nearest-ladder";
 import { forecastNeedsNear } from "$server/forecast";
-import { AUTO_RUN_CAP, NEAREST_BACK_DAYS, pickAutoRunTargets } from "$server/nearest";
+import { AUTO_RUN_CAP, pickAutoRunTargets } from "$server/nearest";
 import { seenSet } from "$server/needs";
+import { notableNearbyObs, type CachedResult, type EbirdObs } from "$server/ebird";
+import {
+  nearestWithEvidence,
+  parseNearestControls,
+  type NearestDistance,
+} from "$server/nearest-evidence";
 import { hydrateEbirdLocationPlaceIds } from "$server/location-placeids";
 import { speciesObservationDetails, type SpeciesObservationDetail } from "$server/observations";
 import { calendarMonth } from "$lib/forecast-calendar";
@@ -31,6 +36,8 @@ export interface NearestTarget {
   /** Empty rows do NOT mean "nowhere" when this is true. */
   capped: boolean;
   proven: boolean;
+  partial: boolean;
+  notableFailed: boolean;
 }
 
 /**
@@ -47,37 +54,37 @@ async function lookupSpecies(
   areaFreq: number | null,
   home: { lat: number; lon: number },
   gate: ProbeGate,
+  controls: { backDays: number; nearestKm: NearestDistance },
+  sharedNotable: Promise<CachedResult<EbirdObs[]>> | null,
   signal?: AbortSignal,
 ): Promise<NearestTarget> {
   try {
-    const res = await nearestSpeciesReports(apiKey, code, home, NEAREST_BACK_DAYS, {
-      headStartMs: 3_000,
-      probeBudget: 8,
-      ladderDeadlineMs: 15_000,
+    const { engine, evidence } = await nearestWithEvidence(apiKey, code, home, controls, {
       gate,
       signal,
+      notablePromise: sharedNotable ?? undefined,
     });
     // DB-only: resolveMissing would fan out live Google Places lookups for
     // every unknown loc — and nearest is UNBOUNDED, so distant locations are
     // always unknown (6 targets × 5 rows = up to 30 lookups per view —
     // CODEX1 P1). Known ids enhance MapLink; unknown fall back to coords.
-    const placeIds = await hydrateEbirdLocationPlaceIds(res.rows, {
+    const placeIds = await hydrateEbirdLocationPlaceIds(evidence.rows, {
       resolveMissing: false,
     });
-    // Our haversine order, closest 3 (GROK pin) — never API order. The engine
-    // returns five for the species page; this page's three is unchanged.
-    const rows = speciesObservationDetails(res.rows, home, placeIds, new Set()).slice(0, 3);
+    const rows = speciesObservationDetails(evidence.rows, home, placeIds, new Set());
     return {
       speciesCode: code,
       comName,
       areaFreq,
       rows,
-      stale: res.stale,
+      stale: evidence.stale,
       error: null,
-      via: res.via,
-      searched: res.searched,
-      capped: res.capped,
-      proven: res.proven,
+      via: engine?.via ?? "nearest",
+      searched: engine?.searched ?? { regions: 0, boundKm: null },
+      capped: engine?.capped ?? false,
+      proven: engine?.proven ?? false,
+      partial: evidence.partial || !!engine?.partial,
+      notableFailed: evidence.notableFailed,
     };
   } catch (err) {
     // Partial failure keeps the page alive (GROK empty-state pin).
@@ -92,6 +99,8 @@ async function lookupSpecies(
       searched: { regions: 0, boundKm: null },
       capped: false,
       proven: false,
+      partial: true,
+      notableFailed: true,
     };
   }
 }
@@ -110,6 +119,12 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
   const probeGate = createProbeGate(24);
   const scopeId = locals.scopeId!;
   const month = calendarMonth();
+  const parsedControls = parseNearestControls(
+    url.searchParams.get("back"),
+    url.searchParams.get("nearestKm"),
+  );
+  if (!parsedControls.ok) throw error(400, parsedControls.message);
+  const controls = parsedControls.value;
 
   const u = await query<{
     home_lat: number | null;
@@ -137,6 +152,8 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
 
   const seen = await seenSet(scopeId);
 
+  let sharedNotable: Promise<CachedResult<EbirdObs[]>> | null = null;
+
   if (pickedCode) {
     if (!validEbirdSpeciesCode(pickedCode)) throw error(400, "Unrecognized species code");
     const t = await query<{ species_code: string; com_name: string }>(
@@ -148,7 +165,14 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     if (!tx) throw error(400, "Unrecognized species code");
     if (seen.has(pickedCode)) {
       searchedSeen = { speciesCode: pickedCode, comName: tx.com_name };
-    } else if (apiKey && home) {
+    } else if (apiKey && home && !pageSignal.aborted) {
+      // Start exactly once, after code validation and only for a real lookup.
+      sharedNotable = notableNearbyObs(
+        apiKey, home.lat, home.lon,
+        controls.nearestKm === "any" ? 50 : Math.min(controls.nearestKm, 50),
+        controls.backDays,
+        { deadlineMs: 8_000 },
+      );
       searched = await lookupSpecies(
         apiKey,
         pickedCode,
@@ -156,6 +180,8 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
         null,
         home,
         probeGate,
+        controls,
+        sharedNotable,
         pageSignal,
       );
     }
@@ -192,6 +218,14 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
       );
       const { picks, likelyCount: n } = pickAutoRunTargets(view.species);
       likelyCount = n;
+      if (picks.length > 0 && !pageSignal.aborted) {
+        sharedNotable = notableNearbyObs(
+          apiKey, home.lat, home.lon,
+          controls.nearestKm === "any" ? 50 : Math.min(controls.nearestKm, 50),
+          controls.backDays,
+          { deadlineMs: 8_000 },
+        );
+      }
       // Parallel, partial-failure-safe (GROK: allSettled, never a waterfall —
       // lookupSpecies never rejects, so all() has allSettled semantics).
       targets = await Promise.all(
@@ -203,6 +237,8 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
             s.areaFreq,
             home,
             probeGate,
+            controls,
+            sharedNotable,
             pageSignal,
           ),
         ),
@@ -220,12 +256,14 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     hasHome: !!home,
     homeLabel: row?.home_label ?? null,
     month,
-    backDays: NEAREST_BACK_DAYS,
+    backDays: controls.backDays,
+    nearestKm: controls.nearestKm,
     autoRunCap: AUTO_RUN_CAP,
     likelyCount,
     targets,
     forecastError,
     q,
+    selectedCode: pickedCode || searchedSeen?.speciesCode || searched?.speciesCode || null,
     searchMatches,
     searched,
     searchedSeen,

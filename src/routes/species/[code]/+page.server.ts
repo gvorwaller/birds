@@ -22,7 +22,7 @@ import {
   recentNearbySpeciesObs,
   EbirdError,
 } from "$server/ebird";
-import { nearestSpeciesReports } from "$server/nearest-ladder";
+import { nearestWithEvidence, parseNearestControls } from "$server/nearest-evidence";
 import { speciesRibbon } from "$server/ribbon";
 import { encodeRibbonGrid } from "$lib/ribbon-payload";
 import { ownerGalleryUrl } from "$server/access";
@@ -51,6 +51,11 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     url.searchParams.get("back"),
     SPECIES_DEFAULT_BACK_DAYS,
   );
+  const nearestControls = parseNearestControls(
+    url.searchParams.get("back"),
+    url.searchParams.get("nearestKm"),
+  );
+  if (!nearestControls.ok) throw error(400, nearestControls.message);
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
   // Home can be centered on a searched place; when it is, the link carries that
   // origin so this page reports on the same area the user was just looking at.
@@ -91,8 +96,24 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
   )?.speciesCode;
 
   const [seen, photos, userRow, backSpecies, interest] = await Promise.all([
-    query<{ first_seen: string | null; source: string }>(
-      "SELECT first_seen, source FROM seen_species WHERE user_id = $1 AND species_code = $2",
+    query<{
+      first_seen: string | null;
+      source: string;
+      location_name: string | null;
+      loc_id: string | null;
+      sub_id: string | null;
+      obs_count: number | null;
+      lat: number | null;
+      lng: number | null;
+    }>(
+      `SELECT ss.first_seen::text, ss.source, ss.location_name, ss.loc_id, ss.sub_id,
+              ss.obs_count, COALESCE(el.lat, llc.lat) AS lat,
+              COALESCE(el.lng, llc.lng) AS lng
+         FROM seen_species ss
+         LEFT JOIN ebird_locations el ON el.loc_id = ss.loc_id
+         LEFT JOIN lifer_loc_coords llc
+                ON llc.user_id = ss.user_id AND llc.source_loc_id = ss.loc_id
+        WHERE ss.user_id = $1 AND ss.species_code = $2`,
       [userId, code],
     ),
     // Gallery is owner-scoped: only the gallery owner (and their viewer) see photos.
@@ -157,8 +178,9 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
   const loadNearby = async (): Promise<{
     rows: SpeciesObservationDetail[];
     stale: boolean;
+    partial: boolean;
   }> => {
-    if (!apiKey || !origin) return { rows: [], stale: false };
+    if (!apiKey || !origin) return { rows: [], stale: false, partial: false };
     const [recentResult, notableResult] = await Promise.allSettled([
       recentNearbySpeciesObs(
         apiKey,
@@ -177,9 +199,13 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
       throw recentResult.reason;
     }
     const recentData =
-      recentResult.status === "fulfilled" ? recentResult.value.data : [];
+      recentResult.status === "fulfilled"
+        ? recentResult.value.data.map((row) => ({ ...row, source: row.source ?? "recent species", fetchedAt: recentResult.value.fetchedAt.toISOString() }))
+        : [];
     const notableData =
-      notableResult.status === "fulfilled" ? notableResult.value.data : [];
+      notableResult.status === "fulfilled"
+        ? notableResult.value.data.map((row) => ({ ...row, source: row.source ?? "notable", fetchedAt: notableResult.value.fetchedAt.toISOString() }))
+        : [];
     let stale =
       (recentResult.status === "fulfilled" && recentResult.value.stale) ||
       (notableResult.status === "fulfilled" && notableResult.value.stale);
@@ -200,6 +226,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
         hotspots.locIds,
       ),
       stale,
+      partial: recentResult.status === "rejected" || notableResult.status === "rejected" || stale,
     };
   };
   const nearby = streamed(loadNearby(), (err) =>
@@ -217,41 +244,38 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
   const loadNearest = async (): Promise<{
     rows: SpeciesObservationDetail[];
     stale: boolean;
+    partial: boolean;
     via: "nearest" | "ladder";
     searched: { regions: number; boundKm: number | null };
     capped: boolean;
-    partial: boolean;
     proven: boolean;
+    notableFailed: boolean;
   }> => {
     // Two strategies raced (td-73e6f9): eBird's direct endpoint, and — if it
     // hasn't answered within the head start — a region-by-region search
     // running alongside it. First real answer wins.
-    const res = await nearestSpeciesReports(apiKey!, code, home!, backDays, {
-      // A head start, NOT a deadline: nothing is abandoned when it elapses.
-      // The direct endpoint answers a rare species well inside it, so those
-      // lookups never probe a single region.
-      headStartMs: 3_000,
-      probeBudget: 40,
-      ladderDeadlineMs: 20_000,
-      signal: request.signal,
-    });
+    const { engine, evidence } = await nearestWithEvidence(
+      apiKey!,
+      code,
+      home!,
+      nearestControls.value,
+      { signal: request.signal, probeBudget: 40, ladderDeadlineMs: 20_000 },
+    );
     // DB-only (CODEX1 P1): no Google Places fanout for unbounded rows.
-    const placeIds = await hydrateEbirdLocationPlaceIds(res.rows, {
+    const placeIds = await hydrateEbirdLocationPlaceIds(evidence.rows, {
       resolveMissing: false,
     });
     // Sort by OUR haversine (GROK: never trust API order); no hotspot-set
     // lookup — nearest is unbounded, links derive from the L-id shape.
     return {
-      rows: speciesObservationDetails(res.rows, home!, placeIds, new Set()).slice(
-        0,
-        5,
-      ),
-      stale: res.stale,
-      via: res.via,
-      searched: res.searched,
-      capped: res.capped,
-      partial: res.partial,
-      proven: res.proven,
+      rows: speciesObservationDetails(evidence.rows, home!, placeIds, new Set()),
+      stale: evidence.stale,
+      via: engine?.via ?? "nearest",
+      searched: engine?.searched ?? { regions: 0, boundKm: null },
+      capped: engine?.capped ?? false,
+      partial: evidence.partial || !!engine?.partial,
+      proven: engine?.proven ?? false,
+      notableFailed: evidence.notableFailed,
     };
   };
   const nearest =
@@ -316,8 +340,13 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
      * origin is not a substitute. */
     hasHome: !!home,
     originLabel,
+    originLat: origin?.lat ?? null,
+    originLng: origin?.lon ?? null,
+    homeLat: home?.lat ?? null,
+    homeLng: home?.lon ?? null,
     distKm,
     backDays,
+    nearestKm: nearestControls.value.nearestKm,
     returnLink,
     tide,
   };

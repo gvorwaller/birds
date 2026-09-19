@@ -17,6 +17,7 @@ import {
   type CachedResult,
   type EbirdObs,
 } from "$server/ebird";
+import { dedupeObservations } from "$server/observations";
 
 export interface SpeciesPlace {
   locId: string | null;
@@ -26,6 +27,14 @@ export interface SpeciesPlace {
   lastObsDt: string;
   nReports: number;
   totalCount: number;
+  /** Sum of rows with an explicit howMany; zero does not mean zero birds. */
+  knownCount: number;
+  /** Reports whose provider payload omitted howMany. */
+  missingCount: number;
+  /** Reports explicitly marked unconfirmed by the provider. */
+  unconfirmedCount: number;
+  /** Reports without an explicit provider review status. */
+  reviewUnavailableCount: number;
   distanceKm: number | null;
   googlePlaceId: string | null;
   /**
@@ -41,6 +50,7 @@ export interface SpeciesPlace {
    * this place. Powers the inline checklist link-out.
    */
   subId?: string | null;
+  sources: string[];
 }
 
 export interface SpeciesActivity {
@@ -49,6 +59,10 @@ export interface SpeciesActivity {
   sciName: string;
   nReports: number;
   totalCount: number;
+  knownCount: number;
+  missingCount: number;
+  unconfirmedCount: number;
+  reviewUnavailableCount: number;
   /** Distinct reported locations for this species. */
   locationCount: number;
   lastObsDt: string;
@@ -79,6 +93,7 @@ export interface SpeciesActivity {
    * rows where this is true.
    */
   enriched: boolean;
+  sources: string[];
 }
 
 export interface NotableEntry extends SpeciesActivity {
@@ -194,7 +209,7 @@ export function aggregate(
   const bySpecies = new Map<string, SpeciesActivity>();
   // Per-species accumulator of distinct places, keyed by speciesCode → locKey.
   const placesBySpecies = new Map<string, Map<string, SpeciesPlace>>();
-  for (const o of obs) {
+  for (const o of dedupeObservations(obs)) {
     if (!o.speciesCode) continue;
     let agg = bySpecies.get(o.speciesCode);
     if (!agg) {
@@ -204,6 +219,10 @@ export function aggregate(
         sciName: o.sciName,
         nReports: 0,
         totalCount: 0,
+        knownCount: 0,
+        missingCount: 0,
+        unconfirmedCount: 0,
+        reviewUnavailableCount: 0,
         locationCount: 0,
         lastObsDt: o.obsDt,
         locations: [],
@@ -215,12 +234,20 @@ export function aggregate(
         distanceKm: null,
         photoCount: photoCounts.get(o.speciesCode) ?? 0,
         enriched: false,
+        sources: [],
       };
       bySpecies.set(o.speciesCode, agg);
       placesBySpecies.set(o.speciesCode, new Map());
     }
     agg.nReports++;
-    agg.totalCount += o.howMany ?? 1;
+    if (o.howMany != null) {
+      agg.totalCount += o.howMany;
+      agg.knownCount += o.howMany;
+    } else {
+      agg.missingCount++;
+    }
+    if (o.obsValid === false) agg.unconfirmedCount++;
+    else if (o.obsValid == null) agg.reviewUnavailableCount++;
     if (o.obsDt > agg.lastObsDt) {
       agg.lastObsDt = o.obsDt;
       agg.lastLat = o.lat;
@@ -250,21 +277,37 @@ export function aggregate(
         lastObsDt: o.obsDt,
         nReports: 0,
         totalCount: 0,
+        knownCount: 0,
+        missingCount: 0,
+        unconfirmedCount: 0,
+        reviewUnavailableCount: 0,
         distanceKm: null,
         googlePlaceId: null,
         isHotspot: !!o.locId && hotspotLocIds.has(o.locId),
         subId: o.subId ?? null,
+        sources: [...new Set([...(o.sources ?? []), ...(o.source ? [o.source] : [])])],
       };
       pmap.set(key, pl);
     }
     pl.nReports++;
-    pl.totalCount += o.howMany ?? 1;
+    if (o.howMany != null) {
+      pl.totalCount += o.howMany;
+      pl.knownCount += o.howMany;
+    } else {
+      pl.missingCount++;
+    }
+    if (o.obsValid === false) pl.unconfirmedCount++;
+    else if (o.obsValid == null) pl.reviewUnavailableCount++;
     if (o.obsDt > pl.lastObsDt) {
       pl.lastObsDt = o.obsDt;
       pl.subId = o.subId ?? null;
     }
     if (o.locId && locationPlaceIds.has(o.locId)) {
       pl.googlePlaceId = locationPlaceIds.get(o.locId)!;
+    }
+    for (const source of [...(o.sources ?? []), ...(o.source ? [o.source] : [])]) {
+      if (!pl.sources.includes(source)) pl.sources.push(source);
+      if (!agg.sources.includes(source)) agg.sources.push(source);
     }
   }
   // Finalize per-species place lists + distances (nearest first when we have an origin).
@@ -331,9 +374,14 @@ function mergePlace(prev: SpeciesPlace, incoming: SpeciesPlace): SpeciesPlace {
     ...newest,
     nReports: countsFrom.nReports,
     totalCount: countsFrom.totalCount,
+    knownCount: countsFrom.knownCount,
+    missingCount: countsFrom.missingCount,
+    unconfirmedCount: countsFrom.unconfirmedCount,
+    reviewUnavailableCount: countsFrom.reviewUnavailableCount,
     googlePlaceId: incoming.googlePlaceId ?? prev.googlePlaceId ?? null,
     isHotspot: incoming.isHotspot || prev.isHotspot,
     subId: newest.subId ?? null,
+    sources: [...new Set([...(prev.sources ?? []), ...(incoming.sources ?? [])])],
   };
 }
 
@@ -394,6 +442,10 @@ function mergeEnrichedNeed<T extends SpeciesActivity>(
     locationCount: places.length,
     nReports: places.reduce((n, pl) => n + pl.nReports, 0),
     totalCount: places.reduce((n, pl) => n + pl.totalCount, 0),
+    knownCount: places.reduce((n, pl) => n + pl.knownCount, 0),
+    missingCount: places.reduce((n, pl) => n + pl.missingCount, 0),
+    unconfirmedCount: places.reduce((n, pl) => n + pl.unconfirmedCount, 0),
+    reviewUnavailableCount: places.reduce((n, pl) => n + pl.reviewUnavailableCount, 0),
     lastObsDt: newest.lastObsDt,
     lastLat: newest.lastLat,
     lastLng: newest.lastLng,
@@ -448,7 +500,11 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
           back,
         );
         stale = stale || result.stale;
-        return result.data;
+        return result.data.map((row) => ({
+          ...row,
+          source: row.source ?? "recent species",
+          fetchedAt: row.fetchedAt ?? result.fetchedAt.toISOString(),
+        }));
       } catch {
         partial = true;
         return null;
@@ -519,7 +575,7 @@ function buildView(
   hotspotLocIds: Set<string> = new Set(),
 ): TargetsView {
   const recentAgg = aggregate(
-    recent.data,
+    recent.data.map((row) => ({ ...row, source: row.source ?? "recent area", fetchedAt: row.fetchedAt ?? recent.fetchedAt.toISOString() })),
     home,
     photoCounts,
     locationPlaceIds,
@@ -530,7 +586,7 @@ function buildView(
     .sort(sortNeedsByActivity);
 
   const notableAgg = aggregate(
-    notable.data,
+    notable.data.map((row) => ({ ...row, source: row.source ?? "notable", fetchedAt: row.fetchedAt ?? notable.fetchedAt.toISOString() })),
     home,
     photoCounts,
     locationPlaceIds,

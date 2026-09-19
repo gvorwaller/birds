@@ -1,7 +1,7 @@
 # Birds UX phase 2B — independent review record
 
 September 19, 2026 · td-f730cf under td-8ff597
-Status: implementation accepted by primary review; ready for owner release instruction. Not committed or deployed.
+Status: released to production as `e730c56` on September 19, 2026; production health and authenticated changed-surface smoke checks passed.
 
 Specification: [comparable hotspot rankings](phase-02b-comparable-rankings.md).
 
@@ -119,12 +119,34 @@ Reproducible acceptance scripts and raw results live in the local task's
 repository's `.local/phase02b-primary-*.log`. Credentials and signing tokens
 are omitted from evidence files. User-facing HTML copies link from the roadmap.
 
-No schema migration, commit, push or production deployment in this phase.
-Production remains phase 2A `0ddf28a`. The unrelated migration 0049 comment was
+No schema migration was needed. At the implementation handback, changes were
+uncommitted and production still ran phase 2A `0ddf28a`; release results follow. The unrelated migration 0049 comment was
 preserved. The previously accepted 12 broad-suite failures were not rerun;
 those are separate from the 91 passing focused checks. Large uncached areas
 can take minutes; explicit progress, pausing and cache reuse are essential.
 
-After owner release instruction, deploy this reviewed phase with normal health
-and changed-surface checks. Next is phase 3: consistent recent-report source,
+The owner subsequently authorized release, verified below. Next is phase 3: consistent recent-report source,
 time window, review status, deduplication, personal sightings and Nearest.
+
+## Production release verification
+
+Owner authorized deployment. Release preflight reran 91 focused tests across
+16 files, check with zero errors/warnings, and web/worker build. Standard
+`./scripts/deploy-to-DO.sh` pushed and deployed **e730c56**. No migration was
+added; the migration runner reported existing files applied. Both birds and
+birds-worker reloaded, and internal/public health returned db=ok, worker=ok,
+gallery_source=ok with exact revision e730c56. Local main matched origin/main.
+The unrelated migration 0049 comment was restored after deployment.
+
+Authenticated production checks used all five verified hotspots in a small
+Huguenot area: All, Needs and rare API comparisons finished fresh with valid
+account-bound v2 tokens. Planner comparison preserved selections until explicit
+Apply, then selected v2 context; 390px had no horizontal overflow. Home also
+completed all five fresh results. No browser script errors and no trip or
+life-list writes. Initial cold attempts hit request/UI wait timeouts; a repeat
+completed without an application change. These checks establish the small-area
+production path, not a guarantee of low latency for uncached large areas.
+Evidence: phase02b-production-results.json and phase02b-production-phone.png.
+
+Phase 2B is closed after release; the broader UX parent remains in progress.
+Phase 3 is separately underway and has not been released.
