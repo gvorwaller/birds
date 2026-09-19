@@ -29,7 +29,11 @@
 -- `week` here is a 1-48 eBird pseudo-week, not a timestamp, and the extension
 -- is not installed on this cluster.)
 --
--- Backfill runs in this migration: ~364 K rollup rows from 23.6 M source rows.
+-- Backfill runs in this migration. Production measurement on 2026-09-03
+-- (recorded in td-4b5248): species_month_freq held 9,546,716 rows (1016 MB),
+-- and loc_month_samples held 109,860 rows. These dated measurements replace
+-- the unchecked pre-backfill estimate from commit 8b642aa (2026-08-31);
+-- they are not a statement of current table sizes.
 --
 -- No BEGIN/COMMIT: migrate_pg.sh wraps each file (see 0043 header).
 
