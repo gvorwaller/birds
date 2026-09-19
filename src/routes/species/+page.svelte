@@ -2,6 +2,10 @@
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import ViewedBadge from "$components/ViewedBadge.svelte";
   import Badge from "$components/Badge.svelte";
+  import { page } from "$app/state";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
+  import PathNavigation from "$components/PathNavigation.svelte";
   import {
     TAG_DIMENSIONS,
     TAG_VOCABULARY,
@@ -68,19 +72,18 @@
   }
 
   function detailHref(code: string): string {
-    const back = new URLSearchParams();
-    if (data.interestOnly) back.set("interest", "1");
-    if (data.q) back.set("q", data.q);
-    if (data.family) back.set("family",data.family);
-    back.set("sort",data.sort);
-    back.set("page",String(data.page));
-    if (data.country) back.set("country", data.country);
-    if (data.region) back.set("region", data.region);
-    for (const t of data.tags) back.append("tags", t);
-    const qs = back.toString();
-    // safeReturnTo labels /species?… itself — no label param needed (GROK).
-    const returnTo = encodeURIComponent(`/species${qs ? `?${qs}` : ""}`);
-    return `/species/${code}?returnTo=${returnTo}`;
+    return withReturnTo(
+      `/species/${encodeURIComponent(code)}`,
+      page.url.pathname + page.url.search + page.url.hash,
+      undefined,
+      "Field guide",
+    );
+  }
+  function speciesAction(code: string, label: string) {
+    return navigationAction(data.user?.id, {
+      label,
+      originId: `guide-species-${encodeURIComponent(code)}`,
+    });
   }
 
   function tagDimension(tag: string): TagDimension {
@@ -93,6 +96,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.user?.id} label="Field guide" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
   <header class="page-head">
     <h1>📖 Field guide</h1>
     <p class="sub">
@@ -259,7 +263,7 @@
         <nav class="pagination" aria-label="Results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
         {#each data.results as r (r.species_code)}
           <article class="result">
-            <a class="row" href={detailHref(r.species_code)}>
+            <a class="row path-focus-target" id={`guide-species-${encodeURIComponent(r.species_code)}`} href={detailHref(r.species_code)} onclick={speciesAction(r.species_code, r.com_name)}>
               <span class="thumbnail">
                 {#if r.photo && !brokenPhotos.has(r.photo.url)}
                   <img

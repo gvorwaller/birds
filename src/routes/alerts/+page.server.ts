@@ -48,6 +48,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   ]);
 
   return {
+    accountId: user.id,
     alerts: prefs.rows[0] ?? { enabled: false, radius_km: 40, realert_days: 7 },
     pushDeviceCount: Number(devices.rows[0]?.n ?? 0),
     history: history.rows,

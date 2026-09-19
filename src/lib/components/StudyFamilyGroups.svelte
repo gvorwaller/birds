@@ -7,12 +7,14 @@
     openFamily = "",
     focusCode = "",
     taxonomic = false,
+    accountId,
   }: {
     rows: StudySpecies[];
     returnTo: string;
     openFamily?: string;
     focusCode?: string;
     taxonomic?: boolean;
+    accountId?: number;
   } = $props();
   const groups = $derived(familyGroups(rows, taxonomic));
   let expanded = $state(new Set<string>());
@@ -43,6 +45,7 @@
           "#study-family-" +
           encodeURIComponent(encodeURIComponent(group.name))}
         {focusCode}
+        {accountId}
       />
     {/if}
   </details>

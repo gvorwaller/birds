@@ -29,6 +29,7 @@
     onRestore,
     contentReady = true,
     ui,
+    hideWhenNoPath = false,
   }: {
     accountId: number | null | undefined;
     label: string;
@@ -43,6 +44,7 @@
     }) => void;
     contentReady?: boolean;
     ui?: NavigationUiState | null;
+    hideWhenNoPath?: boolean;
   } = $props();
 
   let current = $state<NavigationNode | null>(null);
@@ -183,7 +185,7 @@
       The original item is no longer in this view; the current results remain
       available.
     </p>{/if}
-  <p class="back-row">
+  {#if ancestors.length > 0 || !hideWhenNoPath}<p class="back-row">
     {#if ancestors.length > 0}
       <a
         href={ancestorHref(ancestors[ancestors.length - 1])}
@@ -197,7 +199,7 @@
           : `← ${fallbackLabel}`}</a
       >
     {/if}
-  </p>
+  </p>{/if}
   {#if ancestors.length > 1 || truncated}
     <details class="trail">
       <summary>Your path</summary>

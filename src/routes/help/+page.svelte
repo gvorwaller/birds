@@ -265,8 +265,10 @@
 					</li>
 				</ul>
 				<h3>Hotspot pages</h3>
-                <p>Trip, hotspot and bird pages keep a named path back to the same stop
-                or report row, including your hotspot month and expanded list. Use
+                <p>Bird links from Field guide, Taxonomy, Viewed species, Special interest,
+                Photos, Life list, Home, Nearest reports, Alerts and Forecast keep a named path
+                back to the same filtered row. The saved URL includes choices such as search,
+                page, place, radius and month. Use
                 <strong>Your path</strong> to return farther back. In nearby reports,
                 the place name opens its hotspot here; the separate eBird badge opens eBird.
                 A location without usable coordinates opens a Forecast location chooser;

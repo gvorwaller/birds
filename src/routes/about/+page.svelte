@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>More named return paths</strong> — Field guide, taxonomy, collections, photos, life lists, Home, Nearest reports, Alerts and Forecast now keep the filtered page and selected row when you open a bird or hotspot. Life-list paths remain private to the signed-in viewer, even while a shared list is displayed.</li>
 							<li><strong>Clear background-load recovery</strong> — hotspot history requests verify the exact eBird location before they enter the queue, while the shared status view distinguishes running, paused, scheduled, retrying, waiting for a worker, cancelled and completed work. Failed verification and incomplete coverage keep their recovery guidance visible.</li>
 							<li><strong>Home stays usable during slow report loading</strong> — controls become available with the page, while place details load separately. Slow detail requests finish with clearly marked partial coverage, keeping all area-report species and details already received.</li>
 							<li><strong>Recent-report evidence</strong> — Home and species pages now keep duplicate public reports from inflating totals, retain distinct checklist evidence, and label accepted, unconfirmed, and unavailable review status. Home also shows your scoped first-seen life-list records separately from public reports. Nearest reports offer explicit date and distance controls, merge recent and notable evidence, and disclose incomplete feed coverage.</li>

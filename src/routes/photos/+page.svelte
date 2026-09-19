@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import Badge from '$components/Badge.svelte';
+	import { page } from '$app/state';
+	import PathNavigation from '$components/PathNavigation.svelte';
+	import { navigationAction } from '$lib/navigation-context.svelte';
+	import { withReturnTo } from '$lib/navigation-context';
 	import ObsMap from '$components/ObsMap.svelte';
 	import type { ActionData, PageData } from './$types';
 
@@ -28,6 +32,7 @@
 </svelte:head>
 
 <div class="page">
+	<PathNavigation accountId={data.accountId} label="Photos" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
 	<header class="page-head">
 		<h1>My Photos</h1>
 		<p class="sub">
@@ -106,7 +111,7 @@
 	{#each data.groups as g (g.speciesCode)}
 		<section class="card group">
 			<div class="group-head">
-				<h3><a href={`/species/${g.speciesCode}`}>{g.comName}</a></h3>
+				<h3><a class="path-focus-target" id={`photos-species-${encodeURIComponent(g.speciesCode)}`} href={withReturnTo(`/species/${encodeURIComponent(g.speciesCode)}`, page.url.pathname + page.url.search + page.url.hash, undefined, 'Photos')} onclick={navigationAction(data.accountId,{label:g.comName,originId:`photos-species-${encodeURIComponent(g.speciesCode)}`})}>{g.comName}</a></h3>
 				{#if g.sciName}<span class="sci">{g.sciName}</span>{/if}
 				<span class="count">{g.photos.length} {g.photos.length === 1 ? 'photo' : 'photos'}</span>
 			</div>

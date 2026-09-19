@@ -2,6 +2,9 @@
   import Badge from "$lib/components/Badge.svelte";
   import { page } from "$app/stores";
   import type { PageData } from "./$types";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
 
   let { data }: { data: PageData } = $props();
 
@@ -71,6 +74,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.accountId} label="Alerts" href={$page.url.pathname + $page.url.search + $page.url.hash} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
   <header class="page-head">
     <h1>
       Alerts
@@ -127,7 +131,7 @@
                 >{row.title}</a>
                 <!-- Tier-1 (td-97b22e): species_code always shipped, never
                      linked — no path from an alert to our own species page. -->
-                <a class="spx" href={`/species/${row.species_code}?returnTo=${encodeURIComponent("/alerts")}`}
+                <a class="spx path-focus-target" id={`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`} href={withReturnTo(`/species/${encodeURIComponent(row.species_code)}`,$page.url.pathname + $page.url.search + $page.url.hash,undefined,"Alerts")} onclick={navigationAction(data.accountId,{label:row.title,originId:`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`})}
                   >species page →</a
                 >
               </span>

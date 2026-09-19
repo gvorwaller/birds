@@ -18,17 +18,21 @@
     row,
     distanceUnit = "mi",
     speciesHref,
+    speciesAction,
+    originId,
   }: {
     row: RecordedSightingRowData;
     distanceUnit?: DistanceUnit;
     speciesHref?: (code: string) => string;
+    speciesAction?: (row: RecordedSightingRowData) => (event: MouseEvent) => void;
+    originId?: (row: RecordedSightingRowData) => string;
   } = $props();
 </script>
 
 <div class="obs recorded-sighting-row">
   <div class="grow">
     <div class="name">
-      {#if speciesHref}<a href={speciesHref(row.speciesCode)}>{row.comName}</a>{:else}{row.comName}{/if}
+      {#if speciesHref}<a class:path-focus-target={!!originId} id={originId?.(row)} href={speciesHref(row.speciesCode)} onclick={speciesAction?.(row)}>{row.comName}</a>{:else}{row.comName}{/if}
     </div>
     <div class="meta">
       {row.firstSeen ?? "Undated"} · {row.locationName ?? "Location unavailable"}

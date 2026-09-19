@@ -23,6 +23,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const hasGallery = (await ownerGalleryUrl(locals.scopeId!)) != null;
 	if (!hasGallery) {
 		return {
+			accountId: locals.user!.id,
 			hasGallery: false,
 			groups: [],
 			unmatched: [],
@@ -76,6 +77,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		}));
 
 	return {
+		accountId: locals.user!.id,
 		groups: [...groups.values()].sort((a, b) => b.photos.length - a.photos.length),
 		unmatched: [...unmatched.entries()].map(([name, photos]) => ({ name, photos })),
 		total: links.length,

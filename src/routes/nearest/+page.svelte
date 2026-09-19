@@ -5,6 +5,9 @@
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { isHotspotLocId } from "$lib/loc-id";
   import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
   import type { PageData } from "./$types";
   import type { NearestTarget } from "./+page.server";
   import { observationIdentity } from "$lib/observation-evidence";
@@ -23,12 +26,13 @@
   const backOptions = [1, 7, 14, 30];
   const distanceOptions = ["any", 25, 50, 100, 250, 500] as const;
   function speciesPageHref(code: string): string {
-    const params = new URLSearchParams({
-      back: String(data.backDays),
-      nearestKm: String(data.nearestKm),
-      returnTo: page.url.pathname + page.url.search,
-    });
-    return `/species/${code}?${params.toString()}`;
+    return withReturnTo(`/species/${encodeURIComponent(code)}?back=${data.backDays}&nearestKm=${data.nearestKm}`,page.url.pathname + page.url.search + page.url.hash,undefined,"Nearest reports");
+  }
+  function reportAction(id: string, label: string) {
+    return navigationAction(data.user?.id, { label, originId: `nearest-report-${encodeURIComponent(id)}` });
+  }
+  function speciesAction(code: string, label: string, section: string) {
+    return navigationAction(data.user?.id, { label, originId: `nearest-${section}-${encodeURIComponent(code)}` });
   }
   function evidenceAsOf(value: string | Date): string {
     return new Date(value).toLocaleString("en-US", {
@@ -46,7 +50,7 @@
 {#snippet targetCard(t: NearestTarget)}
   <section class="card">
     <h2>
-      <a class="sp" href={speciesPageHref(t.speciesCode)}
+      <a class="sp path-focus-target" id={`nearest-species-${encodeURIComponent(t.speciesCode)}`} href={speciesPageHref(t.speciesCode)} onclick={navigationAction(data.user?.id,{label:t.comName,originId:`nearest-species-${encodeURIComponent(t.speciesCode)}`})}
         >{t.comName}</a
       >
       <Badge kind="need" label="Need" />
@@ -78,7 +82,7 @@
               <span class="ndist">{formatDistance(o.distanceKm, distanceUnit)}</span>
             {/if}
             {#if isHotspotLocId(o.locId)}
-              <a class="nplace" href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+              <a class="nplace path-focus-target" id={`nearest-report-${encodeURIComponent(observationIdentity(o))}`} href={withReturnTo(`/hotspots/${encodeURIComponent(o.locId)}`,page.url.pathname + page.url.search + page.url.hash,undefined,"Nearest reports")} onclick={reportAction(observationIdentity(o),o.locName)}
                 >{o.locName}</a
               >
             {:else}
@@ -120,6 +124,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.user?.id} label="Nearest reports" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
   <header class="page-head">
     <h1>Nearest lifers</h1>
     <p class="sub">
@@ -175,7 +180,7 @@
                   <span class="mseen">
                     {m.comName}
                     <Badge kind="seen" label="Seen" />
-                  <a href={speciesPageHref(m.speciesCode)}
+                  <a class="path-focus-target" id={`nearest-match-${encodeURIComponent(m.speciesCode)}`} href={speciesPageHref(m.speciesCode)} onclick={speciesAction(m.speciesCode,m.comName,'match')}
                       >species page →</a
                     >
                   </span>
@@ -196,7 +201,7 @@
         <p>
           You already have <strong>{data.searchedSeen.comName}</strong> — no
           lookup needed.
-          <a href={speciesPageHref(data.searchedSeen.speciesCode)}
+          <a class="path-focus-target" id={`nearest-seen-${encodeURIComponent(data.searchedSeen.speciesCode)}`} href={speciesPageHref(data.searchedSeen.speciesCode)} onclick={speciesAction(data.searchedSeen.speciesCode,data.searchedSeen.comName,'seen')}
             >species page →</a
           >
         </p>

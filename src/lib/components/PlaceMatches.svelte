@@ -2,6 +2,8 @@
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import MapLink from "$components/MapLink.svelte";
   import type { PlaceMatch } from "$lib/place-search";
+  import { withReturnTo } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
 
   let {
     places = [],
@@ -10,6 +12,8 @@
     distanceUnit = "mi",
     partial = false,
     onfocusplace,
+    navigationSource,
+    accountId,
   }: {
     places?: PlaceMatch[];
     query?: string;
@@ -18,6 +22,8 @@
     /** Some per-species detail calls failed, so coverage is incomplete. */
     partial?: boolean;
     onfocusplace?: (place: PlaceMatch) => void;
+    navigationSource?: string;
+    accountId?: number | null;
   } = $props();
 
   // Once a place is focused, the point of the page is the birds BELOW this
@@ -84,7 +90,7 @@
           <div class="name">
             {#if p.isHotspot && p.locId}
               <!-- Name → internal hotspot page (Phase 1); badge stays eBird. -->
-              <a class="place-link" href={`/hotspots/${p.locId}`}>{p.locName}</a>
+              <a class="place-link path-focus-target" id={`home-place-${encodeURIComponent(p.key)}`} href={withReturnTo(`/hotspots/${encodeURIComponent(p.locId)}`,navigationSource,undefined,'Home')} onclick={navigationAction(accountId,{label:p.locName,originId:`home-place-${encodeURIComponent(p.key)}`})}>{p.locName}</a>
               <a
                 class="hotspot-badge"
                 href={`https://ebird.org/hotspot/${p.locId}`}

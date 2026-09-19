@@ -442,6 +442,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const sortedCountries = sortByProximity(countryList, home, countryCentroids, "US");
 
   return {
+    accountId: locals.user!.id,
     q,
     hasHome: home != null,
     speciesMatches,

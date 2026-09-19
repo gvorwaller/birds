@@ -2,6 +2,9 @@
   import { enhance } from "$app/forms";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
   import ForecastTabs from "$components/ForecastTabs.svelte";
   import FrequencyChart from "$components/FrequencyChart.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
@@ -244,6 +247,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.accountId} label={data.taxon ? `Where to find ${data.taxon.com_name}` : "Species forecast"} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/forecast" fallbackLabel="Forecast" hasExplicitSource={data.crumbs.length > 0} />
   {#if data.crumbs.length > 0}
     <nav class="crumbs" aria-label="Breadcrumb">
       {#each data.crumbs as crumb, i (i)}
@@ -823,7 +827,7 @@
                   {@const sel = ch.selected.find((s) => s.locId === h.code)}
                   <li>
                     <div class="sp">
-                      <a class="name" href={`/hotspots/${h.code}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                      <a class="name path-focus-target" id={`forecast-species-${encodeURIComponent(h.code)}`} href={withReturnTo(`/hotspots/${encodeURIComponent(h.code)}`,page.url.pathname + page.url.search + page.url.hash,undefined,data.taxon ? `Where to find ${data.taxon.com_name}` : 'Species forecast')} onclick={navigationAction(data.accountId,{label:h.name,originId:`forecast-species-${encodeURIComponent(h.code)}`})}
                         >{h.name}</a
                       >
                       <span class="freq"
@@ -861,7 +865,7 @@
                     {@const sel = ch.selected.find((s) => s.locId === h.code)}
                     <li>
                       <div class="sp">
-                        <a class="name" href={`/hotspots/${h.code}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                        <a class="name path-focus-target" id={`forecast-species-low-${encodeURIComponent(h.code)}`} href={withReturnTo(`/hotspots/${encodeURIComponent(h.code)}`,page.url.pathname + page.url.search + page.url.hash,undefined,data.taxon ? `Where to find ${data.taxon.com_name}` : 'Species forecast')} onclick={navigationAction(data.accountId,{label:h.name,originId:`forecast-species-low-${encodeURIComponent(h.code)}`})}
                         >{h.name}</a
                       >
                         <span class="freq"

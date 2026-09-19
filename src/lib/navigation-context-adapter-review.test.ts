@@ -111,6 +111,31 @@ describe('review: public history adapter behavior',()=>{
   expect(fixture.page.url.searchParams.get('returnTo')).toBe('/trips/9');expect(fixture.page.state.unrelated).toBe('preserved');
   expect(nav.trailFor(1).nodes.map(n=>n.label)).toEqual(['Myakka trip','Myakka River SP']);
  });
+ it('preserves a content fragment when attaching navigation state',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL('https://birds.test/species?country=US#results');nav.ensureCurrentNode({accountId:1,label:'Field guide'});
+  nav.navigationAfterNavigate(1);
+  expect(fixture.replaceState.mock.calls.at(-1)?.[0]).toBe('/species?country=US#results');
+ });
+ it('attaches the pending winner when a reloaded router renders before page state',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL('https://birds.test/species?country=US#results');const guide=nav.ensureCurrentNode({accountId:1,label:'Field guide'})!;
+  fixture.goto.mockImplementation(async (href:string)=>{fixture.page.url=new URL(href,'https://birds.test');fixture.page.state={};});
+  nav.navigateWithContext({event:event(),href:'/species/blkrai?returnTo=%2Fspecies%3Fcountry%3DUS%23results',label:'Black Rail',accountId:1,originId:'guide-species-blkrai'});
+  nav.navigationAfterNavigate(1,'goto');
+  expect(nav.trailFor(1).nodes.map(n=>n.label)).toEqual(['Field guide','Black Rail']);
+  expect(fixture.page.state.birdsNavigation).toEqual({accountId:1,nodeId:expect.any(String)});
+  expect(nav.trailFor(1).nodes[0].id).toBe(guide.id);
+ });
+ it('retains a requested node if an early navigation callback clears pending state',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL('https://birds.test/species?country=US#results');const guide=nav.ensureCurrentNode({accountId:1,label:'Field guide'})!;
+  let finish!:()=>void;fixture.goto.mockImplementation(()=>new Promise<void>(resolve=>{finish=resolve}));
+  nav.navigateWithContext({event:event(),href:'/species/blkrai?returnTo=%2Fspecies%3Fcountry%3DUS%23results',label:'Black Rail',accountId:1,originId:'guide-species-blkrai'});
+  nav.navigationAfterNavigate(1,'goto');
+  fixture.page.url=new URL('https://birds.test/species/blkrai');fixture.page.state={};
+  const bird=nav.ensureCurrentNode({accountId:1,label:'Black Rail'})!;
+  expect(nav.trailFor(1,bird.id).nodes.map(n=>n.label)).toEqual(['Field guide','Black Rail']);
+  expect(nav.trailFor(1,bird.id).nodes[0].id).toBe(guide.id);
+  finish();
+ });
  it('updates month on the same hotspot without losing its trip parent or creating another node',async()=>{
   const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Myakka trip'});
   nav.navigateWithContext({event:event(),href:'/hotspots/L299291?tab=monthly&month=9&returnTo=%2Ftrips%2F9',label:'Myakka River SP',accountId:1});await Promise.resolve();await Promise.resolve();
@@ -139,5 +164,15 @@ describe('review: public history adapter behavior',()=>{
   const trail=nav.trailFor(1).nodes;
   expect(trail.map(n=>n.label)).toEqual(['Myakka trip','Myakka River SP']);
   expect(trail.at(-1)?.href).toContain('tab=monthly');
+ });
+ it('updates selector state for one Forecast bird but creates a node for another',async()=>{
+  const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Common Grackle'});
+  nav.navigateWithContext({event:event(),href:'/forecast/species?species=comgra&month=9&returnTo=%2Fspecies%2Fcomgra',label:'Where to find Common Grackle',accountId:1});await Promise.resolve();await Promise.resolve();
+  const first=nav.trailFor(1).nodes.at(-1)!;
+  fixture.page.url=new URL('https://birds.test/forecast/species?species=comgra&month=10&returnTo=%2Fspecies%2Fcomgra');
+  nav.updateCurrentNode({accountId:1,href:fixture.page.url.pathname+fixture.page.url.search,label:'Where to find Common Grackle'});
+  expect(nav.trailFor(1).nodes.at(-1)?.id).toBe(first.id);
+  nav.navigateWithContext({event:event(),href:'/forecast/species?species=roster&month=10&returnTo=%2Fspecies%2Fcomgra',label:'Where to find Roseate Spoonbill',accountId:1});await Promise.resolve();await Promise.resolve();
+  expect(nav.trailFor(1).nodes.at(-1)?.id).not.toBe(first.id);
  });
 });

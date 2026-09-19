@@ -2,7 +2,10 @@
   import FieldGuideTabs from '$components/FieldGuideTabs.svelte';
   import ViewedBadge from '$components/ViewedBadge.svelte';
   import { taxonomyHref } from '$lib/taxonomy';
-  import { afterNavigate } from '$app/navigation';
+  import { page } from '$app/state';
+  import PathNavigation from '$components/PathNavigation.svelte';
+  import { navigationAction } from '$lib/navigation-context.svelte';
+  import { withReturnTo } from '$lib/navigation-context';
   import type { PageData } from './$types';
   let {data}:{data:PageData}=$props();
   const note=$derived(data.enrichment.note);
@@ -13,13 +16,22 @@
     return url.pathname+url.search;
   }
   function detailHref(code:string) {
-    const p=new URL(data.returnTo,'https://birds.invalid');p.searchParams.set('focus',code);
-    return `/species/${code}?returnTo=${encodeURIComponent(p.pathname+p.search)}`;
+    const p=new URL(page.url.pathname+page.url.search+page.url.hash,'https://birds.invalid');
+    p.searchParams.set('focus',code);
+    return withReturnTo(`/species/${encodeURIComponent(code)}`,p.pathname+p.search+p.hash,undefined,'Taxonomy');
   }
-  afterNavigate(()=>{ if(data.focus) document.getElementById('taxon-'+data.focus)?.scrollIntoView({block:'center'}); else if(data.family) document.getElementById('family-title')?.scrollIntoView({block:'start'}); });
+  function speciesAction(code:string, label:string) { return navigationAction(data.user?.id,{label,originId:`taxonomy-species-${encodeURIComponent(code)}`,ui:{expanded:true}}); }
+  function restoreTaxonomy({ originId }: { originId: string | null }) {
+    if (originId) return;
+    requestAnimationFrame(() => {
+      if (data.focus) document.getElementById('taxon-'+data.focus)?.scrollIntoView({block:'center'});
+      else if (data.family) document.getElementById('family-title')?.scrollIntoView({block:'start'});
+    });
+  }
 </script>
 <svelte:head><title>Taxonomy — birds</title></svelte:head>
 <div class="page">
+  <PathNavigation accountId={data.user?.id} label="Taxonomy" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/species" fallbackLabel="Field guide" hideWhenNoPath onRestore={restoreTaxonomy} />
   <h1>📖 Field guide</h1>
   <p class="muted">Explore how birds are related, then follow a species to study it.</p>
   <FieldGuideTabs active="taxonomy" />
@@ -80,7 +92,7 @@
       {#if data.selected}<a class="family-browse" href={'/species?family='+encodeURIComponent(data.selected.code)}>Browse this family with Field Guide filters →</a>{/if}
       <p>{data.rows.length} species{data.q ? ' matching your search' : ''}. Ordered taxonomically where available.</p>
       {#if data.focusUnavailable}<p role="status">The linked species is not in this family’s current results. <a href={taxonomyHref(data.family)}>Show this family without search filters</a>.</p>{/if}
-      <ul class="species">{#each data.rows as row}<li id={'taxon-'+row.code} class:focused={data.focus===row.code}>{#if data.focus===row.code}<strong class="focus-label">Selected species</strong>{/if}<div class="name"><a href={detailHref(row.code)}>{row.name}</a>{#if data.viewed[row.code]}<ViewedBadge view={data.viewed[row.code]} />{/if}{#if row.extinct===true}<span>Extinct</span>{/if}</div><em>{row.scientificName}</em>{#if row.matchedBandingCode}<p class="muted">Banding code: {row.matchedBandingCode}</p>{/if}</li>{/each}</ul>
+      <ul class="species">{#each data.rows as row}<li id={'taxon-'+row.code} class:focused={data.focus===row.code}>{#if data.focus===row.code}<strong class="focus-label">Selected species</strong>{/if}<div class="name"><a id={`taxonomy-species-${encodeURIComponent(row.code)}`} class="path-focus-target" href={detailHref(row.code)} onclick={speciesAction(row.code,row.name)}>{row.name}</a>{#if data.viewed[row.code]}<ViewedBadge view={data.viewed[row.code]} />{/if}{#if row.extinct===true}<span>Extinct</span>{/if}</div><em>{row.scientificName}</em>{#if row.matchedBandingCode}<p class="muted">Banding code: {row.matchedBandingCode}</p>{/if}</li>{/each}</ul>
     </section>
   {/if}
   <p class="muted"><a href="https://ebird.org" target="_blank" rel="noopener">Data from eBird.org</a>. Classification reference: <a href="https://www.birds.cornell.edu/clementschecklist/" target="_blank" rel="noopener">Cornell’s eBird/Clements checklist</a>.</p>

@@ -1,6 +1,9 @@
 <script lang="ts">
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import Badge from "$components/Badge.svelte";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
   import {
     filterLifeList,
     parseLifeListDateInput,
@@ -8,6 +11,9 @@
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+  function lifeHref(code: string) {
+    return withReturnTo(`/species/${encodeURIComponent(code)}`, data.listHref, undefined, "Life list");
+  }
 
   // AGY advisory: segmented Map|Timeline on mobile (Timeline default),
   // side-by-side on desktop (CSS shows both ≥1024px regardless of the tab).
@@ -166,7 +172,7 @@
           .map(
             (l) =>
               `<li style="margin-bottom:4px">` +
-              `<a href="/species/${encodeURIComponent(l.species_code)}?returnTo=${encodeURIComponent(data.listHref)}" style="color:#084298;font-weight:600">${escapeHtml(l.com_name)}</a>` +
+              `<a data-life-species href="${lifeHref(l.species_code)}" style="color:#084298;font-weight:600">${escapeHtml(l.com_name)}</a>` +
               ` <span style="color:#555">${escapeHtml(fmtDate(l.first_seen))}</span>` +
               (l.sub_id
                 ? ` · <a href="https://ebird.org/checklist/${encodeURIComponent(l.sub_id)}" target="_blank" rel="noopener" style="color:#0a5c43">checklist ↗</a>`
@@ -211,6 +217,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.viewerAccountId} label="Life list" href={data.listHref} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
   <header class="page-head">
     <h1>{data.isOtherList ? `${data.selectedUser.name}’s life list` : "Life list"}</h1>
     <p class="sub">
@@ -490,7 +497,10 @@
                   </span>
                   <span class="what">
                     <a
-                      href={`/species/${l.species_code}?returnTo=${encodeURIComponent(data.listHref)}`}
+                      class="path-focus-target"
+                      id={`life-${data.viewerAccountId}-${encodeURIComponent(l.species_code)}`}
+                      href={lifeHref(l.species_code)}
+                      onclick={navigationAction(data.viewerAccountId,{label:l.com_name,originId:`life-${data.viewerAccountId}-${encodeURIComponent(l.species_code)}`})}
                     >
                       {l.com_name}
                     </a>

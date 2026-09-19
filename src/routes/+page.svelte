@@ -8,6 +8,8 @@
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import PlaceMatches from "$components/PlaceMatches.svelte";
   import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
   import { goto } from "$app/navigation";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
@@ -319,6 +321,12 @@
       context: speciesContext,
     });
   }
+  function recordedOrigin(row: { speciesCode: string; firstSeen: string | null; locationName: string | null; subId: string | null }) {
+    return `home-recorded-${encodeURIComponent(`${row.speciesCode}|${row.subId ?? row.firstSeen ?? 'undated'}|${row.locationName ?? 'none'}`)}`;
+  }
+  function recordedAction(row: { speciesCode: string; comName: string; firstSeen: string | null; locationName: string | null; subId: string | null }) {
+    return navigationAction(data.user?.id, { label: row.comName, originId: recordedOrigin(row) });
+  }
   // `focused` matters independently of `searching`: a cold or shared `?loc=`
   // URL arrives with an empty query box, and without this the focused cards
   // would render no place details at all.
@@ -441,6 +449,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.user?.id} label="Home" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/" fallbackLabel="Home" hideWhenNoPath />
   <header class="page-head">
     <h1>Home</h1>
     <p class="sub">
@@ -611,13 +620,13 @@
       <p class="muted">No recorded sightings match these dates and the selected place and radius.</p>
     {:else}
       {#each recordedRows as row (row.speciesCode + '|' + (row.firstSeen ?? 'undated') + '|' + (row.locId ?? row.locationName ?? 'none'))}
-        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} />
+        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} speciesAction={recordedAction} originId={recordedOrigin} />
       {/each}
     {/if}
     {#if unresolvedRecordedRows.length > 0}
       <h3>Location unavailable — not included in this area's results</h3>
       {#each unresolvedRecordedRows as row (row.speciesCode + '|' + (row.firstSeen ?? 'undated') + '|' + (row.locationName ?? 'none'))}
-        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} />
+        <RecordedSightingRow row={row} {distanceUnit} speciesHref={speciesHref} speciesAction={recordedAction} originId={recordedOrigin} />
       {/each}
     {/if}
     {#if (data.recordedSightings ?? []).some((row) => row.undated)}
@@ -695,6 +704,8 @@
       <PlaceMatches
         places={placeHits}
         query={q}
+        navigationSource={page.url.pathname + page.url.search + page.url.hash}
+        accountId={data.user?.id}
         focusedKey={focusKey}
         {distanceUnit}
         partial={enrichPartial}
@@ -767,7 +778,7 @@
         <div class="obs">
           <div class="grow">
             <div class="name">
-              <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
+              <a class="path-focus-target" id={`home-notable-${encodeURIComponent(n.speciesCode)}`} href={speciesHref(n.speciesCode)} onclick={navigationAction(data.user?.id,{label:n.comName,originId:`home-notable-${encodeURIComponent(n.speciesCode)}`})}>{n.comName}</a>
               <Badge kind="notable" label="Notable" />
               {#if n.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
                   kind="need"
@@ -939,7 +950,7 @@
         <div class="obs">
           <div class="grow">
             <div class="name">
-              <a href={speciesHref(n.speciesCode)}>{n.comName}</a>
+              <a class="path-focus-target" id={`home-needs-${encodeURIComponent(n.speciesCode)}`} href={speciesHref(n.speciesCode)} onclick={navigationAction(data.user?.id,{label:n.comName,originId:`home-needs-${encodeURIComponent(n.speciesCode)}`})}>{n.comName}</a>
               <Badge kind="need" label="Need" />
               {#if allNotableCodes.has(n.speciesCode)}<Badge
                   kind="notable"

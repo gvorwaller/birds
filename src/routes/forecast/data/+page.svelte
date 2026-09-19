@@ -2,6 +2,10 @@
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
   import { goto, invalidateAll } from "$app/navigation";
+  import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
   import {
     groupCountriesByGeographicArea,
     type GeographicAreaGroup,
@@ -677,8 +681,10 @@
       {#if r.locKind === "hotspot"}
         <!-- Phase 3: stored hotspots open their workspace page. -->
         <a
-          class="hublink"
-          href={`/hotspots/${r.locCode}?returnTo=${encodeURIComponent("/forecast/data")}`}
+          id={`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`}
+          class="hublink path-focus-target"
+          href={withReturnTo(`/hotspots/${encodeURIComponent(r.locCode)}`,page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
+          onclick={navigationAction(data.accountId,{label:r.locName,originId:`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`})}
           ><strong>{r.locName}</strong></a
         >
       {:else}
@@ -966,6 +972,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.accountId} label="Hotspots & data" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/forecast" fallbackLabel="Forecast" hideWhenNoPath />
   <h1>Hotspots &amp; data</h1>
   <ForecastTabs mode="data" />
   <p class="intro">
@@ -997,8 +1004,10 @@
               <span class="hitmain">
                 {#if h.kind === "hotspot"}
                   <a
-                    class="hublink"
-                    href={`/hotspots/${h.code}?returnTo=${encodeURIComponent("/forecast/data")}`}
+                    id={`forecast-data-search-${encodeURIComponent(h.code)}`}
+                    class="hublink path-focus-target"
+                    href={withReturnTo(`/hotspots/${encodeURIComponent(h.code)}`,page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
+                    onclick={navigationAction(data.accountId,{label:h.name,originId:`forecast-data-search-${encodeURIComponent(h.code)}`})}
                     ><strong>{h.name}</strong></a
                   >
                 {:else}

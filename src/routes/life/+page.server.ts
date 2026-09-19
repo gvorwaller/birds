@@ -135,6 +135,7 @@ export const load = (async ({ locals, url }) => {
 
     const s = sync.rows[0];
     return {
+      viewerAccountId: user.id,
       selectedUser: { id: selected.id, name: selected.display_name },
       listChoices: owners.rows.map((owner) => ({
         id: owner.id,

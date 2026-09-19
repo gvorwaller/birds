@@ -157,6 +157,12 @@ function resourceKey(href: string): string {
   const parts = parsed.pathname.split("/").filter(Boolean);
   if (parts[0] === "hotspots" || parts[0] === "species" || parts[0] === "trips")
     return `/${parts[0]}/${parts[1] ?? ""}`;
+  if (parts[0] === "forecast" && parts[1] === "species") {
+    const species = parsed.searchParams.get("species");
+    return species && /^[A-Za-z0-9_-]+$/.test(species)
+      ? "/forecast/species/" + species
+      : "/forecast/species";
+  }
   return parsed.pathname;
 }
 
@@ -195,6 +201,12 @@ let pending: {
   href: string;
   stateRef: NavigationRef | null;
 } | null = null;
+let requested: {
+  generation: number;
+  accountId: number;
+  node: NavigationNode;
+  href: string;
+} | null = null;
 
 export function clearNavigationAccount(
   accountId: number | null | undefined,
@@ -212,6 +224,7 @@ export function clearNavigationAccount(
     pending = null;
     activeAccountId = null;
     activeNode = null;
+    requested = null;
     missingReferenceHref = null;
   }
 }
@@ -278,7 +291,7 @@ export function ensureCurrentNode(input: {
       if (stored?.href === href) {
         activeNode = stored;
         if (routerReady)
-          replaceState("", mergeState({ accountId, nodeId: stored.id }));
+          replaceState(currentHref(), mergeState({ accountId, nodeId: stored.id }));
         return stored;
       }
       if (raw) missingReferenceHref = href;
@@ -293,6 +306,20 @@ export function ensureCurrentNode(input: {
       return stored;
     }
   }
+  if (requested && requested.accountId === accountId && requested.href === href) {
+    const completed = requested;
+    activeNode = completed.node;
+    writeSnapshot(accountId, upsertNavigationNode(snapshot, completed.node));
+    if (routerReady)
+      replaceState(
+        currentHref(),
+        mergeState({ accountId, nodeId: completed.node.id }),
+      );
+    if (routerReady) writeReloadBridge(accountId, completed.node);
+    pending = null;
+    requested = null;
+    return completed.node;
+  }
   if (pending && pending.accountId === accountId && pending.href === href) {
     activeNode = pending.node;
     return pending.node;
@@ -303,7 +330,7 @@ export function ensureCurrentNode(input: {
     activeNode = updated;
     writeSnapshot(accountId, upsertNavigationNode(snapshot, updated));
     if (routerReady)
-      replaceState("", mergeState({ accountId, nodeId: updated.id }));
+      replaceState(currentHref(), mergeState({ accountId, nodeId: updated.id }));
     if (routerReady) writeReloadBridge(accountId, updated);
     return updated;
   }
@@ -316,7 +343,8 @@ export function ensureCurrentNode(input: {
   if (!node) return null;
   activeNode = node;
   writeSnapshot(accountId, upsertNavigationNode(snapshot, node));
-  if (routerReady) replaceState("", mergeState({ accountId, nodeId: node.id }));
+  if (routerReady)
+    replaceState(currentHref(), mergeState({ accountId, nodeId: node.id }));
   if (routerReady) writeReloadBridge(accountId, node);
   return node;
 }
@@ -486,18 +514,26 @@ export function navigateWithContext(input: {
     href,
     stateRef: ref,
   };
+  requested = { generation, accountId: input.accountId, node, href };
   void goto(destination, { state: mergeState(ref) })
     .then(() => {
       const winner = currentHref();
       const winnerRef = stateRef();
+      const winnerMatches = (canonicalHref(winner) ?? winner) === href;
+      if (
+        !winnerMatches ||
+        (winnerRef != null &&
+          (winnerRef.accountId !== input.accountId ||
+            winnerRef.nodeId !== ref.nodeId))
+      ) {
+        if (requested?.generation === generation) requested = null;
+        return;
+      }
       if (
         !pending ||
         pending.generation !== generation ||
         pending.href !== href ||
-        (canonicalHref(winner) ?? winner) !== href ||
-        !winnerRef ||
-        winnerRef.accountId !== input.accountId ||
-        winnerRef.nodeId !== ref.nodeId
+        !winnerRef
       )
         return;
       const latest = readSnapshot(input.accountId!);
@@ -506,11 +542,13 @@ export function navigateWithContext(input: {
       writeReloadBridge(input.accountId!, node);
       activeAccountId = input.accountId!;
       activeNode = node;
-      replaceState("", mergeState(ref));
+      replaceState(currentHref(), mergeState(ref));
       pending = null;
+      if (requested?.generation === generation) requested = null;
     })
     .catch(() => {
       if (pending?.generation === generation) pending = null;
+      if (requested?.generation === generation) requested = null;
     });
 }
 
@@ -525,6 +563,7 @@ export function navigationAfterNavigate(
     if (activeAccountId != null) clearNavigationAccount(activeAccountId);
     pendingGeneration += 1;
     pending = null;
+    requested = null;
     activeNode = null;
     activeAccountId = null;
     missingReferenceHref = null;
@@ -569,7 +608,10 @@ export function navigationAfterNavigate(
       activeNode.href === canonicalHref(currentHref())
     ) {
       if (ref?.accountId !== accountId || ref.nodeId !== activeNode.id) {
-        replaceState("", mergeState({ accountId, nodeId: activeNode.id }));
+        replaceState(
+          currentHref(),
+          mergeState({ accountId, nodeId: activeNode.id }),
+        );
       }
       writeReloadBridge(accountId, activeNode);
     }
@@ -582,12 +624,34 @@ export function navigationAfterNavigate(
   if (
     accountId !== pending.accountId ||
     (canonicalHref(winner) ?? winner) !== pending.href ||
-    !winnerRef ||
-    winnerRef.accountId !== pending.accountId ||
-    winnerRef.nodeId !== pending.stateRef?.nodeId
+    (winnerRef != null &&
+      (winnerRef.accountId !== pending.accountId ||
+        winnerRef.nodeId !== pending.stateRef?.nodeId))
   ) {
     pendingGeneration += 1;
     pending = null;
+    return;
+  }
+  // SvelteKit can render the winning route before page.state exposes the
+  // state passed to goto (notably after a document reload). The URL still
+  // proves this is the pending winner, so attach its validated reference here
+  // instead of letting the destination register a fresh root node.
+  if (!winnerRef && pending.stateRef) {
+    const completed = pending;
+    const completedRef = pending.stateRef;
+    writeSnapshot(
+      completed.accountId,
+      upsertNavigationNode(
+        readSnapshot(completed.accountId),
+        completed.node,
+      ),
+    );
+    activeAccountId = completed.accountId;
+    activeNode = completed.node;
+    replaceState(currentHref(), mergeState(completedRef));
+    writeReloadBridge(completed.accountId, completed.node);
+    pending = null;
+    if (requested?.generation === completed.generation) requested = null;
   }
 }
 

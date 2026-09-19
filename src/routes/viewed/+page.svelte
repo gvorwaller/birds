@@ -2,6 +2,8 @@
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import { enhance } from "$app/forms";
   import { invalidate } from "$app/navigation";
+  import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
   import { studyHref } from "$lib/species-study";
   import StudySpeciesList from "$components/StudySpeciesList.svelte";
   import StudyFamilyGroups from "$components/StudyFamilyGroups.svelte";
@@ -30,6 +32,7 @@
 
 <svelte:head><title>Viewed species — birds</title></svelte:head>
 <div class="page">
+  <PathNavigation accountId={data.accountId} label="Viewed species" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/species" fallbackLabel="Field guide" hideWhenNoPath />
   <header class="page-head">
     <a href="/species">← Field guide</a>
     <h1>📖 Field guide</h1>
@@ -136,6 +139,7 @@
             {returnTo}
             openFamily={data.openFamily}
             focusCode={data.focusCode}
+            accountId={data.accountId}
           />
         {:else if data.group === "country"}
           <p class="study-hint muted">
@@ -185,6 +189,7 @@
             rows={data.rows}
             {returnTo}
             focusCode={data.focusCode}
+            accountId={data.accountId}
           />
         {/if}
       {/key}

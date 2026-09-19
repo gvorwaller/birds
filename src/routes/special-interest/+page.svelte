@@ -2,16 +2,20 @@
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import SpecialInterestToggle from "$components/SpecialInterestToggle.svelte";
   import { viewedDate } from "$lib/species-views";
+  import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { withReturnTo } from "$lib/navigation-context";
   import type { PageData } from "./$types";
   let { data }: { data: PageData } = $props();
   let countHeading: HTMLHeadingElement;
-  const returnTo = $derived(
-    "/special-interest?" + new URLSearchParams({ q: data.q, sort: data.sort }),
-  );
+  const returnTo = $derived(page.url.pathname + page.url.search + page.url.hash);
+  function detailHref(code: string) { return withReturnTo(`/species/${encodeURIComponent(code)}`,returnTo,undefined,"Special interest"); }
 </script>
 
 <svelte:head><title>Special interest — birds</title></svelte:head>
 <div class="page">
+  <PathNavigation accountId={data.accountId} label="Special interest" href={returnTo} fallbackHref="/species" fallbackLabel="Field guide" hideWhenNoPath />
   <header class="page-head">
     <h1>★ Special interest</h1>
     <p>
@@ -65,8 +69,10 @@
         <div class="bird">
           {#if row.current}
             <a
-              class="species-link"
-              href={`/species/${encodeURIComponent(row.code)}?returnTo=${encodeURIComponent(returnTo)}`}
+              id={`interest-species-${encodeURIComponent(row.code)}`}
+              class="species-link path-focus-target"
+              href={detailHref(row.code)}
+              onclick={navigationAction(data.accountId,{label:row.name ?? row.code,originId:`interest-species-${encodeURIComponent(row.code)}`})}
               >{row.name}</a
             >
             <p class="muted"><em>{row.scientificName}</em></p>

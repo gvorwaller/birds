@@ -245,12 +245,7 @@
   }
 
   function forecastHref(regionCode: string): string {
-    const params = new URLSearchParams({
-      species: data.taxon.species_code,
-      region: regionCode,
-      returnTo: page.url.pathname + page.url.search + page.url.hash,
-    });
-    return `/forecast/species?${params.toString()}`;
+    return withReturnTo(`/forecast/species?species=${encodeURIComponent(data.taxon.species_code)}&region=${encodeURIComponent(regionCode)}`, speciesContextHref, undefined, data.taxon.com_name);
   }
 
   // GROK P2-1/P2-2: keep the whole current query (location context, back —
@@ -394,8 +389,8 @@
     <p class="sub">
       <em>{data.taxon.sci_name}</em> · eBird code
       <code>{data.taxon.species_code}</code>
-      {#if data.taxon.family}· {#if data.taxon.family_code}<a class="taxonomy-link" href={taxonomyHref(data.taxon.family_code,data.taxon.species_code)}>{data.taxon.family}</a>{:else}{data.taxon.family}{/if}{/if}
-      {#if data.taxon.order_name}· <a class="taxonomy-link" href={taxonomyHref(null,undefined,data.taxon.order_name)}>{data.taxon.order_name}</a>{/if}
+      {#if data.taxon.family}· {#if data.taxon.family_code}<a class="taxonomy-link path-focus-target" id={`species-family-${encodeURIComponent(data.taxon.family_code)}`} href={withReturnTo(taxonomyHref(data.taxon.family_code,data.taxon.species_code),speciesContextHref,undefined,data.taxon.com_name)} onclick={adopt('Taxonomy',`species-family-${encodeURIComponent(data.taxon.family_code)}`)}>{data.taxon.family}</a>{:else}{data.taxon.family}{/if}{/if}
+      {#if data.taxon.order_name}· <a class="taxonomy-link path-focus-target" id={`species-order-${encodeURIComponent(data.taxon.order_name)}`} href={withReturnTo(taxonomyHref(null,undefined,data.taxon.order_name),speciesContextHref,undefined,data.taxon.com_name)} onclick={adopt('Taxonomy',`species-order-${encodeURIComponent(data.taxon.order_name)}`)}>{data.taxon.order_name}</a>{/if}
       {#if data.seen?.first_seen}· first seen {new Date(
           data.seen.first_seen,
         ).toLocaleDateString()}{/if}
@@ -683,7 +678,7 @@
           <p class="migration">🛫 {selectedPeer.migration}</p>
         {/if}
         <p class="muted">
-          <a href={forecastHref(selectedPeer.locCode)}>
+          <a class="path-focus-target" id={`species-forecast-${encodeURIComponent(selectedPeer.locCode)}`} href={forecastHref(selectedPeer.locCode)} onclick={adopt(`Where to find ${data.taxon.com_name}`,`species-forecast-${encodeURIComponent(selectedPeer.locCode)}`)}>
             Where should I go? — county &amp; hotspot forecast →
           </a>
         </p>

@@ -2,11 +2,14 @@
   import ViewedBadge from "$components/ViewedBadge.svelte";
   import { viewedDate } from "$lib/species-views";
   import type { StudySpecies } from "$lib/species-study";
+  import { navigationAction } from "$lib/navigation-context.svelte";
   let {
     rows,
     returnTo,
     focusCode = "",
-  }: { rows: StudySpecies[]; returnTo: string; focusCode?: string } = $props();
+    accountId,
+    sourceLabel = "Viewed species",
+  }: { rows: StudySpecies[]; returnTo: string; focusCode?: string; accountId?: number; sourceLabel?: string } = $props();
   let shown = $state(100);
   const visible = $derived(
     Math.max(shown, rows.findIndex((r) => r.code === focusCode) + 1),
@@ -22,7 +25,7 @@
   {#each rows.slice(0, visible) as row (row.code)}
     <li>
       <div class="name">
-        {#if row.current}<a href={detailHref(row.code)}>{row.name}</a>
+        {#if row.current}<a class="path-focus-target" id={`viewed-species-${encodeURIComponent(row.code)}`} href={detailHref(row.code)} onclick={navigationAction(accountId,{label:row.name ?? row.code,originId:`viewed-species-${encodeURIComponent(row.code)}`})}>{row.name}</a>
         {:else}<strong>{row.name ?? row.code}</strong><span class="muted"
             >Not in the current species taxonomy</span
           >{/if}

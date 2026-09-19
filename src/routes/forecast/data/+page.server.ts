@@ -613,6 +613,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   });
 
   return {
+    accountId: locals.user!.id,
     hasHome: home != null,
     speciesCounts,
     stateGroups: stateGroups.map(stripDetail),
@@ -796,9 +797,7 @@ export const actions: Actions = {
     const areaCode = (form.get("county") ?? "").toString().trim();
     const res = await sweepAreaHotspots(userId, areaCode);
     if (!res.ok) return fail(res.status, { error: res.error });
-    return {
-      queued: { jobId: res.jobId, deduped: res.deduped, label: res.label },
-    };
+    return { queued: { jobId: res.jobId, deduped: res.deduped, label: res.label } };
   },
 
   /**
