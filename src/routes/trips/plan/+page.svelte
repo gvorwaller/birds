@@ -88,9 +88,18 @@
   // result, which re-seeds curation (the component is reused across same-route
   // navigations, so this can't rely on a remount).
   let planSig = $derived(
-    (data.anchor?.label ?? "") +
-      "|" +
-      (data.query?.candidates ?? []).map(candKey).join(","),
+    JSON.stringify({
+      anchor: data.anchor ? [data.anchor.lat, data.anchor.lng, data.anchor.label] : null,
+      inputs: data.inputs,
+      verification: data.query?.hotspotVerification ?? null,
+      candidates: (data.query?.candidates ?? []).map((c) => [
+        candKey(c),
+        c.isVerifiedHotspot,
+        c.matchCount,
+        c.lastObsDt,
+      ]),
+      defaults: defaultKeys,
+    }),
   );
 
   // Curation state, seeded from the planner's auto-selection. untrack() marks
@@ -127,7 +136,7 @@
         googlePlaceId: c.googlePlaceId,
         matchCount: c.matchCount,
         triggerSpecies: c.triggerSpecies,
-        kind: "hotspot" as const,
+        kind: c.isVerifiedHotspot ? ("hotspot" as const) : ("observation" as const),
         note: noteFor(c),
       })),
   );
@@ -385,8 +394,13 @@
                   {s.triggerSpecies.map((t) => t.comName).join(", ")}
                 </div>
               {/if}
-              {#if hotspotMetaLine(s.hotspotId)}
+              {#if s.kind === "hotspot" && hotspotMetaLine(s.hotspotId)}
                 <div class="meta hsmeta">{hotspotMetaLine(s.hotspotId)}</div>
+              {/if}
+              {#if s.kind === "observation"}
+                <div class="meta reported-status">
+                  Reported location · Hotspot status unverified. Check access before visiting.
+                </div>
               {/if}
               <div class="stopnote">{s.note}</div>
               <MapLink
@@ -453,12 +467,11 @@
 
   {#if data.query && data.query.candidates.length > 0}
     <section class="card">
-      <h2>All matching places ({data.query.candidates.length})</h2>
+      <h2>Reported places ({data.query.candidates.length})</h2>
       <p class="muted intro">
-        Every hotspot in range with {data.inputs.seenStatus === "needs"
-          ? "your needs"
-          : "species"} reported, ranked. Add or remove any to curate the trip above
-        before saving.
+        Places represented in the current eBird response. Counts are a preview,
+        not a complete inventory of each location. Suggested stops use verified
+        eBird hotspots; other locations may be private, restricted or offshore.
       </p>
       {#each data.query.candidates as c (c.locId ?? c.locName)}
         {@const inTrip = selected.has(candKey(c))}
@@ -468,12 +481,18 @@
               {c.locName}
               {#if inTrip}<Badge kind="seen" label="in trip" />{/if}
               {#if !c.eligible}<Badge kind="stale" label="below min" />{/if}
+              {#if !c.isVerifiedHotspot}<Badge kind="stale" label="unverified" />{/if}
             </div>
             <div class="meta">
               {c.triggerSpecies.map((t) => t.comName).join(", ")}
             </div>
-            {#if hotspotMetaLine(c.locId)}
+            {#if c.isVerifiedHotspot && hotspotMetaLine(c.locId)}
               <div class="meta hsmeta">{hotspotMetaLine(c.locId)}</div>
+            {/if}
+            {#if !c.isVerifiedHotspot}
+              <div class="meta reported-status">
+                Reported location · Hotspot status unverified. Check access before visiting.
+              </div>
             {/if}
             <div class="links">
               <MapLink
@@ -482,7 +501,7 @@
                 name={c.locName}
                 googlePlaceId={c.googlePlaceId}
               />
-              {#if c.locId}
+              {#if c.isVerifiedHotspot && c.locId}
                 <a
                   href={`https://ebird.org/hotspot/${c.locId}`}
                   target="_blank"
@@ -499,8 +518,9 @@
                 type="button"
                 class="toggle"
                 class:in={inTrip}
+                aria-label={`${inTrip ? "Remove" : c.isVerifiedHotspot ? "Add" : "Add reported location"} ${c.locName}`}
                 onclick={() => toggle(candKey(c))}
-                >{inTrip ? "Remove" : "+ Add"}</button
+                >{inTrip ? "Remove" : c.isVerifiedHotspot ? "+ Add" : "Add reported location"}</button
               >
             {/if}
           </div>
@@ -713,7 +733,7 @@
   .remove {
     flex-shrink: 0;
     align-self: center;
-    min-height: 36px;
+    min-height: 48px;
     padding: 6px 12px;
     border-radius: 8px;
     border: 1px solid var(--danger-border);
@@ -740,8 +760,8 @@
     background: var(--accent-soft);
   }
   .toggle {
-    margin-top: 6px;
-    min-height: 34px;
+    margin-top: 0;
+    min-height: 48px;
     padding: 5px 12px;
     border-radius: 8px;
     border: 1px solid var(--accent);
@@ -813,6 +833,7 @@
 
   .obs {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
     gap: 12px;
     padding: 12px 0;
@@ -822,6 +843,11 @@
     border-top: none;
   }
   .right {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
     text-align: right;
     flex-shrink: 0;
   }
@@ -850,6 +876,17 @@
     }
     h1 {
       font-size: 1.6rem;
+    }
+    .obs {
+      flex-direction: row;
+    }
+    .right {
+      display: block;
+      width: auto;
+      text-align: right;
+    }
+    .toggle {
+      margin-top: 6px;
     }
   }
 </style>

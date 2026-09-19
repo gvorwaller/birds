@@ -41,6 +41,13 @@
 					>, ranks them, and builds a driving route — all editable before you
 					save.
 				</p>
+				<p>
+					Automatic suggestions use only locations verified in eBird's hotspot
+					reference data. Other places reported in the current eBird response stay
+					visible as <strong>Reported places</strong> so you can deliberately add
+					them after checking access. A hotspot membership label does not guarantee
+					public access.
+				</p>
 				<h3>1. Pick where to search</h3>
 				<ul>
 					<li>
@@ -85,10 +92,18 @@
 				<h3>3. Curate the route</h3>
 				<ul>
 					<li>
-						Every matching hotspot in range is listed, ranked by how many of your
-						needs were reported there. <strong>Add</strong> or
+						Every place represented in the current eBird response is listed, ranked
+						by how many of your needs were reported there. Counts are a preview, not
+						a complete inventory. Verified hotspots can be added normally; other
+						rows use <strong>Add reported location</strong> and show their unverified
+						status. <strong>Add</strong> or
 						<strong>Remove</strong> any of them — there's no cap, build the trip you
 						want.
+					</li>
+					<li>
+						If hotspot verification is unavailable, no unverified location is chosen
+						automatically. You can still add a reported location yourself after
+						checking access.
 					</li>
 					<li>
 						The map and the “distinct needs across the route” summary update live

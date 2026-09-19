@@ -561,23 +561,33 @@
           <div class="name">
             {#if s.hotspot_id}
               <!-- Name → internal hotspot page (Phase 1, td-32ca9b);
-                   eBird ↗ badge below stays external (GROK pin). -->
+                   the external eBird link is shown only for cache-verified
+                   hotspot membership. -->
               <a
                 class="place-link"
                 href={`/hotspots/${s.hotspot_id}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
                 >{s.custom_name ?? "Stop"}</a
               >
-              <a
-                class="hotspot-badge"
-                href={`https://ebird.org/hotspot/${s.hotspot_id}`}
-                target="_blank"
-                rel="noopener"
-                title="eBird hotspot">eBird hotspot ↗</a
-              >
+              {#if s.isVerifiedHotspot}
+                <a
+                  class="hotspot-badge"
+                  href={`https://ebird.org/hotspot/${s.hotspot_id}`}
+                  target="_blank"
+                  rel="noopener"
+                  title="Verified eBird hotspot">eBird hotspot ↗</a
+                >
+              {:else}
+                <span class="reported-status">Reported location</span>
+              {/if}
             {:else}
               {s.custom_name ?? "Stop"}
             {/if}
           </div>
+          {#if s.hotspot_id && !s.isVerifiedHotspot}
+            <div class="meta reported-status">
+              Hotspot status unverified. Check access before visiting.
+            </div>
+          {/if}
           <div class="meta">
             {#if !data.hasApiKey}
               <a href="/settings">add eBird key</a> for needs counts

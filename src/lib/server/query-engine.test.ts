@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildCandidates, validateTripParams, BOUNDS } from "./query-engine";
+import {
+  assembleTripPreview,
+  buildCandidates,
+  validateTripParams,
+  BOUNDS,
+} from "./query-engine";
 import { nearestNeighborOrder } from "$lib/geo";
 import type { EbirdObs } from "$server/ebird";
 
@@ -184,6 +189,131 @@ describe("buildCandidates", () => {
     });
     const marsh = c.find((x) => x.locName === "Marsh")!;
     expect(marsh.matchCount).toBe(3); // norcar, bkcchi, amecro
+  });
+
+  it("retains an unverified top-ranked report while marking only reference members verified", () => {
+    const c = buildCandidates(
+      fixture,
+      seen,
+      { ...baseFilter, seenStatus: "needs", minNeedsPerStop: 2 },
+      new Map(),
+      new Set(["L1"]),
+    );
+    expect(c.find((x) => x.locId === "L3")).toMatchObject({
+      matchCount: 4,
+      eligible: true,
+      isVerifiedHotspot: false,
+    });
+    expect(c.find((x) => x.locId === "L1")?.isVerifiedHotspot).toBe(true);
+    expect(c.find((x) => x.locId === "L3")?.triggerSpecies).toHaveLength(4);
+  });
+});
+
+describe("assembleTripPreview hotspot identity", () => {
+  const params = {
+    anchorLat: anchor.lat,
+    anchorLng: anchor.lng,
+    anchorLabel: "Blue Hill, ME",
+    radiusKm: 16,
+    daysBack: 14,
+    numStops: 1,
+    minNeedsPerStop: 2,
+    seenStatus: "needs" as const,
+    rareOnly: false,
+    includeHistoricalStop: false,
+  };
+
+  it("selects a lower-ranked verified hotspot and leaves the stronger report available", async () => {
+    const candidates = buildCandidates(
+      fixture,
+      seen,
+      { ...params, minNeedsPerStop: 2 },
+      new Map(),
+      new Set(["L1"]),
+    );
+    const preview = await assembleTripPreview(params, {
+      filters: params,
+      candidates,
+      speciesCount: 5,
+      stale: false,
+      hotspotVerification: "available",
+      hotspotMeta: {},
+      fetchedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(preview.stops).toHaveLength(1);
+    expect(preview.stops[0].hotspotId).toBe("L1");
+    expect(preview.stops[0].kind).toBe("hotspot");
+    expect(
+      candidates.find((c) => c.locId === "L3")?.triggerSpecies,
+    ).toHaveLength(4);
+  });
+
+  it("does not auto-select unknown locations when verification is unavailable", async () => {
+    const candidates = buildCandidates(fixture, seen, {
+      ...params,
+      minNeedsPerStop: 2,
+    });
+    const preview = await assembleTripPreview(params, {
+      filters: params,
+      candidates,
+      speciesCount: 5,
+      stale: false,
+      hotspotVerification: "unavailable",
+      hotspotMeta: {},
+      fetchedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(preview.stops).toHaveLength(0);
+    expect(preview.warnings).toContain(
+      "Hotspot verification is unavailable. No unverified locations were selected automatically; you can still add reported locations after checking access.",
+    );
+  });
+
+  it("counts only verified hotspots toward a shortage and retains the historical stop", async () => {
+    const candidates = buildCandidates(
+      fixture,
+      seen,
+      { ...params, minNeedsPerStop: 2 },
+      new Map(),
+      new Set(["L1"]),
+    );
+    const preview = await assembleTripPreview(
+      { ...params, numStops: 2, includeHistoricalStop: true },
+      {
+        filters: params,
+        candidates,
+        speciesCount: 5,
+        stale: false,
+        hotspotVerification: "available",
+        hotspotMeta: {},
+        fetchedAt: "2026-06-14T00:00:00.000Z",
+      },
+      async () => ({
+        status: "ok" as const,
+        places: [
+          {
+            name: "History Museum",
+            lat: 44.42,
+            lng: -68.55,
+            place_id: "ChIJHistory",
+            vicinity: null,
+            types: ["museum"],
+          },
+        ],
+      }),
+    );
+    expect(preview.stops.map((s) => s.kind)).toEqual([
+      "hotspot",
+      "historical",
+    ]);
+    expect(preview.stops[0].hotspotId).toBe("L1");
+    expect(preview.stops[1].hotspotId).toBeNull();
+    expect(preview.warnings).toContain(
+      "Only 1 of 2 requested stops were verified eBird hotspots meeting the 2-needs bar.",
+    );
+    expect(candidates.find((c) => c.locId === "L3")).toMatchObject({
+      matchCount: 4,
+      isVerifiedHotspot: false,
+    });
   });
 });
 

@@ -1,7 +1,7 @@
 import { fail, redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { getEbirdApiKey, EbirdError, hotspotsNear } from "$server/ebird";
+import { getEbirdApiKey, EbirdError } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
 import { milesToKm } from "$lib/geo";
 import { DEFAULT_BACK_DAYS, parseBackDays } from "$lib/time-windows";
@@ -190,27 +190,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     );
   }
 
-  // Supplementary hotspot stats (one cached geo call). Never fail the plan on it.
-  const hotspotMeta: HotspotMeta = {};
-  if (queryResult) {
-    try {
-      const hs = await hotspotsNear(
-        apiKey,
-        anchor.lat,
-        anchor.lng,
-        params.radiusKm,
-      );
-      for (const h of hs.data) {
-        hotspotMeta[h.locId] = {
-          numSpeciesAllTime: h.numSpeciesAllTime ?? null,
-          latestObsDt: h.latestObsDt ?? null,
-        };
-      }
-    } catch {
-      /* enrichment only — the plan still works without it */
-    }
-  }
-
   return {
     ...base,
     anchor,
@@ -218,7 +197,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     preview,
     errors,
     needsLocation: false,
-    hotspotMeta,
+    hotspotMeta: queryResult?.hotspotMeta ?? {},
   };
 };
 

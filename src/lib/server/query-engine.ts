@@ -18,8 +18,10 @@ import { windowPhrase } from "$lib/time-windows";
 import {
   notableNearbyObs,
   recentNearbyObs,
+  hotspotsNear,
   type CachedResult,
   type EbirdObs,
+  type EbirdHotspot,
 } from "$server/ebird";
 import { seenSet } from "$server/needs";
 import { placesNearby, type PlacesNearbyResult } from "$server/geocode";
@@ -74,6 +76,8 @@ export interface PlaceCandidate {
   lastObsDt: string;
   /** Meets minNeedsPerStop — eligible to become a trip stop. */
   eligible: boolean;
+  /** Membership in the eBird hotspot reference response for this query. */
+  isVerifiedHotspot: boolean;
 }
 
 export interface QueryResult {
@@ -81,12 +85,24 @@ export interface QueryResult {
   candidates: PlaceCandidate[]; // ranked desc by matchCount, then recency
   speciesCount: number; // distinct matching species across the whole result
   stale: boolean;
+  /** Whether hotspot reference data was available for this query. */
+  hotspotVerification: "available" | "unavailable";
+  /** Stats from the same reference response used for verification. */
+  hotspotMeta: Record<
+    string,
+    { numSpeciesAllTime: number | null; latestObsDt: string | null }
+  >;
   fetchedAt: string; // ISO
 }
 
-export type PlannedStopKind = "hotspot" | "historical";
+export type PlannedStopKind = "hotspot" | "observation" | "historical";
 
 export interface PlannedStop {
+  /**
+   * eBird location id for hotspot and observation stops. For observation
+   * stops this legacy field is retained for persistence; `kind` governs
+   * classification and labels.
+   */
   hotspotId: string | null;
   name: string;
   lat: number;
@@ -198,6 +214,7 @@ export function buildCandidates(
     minNeedsPerStop?: number;
   },
   locationPlaceIds: Map<string, string> = new Map(),
+  verifiedHotspotIds: ReadonlySet<string> = new Set(),
 ): PlaceCandidate[] {
   interface Acc {
     locId: string | null;
@@ -261,6 +278,7 @@ export function buildCandidates(
         triggerSpecies,
         lastObsDt: p.lastObsDt,
         eligible: p.species.size >= minNeeds,
+        isVerifiedHotspot: p.locId != null && verifiedHotspotIds.has(p.locId),
       };
     })
     .filter((c) => c.distanceKm <= filters.radiusKm + 0.5) // tolerance for coord rounding
@@ -277,23 +295,35 @@ export async function runQuery(
   filters: QueryFilters,
   minNeedsPerStop = 1,
 ): Promise<QueryResult> {
-  const seen =
-    filters.seenStatus === "needs" ? await seenSet(userId) : new Set<string>();
-  const obsRes: CachedResult<EbirdObs[]> = filters.rareOnly
-    ? await notableNearbyObs(
-        apiKey,
-        filters.anchorLat,
-        filters.anchorLng,
-        filters.radiusKm,
-        filters.daysBack,
-      )
-    : await recentNearbyObs(
-        apiKey,
-        filters.anchorLat,
-        filters.anchorLng,
-        filters.radiusKm,
-        filters.daysBack,
-      );
+  const [seen, obsRes, hotspotRes] = await Promise.all([
+    filters.seenStatus === "needs"
+      ? seenSet(userId)
+      : Promise.resolve(new Set<string>()),
+    (filters.rareOnly
+      ? notableNearbyObs(
+          apiKey,
+          filters.anchorLat,
+          filters.anchorLng,
+          filters.radiusKm,
+          filters.daysBack,
+        )
+      : recentNearbyObs(
+          apiKey,
+          filters.anchorLat,
+          filters.anchorLng,
+          filters.radiusKm,
+          filters.daysBack,
+        )) as Promise<CachedResult<EbirdObs[]>>,
+    // Hotspot verification is supplementary to the observation query. A
+    // reference failure must leave observations visible and selectable by an
+    // explicit manual action, but it must never promote an unknown location.
+    hotspotsNear(
+      apiKey,
+      filters.anchorLat,
+      filters.anchorLng,
+      filters.radiusKm,
+    ).catch(() => null as CachedResult<EbirdHotspot[]> | null),
+  ]);
 
   const candidates = buildCandidates(
     obsRes.data,
@@ -303,6 +333,7 @@ export async function runQuery(
       minNeedsPerStop,
     },
     await hydrateEbirdLocationPlaceIds(obsRes.data),
+    hotspotRes ? new Set(hotspotRes.data.map((h) => h.locId)) : new Set(),
   );
   const speciesSet = new Set<string>();
   for (const c of candidates)
@@ -312,7 +343,17 @@ export async function runQuery(
     filters,
     candidates,
     speciesCount: speciesSet.size,
-    stale: obsRes.stale,
+    stale: obsRes.stale || (hotspotRes?.stale ?? false),
+    hotspotVerification: hotspotRes ? "available" : "unavailable",
+    hotspotMeta: Object.fromEntries(
+      (hotspotRes?.data ?? []).map((h) => [
+        h.locId,
+        {
+          numSpeciesAllTime: h.numSpeciesAllTime ?? null,
+          latestObsDt: h.latestObsDt ?? null,
+        },
+      ]),
+    ),
     fetchedAt: obsRes.fetchedAt.toISOString(),
   };
 }
@@ -387,15 +428,19 @@ export async function assembleTripPreview(
 ): Promise<PlannedTripPreview> {
   const warnings: string[] = [];
 
-  const eligible = q.candidates.filter((c) => c.eligible);
+  const eligible = q.candidates.filter(
+    (c) => c.eligible && c.isVerifiedHotspot,
+  );
   const chosen = eligible.slice(0, params.numStops);
   if (chosen.length === 0) {
     warnings.push(
-      `No hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ of your ${params.rareOnly ? "rare " : ""}needs in the ${windowPhrase(params.daysBack)}. Try widening the radius, the window, or lowering the minimum.`,
+      q.hotspotVerification === "unavailable"
+        ? "Hotspot verification is unavailable. No unverified locations were selected automatically; you can still add reported locations after checking access."
+        : `No verified eBird hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ of your ${params.rareOnly ? "rare " : ""}needs in the ${windowPhrase(params.daysBack)}. Try widening the radius, the window, or lowering the minimum.`,
     );
   } else if (chosen.length < params.numStops) {
     warnings.push(
-      `Only ${chosen.length} of ${params.numStops} requested stops met the ${params.minNeedsPerStop}-needs bar.`,
+      `Only ${chosen.length} of ${params.numStops} requested stops were verified eBird hotspots meeting the ${params.minNeedsPerStop}-needs bar.`,
     );
   }
 
@@ -412,7 +457,7 @@ export async function assembleTripPreview(
     googlePlaceId: c.googlePlaceId,
     matchCount: c.matchCount,
     triggerSpecies: c.triggerSpecies,
-    kind: "hotspot",
+    kind: c.isVerifiedHotspot ? "hotspot" : "observation",
     note: stopNote(c),
   }));
 

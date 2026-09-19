@@ -12,6 +12,7 @@ import {
   type EbirdHotspot,
 } from "$server/ebird";
 import { geocodePlace } from "$server/geocode";
+import { cachedVerifiedHotspotLocIds } from "$server/hotspots";
 import { rankedNeedPlacesNear, type PlaceRanking } from "$server/needs";
 import { tidesForStops } from "$server/tides";
 import type { TideResult } from "$lib/tide-format";
@@ -86,11 +87,16 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   if (!trip) throw error(404, "Trip not found");
 
   const rawStops = await getStops(tripId);
+  const verifiedHotspotIds = await cachedVerifiedHotspotLocIds(
+    rawStops.flatMap((s) => (s.hotspot_id ? [s.hotspot_id] : [])),
+  ).catch(() => new Set<string>());
   const savedPlaceIds = await googlePlaceIdsForLocIds(
     rawStops.map((s) => s.hotspot_id),
   );
   const stops = rawStops.map((s) => ({
     ...s,
+    isVerifiedHotspot:
+      s.hotspot_id != null && verifiedHotspotIds.has(s.hotspot_id),
     google_place_id:
       s.google_place_id ??
       (s.hotspot_id ? savedPlaceIds.get(s.hotspot_id) : null) ??
@@ -198,7 +204,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     // Owners only: viewers neither see nor manage share links (and hooks
     // block them from the non-GET actions regardless).
     share:
-      locals.user!.role !== "viewer" ? await getActiveShare(locals.user!.id, tripId) : null,
+      locals.user!.role !== "viewer"
+        ? await getActiveShare(locals.user!.id, tripId)
+        : null,
     needsCounts: Object.fromEntries(needs.counts) as Record<string, number>,
     needsSpecies: Object.fromEntries(needs.species) as Record<
       string,
@@ -415,7 +423,8 @@ export const actions: Actions = {
     if (!token) return fail(404, { error: "Trip not found." });
     return {
       ok: true as const,
-      message: "Share link created — anyone with the link can view this trip's field sheet.",
+      message:
+        "Share link created — anyone with the link can view this trip's field sheet.",
     };
   },
 
