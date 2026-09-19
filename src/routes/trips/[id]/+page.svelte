@@ -12,6 +12,7 @@
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import { calendarMonth } from "$lib/forecast-calendar";
+  import { formatLegacyCountSnapshot, formatPlannedCountSnapshot } from "$lib/trip-count-context";
   import {
     formatFeet,
     formatTideDate,
@@ -589,17 +590,25 @@
             </div>
           {/if}
           <div class="meta">
+            {#if s.plannedCountContext}
+              {formatPlannedCountSnapshot(
+                s.plannedCountContext,
+                formatDistance(s.plannedCountContext.radiusKm, distanceUnit),
+              )}
+              <span class="snapshot-note">Planning preview and current nearby counts use different coverage; they are not a trend.</span>
+            {:else if s.target_count_at_save != null}
+              {formatLegacyCountSnapshot(s.target_count_at_save)}
+            {/if}
+          </div>
+          <div class="meta">
             {#if !data.hasApiKey}
-              <a href="/settings">add eBird key</a> for needs counts
+              <span>Now nearby: unavailable — <a href="/settings">add eBird key</a> to load life-list needs.</span>
+            {:else if data.needsUnavailableStopIds.includes(s.id)}
+              Now nearby: unavailable
             {:else if data.needsCounts[String(s.id)] !== undefined}
               {@const stopNeeds = data.needsSpecies[String(s.id)] ?? []}
-              {data.needsCounts[String(s.id)]} of your needs reported here · last
-              14 days, ≤{formatDistance(16, distanceUnit)}
-              {#if s.target_count_at_save != null && s.target_count_at_save !== data.needsCounts[String(s.id)]}
-                <span class="plandelta"
-                  >(was {s.target_count_at_save} when planned)</span
-                >
-              {/if}
+              Now nearby: {data.needsCounts[String(s.id)]} life-list needs · last
+              14 days · within {formatDistance(16, distanceUnit)} of this stop
               {#if data.needsStale}<Badge kind="stale" label="cached" />{/if}
               {#if stopNeeds.length > 0}
                 <!-- Tier-1 (td-97b22e): the need SET was always computed for
@@ -619,7 +628,7 @@
                 </details>
               {/if}
             {:else}
-              —
+              Now nearby: unavailable
             {/if}
           </div>
           <MapLink
@@ -1513,10 +1522,6 @@
       text-align: left;
       width: 100%;
     }
-  }
-  .plandelta {
-    color: var(--muted);
-    font-size: 0.82rem;
   }
   .stopneeds {
     display: inline-block;

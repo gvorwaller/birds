@@ -9,6 +9,8 @@ import {
   tripExportFilename,
   type TripExportData,
 } from "$server/trip-export";
+import { contextMatchesStop, parseTripCountContext } from "$lib/trip-count-context";
+import { cachedVerifiedHotspotLocIds } from "$server/hotspots";
 
 /**
  * Trip export (td-8b959f). GET ?format=html|md — html (the default) renders
@@ -30,8 +32,17 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
     throw error(400, "Unknown format. Use html or md.");
 
   const stops = await getStops(tripId);
+  const verifiedHotspotIds = await cachedVerifiedHotspotLocIds(
+    stops.flatMap((s) => (s.hotspot_id ? [s.hotspot_id] : [])),
+  ).catch(() => new Set<string>());
   const apiKey = await getEbirdApiKey(userId);
   const { counts, species } = await needsCountForStops(userId, apiKey, stops);
+  const plannedContexts = new Map(
+    stops.flatMap((s) => {
+      const context = parseTripCountContext(s.planned_count_context);
+      return context && contextMatchesStop(context, s) ? [[s.id, context] as const] : [];
+    }),
+  );
 
   const data: TripExportData = {
     trip,
@@ -41,6 +52,8 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
     // url.origin is right in every real request (localhost included); the env
     // fallback exists for hand-built events (job-handlers.ts precedent).
     origin: url.origin || (env.BIRDS_PUBLIC_ORIGIN ?? "https://birds.gaylon.photos"),
+    plannedContexts,
+    verifiedHotspotIds,
   };
 
   // A trip's notes, coordinates and needs behind a cookie — private either way.

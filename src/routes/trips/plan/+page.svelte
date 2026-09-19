@@ -11,6 +11,7 @@
     type DistanceUnit,
   } from "$lib/geo";
   import { plannerTargetNote } from "$lib/planner-note";
+  import { countModeLabel } from "$lib/trip-count-context";
   import {
     BACK_OPTIONS,
     backOptionLabel,
@@ -158,6 +159,7 @@
     new Set(hotspotStops.flatMap((s) => s.triggerSpecies.map((t) => t.code)))
       .size,
   );
+  let countWord = $derived(data.inputs.seenStatus === "all" ? "species" : "needs");
 
   let mapStops = $derived<MapStop[]>(
     stops.map((s, i) => ({
@@ -189,6 +191,8 @@
         google_place_id: s.googlePlaceId,
         notes: s.note,
         target_count_at_save: s.matchCount,
+        count_context_token:
+          s.kind === "historical" ? null : data.candidateTokens[stopKey(s)] ?? null,
       })),
     ),
   );
@@ -203,8 +207,8 @@
     <p class="sub"><a href="/trips">← Trips</a></p>
     <h1>Plan a trip</h1>
     <p class="sub">
-      Find hotspots near a place that have enough of your needs, and build a
-      route.
+      Find reported places near a place with enough matching species for the
+      selected Count setting, and build a route.
     </p>
   </header>
 
@@ -251,7 +255,7 @@
         </select>
       </label>
       <label>
-        <span>Min needs/stop</span>
+        <span>Minimum matching species/stop</span>
         <select name="minneeds">
           {#each [1, 2, 3, 5] as n (n)}
             <option value={n} selected={data.inputs.minNeeds === n}>{n}</option>
@@ -361,16 +365,14 @@
 
       {#if stops.length === 0}
         <p class="muted">
-          No stops selected — add hotspots from the list below, or loosen the
+          No stops selected — add reported places from the list below, or loosen the
           filters and re-plan.
         </p>
       {:else}
         <p class="muted summary">
           {stops.length}
           {stops.length === 1 ? "stop" : "stops"} ·
-          {distinctNeeds} distinct {data.inputs.seenStatus === "needs"
-            ? "needs"
-            : "species"} across the route
+            {distinctNeeds} distinct {countWord} across the route
         </p>
 
         {#each stops as s, i (stopKey(s))}
@@ -386,7 +388,7 @@
                     label="history"
                   />{:else}<Badge
                     kind="seen"
-                    label={`${s.matchCount} ${s.matchCount === 1 ? "need" : "needs"}`}
+                    label={`${s.matchCount} ${countModeLabel(data.inputs.seenStatus, s.matchCount ?? undefined)}`}
                   />{/if}
               </div>
               {#if s.triggerSpecies.length}
@@ -511,7 +513,7 @@
             </div>
           </div>
           <div class="right">
-            <div class="count">{c.matchCount}</div>
+            <div class="count">{c.matchCount} {countModeLabel(data.inputs.seenStatus, c.matchCount)}</div>
             <div class="when">{formatDistance(c.distanceKm, distanceUnit)}</div>
             {#if data.canEdit}
               <button

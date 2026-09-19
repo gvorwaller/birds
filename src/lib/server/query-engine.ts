@@ -92,6 +92,8 @@ export interface QueryResult {
     string,
     { numSpeciesAllTime: number | null; latestObsDt: string | null }
   >;
+  /** Staleness of the observation feed only; hotspot reference staleness is separate. */
+  observationStale: boolean;
   fetchedAt: string; // ISO
 }
 
@@ -108,7 +110,7 @@ export interface PlannedStop {
   lat: number;
   lng: number;
   googlePlaceId: string | null;
-  /** Snapshot of matching needs at this stop; null for a historical stop. */
+  /** Snapshot of matching species at this stop; null for a historical stop. */
   matchCount: number | null;
   triggerSpecies: TriggerSpecies[];
   kind: PlannedStopKind;
@@ -177,7 +179,7 @@ export function validateTripParams(raw: {
   }
   if (!inRange(raw.minNeedsPerStop, BOUNDS.minNeedsPerStop)) {
     errors.push(
-      `Minimum needs per stop must be between ${BOUNDS.minNeedsPerStop.min} and ${BOUNDS.minNeedsPerStop.max}.`,
+      `Minimum matching species per stop must be between ${BOUNDS.minNeedsPerStop.min} and ${BOUNDS.minNeedsPerStop.max}.`,
     );
   }
   if (errors.length) return { ok: false, errors };
@@ -354,6 +356,7 @@ export async function runQuery(
         },
       ]),
     ),
+    observationStale: obsRes.stale,
     fetchedAt: obsRes.fetchedAt.toISOString(),
   };
 }
@@ -436,11 +439,11 @@ export async function assembleTripPreview(
     warnings.push(
       q.hotspotVerification === "unavailable"
         ? "Hotspot verification is unavailable. No unverified locations were selected automatically; you can still add reported locations after checking access."
-        : `No verified eBird hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ of your ${params.rareOnly ? "rare " : ""}needs in the ${windowPhrase(params.daysBack)}. Try widening the radius, the window, or lowering the minimum.`,
+        : `No verified eBird hotspot within ${params.radiusKm} km had ${params.minNeedsPerStop}+ ${params.rareOnly ? "rare " : ""}${params.seenStatus === "all" ? "species" : "needs"} in the ${windowPhrase(params.daysBack)}. Try widening the radius, the window, or lowering the minimum.`,
     );
   } else if (chosen.length < params.numStops) {
     warnings.push(
-      `Only ${chosen.length} of ${params.numStops} requested stops were verified eBird hotspots meeting the ${params.minNeedsPerStop}-needs bar.`,
+      `Only ${chosen.length} of ${params.numStops} requested stops were verified eBird hotspots meeting the minimum of ${params.minNeedsPerStop} matching ${params.seenStatus === "all" ? "species" : "needs"}.`,
     );
   }
 

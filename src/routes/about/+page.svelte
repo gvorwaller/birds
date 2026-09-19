@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Trip count context</strong> — planner counts now say whether they are My needs or All species, and saved stops retain the preview feed, window, location, fetch time and cached status. Saved trips show that planning snapshot separately from the current nearby life-list-needs count; legacy integer counts keep an unknown-scope label. Planning counts remain an area-feed preview, not a complete inventory of each location.</li>
 							<li><strong>Trustworthy trip location identity</strong> — automatic trip suggestions now use only locations verified in eBird's hotspot reference data. Other reported places remain available for an explicit manual add and are labeled unverified; hotspot membership is not a guarantee of access.</li>
 							<li><strong>Relative colour for seasonal patterns</strong> — switch the ribbon between fixed reporting-rate colours and colours relative to the bird's peak. The legend identifies the peak; readout numbers stay absolute. Your choice is remembered for your account in this browser.</li>
 							<li><strong>Checklist counts in the seasonal chart</strong> — the readout now shows how many of the contributing checklists reported the bird, alongside the rate. Counts are rounded estimates; equal-weight percentages still give countries and continents equal weight.</li>

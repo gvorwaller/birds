@@ -5,6 +5,8 @@ import { getEbirdApiKey } from "$server/ebird";
 import { getStops, needsCountForStops } from "$server/trips";
 import { tripForToken } from "$server/trip-shares";
 import { buildTripHtml, type TripExportData } from "$server/trip-export";
+import { contextMatchesStop, parseTripCountContext } from "$lib/trip-count-context";
+import { cachedVerifiedHotspotLocIds } from "$server/hotspots";
 
 /**
  * Public trip field sheet (td-8b959f follow-up). NO session here — the URL
@@ -26,8 +28,17 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
   const owner = trip.user_id;
   const stops = await getStops(trip.id);
+  const verifiedHotspotIds = await cachedVerifiedHotspotLocIds(
+    stops.flatMap((s) => (s.hotspot_id ? [s.hotspot_id] : [])),
+  ).catch(() => new Set<string>());
   const apiKey = await getEbirdApiKey(owner);
   const { counts, species } = await needsCountForStops(owner, apiKey, stops);
+  const plannedContexts = new Map(
+    stops.flatMap((s) => {
+      const context = parseTripCountContext(s.planned_count_context);
+      return context && contextMatchesStop(context, s) ? [[s.id, context] as const] : [];
+    }),
+  );
 
   const data: TripExportData = {
     trip,
@@ -36,6 +47,8 @@ export const GET: RequestHandler = async ({ params, url }) => {
     species,
     origin: url.origin || (env.BIRDS_PUBLIC_ORIGIN ?? "https://birds.gaylon.photos"),
     mode: "shared",
+    plannedContexts,
+    verifiedHotspotIds,
   };
 
   return new Response(buildTripHtml(data), {

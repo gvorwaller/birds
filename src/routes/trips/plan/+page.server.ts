@@ -15,6 +15,8 @@ import {
   type QueryResult,
 } from "$server/query-engine";
 import { savePlannedTrip, type PlannedTripStopInput } from "$server/trips";
+import { issueTripCountToken, verifyTripCountToken, TripCountTokenError } from "$server/trip-count-token";
+import { contextMatchesStop, parseTripCountContext, type TripCountContext } from "$lib/trip-count-context";
 
 const DEFAULTS = {
   radiusMi: 10,
@@ -73,6 +75,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     bounds: BOUNDS,
     canEdit,
     hotspotMeta: {} as HotspotMeta,
+    candidateTokens: {} as Record<string, string>,
   };
 
   // No query yet (first visit) → just render the form.
@@ -198,11 +201,43 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     errors,
     needsLocation: false,
     hotspotMeta: queryResult?.hotspotMeta ?? {},
+    candidateTokens: (() => {
+      if (!queryResult) return {} as Record<string, string>;
+      const tokens: Record<string, string> = {};
+      const plannedAt = new Date().toISOString();
+      for (const c of queryResult.candidates) {
+        const context: TripCountContext = {
+          version: 1,
+          source: params.rareOnly ? "area-notable-preview" : "area-recent-preview",
+          seenStatus: params.seenStatus,
+          daysBack: params.daysBack,
+          anchorLat: Number(params.anchorLat.toFixed(2)),
+          anchorLng: Number(params.anchorLng.toFixed(2)),
+          radiusKm: params.radiusKm,
+          anchorLabel: params.anchorLabel,
+          locationId: c.locId,
+          locationLat: c.lat,
+          locationLng: c.lng,
+          count: c.matchCount,
+          fetchedAt: queryResult.fetchedAt,
+          plannedAt,
+          stale: queryResult.observationStale,
+        };
+        try {
+          tokens[c.locId ?? `${c.lat},${c.lng}`] = issueTripCountToken(locals.user!.id, userId, context);
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message : "Trip count snapshot configuration is unavailable.");
+          break;
+        }
+      }
+      return tokens;
+    })(),
   };
 };
 
 export const actions: Actions = {
   save: async ({ locals, request }) => {
+    if (locals.user?.role === "viewer") return fail(403, { error: "Viewers cannot save trips." });
     const form = await request.formData();
     const name = (form.get("name") ?? "").toString().trim();
     const stopsJson = (form.get("stops") ?? "").toString();
@@ -221,22 +256,48 @@ export const actions: Actions = {
     }
 
     const stops: PlannedTripStopInput[] = [];
+    const identities = new Set<string>();
     for (const raw of parsed) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return fail(400, { error: "A stop was malformed — re-run the plan." });
+      }
       const s = raw as Record<string, unknown>;
-      const lat = Number(s.lat);
-      const lon = Number(s.lon);
+      const lat = typeof s.lat === "number" ? s.lat : NaN;
+      const lon = typeof s.lon === "number" ? s.lon : NaN;
       const nm = typeof s.name === "string" ? s.name.trim() : "";
-      if (!nm || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+      if (!nm || !Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
         return fail(400, {
           error: "A stop was missing a name or coordinates — re-run the plan.",
         });
       }
-      const count = s.target_count_at_save;
+      const hotspotId = typeof s.hotspot_id === "string" && s.hotspot_id ? s.hotspot_id : null;
+      const countRaw = s.target_count_at_save;
+      const count = countRaw === null || countRaw === undefined ? null : typeof countRaw === "number" ? countRaw : NaN;
+      if (count !== null && (!Number.isSafeInteger(count) || count < 0)) {
+        return fail(400, { error: "A stop had an invalid count — re-run the plan." });
+      }
+      const token = s.count_context_token;
+      const identity = hotspotId ?? `${lat},${lon}`;
+      if (identities.has(identity)) return fail(400, { error: "The preview contained a duplicate stop — re-run the plan." });
+      identities.add(identity);
+      const historical = hotspotId === null && count === null && token == null;
+      let context: TripCountContext | null = null;
+      if (!historical) {
+        if (typeof token !== "string" || !token || count === null) {
+          return fail(400, { error: "This trip preview is missing its signed count snapshot — re-run the plan." });
+        }
+        try {
+          const verified = verifyTripCountToken(token, locals.user!.id, locals.scopeId!);
+          if (!contextMatchesStop(verified.context, { hotspot_id: hotspotId, lat, lon, target_count_at_save: count })) {
+            return fail(400, { error: "This trip preview changed location or count — re-run the plan." });
+          }
+          context = parseTripCountContext(verified.context);
+        } catch (err) {
+          return fail(400, { error: err instanceof TripCountTokenError ? err.message : "Trip count snapshot configuration is unavailable." });
+        }
+      }
       stops.push({
-        hotspot_id:
-          typeof s.hotspot_id === "string" && s.hotspot_id
-            ? s.hotspot_id
-            : null,
+        hotspot_id: hotspotId,
         name: nm.slice(0, 200),
         lat,
         lon,
@@ -245,12 +306,8 @@ export const actions: Actions = {
             ? s.google_place_id.slice(0, 300)
             : null,
         notes: typeof s.notes === "string" ? s.notes.slice(0, 500) : null,
-        target_count_at_save:
-          count === null || count === undefined
-            ? null
-            : Number.isFinite(Number(count))
-              ? Number(count)
-              : null,
+        target_count_at_save: count as number | null,
+        planned_count_context: historical ? null : context,
       });
     }
     if (stops.length > BOUNDS.numStops.max + 1) {

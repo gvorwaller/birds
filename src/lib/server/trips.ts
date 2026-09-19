@@ -7,6 +7,7 @@ import { query, withTransaction } from "$lib/db";
 import { haversineKm } from "$lib/geo";
 import { recentNearbyObs } from "$server/ebird";
 import { seenSet } from "$server/needs";
+import type { TripCountContext } from "$lib/trip-count-context";
 
 export interface Trip {
   id: number;
@@ -28,8 +29,10 @@ export interface TripStop {
   lon: number | null;
   google_place_id: string | null;
   notes: string | null;
-  /** Needs count snapshotted when the stop was saved (planned-vs-now delta). */
+  /** Matching-species count snapshotted when the stop was saved. */
   target_count_at_save: number | null;
+  /** Signed planner context retained with the compatible count, when present. */
+  planned_count_context?: TripCountContext | null;
   field_tip: string | null;
   field_tip_generated_at: string | null;
 }
@@ -99,16 +102,18 @@ export interface PlannedTripStopInput {
   lon: number;
   google_place_id?: string | null;
   notes: string | null;
-  /** Snapshot of matching needs at save time; NULL for non-birding stops. */
+  /** Snapshot of matching species at save time; NULL for non-birding stops. */
   target_count_at_save: number | null;
+  planned_count_context: TripCountContext | null;
 }
 
 /**
  * Persist a generated trip and all its stops atomically (Codex: one
  * transactional boundary, not repeated createTrip()/addStop() from a route
  * action). Stops are written in array order; `target_count_at_save` snapshots
- * the qualifying hotspot's need count (NULL for historical/cultural stops, never
- * a fake 0). Returns the new trip id.
+ * the qualifying hotspot's count and `planned_count_context` records the
+ * authenticated planner scope (NULL for historical/cultural stops). Returns
+ * the new trip id.
  */
 export async function savePlannedTrip(
   userId: number,
@@ -131,8 +136,8 @@ export async function savePlannedTrip(
     for (const s of stops) {
       await client.query(
         `INSERT INTO trip_stops
-				   (trip_id, sort_order, hotspot_id, custom_name, lat, lon, google_place_id, notes, target_count_at_save)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				   (trip_id, sort_order, hotspot_id, custom_name, lat, lon, google_place_id, notes, target_count_at_save, planned_count_context)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           tripId,
           order++,
@@ -143,6 +148,7 @@ export async function savePlannedTrip(
           s.google_place_id ?? null,
           s.notes,
           s.target_count_at_save,
+          s.planned_count_context ? JSON.stringify(s.planned_count_context) : null,
         ],
       );
     }
@@ -441,14 +447,23 @@ export async function needsCountForStops(
   species: Map<number, { code: string; comName: string }[]>;
   stale: boolean;
   error: boolean;
+  unavailableStopIds: number[];
 }> {
   const counts = new Map<number, number>();
   const species = new Map<number, { code: string; comName: string }[]>();
-  if (!apiKey) return { counts, species, stale: false, error: false };
+  if (!apiKey)
+    return {
+      counts,
+      species,
+      stale: false,
+      error: false,
+      unavailableStopIds: stops.map((s) => s.id),
+    };
 
   const seen = await seenSet(userId);
   let stale = false;
   let error = false;
+  const unavailableStopIds: number[] = [];
 
   await Promise.all(
     stops.map(async (s) => {
@@ -476,9 +491,10 @@ export async function needsCountForStops(
         );
       } catch {
         error = true;
+        unavailableStopIds.push(s.id);
       }
     }),
   );
 
-  return { counts, species, stale, error };
+  return { counts, species, stale, error, unavailableStopIds };
 }

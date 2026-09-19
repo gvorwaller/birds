@@ -17,8 +17,9 @@
  * computed and the old export threw away, keeping only `.size`.
  */
 import type { Trip, TripStop } from '$server/trips';
-import { mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
+import { formatDistance, mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 import { normalizeTripStopNote } from '$lib/planner-note';
+import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type TripCountContext } from '$lib/trip-count-context';
 
 export interface TripExportData {
 	trip: Trip;
@@ -37,6 +38,10 @@ export interface TripExportData {
 	mode?: 'owner' | 'shared';
 	/** Injectable for deterministic tests; defaults to now. */
 	generatedAt?: Date;
+	/** Validated saved planner snapshots keyed by stop id. */
+	plannedContexts?: Map<number, TripCountContext>;
+	/** Batched cache membership; an id alone is never proof of hotspot status. */
+	verifiedHotspotIds?: ReadonlySet<string>;
 }
 
 export function tripExportFilename(tripName: string): string {
@@ -105,8 +110,18 @@ function needsLabel(n: number, shared: boolean): string {
 	// The owner phrasing is personal ("your needs"); the public page describes
 	// the same data as the owner's targets without claiming them for the reader.
 	return shared
-		? `${n} target species reported here (last 14 days, ≤16 km)`
-		: `${n} of your needs reported here (last 14 days, ≤16 km)`;
+		? `${n} target species reported near this stop (last 14 days, ≤16 km)`
+		: `${n} of your life-list needs reported near this stop (last 14 days, ≤16 km)`;
+}
+
+function snapshotLabel(data: TripExportData, s: TripStop): string | null {
+	const context = data.plannedContexts?.get(s.id);
+	if (context) return formatPlannedCountSnapshot(context, formatDistance(context.radiusKm, 'mi'), true);
+	return s.target_count_at_save == null ? null : formatLegacyCountSnapshot(s.target_count_at_save);
+}
+
+function isVerifiedHotspot(data: TripExportData, s: TripStop): boolean {
+	return !!s.hotspot_id && data.verifiedHotspotIds?.has(s.hotspot_id) === true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +159,8 @@ export function buildTripMarkdown(data: TripExportData): string {
 		const meta: string[] = [];
 		const n = counts.get(s.id);
 		if (n !== undefined) meta.push(needsLabel(n, shared));
+		const snapshot = snapshotLabel(data, s);
+		if (snapshot) meta.push(snapshot);
 		if (s.lat != null && s.lon != null) {
 			const place = {
 				name,
@@ -154,7 +171,7 @@ export function buildTripMarkdown(data: TripExportData): string {
 			meta.push(`[📍 Map](${mapsPlaceUrl(place)})`);
 			meta.push(`[Directions](${mapsDirectionsUrl(place)})`);
 		}
-		if (s.hotspot_id) {
+		if (isVerifiedHotspot(data, s)) {
 			meta.push(`[eBird hotspot](https://ebird.org/hotspot/${s.hotspot_id})`);
 		}
 		if (meta.length) lines.push('', meta.join(' · '));
@@ -262,12 +279,14 @@ export function buildTripHtml(data: TripExportData): string {
 		const meta: string[] = [];
 		const n = counts.get(s.id);
 		if (n !== undefined) meta.push(esc(needsLabel(n, shared)));
+		const snapshot = snapshotLabel(data, s);
+		if (snapshot) meta.push(esc(snapshot));
 		if (s.lat != null && s.lon != null) {
 			const place = { name, lat: s.lat, lng: s.lon, google_place_id: s.google_place_id };
 			meta.push(`<a href="${esc(mapsPlaceUrl(place))}">📍 Map</a>`);
 			meta.push(`<a href="${esc(mapsDirectionsUrl(place))}">Directions</a>`);
 		}
-		if (s.hotspot_id) {
+		if (isVerifiedHotspot(data, s)) {
 			meta.push(`<a href="${esc(`https://ebird.org/hotspot/${s.hotspot_id}`)}">eBird hotspot</a>`);
 		}
 		if (meta.length) parts.push(`<p class="meta">${meta.join(' · ')}</p>`);

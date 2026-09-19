@@ -2,7 +2,7 @@
 
 September 18, 2026 · td-d22017 under td-8ff597
 
-Status: implemented and independently reviewed in test; ready for release review. Not committed or deployed.
+Status: released as `582f665` on September 18, 2026, after independent review and owner authorization.
 
 The primary agent wrote the [implementation specification](phase-01-trip-location-identity.md),
 a lower-cost built-in implementer wrote the code, and the primary agent reviewed
@@ -69,3 +69,16 @@ unverified; the application does not infer that a location is private.
 No production data, schema migration, commit or deployment was involved.
 Existing audit data, the prior migration comment and earlier UX documents were
 preserved. The isolated test worker and live eBird configuration remain usable.
+
+## Production release verification
+
+Deployed through `scripts/deploy-to-DO.sh`; origin/main and public health both
+identify `582f665`. Existing migrations were already applied; web and worker
+reloaded online. Database, worker and gallery source report ok.
+
+Authenticated production Chromium smoke retained all 36 candidates, confirmed
+the three automatically selected locations against actual hotspot-reference
+caches, checked an unverified location without a false hotspot link at 390px,
+and opened existing trip 16 with seven stops. No browser script errors. No trip
+or list edits were made in production. The unrelated migration 0049 comment
+was restored after deployment. td-d22017 is closed.

@@ -1,6 +1,6 @@
 # Birds UX phase 1 — trustworthy trip location identity
 
-Status: implemented and independently reviewed in test · September 18, 2026
+Status: released as `582f665` after independent review · September 18, 2026
 
 See the [review and verification record](phase-01-review.md).
 Owner/reviewer: primary Codex agent · Implementer: lower-cost delegated agent

@@ -71,9 +71,9 @@
 					</li>
 					<li><strong>Stops</strong> — how many hotspots to aim for.</li>
 					<li>
-						<strong>Min needs/stop</strong> — only suggest a hotspot if it has at
-						least this many of your needs. Raise it to be picky, lower it to see
-						more options.
+						<strong>Minimum matching species/stop</strong> — only suggest a hotspot if
+						it has at least this many species matching the selected Count setting.
+						Raise it to be picky, lower it to see more options.
 					</li>
 					<li>
 						<strong>Count</strong> — “My needs” (species not yet on your life
@@ -93,7 +93,8 @@
 				<ul>
 					<li>
 						Every place represented in the current eBird response is listed, ranked
-						by how many of your needs were reported there. Counts are a preview, not
+						by how many matching species were reported there. Counts follow the Count
+						setting and are a preview, not
 						a complete inventory. Verified hotspots can be added normally; other
 						rows use <strong>Add reported location</strong> and show their unverified
 						status. <strong>Add</strong> or
@@ -106,13 +107,18 @@
 						checking access.
 					</li>
 					<li>
-						The map and the “distinct needs across the route” summary update live
+						The map and the “distinct matching species across the route” summary update live
 						as you curate, and the stops are ordered into an efficient route from
 						your start point.
 					</li>
 					<li>
-						Each stop shows which of your needs were reported, when, and the
+						Each stop shows which matching species were reported, when, and the
 						hotspot's all-time species count and last report date.
+						On a saved trip, “When planned” records the preview feed, window,
+						location and fetch time. “Now nearby” is a separate 14-day nearby
+						life-list-needs count; the two statements use different coverage and
+						are not a trend. Legacy counts whose scope was never saved are labeled
+						as matches with unknown scope.
 					</li>
 				</ul>
 				<h3>4. Extras on the saved trip</h3>

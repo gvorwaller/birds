@@ -238,6 +238,7 @@ describe("assembleTripPreview hotspot identity", () => {
       stale: false,
       hotspotVerification: "available",
       hotspotMeta: {},
+      observationStale: false,
       fetchedAt: "2026-06-14T00:00:00.000Z",
     });
     expect(preview.stops).toHaveLength(1);
@@ -260,6 +261,7 @@ describe("assembleTripPreview hotspot identity", () => {
       stale: false,
       hotspotVerification: "unavailable",
       hotspotMeta: {},
+      observationStale: false,
       fetchedAt: "2026-06-14T00:00:00.000Z",
     });
     expect(preview.stops).toHaveLength(0);
@@ -285,6 +287,7 @@ describe("assembleTripPreview hotspot identity", () => {
         stale: false,
         hotspotVerification: "available",
         hotspotMeta: {},
+        observationStale: false,
         fetchedAt: "2026-06-14T00:00:00.000Z",
       },
       async () => ({
@@ -308,12 +311,35 @@ describe("assembleTripPreview hotspot identity", () => {
     expect(preview.stops[0].hotspotId).toBe("L1");
     expect(preview.stops[1].hotspotId).toBeNull();
     expect(preview.warnings).toContain(
-      "Only 1 of 2 requested stops were verified eBird hotspots meeting the 2-needs bar.",
+      "Only 1 of 2 requested stops were verified eBird hotspots meeting the minimum of 2 matching needs.",
     );
     expect(candidates.find((c) => c.locId === "L3")).toMatchObject({
       matchCount: 4,
       isVerifiedHotspot: false,
     });
+    expect(preview.stops.filter((s) => s.kind !== "historical")).toHaveLength(1);
+    expect(preview.stops.map((s) => s.name)).toEqual(["Marsh", "History Museum"]);
+  });
+
+  it("keeps a stronger unverified location available without counting it as an automatic stop", async () => {
+    const candidates = buildCandidates(fixture, seen, { ...params, minNeedsPerStop: 2 }, new Map(), new Set(["L1"]));
+    const preview = await assembleTripPreview({ ...params, numStops: 2, minNeedsPerStop: 2, includeHistoricalStop: true }, {
+      filters: params,
+      candidates,
+      speciesCount: 5,
+      stale: false,
+      hotspotVerification: "available",
+      hotspotMeta: {},
+      observationStale: false,
+      fetchedAt: "2026-06-14T00:00:00.000Z",
+    }, async () => ({
+      status: "ok" as const,
+      places: [{ name: "History Museum", lat: 44.42, lng: -68.55, place_id: "ChIJHistory", vicinity: null, types: ["museum"] }],
+    }));
+    expect(preview.stops.map((s) => s.kind)).toEqual(["hotspot", "historical"]);
+    expect(candidates[0].locId).toBe("L3");
+    expect(candidates[0].isVerifiedHotspot).toBe(false);
+    expect(preview.warnings[0]).toContain("minimum of 2 matching needs");
   });
 });
 

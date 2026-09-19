@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getStops: vi.fn(),
   needsCountForStops: vi.fn(),
   getEbirdApiKey: vi.fn(),
+  cachedVerifiedHotspotLocIds: vi.fn(),
 }));
 
 vi.mock("$server/trip-shares", () => ({ tripForToken: mocks.tripForToken }));
@@ -18,6 +19,7 @@ vi.mock("$server/trips", () => ({
   needsCountForStops: mocks.needsCountForStops,
 }));
 vi.mock("$server/ebird", () => ({ getEbirdApiKey: mocks.getEbirdApiKey }));
+vi.mock("$server/hotspots", () => ({ cachedVerifiedHotspotLocIds: mocks.cachedVerifiedHotspotLocIds }));
 vi.mock("$env/dynamic/private", () => ({ env: {} }));
 
 import { GET } from "./+server";
@@ -59,6 +61,7 @@ beforeEach(() => {
     },
   ]);
   mocks.getEbirdApiKey.mockReset().mockResolvedValue("owner-key");
+  mocks.cachedVerifiedHotspotLocIds.mockReset().mockResolvedValue(new Set(["L123"]));
   mocks.needsCountForStops.mockReset().mockResolvedValue({
     counts: new Map([[1, 1]]),
     species: new Map([[1, [{ code: "magwar", comName: "Magnolia Warbler" }]]]),

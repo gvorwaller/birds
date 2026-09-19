@@ -54,6 +54,7 @@ describe("runQuery hotspot verification boundary", () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0].isVerifiedHotspot).toBe(false);
     expect(result.hotspotVerification).toBe("unavailable");
+    expect(result.observationStale).toBe(false);
     expect(ebird.hotspotsNear).toHaveBeenCalledTimes(1);
   });
 
@@ -74,5 +75,19 @@ describe("runQuery hotspot verification boundary", () => {
     expect(result.candidates[0].isVerifiedHotspot).toBe(true);
     expect(result.hotspotVerification).toBe("available");
     expect(result.stale).toBe(true);
+    expect(result.observationStale).toBe(false);
+  });
+
+  it("keeps observation staleness separate from a fresh hotspot reference", async () => {
+    ebird.recentNearbyObs.mockResolvedValue({
+      data: [row],
+      stale: true,
+      fetchedAt: new Date("2026-09-17T12:00:00Z"),
+    });
+    ebird.hotspotsNear.mockResolvedValue({ data: [], stale: false, fetchedAt: new Date("2026-09-18T12:00:00Z") });
+    const result = await runQuery(1, "key", filters, 1);
+    expect(result.stale).toBe(true);
+    expect(result.observationStale).toBe(true);
+    expect(ebird.hotspotsNear).toHaveBeenCalledTimes(1);
   });
 });
