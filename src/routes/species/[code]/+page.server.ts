@@ -56,7 +56,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     url.searchParams.get("nearestKm"),
   );
   if (!nearestControls.ok) throw error(400, nearestControls.message);
-  const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
+  const returnLink = safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel"));
   // Home can be centered on a searched place; when it is, the link carries that
   // origin so this page reports on the same area the user was just looking at.
   const locationContext = parseSpeciesLocationContext(url.searchParams);

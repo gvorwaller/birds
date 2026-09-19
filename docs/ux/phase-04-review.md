@@ -1,7 +1,7 @@
 # Birds UX phase 4 — review and acceptance
 
 September 19, 2026 · td-c9e804 · Parent td-8ff597
-Status: independently accepted and submitted for review; not committed or deployed.
+Status: released as 05ba3af; authenticated production acceptance passed.
 
 ## Delivered behavior
 
@@ -115,11 +115,26 @@ The owner retains 227 species. Evidence: `phase04-fixture-audit.json`.
 This cleanup audit establishes current state; it does not turn the earlier run
 into a mocked-only check.
 
+## Production release — September 19, 2026
+
+Owner authorized release and the next phase. Reran 131 focused tests, framework
+check (zero errors/warnings), web/worker build and diff check. Committed as
+**05ba3af**, pushed and deployed through the standard script; no new migration.
+PM2 app/worker reload and internal/public DB, worker and gallery health passed
+at the exact revision. The unrelated migration 0049 comment was restored.
+
+Authenticated production checks passed: /api/jobs presentation fields and terminal
+states, background-work hub and disclosed history window, hotspot form month/
+window/return context, official-versus-personal verification controls, >=48px
+phone controls, no horizontal overflow or JavaScript errors. Owner snapshot227;
+no production loads or life-list/trip mutations were initiated. Evidence: task
+`work/birds-ux/audit/phase04-production-results.json` and phone captures; repo
+`.local/phase04-release-{tests,check,build}.log` and `.local/phase04-deploy.log`.
+
 ## Disposition and next phase
 
-Production remains the verified phase 3 release plus streaming repair **505382b**.
-Phase 4 **td-c9e804** is accepted for review, uncommitted and undeployed. Related hotspot prose ticket td-39d567 and
-broader Admin health ticket td-a47c0d remain outside this phase's completion claim.
-The parent UX epic remains in progress. Next is **phase 5: shared navigation
-context and place-preserving links**, after owner review and a separate release
-instruction.
+Phase 4 **td-c9e804** is released and closed. Related hotspot prose td-39d567 and
+broader Admin health td-a47c0d remain outside this phase. The parent UX epic
+remains in progress. Phase 5 is split into **5A: shared journey core, trip/hotspot/
+bird return paths and place safety** (td-ea384e), then **5B: remaining route
+adoption**. [Phase 5A specification](phase-05a-navigation-context.md).

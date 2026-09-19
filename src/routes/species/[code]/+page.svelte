@@ -30,6 +30,9 @@
   import SimilarSpeciesCard from "$components/SimilarSpeciesCard.svelte";
   import type { ActionData, PageData } from "./$types";
   import { observationIdentity } from "$lib/observation-evidence";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { canonicalHref, withReturnTo } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
 
   const MONTH_NAMES = [
     "January",
@@ -47,6 +50,10 @@
   ];
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  const speciesContextHref = $derived(canonicalHref(page.url.pathname + page.url.search + page.url.hash) ?? `/species/${data.taxon.species_code}`);
+  function adopt(label: string, originId: string) {
+    return (event: MouseEvent) => navigationAction(data.user?.id, { label, originId })(event);
+  }
   const ribbonGrid = $derived(data.ribbon.ok ? decodeRibbonGrid(data.ribbon.gridJson) : null);
   let distanceUnit = $state<DistanceUnit>("mi");
   function evidenceAsOf(value: string | Date): string {
@@ -241,7 +248,7 @@
     const params = new URLSearchParams({
       species: data.taxon.species_code,
       region: regionCode,
-      returnTo: page.url.pathname + page.url.search,
+      returnTo: page.url.pathname + page.url.search + page.url.hash,
     });
     return `/forecast/species?${params.toString()}`;
   }
@@ -376,9 +383,7 @@
 
 <div class="page">
   <header class="page-head">
-    <p class="sub">
-      <a href={data.returnLink.href}>← {data.returnLink.label}</a>
-    </p>
+    <PathNavigation contentReady={(data.nearby == null || nearbyView.current != null) && (data.nearest == null || nearestView.current != null)} accountId={data.user?.id} label={data.taxon.com_name} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref={data.returnLink.href} fallbackLabel={data.returnLink.label} hasExplicitSource={data.returnLink.href !== "/"} />
     <h1>
       {data.taxon.com_name}
       {#if data.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
@@ -725,15 +730,14 @@
       </p>
     {:else}
       {#each nearbyView.current.data.rows as o (observationIdentity(o))}
-        <div class="obs">
+        <div class="obs path-focus-target" id={`species-nearby-report-${observationIdentity(o).replace(/[^A-Za-z0-9_-]/g, "_")}`}>
           <div class="grow">
             <div class="name">
               {#if o.isHotspot && o.locId}
                 <a
                   class="place-link"
-                  href={`https://ebird.org/hotspot/${o.locId}`}
-                  target="_blank"
-                  rel="noopener">{o.locName}</a
+                  href={withReturnTo(`/hotspots/${o.locId}`, speciesContextHref, undefined, data.taxon.com_name)}
+                  onclick={adopt(o.locName, `species-nearby-report-${observationIdentity(o).replace(/[^A-Za-z0-9_-]/g, "_")}`)}>{o.locName}</a
                 >
                 <a
                   class="hotspot-badge"
@@ -851,7 +855,7 @@
         {/if}
       {:else}
         {#each nearestView.current.data.rows as o (observationIdentity(o))}
-          <div class="nrow">
+          <div class="nrow path-focus-target" id={`species-nearest-report-${observationIdentity(o).replace(/[^A-Za-z0-9_-]/g, "_")}`}>
             <div class="nline1">
               {#if o.distanceKm != null}
                 <span class="ndist"
@@ -863,7 +867,8 @@
                      with its context intact (GROK P3 on 3b12042). -->
                 <a
                   class="nplace"
-                  href={`/hotspots/${o.locId}?returnTo=${encodeURIComponent(page.url.pathname + page.url.search)}`}
+                  href={withReturnTo(`/hotspots/${o.locId}`, speciesContextHref, undefined, data.taxon.com_name)}
+                  onclick={adopt(o.locName, `species-nearest-report-${observationIdentity(o).replace(/[^A-Za-z0-9_-]/g, "_")}`)}
                   >{o.locName}</a
                 >
               {:else}
@@ -1114,6 +1119,7 @@
 </div>
 
 <style>
+  .obs .place-link, .nplace { display: inline-flex; align-items: center; min-height: 48px; }
   .taxonomy-link { display:inline-flex; align-items:center; min-height:48px; }
   .ribbon-disclosure > summary {
     display: flex;

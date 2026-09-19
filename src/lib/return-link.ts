@@ -1,3 +1,5 @@
+import { parseLocalHref } from "$lib/navigation-context";
+
 /**
  * Canonical-route helpers shared by the unified Home, the `/targets`
  * compatibility redirect, and the species drilldown's back link.
@@ -50,8 +52,14 @@ const LABELED_PATHS: [path: string, label: string][] = [
   ["/photos", "Photos"],
 ];
 
-export function safeReturnTo(raw: string | null | undefined): ReturnLink {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+function safeReturnLabel(raw: string | null | undefined): string | null {
+	if (typeof raw !== "string" || raw.length === 0 || raw.length > 160 || /[\u0000-\u001f\u007f]/u.test(raw)) return null;
+	const label = raw.trim();
+	return label || null;
+}
+
+export function safeReturnTo(raw: string | null | undefined, suppliedLabel?: string | null): ReturnLink {
+	if (!raw || !parseLocalHref(raw)) {
     return { href: HOME_PATH, label: HOME_LABEL };
   }
   const isHome =
@@ -59,19 +67,19 @@ export function safeReturnTo(raw: string | null | undefined): ReturnLink {
     raw.startsWith("/?") ||
     raw === LEGACY_HOME_PATH ||
     raw.startsWith(`${LEGACY_HOME_PATH}?`);
-  if (isHome) return { href: raw, label: HOME_LABEL };
+	if (isHome) return { href: raw, label: HOME_LABEL };
   // The Field guide is exact-or-query only — "/species/..." is a species
   // DETAIL page and must fall through to "Back", not read as the guide.
   if (raw === "/species" || raw.startsWith("/species?")) {
-    return { href: raw, label: "Field guide" };
+		return { href: raw, label: safeReturnLabel(suppliedLabel) ?? "Field guide" };
   }
   // Most-specific prefix first (the list is ordered that way).
   for (const [path, label] of LABELED_PATHS) {
     if (raw === path || raw.startsWith(`${path}?`) || raw.startsWith(`${path}/`)) {
-      return { href: raw, label };
+			return { href: raw, label: safeReturnLabel(suppliedLabel) ?? label };
     }
   }
-  return { href: raw, label: "Back" };
+	return { href: raw, label: safeReturnLabel(suppliedLabel) ?? "Back" };
 }
 
 /** A species DETAIL page: `/species/<code>`, never the guide index itself. */

@@ -9,6 +9,7 @@
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
 	import type { LayoutData } from './$types';
 	import { DEFAULT_THEME, themeDefinition } from '$lib/themes';
+	import { navigationAfterNavigate } from '$lib/navigation-context.svelte';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -34,7 +35,8 @@
 	});
 	// Drains an owed page refresh (job finished while navigating/off-forecast
 	// and the poller has since gone quiet) on forecast arrival — td-671082.
-	afterNavigate(() => {
+	afterNavigate((navigation) => {
+		queueMicrotask(() => navigationAfterNavigate(data.user?.id, navigation.type));
 		if (data.user) jobsPoll.onNavigated();
 	});
 	const activeJob = $derived.by(() => {

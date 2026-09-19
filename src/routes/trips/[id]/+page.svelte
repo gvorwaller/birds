@@ -12,6 +12,10 @@
   import { optimizeDrivingRoute, formatDuration } from "$lib/route";
   import { formatDistance, mapsRouteUrl, type DistanceUnit } from "$lib/geo";
   import { calendarMonth } from "$lib/forecast-calendar";
+  import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { canonicalHref, withReturnTo } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
   import { formatLegacyCountSnapshot, formatPlannedCountSnapshot } from "$lib/trip-count-context";
   import {
     formatFeet,
@@ -205,7 +209,12 @@
     p.set("lng", s.lon!.toFixed(5));
     p.set("loc", s.custom_name ?? s.hotspot_id ?? "Trip stop");
     p.set("month", String(tripMonth));
-    return `/forecast?${p.toString()}`;
+    return withReturnTo(`/forecast?${p.toString()}`, tripContextHref, undefined, data.trip.name);
+  }
+
+  const tripContextHref = $derived(canonicalHref(page.url.pathname + page.url.search + page.url.hash) ?? `/trips/${data.trip.id}`);
+  function adopt(label: string, originId: string) {
+    return (event: MouseEvent) => navigationAction(data.user?.id, { label, originId })(event);
   }
 
   const MAPS_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
@@ -306,7 +315,7 @@
 
 <div class="page">
   <header class="page-head">
-    <p class="sub"><a href="/trips">← Trips</a></p>
+    <PathNavigation accountId={data.user?.id} label={data.trip.name} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/trips" fallbackLabel="Trips" />
     <div class="title-row">
       <h1>{data.trip.name}</h1>
       {#if data.canEdit}
@@ -556,7 +565,7 @@
       <p class="muted">No stops yet — add one below.</p>
     {/if}
     {#each data.stops as s, i (s.id)}
-      <div class="stop">
+      <div class="stop path-focus-target" id={`trip-stop-${s.id}`}>
         <div class="ordnum">{i + 1}</div>
         <div class="grow">
           <div class="name">
@@ -566,7 +575,8 @@
                    hotspot membership. -->
               <a
                 class="place-link"
-                href={`/hotspots/${s.hotspot_id}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
+                href={withReturnTo(`/hotspots/${s.hotspot_id}`, tripContextHref, undefined, data.trip.name)}
+                onclick={adopt(s.custom_name ?? "Stop", `trip-stop-${s.id}`)}
                 >{s.custom_name ?? "Stop"}</a
               >
               {#if s.isVerifiedHotspot}
@@ -620,7 +630,8 @@
                   <span class="needlist">
                     {#each stopNeeds as sp, i (sp.code)}
                       <a
-                        href={`/species/${sp.code}?returnTo=${encodeURIComponent(`/trips/${data.trip.id}`)}`}
+                        href={withReturnTo(`/species/${sp.code}?back=14`, tripContextHref, undefined, data.trip.name)}
+                        onclick={adopt(sp.comName, `trip-stop-${s.id}`)}
                         >{sp.comName}</a
                       >{i < stopNeeds.length - 1 ? " · " : ""}
                     {/each}

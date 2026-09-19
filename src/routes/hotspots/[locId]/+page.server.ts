@@ -39,7 +39,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     Number.isInteger(monthRaw) && monthRaw >= 1 && monthRaw <= 12
       ? monthRaw
       : new Date().getMonth() + 1;
-  const returnLink = safeReturnTo(url.searchParams.get("returnTo"));
+  const returnLink = safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel"));
 
   const [listMeta, officialCache, place, freqMap, seen, home, lastLoad] = await Promise.all([
     hotspotFromCache(locId),

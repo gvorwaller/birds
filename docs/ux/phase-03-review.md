@@ -151,7 +151,8 @@ and deployment logs. The unrelated migration 0049 comment remains untouched.
 
 ## Disposition
 
-Phase 3 td-766bfd and linked td-3d9544 / td-d71bad are released. The streaming
-repair is tracked as td-602a41. Phase 4 **td-c9e804** is implemented and accepted for review from its
-[detailed specification](phase-04-load-recovery.md). The parent UX epic remains
-in progress; phase 4 has not been committed or deployed.
+Phase 3 td-766bfd and linked td-3d9544 / td-d71bad are released; the streaming
+repair is td-602a41. Phase 4 td-c9e804 is also released as 05ba3af;
+[production acceptance](phase-04-review.md). The parent UX epic remains in
+progress, with [phase 5A](phase-05a-navigation-context.md) now implementing
+shared journey context and safe place links.

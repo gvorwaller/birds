@@ -23,6 +23,7 @@ import {
   selectEffectiveRadiusKm,
 } from "$lib/near-me-radius";
 import { parsePin } from "$lib/pin-params";
+import { safeReturnTo } from "$lib/return-link";
 
 function parseMonth(raw: string | null, fallback: number): number {
   const n = Number(raw);
@@ -35,6 +36,8 @@ function parseMonth(raw: string | null, fallback: number): number {
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
+  const chooseLocation = url.searchParams.get("chooseLocation") === "1";
+  const returnLink = safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel"));
   const place = (url.searchParams.get("place") ?? "").trim();
   // Defaults to the CURRENT month — a real, visible value, not a hidden one.
   const month = parseMonth(
@@ -99,7 +102,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     location = pin;
     originKind = "pin";
   }
-  if (!location && !placeFailed && home) {
+  if (!location && !placeFailed && home && !chooseLocation) {
     location = home;
     originKind = "home";
   }
@@ -162,6 +165,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     analysis,
     error,
     needsLocation: !location,
+    chooseLocation,
+    returnLink,
     hasApiKey: !!apiKey,
     hasLogin: credsRow.rows[0]?.login_set === true,
     isViewer,

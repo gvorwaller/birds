@@ -3,6 +3,11 @@
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import { enhance } from "$app/forms";
   import { page } from "$app/state";
+  import PathNavigation from "$components/PathNavigation.svelte";
+  import { canonicalHref, withReturnTo, type NavigationUiState } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
+  import { hotspotForecastHref } from "$lib/place-forecast";
+  import { speciesLinkHref } from "$lib/species-context";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { jobPresentationText } from "$lib/job-presentation";
   import {
@@ -35,13 +40,17 @@
   });
 
   function tabHref(tab: "recent" | "monthly", extra: Record<string, string> = {}): string {
-    const p = new URLSearchParams();
-    if (tab === "monthly") p.set("tab", "monthly");
-    if (tab === "recent" && extra.back) p.set("back", extra.back);
-    if (tab === "monthly") p.set("month", extra.month ?? String(data.month));
-    if (data.returnLink.href !== "/") p.set("returnTo", data.returnLink.href);
-    const s = p.toString();
-    return `/hotspots/${data.locId}${s ? `?${s}` : ""}`;
+    const p = new URLSearchParams(page.url.searchParams);
+    p.delete("returnTo");
+    p.delete("returnLabel");
+    if (tab === "monthly") {
+      p.set("tab", "monthly");
+      p.set("month", extra.month ?? String(data.month));
+    } else {
+      p.delete("tab");
+      if (extra.back) p.set("back", extra.back);
+    }
+    return withReturnTo(`/hotspots/${data.locId}?${p}`, data.returnLink.href, undefined, data.returnLink.label);
   }
 
   function actionHref(name: "load_hotspot" | "load_area_hotspots"): string {
@@ -69,10 +78,21 @@
       : null,
   );
   const forecastHref = $derived(
-    data.lat != null && data.lng != null
-      ? `/forecast?lat=${data.lat.toFixed(5)}&lng=${data.lng.toFixed(5)}&label=${encodeURIComponent(data.locName ?? data.locId)}`
-      : "/forecast",
+    hotspotForecastHref({ locId: data.locId, locName: data.locName, lat: data.lat, lng: data.lng, month: data.month, returnTo: page.url.pathname + page.url.search + page.url.hash }),
   );
+  const currentCanonical = $derived(canonicalHref(page.url.pathname + page.url.search + page.url.hash) ?? `/hotspots/${data.locId}`);
+  function adopt(label: string, originId: string) {
+    return (event: MouseEvent) => navigationAction(data.user?.id, { label, originId, ui: { expanded: showAllMonthly } })(event);
+  }
+  function speciesHref(code: string, source: string): string {
+    const context = data.lat != null && data.lng != null
+      ? { lat: data.lat, lng: data.lng, distKm: 50, label: data.locName ?? data.locId }
+      : null;
+    return withReturnTo(speciesLinkHref(code, { backDays: data.back, returnTo: source, context }), source, undefined, data.locName ?? data.locId);
+  }
+  function restoreNavigation(state: { originId: string | null; focusId: string | null; ui: NavigationUiState | null }) {
+    if (state.ui?.expanded) showAllMonthly = true;
+  }
   // Existing planner contract: place + lat + lng (GROK veto on locId param).
   const tripHref = $derived(
     data.lat != null && data.lng != null && data.locName
@@ -99,7 +119,7 @@
 
 <div class="page">
   <header class="page-head">
-    <p class="sub"><a href={data.returnLink.href}>← {data.returnLink.label}</a></p>
+    <PathNavigation accountId={data.user?.id} label={data.locName ?? data.locId} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref={data.returnLink.href} fallbackLabel={data.returnLink.label} hasExplicitSource={data.returnLink.href !== "/"} onRestore={restoreNavigation} />
     <h1>
       {data.locName ?? data.locId}
       {#if data.verified}<Badge kind="notable" label="eBird hotspot" />{/if}
@@ -132,7 +152,7 @@
           rel="noopener">eBird ↗</a
         >.
       </p>
-      <p class="muted">Try <a href={forecastHref}>Forecast recovery</a> to search nearby reported locations.</p>
+      <p class="muted">Try <a href={forecastHref}>Choose location for forecast</a> to search nearby reported locations.</p>
       {#if data.isViewer}
         <p class="muted">Viewer accounts cannot verify or queue historical loads.</p>
       {/if}
@@ -161,7 +181,11 @@
     <section class="card actions">
       {#if mapsHref}<a class="act" href={mapsHref} target="_blank" rel="noopener">🗺 Maps</a>{/if}
       {#if directionsHref}<a class="act" href={directionsHref} target="_blank" rel="noopener">🚗 Directions</a>{/if}
-      <a class="act" href={forecastHref}>📅 Forecast my needs here</a>
+      {#if data.lat != null && data.lng != null}
+        <a class="act" href={forecastHref}>📅 Forecast my needs here</a>
+      {:else}
+        <span class="muted forecast-choice">This location has no verified coordinates for a forecast. <a href={forecastHref}>Choose location for forecast</a>.</span>
+      {/if}
       {#if tripHref}<a class="act" href={tripHref}>🧭 Add to trip</a>{/if}
       <a class="act" href={`https://ebird.org/hotspot/${data.locId}`} target="_blank" rel="noopener">eBird ↗</a>
     </section>
@@ -336,8 +360,8 @@
             <h3 class="day">{dayLabel(day.date)}</h3>
             <ul class="obs">
               {#each day.reports as sp (sp.speciesCode)}
-                <li>
-                  <a href={`/species/${sp.speciesCode}?returnTo=${encodeURIComponent(`/hotspots/${data.locId}`)}`}
+                <li class="path-focus-target" id={`hotspot-recent-${sp.speciesCode}`}>
+                  <a href={speciesHref(sp.speciesCode, currentCanonical)} onclick={adopt(sp.comName, `hotspot-recent-${sp.speciesCode}`)}
                     >{sp.comName}</a
                   >
                   {#if sp.howMany != null && sp.howMany > 1}<span class="muted"
@@ -396,8 +420,8 @@
           {:else}
             <ul class="mspecies">
               {#each showAllMonthly ? data.monthly.species : data.monthly.species.slice(0, MONTHLY_PREVIEW) as sp (sp.speciesCode)}
-                <li>
-                  <a href={`/species/${sp.speciesCode}?returnTo=${encodeURIComponent(`/hotspots/${data.locId}?tab=monthly&month=${data.month}`)}`}
+                <li class="path-focus-target" id={`hotspot-monthly-${sp.speciesCode}`}>
+                  <a href={speciesHref(sp.speciesCode, canonicalHref(tabHref("monthly", { month: String(data.month) })) ?? currentCanonical)} onclick={adopt(sp.comName, `hotspot-monthly-${sp.speciesCode}`)}
                     >{sp.comName}</a
                   >
                   <span class="muted">{pct(sp.freq)}{sp.lowSample ? "†" : ""}</span>

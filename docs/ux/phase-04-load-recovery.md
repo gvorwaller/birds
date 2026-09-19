@@ -1,7 +1,7 @@
 # Birds UX phase 4 — trustworthy load recovery and job states
 
 September 19, 2026 · Parent td-8ff597 · F15
-Status: implemented and independently accepted for review — td-c9e804. Phase 3 is deployed and production-verified at 505382b.
+Status: released and production-verified as 05ba3af — td-c9e804.
 
 Acceptance evidence: [phase 4 review record](phase-04-review.md).
 

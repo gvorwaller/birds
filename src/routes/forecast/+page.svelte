@@ -14,6 +14,7 @@
   import { jobPresentationText } from "$lib/job-presentation";
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
+  import PathNavigation from "$components/PathNavigation.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -54,6 +55,7 @@
   const analysisPending = $derived(data.analysis != null && analysis == null);
   let showPicker = $state(false);
   let picked = $state<PickedLocation | null>(null);
+  const returnLabel = $derived(page.url.searchParams.get("returnLabel") ?? "");
 
   function usePicked() {
     if (!picked) return;
@@ -63,6 +65,8 @@
     p.set("loc", picked.label);
     p.set("month", String(data.month));
     p.set("dist", String(data.dist));
+    if (data.returnLink.href !== "/") p.set("returnTo", data.returnLink.href);
+    if (returnLabel) p.set("returnLabel", returnLabel);
     showPicker = false;
     picked = null;
     goto(`/forecast?${p.toString()}`);
@@ -79,7 +83,7 @@
   // Species links carry a returnTo (so "← Forecast" comes back here with the
   // same place/month) plus the forecast origin as location context, so the
   // species page reports on the area being forecast — same pattern as Home.
-  const returnTo = $derived(page.url.pathname + page.url.search);
+  const returnTo = $derived(page.url.pathname + page.url.search + page.url.hash);
   function speciesHref(code: string): string {
     return speciesLinkHref(code, {
       backDays: SPECIES_DEFAULT_BACK_DAYS,
@@ -374,6 +378,7 @@
 </svelte:head>
 
 <div class="page">
+  <PathNavigation accountId={data.user?.id} label={data.location?.label ?? "Forecast"} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref={data.returnLink.href} fallbackLabel={data.returnLink.label} hasExplicitSource={data.returnLink.href !== "/"} />
   <h1>Forecast</h1>
   <ForecastTabs
     mode="area"
@@ -388,6 +393,9 @@
 
   <section class="card">
     <form method="GET" class="filters">
+      {#if data.returnLink.href !== "/"}<input type="hidden" name="returnTo" value={data.returnLink.href} />{/if}
+      {#if returnLabel}<input type="hidden" name="returnLabel" value={returnLabel} />{/if}
+      {#if data.chooseLocation}<input type="hidden" name="chooseLocation" value="1" />{/if}
       {#if data.originKind === "pin" && data.location}
         <input type="hidden" name="lat" value={data.location.lat.toFixed(5)} />
         <input type="hidden" name="lng" value={data.location.lng.toFixed(5)} />
@@ -470,8 +478,8 @@
     {/if}
     {#if data.needsLocation}
       <p class="notice">
-        Search a place above, or set a home location in
-        <a href="/settings">Settings</a>.
+        {#if data.chooseLocation}Choose a location for this forecast. Search a place or drop a pin; saved Home is not used automatically.{:else}Search a place above, or set a home location in
+        <a href="/settings">Settings</a>.{/if}
       </p>
     {:else if !data.hasApiKey}
       <p class="notice">

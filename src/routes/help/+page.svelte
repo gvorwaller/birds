@@ -265,6 +265,12 @@
 					</li>
 				</ul>
 				<h3>Hotspot pages</h3>
+                <p>Trip, hotspot and bird pages keep a named path back to the same stop
+                or report row, including your hotspot month and expanded list. Use
+                <strong>Your path</strong> to return farther back. In nearby reports,
+                the place name opens its hotspot here; the separate eBird badge opens eBird.
+                A location without usable coordinates opens a Forecast location chooser;
+                it will not silently use Home or a remembered search.</p>
 				<ul>
 					<li>
 						Tap any <strong>hotspot name</strong> — on Home's best places,

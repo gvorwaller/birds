@@ -26,12 +26,13 @@ spec is an executable work order beneath it, not a competing backlog.
 streaming repair `505382b`; [production acceptance](phase-03-review.md) records
 healthy services and authenticated Home, species and Nearest checks.
 
-Phase 4 **td-c9e804** is implemented and independently accepted for review from its
-[detailed specification](phase-04-load-recovery.md); the
-[review record](phase-04-review.md) distinguishes actual metadata recovery,
-worker completion and retry evidence from injected display checks. It is not
-committed or deployed. Phase 5 will address shared navigation context and
-place-preserving links.
+Phase 4 **td-c9e804** is released as `05ba3af`; its
+[review record](phase-04-review.md) includes real worker and production evidence.
+Phase **5A td-ea384e** is independently accepted and submitted for review; its
+[acceptance record](phase-05a-review.md) covers real browser journeys. It implements the
+[detailed specification](phase-05a-navigation-context.md): shared journey core,
+trip/hotspot/bird returns and safe place links. Phase **5B** will then adopt the
+core across remaining entry points. Neither slice is deployed yet.
 
 ## Phase queue
 
@@ -42,7 +43,8 @@ place-preserving links.
 | 2B | Comparable ranking evidence, progress/completeness and Home Best places | F13; td-f730cf; [detailed specification](phase-02b-comparable-rankings.md) |
 | 3 | Recent-report source/window/review status, deduplication, personal sightings and Nearest consistency | F14; td-766bfd, td-3d9544 / td-d71bad; [specification](phase-03-report-evidence.md) |
 | 4 | Missing hotspot metadata recovery and clear paused/scheduled/running load states | F15; td-c9e804; [detailed specification](phase-04-load-recovery.md) |
-| 5 | Shared navigation context and place-preserving links, split into core and route-adoption phases if needed | F01–F02; release-1 units A/B |
+| 5A | Shared journey core, trip/hotspot/bird returns and safe place links | F01–F02; td-ea384e; [specification](phase-05a-navigation-context.md) |
+| 5B | Adopt journey context across remaining list/search/county entry points | F01; remaining release-1 units A/B |
 | 6 | Keyboard drawer, map reveal/focus and touched control sizing | F03/F08/F09 |
 | 7 | Compact Field Guide controls and species section navigation | F04/F05; preserve full dataset and search behavior |
 | Later | Unified geographic selection, list scope and field-use trips, in independently specified slices | Existing roadmap packages B/C and remaining tickets |
