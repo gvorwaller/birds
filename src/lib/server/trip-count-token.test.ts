@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("$env/dynamic/private", () => ({ env: { AUTH_SECRET: "test-auth-secret" } }));
+vi.mock("$env/dynamic/private", () => ({
+  env: { AUTH_SECRET: "test-auth-secret" },
+}));
 
-import { issueTripCountToken, verifyTripCountToken, TripCountTokenError } from "./trip-count-token";
+import {
+  issueTripCountToken,
+  verifyTripCountToken,
+  TripCountTokenError,
+} from "./trip-count-token";
 
 const context = {
   version: 1 as const,
@@ -22,23 +28,83 @@ const context = {
   stale: false,
 };
 
+const hotspotContext = {
+  version: 2 as const,
+  source: "hotspot-notable" as const,
+  reportPolicy: "including-unconfirmed" as const,
+  seenStatus: "all" as const,
+  daysBack: 30,
+  anchorLat: 30.41,
+  anchorLng: -81.42,
+  radiusKm: 40,
+  anchorLabel: "Huguenot",
+  locationId: "L127286",
+  locationLat: 30.41,
+  locationLng: -81.42,
+  count: 3,
+  fetchedAt: "2026-09-18T12:00:00.000Z",
+  plannedAt: "2026-09-18T12:01:00.000Z",
+  stale: false,
+};
+
 describe("trip count token", () => {
   it("binds account, scope, context and expiry", () => {
     const token = issueTripCountToken(7, 42, context);
     const now = Date.parse(context.plannedAt) + 1;
-    expect(verifyTripCountToken(token, 7, 42, now)).toMatchObject({ accountId: 7, scopeOwnerId: 42, context });
-    expect(() => verifyTripCountToken(token, 8, 42, now)).toThrow(TripCountTokenError);
-    expect(() => verifyTripCountToken(token, 7, 43, now)).toThrow(TripCountTokenError);
-    expect(() => verifyTripCountToken(token, 7, 42, Date.parse(context.plannedAt) + 24 * 60 * 60 * 1000)).toThrow(TripCountTokenError);
+    expect(verifyTripCountToken(token, 7, 42, now)).toMatchObject({
+      accountId: 7,
+      scopeOwnerId: 42,
+      context,
+    });
+    expect(() => verifyTripCountToken(token, 8, 42, now)).toThrow(
+      TripCountTokenError,
+    );
+    expect(() => verifyTripCountToken(token, 7, 43, now)).toThrow(
+      TripCountTokenError,
+    );
+    expect(() =>
+      verifyTripCountToken(
+        token,
+        7,
+        42,
+        Date.parse(context.plannedAt) + 24 * 60 * 60 * 1000,
+      ),
+    ).toThrow(TripCountTokenError);
   });
 
   it("rejects tampering, malformed context and fractional/negative counts", () => {
     const token = issueTripCountToken(7, 42, context);
     const [body, sig] = token.split(".");
     const tampered = `${Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(body, "base64url").toString()), context: { ...context, count: -1 } })).toString("base64url")}.${sig}`;
-    expect(() => verifyTripCountToken(tampered, 7, 42)).toThrow(TripCountTokenError);
-    expect(() => issueTripCountToken(7, 42, { ...context, count: 1.5 })).toThrow(TripCountTokenError);
-    expect(() => issueTripCountToken(7, 42, { ...context, count: -1 })).toThrow(TripCountTokenError);
-    expect(() => verifyTripCountToken(`${body}.bad`, 7, 42)).toThrow(TripCountTokenError);
+    expect(() => verifyTripCountToken(tampered, 7, 42)).toThrow(
+      TripCountTokenError,
+    );
+    expect(() =>
+      issueTripCountToken(7, 42, { ...context, count: 1.5 }),
+    ).toThrow(TripCountTokenError);
+    expect(() => issueTripCountToken(7, 42, { ...context, count: -1 })).toThrow(
+      TripCountTokenError,
+    );
+    expect(() => verifyTripCountToken(`${body}.bad`, 7, 42)).toThrow(
+      TripCountTokenError,
+    );
+  });
+
+  it("signs and verifies a strict v2 per-hotspot snapshot", () => {
+    const token = issueTripCountToken(7, 42, hotspotContext);
+    expect(
+      verifyTripCountToken(
+        token,
+        7,
+        42,
+        Date.parse(hotspotContext.plannedAt) + 1,
+      ).context,
+    ).toEqual(hotspotContext);
+    expect(() =>
+      issueTripCountToken(7, 42, {
+        ...hotspotContext,
+        reportPolicy: "all" as never,
+      }),
+    ).toThrow(TripCountTokenError);
   });
 });

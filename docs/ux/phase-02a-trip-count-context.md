@@ -1,7 +1,7 @@
 # Birds UX phase 2A — counts that keep their meaning
 
 September 18, 2026 · Parent td-8ff597 · Source finding F13
-Status: implemented and independently reviewed in test. See the [review record](phase-02a-review.md). Not committed or deployed.
+Status: released as `0ddf28a` on September 19, 2026. See the [review record](phase-02a-review.md) for independent acceptance and production verification.
 
 ## Outcome and phase boundary
 

@@ -16,7 +16,7 @@ import {
 } from "$server/query-engine";
 import { savePlannedTrip, type PlannedTripStopInput } from "$server/trips";
 import { issueTripCountToken, verifyTripCountToken, TripCountTokenError } from "$server/trip-count-token";
-import { contextMatchesStop, parseTripCountContext, type TripCountContext } from "$lib/trip-count-context";
+import { contextMatchesStop, parseAnyTripCountContext, type AnyTripCountContext, type TripCountContext } from "$lib/trip-count-context";
 
 const DEFAULTS = {
   radiusMi: 10,
@@ -281,7 +281,7 @@ export const actions: Actions = {
       if (identities.has(identity)) return fail(400, { error: "The preview contained a duplicate stop — re-run the plan." });
       identities.add(identity);
       const historical = hotspotId === null && count === null && token == null;
-      let context: TripCountContext | null = null;
+      let context: AnyTripCountContext | null = null;
       if (!historical) {
         if (typeof token !== "string" || !token || count === null) {
           return fail(400, { error: "This trip preview is missing its signed count snapshot — re-run the plan." });
@@ -291,7 +291,7 @@ export const actions: Actions = {
           if (!contextMatchesStop(verified.context, { hotspot_id: hotspotId, lat, lon, target_count_at_save: count })) {
             return fail(400, { error: "This trip preview changed location or count — re-run the plan." });
           }
-          context = parseTripCountContext(verified.context);
+          context = parseAnyTripCountContext(verified.context);
         } catch (err) {
           return fail(400, { error: err instanceof TripCountTokenError ? err.message : "Trip count snapshot configuration is unavailable." });
         }

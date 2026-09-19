@@ -20,7 +20,7 @@ vi.mock("$server/query-engine", () => ({
 }));
 
 import { actions, load } from "./+page.server";
-import { verifyTripCountToken } from "$server/trip-count-token";
+import { issueTripCountToken, verifyTripCountToken } from "$server/trip-count-token";
 
 const candidate = {
   locId: null,
@@ -154,5 +154,13 @@ describe("trip planner count token boundary", () => {
   it("saves a historical stop with null hotspot, count and context", async () => {
     await expect(actions.save(saveEvent([{ hotspot_id: null, name: "Museum", lat: 30, lon: -81, notes: null, target_count_at_save: null, count_context_token: null }]))).rejects.toMatchObject({ status: 303 });
     expect(mocks.savePlannedTrip).toHaveBeenCalledWith(7, expect.anything(), [expect.objectContaining({ hotspot_id: null, target_count_at_save: null, planned_count_context: null })]);
+  });
+
+  it("accepts a real signed v2 per-hotspot snapshot and persists its JSONB context", async () => {
+    const now = new Date().toISOString();
+    const context = { version: 2 as const, source: "hotspot-recent" as const, reportPolicy: "including-unconfirmed" as const, seenStatus: "needs" as const, daysBack: 30, anchorLat: 30.41, anchorLng: -81.42, radiusKm: 25, anchorLabel: "Huguenot", locationId: "L127286", locationLat: 30.41, locationLng: -81.42, count: 2, fetchedAt: now, plannedAt: now, stale: false };
+    const token = issueTripCountToken(7, 42, context);
+    await expect(actions.save(saveEvent([stop({ hotspot_id: "L127286", name: "Huguenot Memorial City Park", lat: 30.41, lon: -81.42, target_count_at_save: 2, count_context_token: token })]))).rejects.toMatchObject({ status: 303 });
+    expect(mocks.savePlannedTrip).toHaveBeenCalledWith(7, expect.anything(), [expect.objectContaining({ planned_count_context: verifyTripCountToken(token, 7, 42).context })]);
   });
 });

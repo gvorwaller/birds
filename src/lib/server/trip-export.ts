@@ -19,7 +19,7 @@
 import type { Trip, TripStop } from '$server/trips';
 import { formatDistance, mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 import { normalizeTripStopNote } from '$lib/planner-note';
-import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type TripCountContext } from '$lib/trip-count-context';
+import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type AnyTripCountContext } from '$lib/trip-count-context';
 
 export interface TripExportData {
 	trip: Trip;
@@ -39,7 +39,7 @@ export interface TripExportData {
 	/** Injectable for deterministic tests; defaults to now. */
 	generatedAt?: Date;
 	/** Validated saved planner snapshots keyed by stop id. */
-	plannedContexts?: Map<number, TripCountContext>;
+	plannedContexts?: Map<number, AnyTripCountContext>;
 	/** Batched cache membership; an id alone is never proof of hotspot status. */
 	verifiedHotspotIds?: ReadonlySet<string>;
 }

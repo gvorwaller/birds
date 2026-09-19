@@ -32,6 +32,7 @@ const {
   nearestObsOfSpecies,
   recentSpeciesInRegion,
   notableNearbyObs,
+  hotspotsNear,
 } = await import("./ebird");
 
 /** Always a cache miss, so every call reaches the coalescing path. */
@@ -166,6 +167,14 @@ describe("recentSpeciesInRegion (ladder rung)", () => {
 });
 
 describe("cachedFetch coalescing", () => {
+  it("retains the refresh status when serving a stale fallback", async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ payload: [], fetched_at: "2026-09-18T00:00:00.000Z" }] });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) }) as unknown as Response));
+    const result = await hotspotsNear("key", 30.33, -81.66, 40);
+    expect(result).toMatchObject({ stale: true, refreshErrorStatus: 429, data: [] });
+  });
+
   it("shares one upstream request between concurrent callers of the same key", async () => {
     const [a, b, c] = await Promise.all([
       recentNearbyObs("key", 30.33, -81.66, 40, 7),

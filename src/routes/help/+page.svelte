@@ -107,6 +107,13 @@
 						checking access.
 					</li>
 					<li>
+						<strong>Compare hotspots</strong> checks every verified hotspot in the
+						selected radius using that hotspot's own recent public reports. It shows
+						progress, stale or failed results, and keeps the area-feed preview labeled
+						as incomplete. In the planner, press <strong>Use compared ranking</strong>
+						explicitly before it changes the suggested route.
+					</li>
+					<li>
 						The map and the “distinct matching species across the route” summary update live
 						as you curate, and the stops are ordered into an efficient route from
 						your start point.

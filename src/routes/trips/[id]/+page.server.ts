@@ -38,7 +38,7 @@ import {
   googlePlaceIdsForLocIds,
   hydrateEbirdLocationPlaceIds,
 } from "$server/location-placeids";
-import { contextMatchesStop, parseTripCountContext } from "$lib/trip-count-context";
+import { contextMatchesStop, parseAnyTripCountContext } from "$lib/trip-count-context";
 
 async function homeOf(
   userId: number,
@@ -98,7 +98,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     ...s,
     plannedCountContext:
       (() => {
-        const context = parseTripCountContext(s.planned_count_context);
+        const context = parseAnyTripCountContext(s.planned_count_context);
         return context && contextMatchesStop(context, s) ? context : null;
       })(),
     isVerifiedHotspot:

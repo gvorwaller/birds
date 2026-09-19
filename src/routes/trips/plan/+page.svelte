@@ -5,12 +5,16 @@
   import MapLink from "$components/MapLink.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
+  import HotspotComparison from "$components/HotspotComparison.svelte";
   import {
     formatDistance,
+    milesToKm,
     nearestNeighborOrder,
     type DistanceUnit,
   } from "$lib/geo";
   import { plannerTargetNote } from "$lib/planner-note";
+  import type { HotspotComparisonRow } from "$lib/hotspot-comparison";
+  import { applyComparedRanking, plannerCandidateKey } from "$lib/planner-comparison";
   import { countModeLabel } from "$lib/trip-count-context";
   import {
     BACK_OPTIONS,
@@ -53,11 +57,11 @@
   type PreviewStop = NonNullable<PageData["preview"]>["stops"][number];
   type Candidate = NonNullable<PageData["query"]>["candidates"][number];
 
-  const candKey = (c: { locId: string | null; lat: number; lng: number }) =>
-    c.locId ?? `${c.lat},${c.lng}`;
+  const candKey = plannerCandidateKey;
   const stopKey = (s: PreviewStop) => s.hotspotId ?? `${s.lat},${s.lng}`;
 
   function noteFor(c: Candidate): string {
+    if (c.matchCount === 0) return "No matching species in the checked public reports; this reported zero does not mean the species is absent.";
     const names = c.triggerSpecies.slice(0, 4).map((t) => t.comName);
     const extra = c.triggerSpecies.length - names.length;
     return plannerTargetNote(names, c.lastObsDt.slice(0, 10), extra);
@@ -109,12 +113,21 @@
   let selected = $state(untrack(() => new Set(defaultKeys)));
   let includeHistorical = $state(untrack(() => !!historicalStop));
   let appliedSig = $state(untrack(() => planSig));
+  let comparedCandidates = $state<Candidate[] | null>(null);
+  let comparedTokens = $state<Record<string, string>>({});
+  let comparedShortage = $state<string | null>(null);
+
+  let activeCandidates = $derived(comparedCandidates ?? (data.query?.candidates ?? []));
+  let activeTokens = $derived(comparedCandidates ? comparedTokens : data.candidateTokens);
 
   $effect(() => {
     if (planSig !== appliedSig) {
       appliedSig = planSig;
       selected = new Set(defaultKeys);
       includeHistorical = !!historicalStop;
+      comparedCandidates = null;
+      comparedTokens = {};
+      comparedShortage = null;
     }
   });
 
@@ -125,9 +138,18 @@
     selected = next;
   }
 
+  function applyCompared(rows: HotspotComparisonRow[]) {
+    if (!data.query) return;
+    const merged = applyComparedRanking({ rows, originalCandidates: data.query.candidates, previousCandidates: activeCandidates, selectedKeys: selected, existingTokens: data.candidateTokens, minNeeds: data.inputs.minNeeds, requestedStops: data.inputs.stops });
+    comparedCandidates = merged.candidates;
+    comparedTokens = merged.tokens;
+    selected = merged.selectedKeys;
+    comparedShortage = merged.shortage;
+  }
+
   // Selected hotspots in candidate-rank order, mapped to the stop shape.
   let hotspotStops = $derived<PreviewStop[]>(
-    (data.query?.candidates ?? [])
+    activeCandidates
       .filter((c) => selected.has(candKey(c)))
       .map((c) => ({
         hotspotId: c.locId,
@@ -191,8 +213,8 @@
         google_place_id: s.googlePlaceId,
         notes: s.note,
         target_count_at_save: s.matchCount,
-        count_context_token:
-          s.kind === "historical" ? null : data.candidateTokens[stopKey(s)] ?? null,
+          count_context_token:
+          s.kind === "historical" ? null : activeTokens[stopKey(s)] ?? null,
       })),
     ),
   );
@@ -344,6 +366,15 @@
     </section>
   {/if}
 
+  {#if data.anchor}
+    <HotspotComparison
+      filters={{ lat: data.anchor.lat, lng: data.anchor.lng, radiusKm: data.query?.filters.radiusKm ?? milesToKm(data.inputs.radiusMi), daysBack: data.query?.filters.daysBack ?? data.inputs.back, seenStatus: data.query?.filters.seenStatus ?? data.inputs.seenStatus, rareOnly: data.query?.filters.rareOnly ?? data.inputs.rareOnly, anchorLabel: data.anchor.label }}
+      {distanceUnit}
+      canApply={!!data.query}
+      onApply={applyCompared}
+    />
+  {/if}
+
   {#if data.preview}
     {#if mapStops.length > 0}
       <section class="card map-card">
@@ -359,9 +390,17 @@
         {#if data.preview.stale}<Badge kind="stale" label="cached" />{/if}
       </div>
 
-      {#each data.preview.warnings as w (w)}
-        <p class="warn">{w}</p>
-      {/each}
+      {#if comparedCandidates}
+        <p class="muted compared-note">Compared ranking is based on each verified hotspot's own checked reports; the route below is your explicit applied selection.</p>
+        {#if comparedShortage}<p class="warn">{comparedShortage}</p>{/if}
+        {#each data.preview.warnings.filter((warning) => /historical|culture/i.test(warning)) as w (w)}
+          <p class="warn">{w}</p>
+        {/each}
+      {:else}
+        {#each data.preview.warnings as w (w)}
+          <p class="warn">{w}</p>
+        {/each}
+      {/if}
 
       {#if stops.length === 0}
         <p class="muted">
@@ -467,15 +506,21 @@
     </section>
   {/if}
 
-  {#if data.query && data.query.candidates.length > 0}
+  {#if data.query && activeCandidates.length > 0}
     <section class="card">
-      <h2>Reported places ({data.query.candidates.length})</h2>
+      <h2>Reported places ({activeCandidates.length})</h2>
       <p class="muted intro">
-        Places represented in the current eBird response. Counts are a preview,
-        not a complete inventory of each location. Suggested stops use verified
-        eBird hotspots; other locations may be private, restricted or offshore.
+        {#if comparedCandidates}
+          Compared verified-hotspot counts are applied to the current route. The
+          original area-feed candidates remain available for manual selection.
+        {:else}
+          Places represented in the current eBird response. Counts are an
+          incomplete area-feed preview, not a complete inventory of each
+          location. Suggested stops use verified eBird hotspots; other locations
+          may be private, restricted or offshore.
+        {/if}
       </p>
-      {#each data.query.candidates as c (c.locId ?? c.locName)}
+      {#each activeCandidates as c (c.locId ?? c.locName)}
         {@const inTrip = selected.has(candKey(c))}
         <div class="obs">
           <div class="grow">

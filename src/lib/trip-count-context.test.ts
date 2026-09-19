@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, parseTripCountContext } from "./trip-count-context";
+import {
+  formatLegacyCountSnapshot,
+  formatPlannedCountSnapshot,
+  parseAnyTripCountContext,
+  parseTripCountContext,
+} from "./trip-count-context";
 
 const valid = {
   version: 1,
@@ -31,7 +36,33 @@ describe("trip count context", () => {
     const text = formatPlannedCountSnapshot(valid, "25 mi");
     expect(text).toContain("When planned: 1 need");
     expect(text).toContain("last 30 days");
-    expect(formatPlannedCountSnapshot({ ...valid, seenStatus: "all", count: 4 }, "25 mi")).toContain("4 species");
-    expect(formatLegacyCountSnapshot(7)).toBe("When planned: 7 matches; original scope and window were not recorded.");
+    expect(
+      formatPlannedCountSnapshot(
+        { ...valid, seenStatus: "all", count: 4 },
+        "25 mi",
+      ),
+    ).toContain("4 species");
+    expect(formatLegacyCountSnapshot(7)).toBe(
+      "When planned: 7 matches; original scope and window were not recorded.",
+    );
+  });
+
+  it("strictly parses and formats the v2 per-hotspot source", () => {
+    const v2 = {
+      ...valid,
+      version: 2 as const,
+      source: "hotspot-notable" as const,
+      reportPolicy: "including-unconfirmed" as const,
+      locationId: "L1",
+    };
+    expect(parseAnyTripCountContext({ ...v2, extra: true })).toBeNull();
+    const parsed = parseAnyTripCountContext(v2);
+    expect(parsed).toEqual(v2);
+    expect(formatPlannedCountSnapshot(v2, "25 mi")).toContain(
+      "notable/rare reports",
+    );
+    expect(formatPlannedCountSnapshot(v2, "25 mi")).toContain(
+      "includes unconfirmed reports",
+    );
   });
 });

@@ -43,6 +43,8 @@ export interface CachedResult<T> {
 	data: T;
 	fetchedAt: Date;
 	stale: boolean;
+	/** Status from a failed refresh when a stale payload was returned. */
+	refreshErrorStatus?: number;
 }
 
 export async function getEbirdApiKey(userId: number): Promise<string | null> {
@@ -272,7 +274,8 @@ async function cachedFetchUncoalesced<T>(
 			return {
 				data: row.payload,
 				fetchedAt: new Date(row.fetched_at),
-				stale: true
+				stale: true,
+				refreshErrorStatus: err instanceof EbirdError ? err.status : undefined
 			};
 		}
 		throw err;
@@ -585,4 +588,3 @@ export async function taxonomyCount(): Promise<number> {
 	const r = await query<{ n: string }>('SELECT COUNT(*) AS n FROM taxonomy_cache');
 	return Number(r.rows[0]?.n ?? 0);
 }
-

@@ -5,7 +5,7 @@ import { getEbirdApiKey } from "$server/ebird";
 import { getStops, needsCountForStops } from "$server/trips";
 import { tripForToken } from "$server/trip-shares";
 import { buildTripHtml, type TripExportData } from "$server/trip-export";
-import { contextMatchesStop, parseTripCountContext } from "$lib/trip-count-context";
+import { contextMatchesStop, parseAnyTripCountContext } from "$lib/trip-count-context";
 import { cachedVerifiedHotspotLocIds } from "$server/hotspots";
 
 /**
@@ -35,7 +35,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
   const { counts, species } = await needsCountForStops(owner, apiKey, stops);
   const plannedContexts = new Map(
     stops.flatMap((s) => {
-      const context = parseTripCountContext(s.planned_count_context);
+      const context = parseAnyTripCountContext(s.planned_count_context);
       return context && contextMatchesStop(context, s) ? [[s.id, context] as const] : [];
     }),
   );

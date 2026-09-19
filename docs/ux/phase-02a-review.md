@@ -1,7 +1,7 @@
 # Birds UX phase 2A — independent review record
 
 September 18, 2026 · td-2c866c under td-8ff597
-Status: implemented and independently reviewed in test; ready for release review. Not committed or deployed.
+Status: released as `0ddf28a` on September 19, 2026; production verification passed.
 
 ## Intended result
 
@@ -18,8 +18,9 @@ Phase 2B comparative rankings remain open; see the
 
 The primary agent owns the specification, source review and live acceptance;
 the lower-cost built-in implementer owns runtime, migration, tests and Help/About.
-Only the test database receives migration 0061 during this phase. Phase 1 is
-already deployed as `582f665`; no phase 2 code is part of that release.
+Initial implementation and acceptance applied migration 0061 only in test.
+The owner subsequently authorized the production release recorded below.
+Phase 1 was previously deployed as `582f665`.
 
 ## Primary live acceptance completed
 
@@ -72,7 +73,8 @@ already deployed as `582f665`; no phase 2 code is part of that release.
 | Test health | Database, worker and gallery source ok |
 
 Evidence: `work/birds-ux/audit/phase02a-*`. No physical iPhone was used.
-No production phase 2 code, schema or data change; phase 1 remains live at `582f665`.
+At initial test acceptance, production remained at phase 1 (`582f665`).
+The subsequent authorized phase 2A release is recorded below.
 Phase 2B comparable rankings and coverage/progress remain outstanding.
 
 ## Broader suite limitation
@@ -93,3 +95,27 @@ Owner approved deployment and explicitly accepted the 12 broader-suite failures
 as non-blocking for this release, recalling earlier one-off loading repairs.
 The release still requires the focused gates, migration, live health and
 changed-route smoke checks. No claim that the broad suite itself is green.
+
+## Production release — September 19, 2026
+
+- Committed and pushed `0ddf28a`; deployed through `scripts/deploy-to-DO.sh`.
+- Migration 0061 applied successfully. Verified `planned_count_context` is
+  nullable JSONB without a default. No legacy count backfill.
+- Both app and worker reloaded successfully. Public health returned revision
+  `0ddf28a` with database, worker and gallery source all `ok`.
+- Authenticated Huguenot planner checks passed for All species and My needs:
+  three selected stops each, correct labels and signed context matching the
+  account, location, scope, count, 30-day window and source.
+- Desktop and 390px planner layouts had no horizontal overflow. Existing saved
+  trip 16 showed separate current nearby counts and explicit unknown legacy
+  scope/window. HTML export preserved those labels, and external hotspot links
+  matched production reference data. No browser script errors.
+- Production smoke checks made no trip writes. Preserved and restored the
+  unrelated migration 0049 comment.
+- Preflight rerun: 56 focused tests passed; framework check zero errors/warnings;
+  web/worker build passed. The owner-designated broader-suite failures remained
+  non-blocking; the full suite was not rerun.
+
+Evidence: `work/birds-ux/audit/phase02a-production-results.json`,
+`phase02a-production-saved-phone.png`, and `.local/phase02a-deploy.log`.
+Next is phase 2B specification work; no later phase implementation is included.

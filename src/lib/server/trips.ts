@@ -7,7 +7,7 @@ import { query, withTransaction } from "$lib/db";
 import { haversineKm } from "$lib/geo";
 import { recentNearbyObs } from "$server/ebird";
 import { seenSet } from "$server/needs";
-import type { TripCountContext } from "$lib/trip-count-context";
+import type { AnyTripCountContext } from "$lib/trip-count-context";
 
 export interface Trip {
   id: number;
@@ -32,7 +32,7 @@ export interface TripStop {
   /** Matching-species count snapshotted when the stop was saved. */
   target_count_at_save: number | null;
   /** Signed planner context retained with the compatible count, when present. */
-  planned_count_context?: TripCountContext | null;
+  planned_count_context?: AnyTripCountContext | null;
   field_tip: string | null;
   field_tip_generated_at: string | null;
 }
@@ -104,7 +104,7 @@ export interface PlannedTripStopInput {
   notes: string | null;
   /** Snapshot of matching species at save time; NULL for non-birding stops. */
   target_count_at_save: number | null;
-  planned_count_context: TripCountContext | null;
+  planned_count_context: AnyTripCountContext | null;
 }
 
 /**

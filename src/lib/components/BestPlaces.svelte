@@ -52,7 +52,7 @@
   <section class="card">
     <h2>{title}</h2>
     <p class="muted intro">
-      Ranked by how many of your needs were reported there recently.
+      Area-feed preview of reported needs; compare hotspots below for per-location coverage.
     </p>
     {#each shown as p, i (p.locId ?? p.locName)}
       <div class="place">

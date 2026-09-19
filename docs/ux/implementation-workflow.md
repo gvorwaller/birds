@@ -21,7 +21,7 @@ Write the next detailed specification after the current phase's review, so it
 reflects what was learned. The full roadmap remains the plan index; a phase
 spec is an executable work order beneath it, not a competing backlog.
 
-**Current checkpoint:** Phase 1 is released as `582f665`; see its [review record](phase-01-review.md). Phase 2A (td-2c866c) is implemented and independently reviewed in test; see its [specification](phase-02a-trip-count-context.md) and [review record](phase-02a-review.md). It is in review, not committed or deployed. Phase 2B remains required for comparable rankings. The split keeps count meaning and persistence reviewable independently of upstream request orchestration.
+**Current checkpoint:** Phase 1 is released as `582f665`; see its [review record](phase-01-review.md). Phase 2A (td-2c866c) is released as `0ddf28a` on September 19, 2026; see its [specification](phase-02a-trip-count-context.md) and [review record](phase-02a-review.md). Production migration, health, planner, saved-trip and export checks passed. Phase 2B (td-f730cf) is implemented and in review from its [detailed specification](phase-02b-comparable-rankings.md); [acceptance evidence](phase-02b-review.md) records 91 passing focused tests and real 246-hotspot comparisons. It awaits owner commit/deploy instruction. Next is phase 3. The split keeps count meaning and persistence reviewable independently of upstream request orchestration.
 
 ## Phase queue
 
@@ -29,7 +29,7 @@ spec is an executable work order beneath it, not a competing backlog.
 | --- | --- | --- |
 | 1 | Verified automatic hotspots; explicitly selected other reports; accurate saved-trip identity | F12; td-d22017; [detailed specification](phase-01-trip-location-identity.md) |
 | 2A | All/Need labels and authenticated saved count context; separate current nearby counts | F13; td-2c866c; [specification](phase-02a-trip-count-context.md) |
-| 2B | Comparable ranking evidence, progress/completeness and Home Best places | F13; define realistic upstream request/performance strategy before coding |
+| 2B | Comparable ranking evidence, progress/completeness and Home Best places | F13; td-f730cf; [detailed specification](phase-02b-comparable-rankings.md) |
 | 3 | Recent-report source/window/review status, deduplication, personal sightings and Nearest consistency | F14; td-3d9544 / td-d71bad |
 | 4 | Missing hotspot metadata recovery and clear paused/scheduled/running load states | F15 |
 | 5 | Shared navigation context and place-preserving links, split into core and route-adoption phases if needed | F01–F02; release-1 units A/B |

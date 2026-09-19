@@ -1,6 +1,7 @@
 <script lang="ts">
   import Badge from "$components/Badge.svelte";
   import BestPlaces from "$components/BestPlaces.svelte";
+  import HotspotComparison from "$components/HotspotComparison.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
@@ -1010,7 +1011,14 @@
       {/if}
     </section>
 
-    <BestPlaces places={data.view.bestPlaces} {distanceUnit} />
+    <BestPlaces places={data.view.bestPlaces} title="Best places (area-feed preview)" {distanceUnit} />
+  {/if}
+
+  {#if data.location}
+      <HotspotComparison
+        filters={{ lat: data.location.lat, lng: data.location.lng, radiusKm: data.dist, daysBack: data.back, seenStatus: "needs", rareOnly: false, anchorLabel: data.location.label }}
+        {distanceUnit}
+      />
   {/if}
 
   <p class="attribution">
