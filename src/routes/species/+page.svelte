@@ -18,6 +18,20 @@
   let { data }: { data: PageData } = $props();
 
   const selected = $derived(new Set(data.tags));
+  const ownedParams = new Set([
+    "q",
+    "interest",
+    "family",
+    "sort",
+    "country",
+    "region",
+    "tags",
+    "page",
+  ]);
+  const unknownParams = $derived(
+    [...page.url.searchParams].filter(([key]) => !ownedParams.has(key)),
+  );
+  let filtersOpen = $state(false);
   let brokenPhotos = $state(new Set<string>());
 
   function checkThumbnail(image: HTMLImageElement, url: string) {
@@ -56,19 +70,27 @@
 
   /** Toggle URL for a tag chip — GET-driven, restorable, no client state. */
   function toggleHref(tag: string): string {
-    const p = new URLSearchParams();
-    if (data.interestOnly) p.set("interest", "1");
-    if (data.q) p.set("q", data.q);
-    if (data.family) p.set("family",data.family);
-    p.set("sort",data.sort);
-    if (data.country) p.set("country", data.country);
-    if (data.region) p.set("region", data.region);
+    const p = new URLSearchParams(page.url.searchParams);
+    p.delete("tags");
+    p.delete("page");
     const next = selected.has(tag)
       ? data.tags.filter((t) => t !== tag)
       : [...data.tags, tag];
     for (const t of next) p.append("tags", t);
     const s = p.toString();
-    return s ? `/species?${s}` : "/species";
+    return `${s ? `/species?${s}` : "/species"}#results`;
+  }
+
+  function clearHref(): string {
+    const p = new URLSearchParams(page.url.searchParams);
+    for (const key of ownedParams) p.delete(key);
+    const s = p.toString();
+    return `${s ? `/species?${s}` : "/species"}#results`;
+  }
+
+  function activeFilterCount(): number {
+    return Number(data.interestOnly) + Number(!!data.family) +
+      Number(data.sort !== "relevance") + Number(!!data.country) + data.tags.length;
   }
 
   function detailHref(code: string): string {
@@ -113,12 +135,17 @@
   {#if data.interests === null}<p role="status">Special interest badges are temporarily unavailable.</p>{/if}
   {#if data.interestOnly}<p>Your saved species matching the filters below. <a href="/special-interest">Open the complete collection</a>, including any retired species.</p>{/if}
 
-  <section class="card">
-    <form method="GET" action="/species" class="searchform">
-      {#each data.tags as t (t)}
-        <input type="hidden" name="tags" value={t} />
+  <section class="card guide-search">
+    <form method="GET" action="/species#results" class="searchform">
+      {#each unknownParams as [key, value], index (`search-${index}-${key}-${value}`)}
+        <input type="hidden" name={key} value={value} />
       {/each}
-      <label class="interest-filter"><input type="checkbox" name="interest" value="1" checked={data.interestOnly} onchange={(e) => e.currentTarget.form?.requestSubmit()} /> Special interest only</label>
+      {#if data.interestOnly}<input type="hidden" name="interest" value="1" />{/if}
+      {#if data.family}<input type="hidden" name="family" value={data.family} />{/if}
+      {#if data.sort !== "relevance"}<input type="hidden" name="sort" value={data.sort} />{/if}
+      {#if data.country}<input type="hidden" name="country" value={data.country} />{/if}
+      {#if data.region}<input type="hidden" name="region" value={data.region} />{/if}
+      {#each data.tags as t (t)}<input type="hidden" name="tags" value={t} />{/each}
       <div class="search-entry">
         <input
           type="search"
@@ -129,108 +156,72 @@
         />
         <button type="submit">Search</button>
       </div>
-      <div class="location-fields">
-        <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" name="family" value={data.family}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
-        <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" name="sort" value={data.sort}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
-      </div>
-      {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
-      <div class="location-fields">
-        <div class="location-field">
-          <label for="guide-country">Country</label>
-          <select
-            id="guide-country"
-            name="country"
-            value={data.country}
-            onchange={countryChanged}
-          >
-            <option value="">Anywhere</option>
-            {#each data.countries as c (c.code)}
-              <option value={c.code}>{c.name}</option>
-            {/each}
-          </select>
-        </div>
-        <div class="location-field">
-          <label for="guide-region">State / region</label>
-          <select
-            id="guide-region"
-            name="region"
-            value={data.region}
-            disabled={!data.country || data.regions.length === 0}
-            onchange={(e) => e.currentTarget.form?.requestSubmit()}
-          >
-            <option value=""
-              >{data.country
-                ? "Anywhere in this country"
-                : "Choose a country first"}</option
-            >
-            {#each data.regions as r (r.code)}
-              <option value={r.code}>{r.name}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
     </form>
-    <p class="location-hint muted">
-      Optional: birds reported in this location at any time of year.
+    <p class="search-help muted">
+      Searches common and scientific names and eBird/banding codes first, then Wikipedia text, field notes and tags when available.
     </p>
-    {#if data.location}
-      <p class="location-hint" role="status">
-        {#if data.location.sourceCount === 0}
-          No historical data is loaded for {data.location.label} yet.
-          <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search
-          here.
+
+    {#if data.active}
+      <div class="scope-summary" aria-label="Current Field Guide search and filters">
+        {#if data.results.length > 0}
+          <strong>Showing {(data.page - 1) * 100 + 1}–{(data.page - 1) * 100 + data.results.length} of {data.total} matching species</strong>
         {:else}
-          Reported in <strong>{data.location.label}</strong> · any month ·
-          {data.location.beginYear}–{data.location.endYear}.
-          {#if !data.location.wholeArea}
-            Based on {data.location.sourceCount} loaded areas and hotspots; places
-            without loaded data are not covered.
-          {/if}
-          This shows recorded presence, not a complete list of birds that could occur
-          here.
+          <strong>No matching species</strong>
         {/if}
-      </p>
-    {/if}
-
-    {#if data.tags.length > 0}
-      <div class="active-filters">
-        <span class="muted af-label">Match all selected tags:</span>
-        {#each data.tags as t (t)}
-          <a
-            class="chip chip-active"
-            class:chip-tide={tagDimension(t) === "tide"}
-            href={toggleHref(t)}
-            title="Remove filter"
-          >
-            {tagLabel(tagDimension(t), t.split(":")[1])} ✕
-          </a>
-        {/each}
-      </div>
-    {/if}
-
-    {#each TAG_DIMENSIONS as d (d)}
-      <details class="dim">
-        <summary>{dimensionLabel(d)}</summary>
-        <div class="chips">
-          {#each TAG_VOCABULARY[d] as v (v)}
-            {@const tag = `${d}:${v}`}
-            <a
-              class="chip"
-              class:chip-on={selected.has(tag)}
-              class:chip-tide={d === "tide"}
-              href={toggleHref(tag)}
-            >
-              {tagLabel(d, v)}
-            </a>
-          {/each}
+        <div class="scope-items">
+          {#if data.q}<span>Search: “{data.q}”</span>{/if}
+          {#if data.location}<span>{data.location.label}</span>{/if}
+          {#if data.family}<span>Family: {data.families.find((f) => f.code === data.family)?.name ?? data.family}</span>{/if}
+          {#if data.interestOnly}<span>Special interest only</span>{/if}
+          {#if data.sort !== "relevance"}<span>Sort: {data.sort === "name" ? "Alphabetical" : "Taxonomic"}</span>{/if}
         </div>
-      </details>
-    {/each}
+        {#if data.tags.length > 0}
+          <div class="active-filters">
+            <span class="muted af-label">Match all selected tags:</span>
+            {#each data.tags as t (t)}
+              <a class="chip chip-active" class:chip-tide={tagDimension(t) === "tide"} href={toggleHref(t)} title="Remove filter">
+                {tagLabel(tagDimension(t), t.split(":")[1])} ✕
+              </a>
+            {/each}
+          </div>
+        {/if}
+        <a class="clear-filters" href={clearHref()}>Clear all search and filters</a>
+      </div>
+    {:else}
+      <p class="muted scope-summary">Enter a search or use Filters and sort to browse the current taxonomy.</p>
+    {/if}
+  </section>
+
+  <section class="card filter-card">
+    <details class="filters" bind:open={filtersOpen}>
+      <summary>Filters and sort{activeFilterCount() ? ` (${activeFilterCount()} active)` : ""}</summary>
+      <form method="GET" action="/species#results" class="filter-form">
+        {#each unknownParams as [key, value], index (`filter-${index}-${key}-${value}`)}<input type="hidden" name={key} value={value} />{/each}
+        {#if data.q}<input type="hidden" name="q" value={data.q} />{/if}
+        {#each data.tags as t (t)}<input type="hidden" name="tags" value={t} />{/each}
+        <label class="interest-filter"><input type="checkbox" name="interest" value="1" checked={data.interestOnly} /> Special interest only</label>
+        <div class="location-fields">
+          <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" name="family" value={data.family}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
+          <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" name="sort" value={data.sort}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
+        </div>
+        {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
+        <div class="location-fields">
+          <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country} onchange={countryChanged}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
+          <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0} onchange={(e) => e.currentTarget.form?.requestSubmit()}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
+        </div>
+        <p class="location-hint muted">Optional: birds reported in this location at any time of year.</p>
+        {#if data.location}<p class="location-hint" role="status">{#if data.location.sourceCount === 0}No historical data is loaded for {data.location.label} yet. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search here.{:else}Reported in <strong>{data.location.label}</strong> · any month · {data.location.beginYear}–{data.location.endYear}. {#if !data.location.wholeArea}Based on {data.location.sourceCount} loaded areas and hotspots; places without loaded data are not covered.{/if} This shows recorded presence, not a complete list of birds that could occur here.{/if}</p>{/if}
+        {#each TAG_DIMENSIONS as d (d)}
+          <details class="dim"><summary>{dimensionLabel(d)}</summary><div class="chips">{#each TAG_VOCABULARY[d] as v (v)}{@const tag = `${d}:${v}`}<a class="chip" class:chip-on={selected.has(tag)} class:chip-tide={d === "tide"} href={toggleHref(tag)}>{tagLabel(d, v)}</a>{/each}</div></details>
+        {/each}
+        <button class="apply-filters" type="submit">Apply filters</button>
+      </form>
+    </details>
   </section>
 
   {#if data.active}
     {#if data.results.length === 0}
-      <section class="card">
+      <section class="card" id="results">
         {#if data.location?.sourceCount === 0}
           <p class="muted">
             Location coverage is unavailable; this does not mean there are no
@@ -258,9 +249,7 @@
         {/if}
       </section>
     {:else}
-      <section class="card results">
-        <p>Showing {(data.page-1)*100+1}–{(data.page-1)*100+data.results.length} of {data.total} matching species</p>
-        <nav class="pagination" aria-label="Results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
+      <section class="card results" id="results">
         {#each data.results as r (r.species_code)}
           <article class="result">
             <a class="row path-focus-target" id={`guide-species-${encodeURIComponent(r.species_code)}`} href={detailHref(r.species_code)} onclick={speciesAction(r.species_code, r.com_name)}>
@@ -296,6 +285,8 @@
                     />{/if}
                 </span>
                 {#if r.matched_banding_code}<span class="muted">Banding code: {r.matched_banding_code}</span>{/if}
+                {#if r.match_provenance === "name_or_code"}<span class="match-provenance">Name or code match</span>{/if}
+                {#if r.match_provenance === "description_or_field_note"}<span class="match-provenance">Description or field-note match</span>{/if}
                 <span class="muted sci"
                   ><em>{r.sci_name}</em>{#if r.family}
                     · {r.family}{/if}
@@ -350,7 +341,7 @@
       <nav class="pagination" aria-label="More results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
     {/if}
   {:else}
-    <section class="card">
+    <section class="card" id="results">
       <p class="muted">
         Choose a family or location, pick tags above, or type a search — try
         <a href="/species?tags=habitat%3Amudflat&tags=tide%3Alow"
@@ -409,6 +400,30 @@
     gap: 12px;
     margin-bottom: 10px;
   }
+  .search-help { margin: 0; }
+  .scope-summary {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .scope-items { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 0.89rem; }
+  .clear-filters { display: inline-flex; align-items: center; min-height: 48px; width: fit-content; }
+  .filter-card { padding: 0 16px; margin-bottom: 4px; }
+  .filters > summary {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+  }
+  .filters > summary::-webkit-details-marker { display: none; }
+  .filters > summary::after { content: "▸"; margin-left: auto; color: var(--accent); font-size: 1.1em; }
+  .filters[open] > summary::after { content: "▾"; }
+  .filter-form { display: grid; gap: 12px; padding-bottom: 16px; }
+  .apply-filters { min-height: 48px; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .search-entry {
     display: flex;
     gap: 8px;
@@ -680,6 +695,12 @@
     margin-left: 6px;
     background: #e9ecef;
     color: #343a40;
+  }
+  .match-provenance {
+    width: fit-content;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text);
   }
   .iucn.s-lc {
     background: #d8ecd9;

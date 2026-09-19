@@ -631,6 +631,12 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       expect(codes.indexOf(A)).toBeLessThan(codes.indexOf(B)); // name tier wins
       expect(both.find((r) => r.species_code === A)?.seen).toBe(true);
       expect(both.find((r) => r.species_code === B)?.seen).toBe(false);
+      expect(both.find((r) => r.species_code === A)?.match_provenance).toBe(
+        "name_or_code",
+      );
+      expect(both.find((r) => r.species_code === B)?.match_provenance).toBe(
+        "description_or_field_note",
+      );
 
       // Tag AND semantics: both tags → B only; adding a non-matching tag → none.
       // Keep the fixture candidates in scope on a production-sized corpus:
@@ -655,6 +661,16 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       // Tag search finds the AI lexemes through FTS too.
       const fts = await searchEnrichment("reedbeds dawn", [], uid);
       expect(fts.map((r) => r.species_code)).toContain(B);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("keeps match provenance absent when there is no text query", async () => {
+    await seed();
+    try {
+      const rows = await searchEnrichment("", [], uid);
+      expect(rows.find((r) => r.species_code === A)?.match_provenance).toBeNull();
     } finally {
       await unseed();
     }

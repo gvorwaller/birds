@@ -611,7 +611,8 @@
 			<div class="body">
 				<p>
 					The <a href="/species">Field guide</a> (menu → 📖 Field guide) searches
-					the complete current eBird species taxonomy by name or code.
+					the complete current eBird species taxonomy by name or code, and can
+					also find loaded Wikipedia text, field notes and tags.
 					Wikipedia notes and field craft fill from loaded regions, life lists,
 					photos, or an explicit first-time Load on the species page. Each
 					enriched species may include article text from Wikipedia, quick facts
@@ -620,9 +621,9 @@
 				</p>
 				<ul>
 					<li>
-						<strong>Search anything</strong> — a name ("godwit"), or words
+						<strong>Search anything</strong> — use the always-visible search for a name ("godwit"), or words
 						from how you'd describe a bird ("granary trees", "probes
-						mudflats"). With Relevance selected, exact species and banding codes rank before names, then prose matches.
+						mudflats"). With Relevance selected, exact species and banding codes rank before names, then description or field-note matches. Each result says which kind of match it is. Open <strong>Filters and sort</strong> for location, family, tags and other filters.
 					</li>
 					<li>
 						<strong>Filter by location</strong> — choose a Country and, optionally,

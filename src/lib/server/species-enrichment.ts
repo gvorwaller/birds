@@ -757,6 +757,8 @@ export async function enrichOneNow(
 
 export interface GuideResult {
  matched_banding_code?: string | null;
+	/** How a non-empty Field Guide query matched this row. */
+	match_provenance: 'name_or_code' | 'description_or_field_note' | null;
 	species_code: string;
 	com_name: string;
 	sci_name: string;
@@ -815,7 +817,12 @@ export async function searchGuide(
 		   SELECT DISTINCT species_code FROM species_month_freq
 		   WHERE loc_code = ANY($8::text[]) AND num > 0
 		 )
-		 SELECT matches.*, photo.photo FROM (
+		 SELECT matches.*,
+		        CASE WHEN $1::bool THEN
+		          CASE WHEN matches.name_tier < 5 THEN 'name_or_code'
+		               ELSE 'description_or_field_note' END
+		        ELSE NULL END AS match_provenance,
+		        photo.photo FROM (
 		 SELECT *, count(*) OVER()::int AS total_matches FROM (
 		   SELECT DISTINCT ON (species_code) *
 		   FROM (

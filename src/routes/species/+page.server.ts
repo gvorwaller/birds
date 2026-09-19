@@ -72,7 +72,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     results = found.rows; total = found.total;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
-  const pageHref = (n:number) => { const p = new URLSearchParams(url.searchParams); p.set('page',String(n)); return '/species?' + p; };
+  const pageHref = (n:number) => {
+    const p = new URLSearchParams(url.searchParams);
+    p.set('page', String(n));
+    return `/species?${p}#results`;
+  };
   let viewed: Record<string, SpeciesView> = {};
   let viewedUnavailable = false;
   try { viewed = await speciesViewsFor(locals.user!.id, results.map(r => r.species_code)); }

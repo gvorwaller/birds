@@ -146,6 +146,7 @@ it("matches exact banding codes, keeps family and geography intersections, and e
   expect(result.rows[0]).toMatchObject({
     species_code: "osprey",
     matched_banding_code: "OSPR",
+    match_provenance: "name_or_code",
   });
   expect(
     (await searchGuide("OSPR", [], owner, null, { family: "anatid1", page: 1 }))
