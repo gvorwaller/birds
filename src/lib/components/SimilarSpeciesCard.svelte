@@ -44,7 +44,8 @@
 		inatStatus,
 		backDays,
 		returnTo,
-		context = null
+		context = null,
+		open = $bindable(true)
 	}: {
 		similar: SimilarSpeciesRow[];
 		unresolved: UnresolvedSimilarRow[];
@@ -52,6 +53,7 @@
 		backDays: number;
 		returnTo: string;
 		context?: SpeciesLocationContext | null;
+		open?: boolean;
 	} = $props();
 
 	const showCard = $derived(
@@ -121,8 +123,8 @@
 
 {#if showCard}
 	<section class="card">
-		<details class="sim-collapse" open>
-			<summary><h2>Similar species</h2></summary>
+		<details class="sim-collapse" bind:open>
+			<summary><h2 id="similar-species" class="section-target" tabindex="-1">Similar species</h2></summary>
 		{#if similar.length > 0}
 			<div class="similar-list">
 				{#each similar as item (item.species_code)}
@@ -185,6 +187,13 @@
 	.card h2 {
 		font-size: 1.05rem;
 		margin: 0;
+	}
+	.section-target {
+		scroll-margin-top: calc(var(--nav-h) + 16px);
+	}
+	.section-target:focus {
+		outline: 3px solid var(--accent);
+		outline-offset: 3px;
 	}
 	.sim-collapse summary {
 		min-height: 48px;

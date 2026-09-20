@@ -12,6 +12,21 @@ filter, pagination and return-navigation contracts. This review covers the
 uncommitted implementation in the main checkout. It is not a production-release
 record.
 
+## Production release
+
+The owner authorized release on September 19, 2026. Commit `1853a8c` was pushed
+to `main` and deployed through `scripts/deploy-to-DO.sh`. The remote production
+build passed, all 60 migrations were already applied, and PM2 reloaded both
+`birds` and `birds-worker` online. Internal and public health returned database,
+worker and gallery `ok` with exact version `1853a8c`.
+
+An authenticated, read-only 390px production smoke check returned the exact
+seven Florida `godwit` rows and provenance, measured the first row at 806px,
+confirmed the collapsed 48px filter summary, retained `future=kept` and the full
+Field Guide return URL, and reported no overflow or page errors. Evidence is in
+the audit workspace as `phase07a-production.json` and
+`phase07a-production-phone.png`. td-b33568 is closed.
+
 The lower-cost implementer completed the code and focused tests. Independent
 review returned four defects for correction before acceptance:
 
@@ -96,4 +111,4 @@ four enrichment workflows.
 Phase 7B still needs its own specification and implementation for navigation
 among sections on an individual species page. County, hotspot and map/radius
 selection, All/Need/Seen scope and any ranking changes remain later work. No
-commit, push or deployment was performed for Phase 7A.
+further Phase 7A work is pending.

@@ -17,6 +17,7 @@
   import { page } from "$app/state";
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
+  import { replaceState } from "$app/navigation";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { tick } from "svelte";
   import { browser } from "$app/environment";
@@ -33,6 +34,7 @@
   import PathNavigation from "$components/PathNavigation.svelte";
   import { canonicalHref, withReturnTo } from "$lib/navigation-context";
   import { navigationAction } from "$lib/navigation-context.svelte";
+  import { sectionHref, shouldEnhanceSectionLink } from "$lib/section-navigation";
 
   const MONTH_NAMES = [
     "January",
@@ -75,12 +77,14 @@
   let aboutExpanded = $state(false);
   let refreshBusy = $state(false);
   let ribbonExpanded = $state(true);
+  let similarExpanded = $state(true);
   let disclosureSpecies: string | undefined;
   $effect(() => {
     const code = data.taxon.species_code;
     if (code !== disclosureSpecies) {
       disclosureSpecies = code;
       ribbonExpanded = true;
+      similarExpanded = true;
     }
   });
   const en = $derived(data.enrichment);
@@ -182,6 +186,7 @@
   const selectedPeer = $derived(
     cardPeers.find((p) => p.locCode === selectedTeaserCode) ?? cardPeers[0] ?? null,
   );
+  const hasBestTime = $derived(selectedPeer !== null);
   function peerKindLabel(
     kind: "closest" | "best" | "both" | "chart",
     poolSize: number,
@@ -238,10 +243,7 @@
       good: r.good,
     };
     selectedTeaserCode = r.locCode;
-    await tick();
-    document
-      .getElementById("besth")
-      ?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
+    await navigateToSection("best-time");
   }
 
   function forecastHref(regionCode: string): string {
@@ -307,6 +309,22 @@
   const hasMedia = $derived(
     data.sampleMedia.photo != null || data.sampleMedia.sounds.length > 0,
   );
+  const hasIdentification = $derived(
+    hasMedia ||
+      data.sampleMedia.audioStatus === "restricted" ||
+      (data.isAdmin && data.sampleMedia.status != null),
+  );
+  const hasSimilarSpecies = $derived(
+    data.similar.similar.length > 0 ||
+      data.similar.unresolved.length > 0 ||
+      data.similar.inatStatus === "no_mapping" ||
+      data.similar.inatStatus === "error",
+  );
+  const hasSeasonalDistribution = $derived(
+    (data.ribbon.ok && ribbonGrid !== null) || !data.ribbon.ok,
+  );
+  const hasNearestReports = $derived(!data.seen && data.hasApiKey && data.hasHome);
+  const hasAbout = $derived(data.taxon.category === "species");
   const tagGroups = $derived(groupTags(en?.tags ?? []));
   const aiGeneratedOn = $derived(
     en?.ai_generated_at
@@ -370,6 +388,63 @@
         : `https://www.inaturalist.org/taxa/search?q=${encodeURIComponent(data.taxon.sci_name)}`,
     },
   ]);
+
+  type SectionId =
+    | "identification"
+    | "similar-species"
+    | "finding-this-bird"
+    | "seasonal-distribution"
+    | "best-time"
+    | "recent-reports"
+    | "nearest-reports"
+    | "about"
+    | "learn-more";
+  type OnPageSection = { id: SectionId; label: string; reveal?: () => void };
+  const onPageSections = $derived.by<OnPageSection[]>(() => {
+    const sections: OnPageSection[] = [];
+    if (hasIdentification)
+      sections.push({ id: "identification", label: "Identification" });
+    if (hasSimilarSpecies)
+      sections.push({
+        id: "similar-species",
+        label: "Similar species",
+        reveal: () => (similarExpanded = true),
+      });
+    if (hasFieldCraft) sections.push({ id: "finding-this-bird", label: "Finding this bird" });
+    if (hasSeasonalDistribution)
+      sections.push({
+        id: "seasonal-distribution",
+        label: "Seasonal distribution",
+        reveal: () => (ribbonExpanded = true),
+      });
+    if (hasBestTime) sections.push({ id: "best-time", label: "Best time" });
+    sections.push({ id: "recent-reports", label: "Recent reports" });
+    if (hasNearestReports) sections.push({ id: "nearest-reports", label: "Nearest reports" });
+    if (hasAbout) sections.push({ id: "about", label: "About" });
+    sections.push({ id: "learn-more", label: "Learn more" });
+    return sections;
+  });
+
+  async function navigateToSection(id: SectionId, reveal?: () => void) {
+    reveal?.();
+    await tick();
+    const target = document.getElementById(id);
+    if (!target) return;
+    // SvelteKit's replaceState replaces the native history entry while retaining
+    // page.state, which is where PathNavigation keeps the return trail.
+    replaceState(sectionHref(page.url.pathname, page.url.search, id), page.state);
+    target.scrollIntoView({
+      block: "start",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+    target.focus({ preventScroll: true });
+  }
+
+  function onSectionLinkClick(event: MouseEvent, section: OnPageSection) {
+    if (!shouldEnhanceSectionLink(event)) return;
+    event.preventDefault();
+    void navigateToSection(section.id, section.reveal);
+  }
 </script>
 
 <svelte:head>
@@ -403,6 +478,18 @@
       {/key}
     {/if}
   </header>
+
+  <nav class="on-page" aria-label="On this page">
+    <span class="on-page-label">On this page</span>
+    <div class="on-page-links">
+      {#each onPageSections as section (section.id)}
+        <a
+          href={`#${section.id}`}
+          onclick={(event) => onSectionLinkClick(event, section)}
+        >{section.label}</a>
+      {/each}
+    </div>
+  </nav>
 
   {#if data.seen}
     <section class="card recorded-card">
@@ -456,11 +543,12 @@
     backDays={data.backDays}
     returnTo={similarReturnTo}
     context={data.locationContext}
+    bind:open={similarExpanded}
   />
 
   {#if hasFieldCraft}
     <section class="card">
-      <h2>Finding this bird</h2>
+      <h2 id="finding-this-bird" class="section-target" tabindex="-1">Finding this bird</h2>
       {#if form && "message" in form && form.message}
         <p class="ok" role="status">{form.message}</p>
       {/if}
@@ -554,7 +642,7 @@
   {#if data.ribbon.ok && ribbonGrid}
     <details class="card ribbon-disclosure" bind:open={ribbonExpanded}>
       <summary>
-        <h2 id="ribh">Where it is through the year</h2>
+        <h2 id="seasonal-distribution" class="section-target" tabindex="-1">Where it is through the year</h2>
         <span class="disclosure-label" aria-hidden="true">{ribbonExpanded ? "Hide" : "Show"}</span>
       </summary>
       <!-- Keep the chart mounted: closing retains month/view/drill state, and
@@ -569,7 +657,7 @@
     </details>
   {:else if !data.ribbon.ok}
     <section class="card">
-      <h2>Where it is through the year</h2>
+      <h2 id="seasonal-distribution" class="section-target" tabindex="-1">Where it is through the year</h2>
       <p class="muted">The migration chart could not be loaded.</p>
     </section>
   {/if}
@@ -577,7 +665,7 @@
   {#if selectedPeer}
     {@const ft = data.forecastTeaser}
     <section class="card">
-      <h2 id="besth">Best time of year</h2>
+      <h2 id="best-time" class="section-target" tabindex="-1">Best time of year</h2>
       <!-- Both picks as equal peers (plan Phase 5; AGY: a TABLIST, not a
            radiogroup — this selects which region's data a panel displays).
            The honesty qualifier lives IN the row label ("Best of N loaded
@@ -688,7 +776,7 @@
 
   <section class="card">
     <div class="card-head">
-      <h2>
+      <h2 id="recent-reports" class="section-target" tabindex="-1">
         Recent reports near {originName} — {windowPhrase(data.backDays)}
         {#if nearbyView.current?.ok && nearbyView.current.data.stale}<Badge
             kind="stale"
@@ -787,7 +875,7 @@
          an SSR fetch the default page load never pays for (GROK pin). Need
          species only; unbounded distance from the saved home. -->
     <section class="card">
-      <h2>
+      <h2 id="nearest-reports" class="section-target" tabindex="-1">
         Nearest reports — {data.nearestKm === "any" ? "any distance" : `within ${formatDistance(Number(data.nearestKm), distanceUnit)}`}
         {#if nearestView.current?.ok && nearestView.current.data.stale}<Badge
             kind="stale"
@@ -920,7 +1008,7 @@
 
   {#if data.taxon.category === "species"}
     <section class="card">
-      <h2>
+      <h2 id="about" class="section-target" tabindex="-1">
         About {data.taxon.com_name}
         {#if en?.iucn_status}
           <span
@@ -1077,7 +1165,7 @@
   {/if}
 
   <section class="card">
-    <h2>Learn more</h2>
+    <h2 id="learn-more" class="section-target" tabindex="-1">Learn more</h2>
     {#each links as l (l.href)}
       <div class="obs">
         <div class="grow">
@@ -1114,6 +1202,47 @@
 </div>
 
 <style>
+  .on-page {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+  }
+  .on-page-label {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .on-page-links {
+    display: flex;
+    flex: 1 1 240px;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    min-width: 0;
+  }
+  .on-page a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    color: var(--link);
+    font-size: 0.9rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    text-underline-offset: 2px;
+  }
+  .section-target {
+    scroll-margin-top: calc(var(--nav-h) + 16px);
+  }
+  .section-target:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+  }
   .obs .place-link, .nplace { display: inline-flex; align-items: center; min-height: 48px; }
   .taxonomy-link { display:inline-flex; align-items:center; min-height:48px; }
   .ribbon-disclosure > summary {

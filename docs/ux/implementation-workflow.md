@@ -40,9 +40,14 @@ its production release. Its
 remains the contract. Phase **7A** is now specified as the compact, answer-first
 Field Guide search/filter/result-meaning slice in
 [phase-07a-field-guide-results.md](phase-07a-field-guide-results.md). Phase
-**7A td-b33568** is implemented and independently accepted in its
-[review record](phase-07a-review.md); it remains uncommitted and undeployed.
-Phase 7B will separately cover navigation within an individual species page.
+**7A td-b33568** is released as `1853a8c`; its
+[review record](phase-07a-review.md) includes authenticated production proof.
+Phase 7B is specified separately for navigation within an individual species
+page in
+[phase-07b-species-section-navigation.md](phase-07b-species-section-navigation.md).
+**Phase 7B td-f09c48** is implemented and independently accepted in its
+[review record](phase-07b-review.md). The owner authorized its production
+release after acceptance.
 
 ## Phase queue
 
@@ -57,7 +62,7 @@ Phase 7B will separately cover navigation within an individual species page.
 | 5B | Adopt journey context across remaining list/search/county entry points | F01; td-750277; [specification](phase-05b-navigation-adoption.md); [review](phase-05b-review.md) |
 | 6 | Keyboard drawer, map reveal/focus and touched control sizing | F03/F08/F09; [specification](phase-06-shell-map-controls.md); [review](phase-06-review.md) |
 | 7A | Compact Field Guide search, filters and explicit match meaning | F04; td-b33568; [specification](phase-07a-field-guide-results.md); [review](phase-07a-review.md) |
-| 7B | Species-page section navigation | F05; specify after 7A review |
+| 7B | Species-page section navigation | F05; td-f09c48; [specification](phase-07b-species-section-navigation.md); [review](phase-07b-review.md) |
 | Later | Unified geographic selection, list scope and field-use trips, in independently specified slices | Existing roadmap packages B/C and remaining tickets |
 
 These are implementation boundaries, not promises that all work fits one

@@ -14,7 +14,7 @@ describe('MigrationRibbon.svelte markup', () => {
 	it('the ribbon is a labeled, described custom widget', () => {
 		expect(markup).toContain('role="group"');
 		expect(markup).toContain('aria-roledescription="migration ribbon"');
-		expect(markup).toContain('aria-labelledby="ribh"');
+		expect(markup).toContain('aria-labelledby="seasonal-distribution"');
 	});
 
 	it('has a live announcement region for user-initiated selection changes', () => {

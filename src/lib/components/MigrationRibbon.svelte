@@ -810,7 +810,7 @@
 			role="group"
 			aria-roledescription="migration ribbon"
 			aria-describedby="rbreadout rbkeys rbcolourLegend"
-			aria-labelledby="ribh"
+			aria-labelledby="seasonal-distribution"
 			onkeydown={onRibbonKeydown}
 		>
 			<span id="rbkeys" class="sr-only"

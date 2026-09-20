@@ -667,6 +667,15 @@
 						species page; the back link returns to your exact search.
 					</li>
 					<li>
+						<strong>Jump to an answer</strong> — the <strong>On this page</strong>
+						links below a bird's name list only the sections available for that
+						bird. Choose Identification, Similar species, Finding this bird,
+						seasonal distribution, Best time, reports, About, or Learn more to
+						move directly to it. A closed Similar species or seasonal chart
+						reopens automatically. These jumps keep your Field Guide search and
+						return path intact.
+					</li>
+					<li>
 						On any species page, the <strong>About</strong> card holds the
 						article text (tap section headings to expand) and the
 						<strong>Finding this bird</strong> card holds the field craft and

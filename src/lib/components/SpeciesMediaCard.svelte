@@ -80,7 +80,7 @@
 </script>
 
 <section class="card">
-	<h2>
+	<h2 id="identification" class="section-target" tabindex="-1">
 		Identification
 		{#if subtitle}<span class="muted">{subtitle}</span>{/if}
 	</h2>
@@ -162,6 +162,13 @@
 	.card h2 {
 		font-size: 1.05rem;
 		margin-bottom: 10px;
+	}
+	.section-target {
+		scroll-margin-top: calc(var(--nav-h) + 16px);
+	}
+	.section-target:focus {
+		outline: 3px solid var(--accent);
+		outline-offset: 3px;
 	}
 	.card h2 .muted {
 		font-weight: 400;

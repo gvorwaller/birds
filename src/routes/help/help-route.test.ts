@@ -2,6 +2,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("Help route — migration ribbon copy (td-950907)", () => {
+	it("documents species-page section navigation and preserved return paths", () => {
+		const content = readFileSync("src/routes/help/+page.svelte", "utf8");
+		const normalized = content.replace(/\s+/g, " ");
+		expect(normalized).toContain("Jump to an answer");
+		expect(normalized).toContain("On this page");
+		expect(normalized).toContain("reopens automatically");
+		expect(normalized).toContain("return path intact");
+	});
+
 	// The current chart supports selecting a square on all screen sizes;
 	// phones also provide month controls. Keep both paths documented.
 	it("describes region-drill picking correctly on both phone and larger screens", () => {
