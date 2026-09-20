@@ -161,6 +161,11 @@
         {/if}
         Verify it with eBird before loading historical data.
       </p>
+      <p class="muted">
+        Choosing “Verify hotspot and load history” asks eBird whether this ID is a
+        hotspot and, only if it is, queues its history. This verifies eBird hotspot
+        identity only; it does not establish public access.
+      </p>
       {#if data.isViewer}
         <p class="muted">Viewer accounts cannot verify or queue historical loads.</p>
       {/if}

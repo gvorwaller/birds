@@ -9,7 +9,7 @@ vi.mock("$server/ebird", async (importOriginal) =>
   guardEbird(await importOriginal<Record<string, unknown>>(), seen.calls, "placeholder-key"),
 );
 
-import { load } from "./+page.server";
+import { actions, load } from "./+page.server";
 
 /**
  * Phase 8B P1: selecting a discovery result opens a hotspot workspace, and that
@@ -95,5 +95,41 @@ describe("hotspot workspace reached from discovery", () => {
     const data = (await load(event(H_LIST, "?tab=monthly"))) as any;
     expect(data).toMatchObject({ known: true, verified: true, freq: null, monthly: null });
     expect(seen.calls).toEqual([]);
+  });
+
+  describe("the explicit verify-and-load action stays available, and is the only eBird path", () => {
+    async function post(locId: string, role: "user" | "viewer") {
+      const body = new FormData();
+      body.set("back", "7");
+      body.set("tab", "monthly");
+      return (await actions.load_hotspot({
+        locals: { scopeId: owner, user: { id: owner, role } },
+        params: { locId },
+        request: new Request(`http://localhost/hotspots/${locId}?/load_hotspot`, { method: "POST", body }),
+      } as unknown as Parameters<typeof actions.load_hotspot>[0])) as any;
+    }
+    const jobs = async () => (await query<{ n: string }>("SELECT count(*) AS n FROM jobs")).rows[0].n;
+
+    it("the default GET of an unverified page makes zero eBird calls; the owner's POST is the authorized path to eBird", async () => {
+      for (const id of [H_PLACE, H_UNKNOWN]) {
+        seen.calls.length = 0;
+        await load(event(id));
+        expect(seen.calls, `GET ${id}`).toEqual([]);
+        const before = await jobs();
+        const res = await post(id, "user");
+        // The guard refuses the request, so nothing is verified and no job is queued.
+        expect(seen.calls, `POST ${id}`).toEqual(["ebirdFetchOrNull"]);
+        expect(res.status, id).toBe(502);
+        expect(res.data.verificationRequired, id).toBe(true);
+        expect(await jobs(), id).toBe(before);
+      }
+    });
+
+    it("a viewer's POST is refused before any eBird call", async () => {
+      seen.calls.length = 0;
+      const res = await post(H_PLACE, "viewer");
+      expect(res.status).toBe(403);
+      expect(seen.calls).toEqual([]);
+    });
   });
 });

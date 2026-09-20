@@ -265,6 +265,13 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
       expect(plain.includes(forbidden), forbidden).toBe(false);
     expect(plain).toContain("does not verify that the ID is a");
     expect(plain).toContain("Verify it with eBird before loading historical data.");
+    // The owner-only explicit verify-and-load action remains, worded precisely.
+    expect(plain).toContain('{#if !data.isViewer}');
+    expect(plain).toContain('action={actionHref("load_hotspot")}');
+    expect(plain).toContain("Verify hotspot and load history");
+    expect(plain).toContain("This verifies eBird hotspot");
+    expect(plain).toContain("identity only; it does not establish public access.");
+    expect(plain).toContain("Viewer accounts cannot verify or queue historical loads.");
     // The eBird hotspot link and the data tabs exist only in the verified branch.
     const verifiedBranch = workspace.slice(workspace.indexOf('<section class="card actions">'));
     expect(verifiedBranch).toContain("https://ebird.org/hotspot/");
