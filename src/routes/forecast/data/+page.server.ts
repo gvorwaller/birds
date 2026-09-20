@@ -1,4 +1,4 @@
-import { fail } from "@sveltejs/kit";
+import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { loadedSpeciesCounts } from "$server/loaded-species-counts";
@@ -27,6 +27,12 @@ import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
+import { hubNodeId, parseHubDiscovery } from "$lib/hub-discovery";
+import { hubDiscover, verifiedHotspotIdsAmong } from "$server/hub-discovery";
+import { regionDetail, type RegionDetail } from "$server/region-detail";
+import { geographicAreaForCountry } from "$lib/geographic-areas";
+import { isHotspotLocId } from "$lib/loc-id";
+import { safeReturnTo } from "$lib/return-link";
 import {
   parseRegionCode,
   isCountry,
@@ -172,6 +178,31 @@ interface CountryJobStateRow {
 export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
+  // Discovery (Phase 8B): strict typed / map state, rendered on the server so
+  // the page works without JavaScript. Local database and cache reads only.
+  const parsedDiscovery = parseHubDiscovery(url.searchParams);
+  if (!parsedDiscovery.ok) error(400, parsedDiscovery.message);
+  const discovery =
+    parsedDiscovery.state.mode === "none" ? null : await hubDiscover(parsedDiscovery.state);
+  // Selection state written by a discovery result: `region` preselects the
+  // existing Load form, `show` opens an existing section. Each is one value.
+  const singleParam = (name: string): string => {
+    const all = url.searchParams.getAll(name);
+    if (all.length > 1) error(400, `Use only one ${name} value.`);
+    return (all[0] ?? "").trim().toUpperCase();
+  };
+  const regionParam = singleParam("region");
+  const regionParsed = regionParam ? parseRegionCode(regionParam) : null;
+  if (regionParam && regionParsed?.level !== "subnational1") error(400, "Choose a recognized region.");
+  const showParam = singleParam("show");
+  // An explicit country (a country-only Load destination from a discovery result,
+  // or the Load picker) is a single value too.
+  const countryParamRaw = singleParam("country");
+  // A discovery or selection URL is built from local data only: no eBird region
+  // list fan-out on the server (and, on the page, no hotspot-count fetches until
+  // the person acts). Explicit actions keep their normal behavior.
+  const offlineView =
+    parsedDiscovery.state.mode !== "none" || !!showParam || !!regionParam || !!countryParamRaw;
   // Stream the counts: the inventory and its controls need not wait for the
   // all-world distinct aggregation. Failure is explicit, never shown as zero.
   const speciesCounts = streamed(loadedSpeciesCounts(), () => "Species counts unavailable");
@@ -275,7 +306,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   ).map((r) => ({ code: r.code, name: r.name }));
   const countryOptionCodes = new Set(countryOptions.map((c) => c.code));
 
-  const countryParam = (url.searchParams.get("country") ?? "").trim().toUpperCase();
+  const explicitCountry = countryParamRaw;
+  if (regionParsed && explicitCountry && explicitCountry !== regionParsed.country)
+    error(400, "That region is not in the selected country.");
+  const countryParam = explicitCountry || regionParsed?.country || "";
   // Default to the first alphabetical unfinished country. US is only a
   // harmless display fallback for the eventual all-done state.
   let selectedCountry = countryOptions[0]?.code ?? DEFAULT_COUNTRY;
@@ -479,7 +513,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   await Promise.all(
     allGroups.map(async (g) => {
       const childLvl = childLevel(g.level);
-      if (!childLvl || (childLvl === "subnational2" && !apiKey)) return;
+      if (!childLvl || (childLvl === "subnational2" && (!apiKey || offlineView))) return;
       try {
         // A country group's children come from the LOCAL reference set (works
         // without an eBird key); subnational2 county lists stay
@@ -591,6 +625,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     a.countryName.localeCompare(b.countryName),
   );
 
+  // Which failed rows have no hotspot evidence (local reads only).
+  const verifiedFailed = await verifiedHotspotIdsAmong(failedRes.rows.map((r) => r.loc_code));
+
   // Country-qualified labels for the failed-loads list (rev 3: it mixes
   // countries, so bare "Bornholm" would be ambiguous there).
   const failedRegionLabels = await regionLabels(
@@ -612,8 +649,70 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     stateHotspots: [],
   });
 
+  // Selection destinations. The chain of disclosures to open is resolved here
+  // so the server can render it (no JavaScript needed); only the ONE focused
+  // group's detail is loaded, never the whole inventory.
+  const states = selectedCountryRegions.filter((s) => !loadedRegionCodes.has(s.code));
+  const preselectRegion =
+    regionParsed && states.some((s) => s.code === regionParsed.code) ? regionParsed.code : null;
+  type Focus =
+    | {
+        kind: "area";
+        code: string;
+        targetId: string;
+        area: string;
+        states: string[];
+        county: string | null;
+      }
+    | { kind: "failed"; code: string }
+    | { kind: "unavailable"; code: string };
+  let focus: Focus | null = null;
+  const focusDetail: Record<string, RegionDetail> = {};
+  if (showParam) {
+    const parsed = parseRegionCode(showParam);
+    if (parsed) {
+      const here = await query(
+        `SELECT 1 FROM frequency_fetch
+          WHERE loc_code = $1 OR loc_code LIKE $2 OR region_code = $1 OR region_code LIKE $2
+          LIMIT 1`,
+        [parsed.code, `${parsed.code}-%`],
+      );
+      if ((here.rowCount ?? 0) === 0) {
+        focus = { kind: "unavailable", code: parsed.code };
+      } else {
+        const region =
+          parsed.level === "country" ? null : parsed.level === "subnational1" ? parsed.code : parsed.parent;
+        focus = {
+          kind: "area",
+          code: parsed.code,
+          targetId: hubNodeId(parsed.code),
+          area: geographicAreaForCountry(parsed.country),
+          states: [parsed.country, ...(region ? [region] : [])],
+          county: parsed.level === "subnational2" ? parsed.code : null,
+        };
+        const detailCode = region ?? parsed.country;
+        const detailName =
+          (region ? regionDisplayName.get(region) : countryName.get(parsed.country)) ?? detailCode;
+        focusDetail[detailCode] = await regionDetail(detailCode, detailName);
+      }
+    } else if (isHotspotLocId(showParam)) {
+      focus = failedRes.rows.some((f) => f.loc_code === showParam)
+        ? { kind: "failed", code: showParam }
+        : { kind: "unavailable", code: showParam };
+    } else {
+      error(400, "Choose a recognized area.");
+    }
+  }
+
   return {
     accountId: locals.user!.id,
+    // The shared, validated immediate return path a discovery selection sets.
+    returnLink: safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel")),
+    discovery,
+    offlineView,
+    focus,
+    focusDetail,
+    preselectRegion,
     hasHome: home != null,
     speciesCounts,
     stateGroups: stateGroups.map(stripDetail),
@@ -624,6 +723,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     })),
     orphanHotspots,
     failed: failedRes.rows.map((r) => {
+      // A failed hotspot load with no hotspot evidence is a reported location.
+      const unverified = isHotspotLocId(r.loc_code) && !verifiedFailed.has(r.loc_code);
       const parsed = r.region_code ? parseRegionCode(r.region_code) : null;
       let regionName: string | null = null;
       if (parsed?.level === "subnational2") {
@@ -647,6 +748,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
         error: r.error,
         locName: r.loc_name,
         regionName,
+        unverified,
       };
     }),
     frequencyCorrections: correctionsRes.rows.map((r) => ({
@@ -662,7 +764,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     })),
     countries: countryOptions,
     selectedCountry,
-    states: selectedCountryRegions.filter((s) => !loadedRegionCodes.has(s.code)),
+    states,
     wholeCountryLoaded,
     hasApiKey: !!apiKey,
     hasLogin,

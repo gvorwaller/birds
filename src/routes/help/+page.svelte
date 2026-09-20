@@ -353,10 +353,10 @@
 					<li>
 						<strong>Hotspots &amp; data</strong> (menu → 📊 Hotspots &amp; data,
 						or the third Forecast tab) is the inventory <em>and</em> the
-						load hub. A <strong>search box</strong> at the top finds any
-						stored hotspot, county, or region by name and shows its status —
-						hotspot names there (and throughout the tree) open their own
-						page. Background loads show live progress with an
+						load hub. The <strong>Find a country, region, county or hotspot</strong>
+						section at the top (described just below) finds places by name,
+						code or map point — hotspot names there (and throughout the tree)
+						open their own page. Background loads show live progress with an
 						<strong>Activity</strong> feed per load (which location just
 						loaded, which failed and why), Cancel, and recent history; below,
 						loaded data drills from geographic area to country, then from
@@ -390,6 +390,32 @@
 						be disproportionate). Note: eBird's bar-chart export can't tell
 						provisional or escaped-exotic records apart, so those are included
 						in frequencies.
+					</li>
+					<li>
+						<strong>Find a country, region, county or hotspot</strong> — on
+						<strong>Hotspots &amp; data</strong>, type a name or code, or choose
+						<strong>Choose on map</strong>, pick a place, enter a radius from 1 to
+						200 miles and choose <strong>Apply location</strong>. Results show 50
+						at a time with an exact total and Previous/Next links, so every match
+						is reachable; zero results means nothing local matched, not that the
+						place does not exist in eBird. Each result says what it is and how
+						it is known: countries and first-level regions are reference
+						geography; a county or equivalent is a loaded county; a
+						<strong>verified eBird hotspot</strong> has eBird evidence (a loaded
+						hotspot, an official hotspot list, or official hotspot information);
+						and a <strong>reported location — hotspot status unverified</strong>
+						is a place that appeared in a failed load without that evidence. An
+						unverified location is never treated as a hotspot, a venue or a
+						public-access site. Map results are only verified hotspots with
+						recorded coordinates inside the circle, nearest first; the page says
+						how many locally known verified hotspots have no coordinates and could
+						not be measured, and lists areas represented by nearby verified
+						hotspots without claiming your point lies inside them. Selecting a
+						result only opens or preselects what is already on this page (a
+						section, or the Load form) or opens a hotspot page, with a link back to
+						your exact search; it never loads bird data, queues a job or changes
+						Home. Typed search and shared map links work without JavaScript;
+						picking or moving a map point needs it.
 					</li>
 					<li>
 						For the species page's seasonal charts and recent report lookup,

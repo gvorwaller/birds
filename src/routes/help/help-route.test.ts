@@ -52,4 +52,24 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		expect(normalized).toContain("does not change your saved Home location");
 		expect(normalized).toContain("does not fetch anything from eBird");
 	});
+
+	it("documents Hotspots & data discovery, its evidence labels and that selecting loads nothing (td-687b1c)", () => {
+		const content = readFileSync("src/routes/help/+page.svelte", "utf8");
+		const normalized = content.replace(/\s+/g, " ");
+		expect(normalized).toContain("Find a country, region, county or hotspot");
+		expect(normalized).toContain("Choose on map");
+		expect(normalized).toContain("radius from 1 to 200 miles");
+		expect(normalized).toContain("50 at a time with an exact total");
+		expect(normalized).toContain("every match is reachable");
+		expect(normalized).toContain("not that the place does not exist in eBird");
+		expect(normalized).toContain("countries and first-level regions are reference geography");
+		expect(normalized).toContain("verified eBird hotspot");
+		expect(normalized).toContain("reported location — hotspot status unverified");
+		expect(normalized).toContain("never treated as a hotspot, a venue or a public-access site");
+		expect(normalized).toContain("could not be measured");
+		expect(normalized).toContain("areas represented by nearby verified hotspots without claiming your point lies inside them");
+		expect(normalized).toContain("it never loads bird data, queues a job or changes Home");
+		expect(normalized).toContain("Typed search and shared map links work without JavaScript");
+		expect(normalized).not.toContain("A search box at the top finds any stored hotspot");
+	});
 });

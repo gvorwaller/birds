@@ -169,6 +169,11 @@ export async function regionLabels(
 	return out;
 }
 
+/** Every reference country and first-level region (Phase 8B discovery search). */
+export async function allReferenceRegions(): Promise<Region[]> {
+	return [...(await regionIndex()).byCode.values()];
+}
+
 /** World country list, name-sorted. Replaces `countries(apiKey)` on read paths. */
 export async function countriesList(): Promise<Region[]> {
 	return (await regionIndex()).countries;

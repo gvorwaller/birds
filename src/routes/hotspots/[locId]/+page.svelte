@@ -124,6 +124,12 @@
       {data.locName ?? data.locId}
       {#if data.verified}<Badge kind="notable" label="eBird hotspot" />{/if}
     </h1>
+    {#if !data.verified}
+      <!-- Phase 8B: discovery labels a non-verified location this way, known to
+           this page or not; the label must survive selection so it is never
+           read as a hotspot. -->
+      <p class="unverified-label" role="status"><strong>reported location — hotspot status unverified</strong></p>
+    {/if}
     <p class="sub">
       {#if data.countyName}{data.countyName}{#if data.stateName},
           {data.stateName}{/if}{:else if data.stateName}{data.stateName}{/if}
@@ -133,26 +139,28 @@
       {/if}
       {#if data.numSpeciesAllTime != null}· {data.numSpeciesAllTime} species all-time{/if}
     </p>
-    {#if data.venueTypes.length > 0}
+    {#if data.verified && data.venueTypes.length > 0}
       <p class="venues">
         {#each data.venueTypes as v (v)}<span class="venue">{v}</span>{/each}
       </p>
     {/if}
   </header>
 
-  {#if !data.known}
+  {#if !data.known || !data.verified}
+    <!-- Unverified (known from place data or not): a plain recovery state. No
+         place-type chips, no eBird hotspot link, no map/trip/route actions and
+         no hotspot data tabs: none of them may read as a verified hotspot. -->
     <section class="card">
       {#if form && "error" in form && form.error}<p class="err" role="alert">{form.error}</p>{/if}
       <p class="muted">
-        This location has no stored place details yet. Verify it with eBird
-        before loading historical data. You can still view it on
-        <a
-          href={`https://ebird.org/hotspot/${data.locId}`}
-          target="_blank"
-          rel="noopener">eBird ↗</a
-        >.
+        {#if data.known}
+          This name comes from place data and does not verify that the ID is a
+          public eBird hotspot.
+        {:else}
+          This location has no stored place details yet.
+        {/if}
+        Verify it with eBird before loading historical data.
       </p>
-      <p class="muted">Try <a href={forecastHref}>Choose location for forecast</a> to search nearby reported locations.</p>
       {#if data.isViewer}
         <p class="muted">Viewer accounts cannot verify or queue historical loads.</p>
       {/if}
@@ -201,33 +209,7 @@
           <p class="muted" role="status">eBird verification could not be refreshed; this load uses cached hotspot identity and should be reverified later.</p>
         {/if}
       {/if}
-      {#if !data.verified}
-        <p class="muted">
-        This name comes from place data and does not verify that the ID is a
-          public eBird hotspot.
-        </p>
-        {#if data.isViewer}<p class="muted">Viewer accounts cannot verify or queue historical loads.</p>{/if}
-        {#if !data.isViewer}
-          {#if data.hasApiKey}
-            <form method="POST" action={actionHref("load_hotspot")} use:enhance={() => {
-              loadBusy = true;
-              return async ({ update }) => {
-                await update();
-                loadBusy = false;
-              };
-            }}>
-              <input type="hidden" name="back" value={data.back} />
-              <input type="hidden" name="tab" value={data.tab} />
-              <input type="hidden" name="returnTo" value={data.returnLink.href} />
-              <button type="submit" disabled={loadBusy}>
-                {loadBusy ? "Verifying…" : form && "verificationRequired" in form ? "Retry verification" : "Verify hotspot and load history"}
-              </button>
-            </form>
-          {:else}
-            <p class="muted">Add an eBird API key in <a href="/settings">Settings</a> to verify this hotspot.</p>
-          {/if}
-        {/if}
-      {:else if myJob}
+      {#if myJob}
         <p class="progress">{jobPresentationText(myJob.presentation, myJob.progress)}
           <a href="/forecast/data#background-work">details</a>
         </p>
@@ -457,6 +439,10 @@
 </div>
 
 <style>
+  .unverified-label {
+    margin: 4px 0 8px;
+    color: var(--text);
+  }
   .page {
     max-width: 860px;
     margin: 0 auto;

@@ -82,4 +82,16 @@ describe("About route and navigation", () => {
 		expect(normalized).not.toContain("fetches nothing");
 		expect(normalized).toContain("leaves your Home location alone");
 	});
+
+	it("v0.1.6 announces Hotspots & data discovery without implying it loads data (td-687b1c)", () => {
+		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		const normalized = content.slice(start, end).replace(/\s+/g, " ");
+		expect(normalized).toContain("Find places on Hotspots &amp; data by name or map");
+		expect(normalized).toContain("1 to 200 miles");
+		expect(normalized).toContain("50 per page with an exact total");
+		expect(normalized).toContain("reported location — hotspot status unverified");
+		expect(normalized).toContain("Searching and selecting never load bird data or change Home");
+	});
 });

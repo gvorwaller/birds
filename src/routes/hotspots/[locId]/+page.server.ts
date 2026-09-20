@@ -88,7 +88,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   let recentStale = false;
   const apiKey = await getEbirdApiKey(scopeId);
   let hasApiKey = !!apiKey;
-  if (tab === "recent" && known) {
+  // Live observations are only shown for a VERIFIED hotspot (the page renders
+  // a plain unverified state otherwise), so an unverified location never
+  // triggers an eBird request just by being opened.
+  if (tab === "recent" && known && meta?.isHotspot === true) {
     if (apiKey) {
       try {
         const res = await recentHotspotObs(apiKey, locId, back);

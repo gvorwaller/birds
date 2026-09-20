@@ -1,7 +1,8 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
-  import { goto, invalidateAll } from "$app/navigation";
+  import { goto, invalidateAll, replaceState } from "$app/navigation";
+  import { onMount, tick } from "svelte";
   import { page } from "$app/state";
   import PathNavigation from "$components/PathNavigation.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
@@ -18,7 +19,25 @@
   import ProgressBar from "$components/ProgressBar.svelte";
   import Skeleton from "$components/Skeleton.svelte";
   import type { ActionData, PageData } from "./$types";
-  import type { HubHit } from "$server/region-detail";
+  import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
+  import { GUIDE_RADIUS_MAX, GUIDE_RADIUS_MIN } from "$lib/guide-location";
+  import {
+    HUB_DISCOVERY_PARAMS,
+    HUB_FIND_MIN,
+    HUB_RESULTS_ID,
+    HUB_SELECTION_PARAMS,
+    clearHubDiscovery,
+    hubFailedId,
+    hubHotspotPath,
+    hubHref,
+    hubNodeId,
+    hubSelectHref,
+    normalizeHubFind,
+    withHubMap,
+    withHubPage,
+    withHubTyped,
+  } from "$lib/hub-discovery";
+  import type { HubDiscovery, HubResult, HubSummaryArea } from "$server/hub-discovery";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -44,10 +63,12 @@
   });
   const filteredCountries = $derived(data.countries.filter(countryMatches));
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
-    void goto(`?country=${e.currentTarget.value}`, {
-      keepFocus: true,
-      noScroll: true,
-    });
+    // Keep every unrelated parameter (discovery included); a new country makes
+    // any preselected region or opened section stale.
+    const next = new URLSearchParams(page.url.searchParams);
+    next.set("country", e.currentTarget.value);
+    for (const name of ["region", "show"]) next.delete(name);
+    void goto(`?${next}`, { keepFocus: true, noScroll: true });
   }
   // Nothing left to offer: every subnational1 region is loaded, and so is the
   // countrywide export where one is offered (never for US).
@@ -227,7 +248,23 @@
       openAreas = [];
     }
   });
+  // A discovery selection can ask for a chain of disclosures (area → country →
+  // region) to be open. The server renders that chain, so it works without
+  // JavaScript; a person can still close any of it (tracked in `dismissed`).
+  const focusAreas = $derived(new Set(data.focus?.kind === "area" ? [data.focus.area] : []));
+  const focusStates = $derived(new Set(data.focus?.kind === "area" ? data.focus.states : []));
+  let dismissed = $state<string[]>([]);
+  function noteToggle(id: string, open: boolean, focused: Set<string>) {
+    if (open) dismissed = dismissed.filter((x) => x !== id);
+    else if (focused.has(id) && !dismissed.includes(id)) dismissed = [...dismissed, id];
+  }
+  const areaOpen = (id: string) =>
+    openAreas.includes(id) || (focusAreas.has(id) && !dismissed.includes(id));
+  const stateOpen = (code: string) =>
+    openStates.includes(code) || (focusStates.has(code) && !dismissed.includes(code));
+
   function toggleArea(id: string, open: boolean) {
+    noteToggle(id, open, focusAreas);
     const next = openAreas.filter((areaId) => areaId !== id);
     if (open) next.push(id);
     openAreas = next;
@@ -256,11 +293,15 @@
     openStates = readOpen();
   });
   function toggleState(code: string, open: boolean) {
+    // The toggle event a landing's own server-opened chain fires on hydration is
+    // not a person's action, so it never fetches counts; closing then reopening is.
+    const landingOpen = open && focusStates.has(code) && !dismissed.includes(code);
+    noteToggle(code, open, focusStates);
     const next = openStates.filter((c) => c !== code);
     if (open) next.push(code);
     openStates = next;
     if (open) {
-      void loadHotspotCounts(code);
+      if (!landingOpen) void loadHotspotCounts(code);
       // Detail is fetched on expand, not shipped with the page (td-3bf3a2).
       const g =
         data.stateGroups.find((x) => x.stateCode === code) ??
@@ -288,7 +329,7 @@
   let groupDetail = $state<Record<string, GroupDetail>>({});
   const detailFetched = new Set<string>();
   async function loadGroupDetail(code: string, name: string) {
-    if (!browser || detailFetched.has(code)) return;
+    if (!browser || detailFetched.has(code) || data.focusDetail[code]) return;
     detailFetched.add(code);
     try {
       const res = await fetch(
@@ -305,8 +346,12 @@
   }
   /** Blocks for a group once fetched; empty until then. */
   function detailOf(code: string): GroupDetail {
-    return groupDetail[code] ?? { countyBlocks: [], stateHotspots: [] };
+    return (
+      groupDetail[code] ??
+      data.focusDetail[code] ?? { countyBlocks: [], stateHotspots: [] }
+    );
   }
+  const hasDetail = (code: string) => !!(groupDetail[code] ?? data.focusDetail[code]);
 
   // Hotspot tallies per county ("229 of 312 loaded · 83 to load"), fetched
   // only for groups you actually open — one cached eBird request per region
@@ -314,8 +359,24 @@
   type HotspotCounts = { total: number; loaded: number; pending: number };
   let hotspotCounts = $state<Record<string, HotspotCounts>>({});
   const countsFetched = new Set<string>();
+  // These tallies come from eBird hotspot lists. A discovery or selection view
+  // never triggers them on its own: only after the person interacts (a plain
+  // variable, so engaging does not re-run the effect that restores open groups).
+  let engaged = false;
+  onMount(() => {
+    const mark = () => {
+      engaged = true;
+    };
+    window.addEventListener("pointerdown", mark, { capture: true, passive: true });
+    window.addEventListener("keydown", mark, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", mark, { capture: true });
+      window.removeEventListener("keydown", mark, { capture: true });
+    };
+  });
   async function loadHotspotCounts(regionCode: string) {
     if (!browser || countsFetched.has(regionCode)) return;
+    if (data.offlineView && !engaged) return;
     countsFetched.add(regionCode);
     try {
       const res = await fetch(
@@ -328,10 +389,11 @@
       countsFetched.delete(regionCode); // transient — allow a retry on reopen
     }
   }
-  // Groups restored open from localStorage need their counts too.
+  // Groups restored open from localStorage need their counts too, except on a
+  // local-only discovery/selection view, where nothing is fetched automatically.
   $effect(() => {
     for (const code of openStates) {
-      void loadHotspotCounts(code);
+      if (!data.offlineView) void loadHotspotCounts(code);
       const g =
         data.stateGroups.find((x) => x.stateCode === code) ??
         data.countrySections.flatMap((x) => x.groups).find((x) => x.stateCode === code);
@@ -407,50 +469,224 @@
     return new Date(j.finishedAt).getTime() - new Date(j.enqueuedAt).getTime();
   }
 
-  // ---- Hub search (Phase 3): one box finds any stored state, county,
-  // hotspot, or failed load by name and shows its status — hotspot hits
-  // link straight to their /hotspots/[locId] workspace page.
-  let hubSearchText = $state("");
-  const hubQuery = $derived(hubSearchText.trim());
-  // A StateGroup's own hits (state/region row, counties, hotspots) — shared
-  // between the top-level US loop and each CountrySection's nested groups
-  // (td-f1d6da UX restructure).
-  // Hub search runs SERVER-SIDE (td-3bf3a2). It used to filter an in-memory
-  // index built from the whole page payload — which is exactly why that
-  // payload (3,459 county + 4,731 hotspot rows, ~1.2 MB) had to be shipped
-  // and parsed before this box would accept a keystroke. Searching ~8,200
-  // rows is a trivial indexed query; shipping them to search locally was the
-  // expensive part.
-  let hubHits = $state<HubHit[]>([]);
-  let hubCapped = $state(false);
-  let hubSearching = $state(false);
-  let hubSeq = 0;
+  // ---- Discovery (Phase 8B): find a country, region, county or hotspot by
+  // typing or by a map point + explicit radius. The server renders the result
+  // (native GET form, no JavaScript needed); this only adds debounced live
+  // results from the same service through /api/hub-search.
+  const NAV_KEYS = ["returnTo", "returnLabel", "navNode", "navParent", "navAccount"];
+  /** The current URL's parameters without navigation bookkeeping. */
+  function baseParams(): URLSearchParams {
+    const next = new URLSearchParams(page.url.searchParams);
+    for (const name of NAV_KEYS) next.delete(name);
+    return next;
+  }
+  // Unrelated parameters ride along on the native forms; discovery and stale
+  // selection state do not.
+  const preservedParams = $derived(
+    [...page.url.searchParams].filter(
+      ([name]) =>
+        !HUB_DISCOVERY_PARAMS.includes(name) &&
+        !(HUB_SELECTION_PARAMS as readonly string[]).includes(name) &&
+        !NAV_KEYS.includes(name),
+    ),
+  );
+
+  let typedText = $state<string | null>(null);
+  const findValue = $derived(
+    typedText ??
+      (data.discovery?.mode === "typed" ? (data.discovery.submitted ?? data.discovery.find ?? "") : ""),
+  );
+  // Live results replace the server-rendered ones until the next navigation;
+  // `discovery: null` means the search was cleared.
+  let live = $state<{ discovery: HubDiscovery | null } | null>(null);
+  const shown = $derived<HubDiscovery | null>(live ? live.discovery : data.discovery);
   $effect(() => {
-    const q = hubQuery;
+    void data.discovery;
+    typedText = null;
+    live = null;
+  });
+
+  let findSeq = 0;
+  let findTimer: ReturnType<typeof setTimeout> | undefined;
+  function onFindInput(e: Event & { currentTarget: HTMLInputElement }) {
+    typedText = e.currentTarget.value;
+    const text = normalizeHubFind(typedText);
+    const params = withHubTyped(baseParams(), text);
+    clearTimeout(findTimer);
+    findTimer = setTimeout(async () => {
+      const seq = ++findSeq;
+      if (!text) {
+        live = { discovery: null };
+        replaceState(hubHref(params, ""), {});
+        return;
+      }
+      try {
+        const res = await fetch(`/api/hub-search?${params}`);
+        // Out-of-order guard: only the newest query may paint. A failure keeps
+        // the last answer; the Search button always works.
+        if (seq !== findSeq || !res.ok) return;
+        const body = (await res.json()) as { discovery: HubDiscovery | null };
+        live = { discovery: body.discovery };
+        replaceState(hubHref(params), {});
+      } catch {
+        /* the native form remains authoritative */
+      }
+    }, 250);
+  }
+
+  // The named immediate return path: the exact canonical query of what is on
+  // screen (mode, page, unrelated parameters) with the fragment of the very row
+  // that was chosen, so coming back lands on and focuses that row.
+  function selectHref(target: HubResult["target"], rowId: string): string | null {
+    const returnHref = hubHref(baseParams(), rowId);
+    if (target.kind === "hotspot")
+      return withReturnTo(hubHotspotPath(target.id), returnHref, undefined, "Hotspots & data");
+    // Only the account owner can act on the Load workflow this would preselect.
+    if (target.kind === "load" && data.isViewer) return null;
+    const destination = hubSelectHref(baseParams(), target);
+    return destination ? withReturnTo(destination, returnHref, undefined, "Hotspots & data") : null;
+  }
+  const resultRowId = (id: string) => `forecast-data-search-${encodeURIComponent(id)}`;
+  const areaRowId = (area: HubSummaryArea) => `forecast-data-area-${area.type}-${encodeURIComponent(area.code)}`;
+
+  // Arriving on a row's fragment (a return path) focuses that row.
+  $effect(() => {
+    void shown;
     if (!browser) return;
-    if (q.trim().length < 2) {
-      hubHits = [];
-      hubCapped = false;
-      hubSearching = false;
+    let id = "";
+    try {
+      id = decodeURIComponent(page.url.hash.slice(1));
+    } catch {
       return;
     }
-    const seq = ++hubSeq;
-    hubSearching = true;
-    // Debounced so a fast typist issues one request, not one per keystroke.
-    const t = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/hub-search?q=${encodeURIComponent(q)}`);
-        if (!res.ok) return;
-        const body = (await res.json()) as { hits: HubHit[]; capped: boolean };
-        // Out-of-order guard: only the newest query may paint.
-        if (seq !== hubSeq) return;
-        hubHits = body.hits;
-        hubCapped = body.capped;
-      } finally {
-        if (seq === hubSeq) hubSearching = false;
-      }
-    }, 200);
-    return () => clearTimeout(t);
+    if (!id.startsWith("forecast-data-search-") && !id.startsWith("forecast-data-area-")) return;
+    void tick().then(() => {
+      const el = document.getElementById(id);
+      if (el instanceof HTMLElement) el.focus({ preventScroll: true });
+    });
+  });
+  function pageHref(n: number): string {
+    return hubHref(withHubPage(baseParams(), shown?.mode === "map" ? "map" : "typed", n));
+  }
+  const clearDiscoveryHref = $derived(hubHref(clearHubDiscovery(baseParams()), "discovery"));
+  // The ordinary inventory view: no discovery or selection state.
+  const fullViewHref = $derived.by(() => {
+    const next = clearHubDiscovery(baseParams());
+    for (const name of HUB_SELECTION_PARAMS) next.delete(name);
+    return hubHref(next, "");
+  });
+
+  const TYPE_LABEL: Record<HubResult["type"], string> = {
+    country: "country",
+    region: "first-level region",
+    county: "county or equivalent",
+    hotspot: "verified eBird hotspot",
+    reported: "reported location — hotspot status unverified",
+  };
+  function stateText(r: HubResult): string {
+    const span = r.row ? `${r.row.beginYear}–${r.row.endYear} · ${r.row.nSpecies.toLocaleString()} species` : "";
+    switch (r.loadState) {
+      case "current":
+        return `loaded, current · ${span}`;
+      case "outdated":
+        return `loaded, outdated · ${span}`;
+      case "failed":
+        return `last load failed${r.error ? ` — ${r.error}` : ""}`;
+      case "unverified":
+        return `not verified as a hotspot${r.error ? ` · last load failed — ${r.error}` : ""}`;
+      default:
+        return r.loadedBeneath > 0
+          ? `not loaded as a whole · ${r.loadedBeneath.toLocaleString()} loaded ${r.loadedBeneath === 1 ? "area or hotspot" : "areas and hotspots"} inside`
+          : "available, not loaded";
+    }
+  }
+  const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+  function countsText(d: HubDiscovery): string {
+    const parts = [
+      d.counts.country ? plural(d.counts.country, "country", "countries") : "",
+      d.counts.region ? plural(d.counts.region, "first-level region", "first-level regions") : "",
+      d.counts.county ? plural(d.counts.county, "loaded county or equivalent", "loaded counties or equivalents") : "",
+      d.counts.hotspot ? plural(d.counts.hotspot, "verified hotspot", "verified hotspots") : "",
+      d.counts.reported ? plural(d.counts.reported, "reported location, hotspot status unverified", "reported locations, hotspot status unverified") : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+
+  // Map + radius chooser. Creating a marker needs JavaScript, so the control
+  // appears once the page has hydrated; <noscript> explains it. The radius is
+  // explicit and never defaulted, saved or taken from the map view.
+  const chooserId = "hub-map-chooser";
+  let jsReady = $state(false);
+  onMount(() => {
+    jsReady = true;
+  });
+  let mapOpen = $state(false);
+  let picked = $state<PickedLocation | null>(null);
+  let radiusText = $state("");
+  let applyError = $state("");
+  let chooseButton = $state<HTMLButtonElement | undefined>();
+  let chooserHeading = $state<HTMLHeadingElement | undefined>();
+  const radiusValid = $derived(
+    /^\d+$/.test(radiusText.trim()) &&
+      Number(radiusText) >= GUIDE_RADIUS_MIN &&
+      Number(radiusText) <= GUIDE_RADIUS_MAX,
+  );
+  const canApply = $derived(picked !== null && radiusValid);
+  async function openChooser() {
+    picked = null;
+    applyError = "";
+    radiusText = shown?.map ? String(shown.map.dist) : "";
+    mapOpen = true;
+    await tick();
+    chooserHeading?.focus({ preventScroll: true });
+    chooserHeading?.scrollIntoView({ block: "start" });
+  }
+  async function cancelChooser() {
+    mapOpen = false;
+    picked = null;
+    radiusText = "";
+    applyError = "";
+    await tick();
+    chooseButton?.focus();
+  }
+  function applyChooser() {
+    if (!picked || !radiusValid) return;
+    const built = withHubMap(baseParams(), {
+      place: picked.label,
+      lat: picked.lat,
+      lng: picked.lng,
+      dist: Number(radiusText),
+    });
+    if (!built.ok) {
+      applyError = built.message;
+      return;
+    }
+    mapOpen = false;
+    picked = null;
+    radiusText = "";
+    applyError = "";
+    void goto(hubHref(built.params));
+  }
+
+  // Land on the section a selection asked for (its disclosures are already
+  // rendered open by the server) or on the preselected Load form.
+  $effect(() => {
+    const f = data.focus;
+    const target =
+      f?.kind === "area"
+        ? f.targetId
+        : f?.kind === "failed"
+          ? hubFailedId(f.code)
+          : data.preselectRegion
+            ? "region-select"
+            : null;
+    if (!browser || !target) return;
+    void tick().then(() => {
+      const el = document.getElementById(target);
+      if (!el) return;
+      el.scrollIntoView({ block: "start" });
+      el.focus({ preventScroll: true });
+    });
   });
 
   // ---- Per-unit activity (Phase 3): the events feed the admin page already
@@ -683,7 +919,7 @@
         <a
           id={`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`}
           class="hublink path-focus-target"
-          href={withReturnTo(`/hotspots/${encodeURIComponent(r.locCode)}`,page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
+          href={withReturnTo(hubHotspotPath(r.locCode),page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
           onclick={navigationAction(data.accountId,{label:r.locName,originId:`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`})}
           ><strong>{r.locName}</strong></a
         >
@@ -724,10 +960,10 @@
   <details
     class="stategroup"
     class:nested
-    open={openStates.includes(g.stateCode)}
+    open={stateOpen(g.stateCode)}
     ontoggle={(e) => toggleState(g.stateCode, e.currentTarget.open)}
   >
-    <summary>
+    <summary id={hubNodeId(g.stateCode)} class="hub-target">
       <strong>{g.stateName}</strong>
       <span class="groupmeta">{groupStatusText(g)} · {@render speciesTotal("regions", g.stateCode)}</span>
     </summary>
@@ -736,9 +972,9 @@
          and hydrate on every visit — blocking input on the country search for
          ~10 s on a phone. Render a group's table only while it is open, the
          same treatment the hotspot rows inside it already get. -->
-    {#if openStates.includes(g.stateCode)}
+    {#if stateOpen(g.stateCode)}
       {@const detail = detailOf(g.stateCode)}
-      {#if !groupDetail[g.stateCode]}
+      {#if !hasDetail(g.stateCode)}
         <Skeleton minHeight="120px" label="Loading {g.stateName}…" />
       {/if}
       {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
@@ -798,7 +1034,7 @@
               {#each detail.countyBlocks as b (b.countyCode)}
                 {@const open = openCounties.includes(b.countyCode)}
                 <tr>
-                  <td>
+                  <td id={hubNodeId(b.countyCode)} class="hub-target" tabindex="-1">
                     {#if b.hotspots.length > 0}
                       <button
                         type="button"
@@ -869,16 +1105,16 @@
        with states as its nested groups and no countrywide export. -->
   <details
     class="stategroup countrygroup"
-    open={openStates.includes(s.countryCode)}
+    open={stateOpen(s.countryCode)}
     ontoggle={(e) => toggleState(s.countryCode, e.currentTarget.open)}
   >
-    <summary>
+    <summary id={hubNodeId(s.countryCode)} class="hub-target">
       <strong>{s.countryName}</strong>
       <span class="groupmeta">{sectionStatusText(s)} · {@render speciesTotal("regions", s.countryCode)}</span>
     </summary>
     <!-- Same lazy body as the state groups above: a closed <details> still
          hydrates everything inside it. -->
-    {#if openStates.includes(s.countryCode)}
+    {#if stateOpen(s.countryCode)}
       {@const cdetail = detailOf(s.countryCode)}
       {#if !data.isViewer && (s.regionRemaining ?? 0) > 0}
         {@const missing = s.regionRemaining ?? 0}
@@ -928,6 +1164,27 @@
   </details>
 {/snippet}
 
+{#snippet areaLink(area: HubSummaryArea)}
+  {@const href = selectHref(area.target, areaRowId(area))}
+  <li>
+    {#if href}
+      <a
+        id={areaRowId(area)}
+        class="hublink path-focus-target"
+        {href}
+        onclick={navigationAction(data.accountId, { label: area.name, originId: areaRowId(area) })}
+        ><strong>{area.name}</strong></a
+      >
+    {:else}
+      <strong>{area.name}</strong>
+    {/if}
+    <span class="hitmeta"
+      >{area.type === "county" ? "loaded county or equivalent" : area.type === "region" ? "first-level region" : "country"}
+      · {plural(area.hotspots, "nearby verified hotspot", "nearby verified hotspots")}</span
+    >
+  </li>
+{/snippet}
+
 {#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string)}
   <span class="species-total">
     {#await data.speciesCounts}
@@ -948,7 +1205,7 @@
 {#snippet geographicArea(area: LoadedArea)}
   <details
     class="area-group"
-    open={openAreas.includes(area.id)}
+    open={areaOpen(area.id)}
     ontoggle={(e) => toggleArea(area.id, e.currentTarget.open)}
   >
     <summary>
@@ -957,7 +1214,7 @@
     </summary>
     <!-- Do not even render the country summaries while this area is closed.
          Country and region bodies have the same lazy boundary one level down. -->
-    {#if openAreas.includes(area.id)}
+    {#if areaOpen(area.id)}
       <div class="area-countries">
         {#each area.countries as country (country.countryCode)}
           {@render countrySection(country)}
@@ -972,7 +1229,15 @@
 </svelte:head>
 
 <div class="page">
-  <PathNavigation accountId={data.accountId} label="Hotspots & data" href={page.url.pathname + page.url.search + page.url.hash} fallbackHref="/forecast" fallbackLabel="Forecast" hideWhenNoPath />
+  <PathNavigation
+    accountId={data.accountId}
+    label="Hotspots & data"
+    href={page.url.pathname + page.url.search + page.url.hash}
+    fallbackHref={data.returnLink.href !== "/" ? data.returnLink.href : "/forecast"}
+    fallbackLabel={data.returnLink.href !== "/" ? data.returnLink.label : "Forecast"}
+    hasExplicitSource={data.returnLink.href !== "/"}
+    hideWhenNoPath={data.returnLink.href === "/"}
+  />
   <h1>Hotspots &amp; data</h1>
   <ForecastTabs mode="data" />
   <p class="intro">
@@ -981,58 +1246,181 @@
     a year, when a new complete year of checklists becomes available.
   </p>
 
-  <section class="card">
-    <h2>Find a hotspot or region</h2>
-    <input
-      class="hubsearch"
-      type="search"
-      placeholder="Type a hotspot, county, or region name"
-      aria-label="Search stored hotspots and regions"
-      bind:value={hubSearchText}
-    />
-    {#if hubQuery}
-      {#if hubHits.length === 0}
+  <section class="card hub-target" id="discovery" aria-labelledby="discovery-title">
+    <h2 id="discovery-title">Find a country, region, county or hotspot</h2>
+    <form method="GET" action={`${page.url.pathname}#${HUB_RESULTS_ID}`} class="findform" role="search">
+      {#each preservedParams as [pname, pvalue], i (`keep-${i}-${pname}-${pvalue}`)}
+        <input type="hidden" name={pname} value={pvalue} />
+      {/each}
+      <div class="find-entry">
+        <input
+          class="hubsearch"
+          type="search"
+          name="find"
+          value={findValue}
+          oninput={onFindInput}
+          maxlength="100"
+          autocomplete="off"
+          placeholder="A country, region, county or hotspot name or code"
+          aria-label="Find a country, region, county or hotspot"
+        />
+        <button type="submit" class="find-submit">Search</button>
+      </div>
+    </form>
+    <p class="notice">
+      Searches reference countries and first-level regions, loaded counties or
+      equivalents, verified eBird hotspots, and failed loads. Searching and
+      selecting a result never loads bird data.
+    </p>
+
+    <div class="map-chooser">
+      <p id="hub-map-label" class="map-label">Or choose a point on the map</p>
+      <noscript>
         <p class="notice">
-          Nothing stored matches “{hubSearchText.trim()}”. To bring a new area in,
-          load hotspots from <a href="/forecast">Forecast</a> or a region
-          below.
+          Typed search above works without JavaScript. Choosing or moving a map
+          point needs JavaScript; a shared map link still shows its results.
         </p>
-      {:else}
-        <ul class="hits">
-          {#each hubHits as h (h.kind + h.code)}
-            <li>
-              <span class="hitmain">
-                {#if h.kind === "hotspot"}
-                  <a
-                    id={`forecast-data-search-${encodeURIComponent(h.code)}`}
-                    class="hublink path-focus-target"
-                    href={withReturnTo(`/hotspots/${encodeURIComponent(h.code)}`,page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
-                    onclick={navigationAction(data.accountId,{label:h.name,originId:`forecast-data-search-${encodeURIComponent(h.code)}`})}
-                    ><strong>{h.name}</strong></a
-                  >
-                {:else}
-                  <strong>{h.name}</strong>
-                {/if}
-                {#if h.context}<span class="hitctx">· {h.context}</span>{/if}
-                <span class="code">{h.code}</span>
-              </span>
-              <span class="hitmeta">
-                {#if h.kind === "failed"}
-                  <span class="err">failed — {h.error ?? "unknown error"}</span>
-                {:else if h.row}
-                  {h.row.beginYear}–{h.row.endYear} ·
-                  {h.row.nSpecies.toLocaleString()} species
-                  {#if !h.row.current}<span class="outdated">outdated</span>{/if}
-                {/if}
-              </span>
-            </li>
-          {/each}
-        </ul>
-        <p class="notice">
-          {hubHits.length} match{hubHits.length === 1 ? "" : "es"} across
-          everything stored. Hotspot names open their page.
-        </p>
+      </noscript>
+      {#if jsReady}
+        <button
+          type="button"
+          class="secondary"
+          bind:this={chooseButton}
+          hidden={mapOpen}
+          aria-expanded={mapOpen}
+          aria-controls={chooserId}
+          onclick={openChooser}>Choose on map</button
+        >
       {/if}
+      {#if mapOpen}
+        <div id={chooserId} class="chooser" role="group" aria-labelledby="hub-map-heading">
+          <h3 bind:this={chooserHeading} id="hub-map-heading" tabindex="-1">Choose a map point and radius</h3>
+          <p class="muted2">
+            Search for a place or tap the map, then enter a radius. Results are
+            verified eBird hotspots with recorded coordinates inside the circle;
+            the part of the map you can see is never a boundary, and a place
+            you pick is only a point.
+          </p>
+          <MapPicker bind:selected={picked} initialLat={shown?.map?.lat ?? null} initialLng={shown?.map?.lng ?? null} initialLabel={shown?.map?.place} />
+          <p class="picked">{picked ? `Chosen point: ${picked.label}` : "No point chosen yet."}</p>
+          <div class="radius-field">
+            <label for="hub-radius">Radius in miles ({GUIDE_RADIUS_MIN}–{GUIDE_RADIUS_MAX})</label>
+            <input id="hub-radius" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={radiusText} aria-describedby="hub-apply-help" aria-invalid={radiusText.trim() !== "" && !radiusValid} />
+          </div>
+          <p id="hub-apply-help" class="muted2">{canApply ? "Ready to apply." : `Choose a point on the map and enter a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`}</p>
+          {#if applyError}<p class="err" role="alert">{applyError}</p>{/if}
+          <div class="chooser-actions">
+            <button type="button" class="apply" disabled={!canApply} onclick={applyChooser}>Apply location</button>
+            <button type="button" class="secondary" onclick={cancelChooser}>Cancel</button>
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    {#if data.focus?.kind === "unavailable"}
+      <p class="notice" role="status">
+        No data is loaded for {data.focus.code}, so there is no section to open. It
+        can still be found by searching.
+      </p>
+    {/if}
+
+    {#if shown}
+      <div id={HUB_RESULTS_ID} class="hub-results hub-target">
+        {#if shown.tooShort}
+          <p class="notice" role="status">Type at least {HUB_FIND_MIN} characters to search.</p>
+        {:else if shown.total === 0}
+          <p class="notice" role="status">
+            {#if shown.mode === "typed"}
+              No local match for “{shown.submitted ?? shown.find}”.
+            {:else if shown.map}
+              No coordinate-known verified hotspot lies within {plural(shown.map.dist, "mile", "miles")} of {shown.map.place}.
+            {/if}
+            This means nothing in the reference geography, loaded counties, verified
+            hotspots or failed loads matches — not that the place does not exist in
+            eBird. To bring a new area in, load hotspots from
+            <a href="/forecast">Forecast</a> or a region below.
+          </p>
+        {:else}
+          <p class="hub-count" role="status">
+            {#if shown.mode === "typed"}
+              Showing {shown.first.toLocaleString()}–{shown.last.toLocaleString()} of
+              {shown.total.toLocaleString()} {shown.total === 1 ? "match" : "matches"} for
+              “{shown.submitted ?? shown.find}”
+            {:else if shown.map}
+              Showing {shown.first.toLocaleString()}–{shown.last.toLocaleString()} of
+              {shown.total.toLocaleString()} verified {shown.total === 1 ? "hotspot" : "hotspots"} within
+              {plural(shown.map.dist, "mile", "miles")} of {shown.map.place}, nearest first
+            {/if}
+            <span class="muted2">· page {shown.page} of {shown.pageCount.toLocaleString()}</span>
+          </p>
+          <p class="muted2">
+            {#if shown.mode === "typed"}
+              {countsText(shown)}. Best matches first: exact code, exact name, name
+              prefix, then names and contexts that contain your text.
+            {:else if shown.map}
+              Measured {shown.map.evaluated.toLocaleString()} verified hotspots with recorded
+              coordinates. {shown.map.unevaluable.toLocaleString()} more locally known verified
+              hotspots have no recorded coordinates and could not be measured. Region
+              centres are never used.
+            {/if}
+          </p>
+          {#if shown.mode === "map" && shown.summary && (shown.summary.countries.length || shown.summary.regions.length || shown.summary.counties.length)}
+            <div class="hub-summary">
+              <h3>Areas represented by nearby verified hotspots</h3>
+              <p class="muted2">
+                Taken from these hotspots' recorded areas. This does not say the
+                map point lies inside any of them.
+              </p>
+              <ul class="hub-areas">
+                {#each [...shown.summary.countries, ...shown.summary.regions, ...shown.summary.counties] as area (area.type + area.code)}
+                  {@render areaLink(area)}
+                {/each}
+              </ul>
+            </div>
+          {/if}
+          <ul class="hub-hits">
+            {#each shown.results as r (r.type + r.id)}
+              {@const href = selectHref(r.target, resultRowId(r.id))}
+              <li class="hub-hit" data-type={r.type}>
+                <span class="hitmain">
+                  {#if href}
+                    <a
+                      id={resultRowId(r.id)}
+                      class="hublink path-focus-target"
+                      {href}
+                      onclick={navigationAction(data.accountId, { label: r.name, originId: resultRowId(r.id) })}
+                      ><strong>{r.name}</strong></a
+                    >
+                  {:else}
+                    <strong class="hubname">{r.name}</strong>
+                  {/if}
+                  {#if r.context}<span class="hitctx">· {r.context}</span>{/if}
+                  <span class="code">{r.id}</span>
+                </span>
+                <span class="hitmeta">
+                  <span class="hittype" data-type={r.type}>{TYPE_LABEL[r.type]}</span>
+                  {#if r.distanceMiles != null}<span> · {r.distanceMiles.toLocaleString()} mi</span>{/if}
+                  <span> · {stateText(r)}</span>
+                  {#if r.type === "hotspot" && r.evidence.length > 1}
+                    <span class="evidence"> · evidence: {r.evidence.slice(1).join("; ")}</span>
+                  {/if}
+                  {#if !href}
+                    <span class="evidence"> · loading is available to the account owner</span>
+                  {/if}
+                </span>
+              </li>
+            {/each}
+          </ul>
+          {#if shown.pageCount > 1}
+            <nav class="pagination" aria-label="More discovery results">
+              {#if shown.page > 1}<a href={pageHref(shown.page - 1)}>← Previous</a>{/if}
+              <span>Page {shown.page} of {shown.pageCount.toLocaleString()}</span>
+              {#if shown.page < shown.pageCount}<a href={pageHref(shown.page + 1)}>Next →</a>{/if}
+            </nav>
+          {/if}
+        {/if}
+        <a class="clear-discovery" href={clearDiscoveryHref}>Clear search</a>
+      </div>
     {/if}
   </section>
 
@@ -1187,8 +1575,14 @@
   </section>
 
   {#if !data.isViewer}
-    <section class="card">
+    <section class="card hub-target" id="load-region">
       <h2>Load a region</h2>
+      {#if data.preselectRegion}
+        <p class="notice" role="status">
+          Preselected from your search: <strong>{data.states.find((r) => r.code === data.preselectRegion)?.name ?? data.preselectRegion}</strong>.
+          Nothing has been loaded; choose <em>Load data</em> below if you want it.
+        </p>
+      {/if}
       {#if !data.hasApiKey}
         <p class="notice">
           The region list needs an eBird API key — add one in
@@ -1256,7 +1650,7 @@
                   (nearest known first)</span
                 >{/if}</label
             >
-            <select id="region-select" name="region" required>
+            <select id="region-select" name="region" required value={data.preselectRegion ?? ""}>
               <option value="">Choose a region…</option>
               {#if data.selectedCountry !== "US" && !data.wholeCountryLoaded}
                 <option value={data.selectedCountry}
@@ -1300,6 +1694,15 @@
     {#if totalCountryCount === 0}
       <p class="notice">Nothing loaded yet — load a region above.</p>
     {:else}
+      {#if data.offlineView}
+        <p class="notice" role="status">
+          This search or selection view did not contact eBird when it opened, so
+          totals such as “of N counties” and hotspot-to-load counts are not
+          shown. Explicitly opening inventory groups below may request current
+          hotspot counts from eBird. <a href={fullViewHref}>Open the full inventory</a>
+          to see the totals.
+        </p>
+      {/if}
       <p class="notice">
         Species totals count each species once across loaded historical data—not
         a complete range checklist.
@@ -1324,7 +1727,7 @@
 
   {#if data.failed.length > 0}
     <section class="card">
-      <details class="failed-section">
+      <details class="failed-section" open={data.focus?.kind === "failed"}>
         <summary>
           <h2>Failed loads ({data.failed.length})</h2>
         </summary>
@@ -1334,15 +1737,21 @@
         </p>
         <ul class="failed">
           {#each data.failed as f (f.locCode)}
-            <li>
+            <li id={hubFailedId(f.locCode)} class="hub-target" class:unverified={f.unverified} tabindex="-1">
               <div class="failinfo">
                 <strong>{f.locName ?? f.locCode}</strong>
+                {#if f.unverified}
+                  <span class="unverified-tag">reported location — hotspot status unverified</span>
+                {/if}
                 {#if f.regionName}
                   <span class="region">· {f.regionName}</span>
                 {/if}
                 <span class="code">{f.locCode}</span>
                 <span class="err">{f.error ?? "unknown error"}</span>
                 <span class="when">{fmtDate(f.lastAttemptAt)}</span>
+                {#if f.unverified}
+                  <span class="muted2">Retrying reloads history; it does not verify that this is a hotspot or say anything about public access.</span>
+                {/if}
               </div>
               {#if !data.isViewer}
                 <form
@@ -1940,8 +2349,25 @@
     }
   }
 
-  /* ---- Phase 3: hub search ---- */
+  /* ---- Phase 8B: discovery ---- */
+  .hub-target {
+    scroll-margin-top: calc(var(--nav-h) + 16px);
+  }
+  .hub-target:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .findform {
+    margin: 0;
+  }
+  .find-entry {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
   .hubsearch {
+    flex: 1;
+    min-width: 0;
     width: 100%;
     min-height: 48px;
     padding: 8px 12px;
@@ -1949,26 +2375,124 @@
     border-radius: 8px;
     background: var(--bg);
     color: var(--text);
+    font-size: 1rem;
   }
-  .hits {
+  .find-entry .hubsearch {
+    width: auto;
+    min-width: 12rem;
+  }
+  .find-submit,
+  .chooser-actions button,
+  .map-chooser > button.secondary {
+    min-height: 48px;
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 8px;
+  }
+  .find-submit,
+  .chooser-actions .apply {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+    cursor: pointer;
+  }
+  .chooser-actions .apply:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .map-chooser {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .map-label {
+    margin: 0;
+    font-weight: 600;
+  }
+  .map-chooser > button.secondary {
+    width: fit-content;
+  }
+  /* minmax(0, 1fr): an auto column would size to the picker's intrinsic search
+     row and push it past a 320px viewport. */
+  .chooser {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    min-width: 0;
+  }
+  .chooser h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    scroll-margin-top: calc(var(--nav-h) + 16px);
+  }
+  .chooser p {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .picked {
+    font-weight: 600;
+  }
+  .radius-field {
+    display: grid;
+    gap: 4px;
+    font-size: 0.89rem;
+    font-weight: 600;
+  }
+  .radius-field input {
+    min-height: 48px;
+    max-width: 12rem;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .chooser-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .hub-results {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .hub-count {
+    margin: 0 0 4px;
+    font-weight: 600;
+  }
+  .hub-summary h3 {
+    font-size: 1rem;
+    margin: 8px 0 4px;
+  }
+  .hub-areas,
+  .hub-hits {
     list-style: none;
     padding: 0;
-    margin: 10px 0 0;
+    margin: 8px 0 0;
   }
-  .hits li {
+  .hub-areas li,
+  .hub-hits li {
     display: flex;
-    gap: 8px 12px;
+    gap: 4px 12px;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     min-height: 48px;
     padding: 2px 0;
   }
-  .hits li + li {
+  .hub-areas li + li,
+  .hub-hits li + li {
     border-top: 1px solid var(--border);
   }
   .hitmain {
     min-width: 0;
+    overflow-wrap: anywhere;
   }
   .hitctx {
     color: var(--muted);
@@ -1977,7 +2501,57 @@
   .hitmeta {
     color: var(--muted);
     font-size: 0.85rem;
-    white-space: nowrap;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .hittype {
+    color: var(--text);
+    font-weight: 600;
+  }
+  /* Verified hotspot and unverified reported location differ in shape and mark,
+     not only in words or colour: solid bar and ✓ versus dashed bar and ⚠. */
+  .hub-hit[data-type="hotspot"] {
+    border-left: 4px solid var(--accent);
+    padding-left: 10px;
+  }
+  .hub-hit[data-type="reported"],
+  .failed li.unverified {
+    border-left: 4px dashed var(--muted);
+    padding-left: 10px;
+    background: var(--bg);
+  }
+  .hittype[data-type="hotspot"]::before {
+    content: "✓ ";
+  }
+  .hittype[data-type="reported"]::before,
+  .unverified-tag::before {
+    content: "⚠ ";
+  }
+  .unverified-tag {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .evidence {
+    color: var(--muted);
+  }
+  .hubname {
+    overflow-wrap: anywhere;
+  }
+  .pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin: 12px 0 0;
+  }
+  .pagination a,
+  .clear-discovery {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
+  .clear-discovery {
+    margin-top: 4px;
   }
   .hublink {
     color: inherit;

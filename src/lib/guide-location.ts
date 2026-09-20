@@ -112,6 +112,33 @@ export function guideMapSelection(input: {
 }
 
 /**
+ * Strictly parses the four raw (already trimmed) map values shared by every
+ * page that offers map + radius discovery: all four present, plain decimal
+ * coordinates, a whole-mile radius. Nothing is defaulted or inferred.
+ */
+export function parseGuideMapFields(raw: {
+  place: string;
+  lat: string;
+  lng: string;
+  dist: string;
+}): GuideLocationParse {
+  if (!raw.place || !raw.lat || !raw.lng || !raw.dist)
+    return fail("A map location needs a place name, latitude, longitude and radius.");
+  if (!NUMBER_RE.test(raw.lat)) return fail("Latitude must be a number from -90 to 90.");
+  if (!NUMBER_RE.test(raw.lng)) return fail("Longitude must be a number from -180 to 180.");
+  if (!WHOLE_RE.test(raw.dist))
+    return fail(
+      `Radius must be a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`,
+    );
+  return guideMapSelection({
+    place: raw.place,
+    lat: Number(raw.lat),
+    lng: Number(raw.lng),
+    dist: Number(raw.dist),
+  });
+}
+
+/**
  * Strictly parses the geography part of a Field Guide URL. Empty values count
  * as absent (a native form submits empty selects); anything else that is
  * repeated, malformed, incomplete or mixed is rejected rather than guessed at.
@@ -130,26 +157,8 @@ export function parseGuideLocation(params: ParamReader): GuideLocationParse {
     return fail(
       "Choose either a country, state, county or hotspot, or a map point with a radius, not both.",
     );
-  if (hasMap) {
-    if (!GUIDE_MAP_PARAMS.every((p) => raw[p]))
-      return fail(
-        "A map location needs a place name, latitude, longitude and radius.",
-      );
-    if (!NUMBER_RE.test(raw.lat))
-      return fail("Latitude must be a number from -90 to 90.");
-    if (!NUMBER_RE.test(raw.lng))
-      return fail("Longitude must be a number from -180 to 180.");
-    if (!WHOLE_RE.test(raw.dist))
-      return fail(
-        `Radius must be a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`,
-      );
-    return guideMapSelection({
-      place: raw.place,
-      lat: Number(raw.lat),
-      lng: Number(raw.lng),
-      dist: Number(raw.dist),
-    });
-  }
+  if (hasMap)
+    return parseGuideMapFields({ place: raw.place, lat: raw.lat, lng: raw.lng, dist: raw.dist });
   if (!hasHierarchy) return { ok: true, selection: { kind: "anywhere" } };
 
   let country = raw.country.toUpperCase();
