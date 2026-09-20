@@ -8,12 +8,13 @@ September 18, 2026 · Integrated roadmap, refined after browser review at `8ceb9
 live eBird workflows and completed worker jobs after repairing the test environment.
 This roadmap remains the single backlog index; the
 [implementation workflow](ux/implementation-workflow.md) tracks delivery phases.
-Phases 1–4 and **5A td-ea384e** are released; production is healthy at `c731094`.
-The authenticated [phase 5A acceptance](ux/phase-05a-review.md) covers shared journey context,
-trip/hotspot/bird return paths and safe place links. Phase **5B td-750277** is
-implemented and independently accepted in its [review record](ux/phase-05b-review.md),
-with its [specification](ux/phase-05b-navigation-adoption.md) retained as the
-contract. It is awaiting owner review and release; phase 6 follows it.
+Phases 1–7B are released through `5adddea`. Their specifications, independent
+reviews and production evidence remain indexed in the
+[implementation workflow](ux/implementation-workflow.md). The remaining work
+is sequenced in the [post-7B continuation plan](ux/future-implementation-plan.md):
+regression stabilization, geographic discovery, explicit list/time scope,
+cross-page handoff, species preferences, field-trip use and supporting
+reliability/operations releases.
 
 
 

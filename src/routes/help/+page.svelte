@@ -626,15 +626,44 @@
 						mudflats"). With Relevance selected, exact species and banding codes rank before names, then description or field-note matches. Each result says which kind of match it is. Open <strong>Filters and sort</strong> for location, family, tags and other filters.
 					</li>
 					<li>
-						<strong>Filter by location</strong> — choose a Country and, optionally,
-						a State / region (for example, United States → Florida). Location
-						combines with your search text and every selected tag, or works on its
-						own. It includes birds reported in any month of the displayed historical
-						years, using loaded regional, county, and hotspot data. This is recorded
-						presence, not a complete range checklist or a prediction for today.
-						Places without loaded data show a coverage message. Choose Anywhere
-						to remove the location filter. Filters remain in the URL and survive
-						opening a species and returning to the results.
+						<strong>Filter by location</strong> — open <strong>Filters and sort</strong>
+						and use <strong>Location</strong>. Choose a Country, then optionally a
+						State / region, a County / equivalent and a Verified hotspot (for
+						example United States → Florida → Sarasota County → Myakka River SP).
+						Each list offers every loaded choice beneath your previous one, and
+						changing a higher level clears the lower ones. Location combines with
+						your search text and every selected tag, or works on its own. It
+						includes birds reported in any month of the displayed historical
+						years. A country, state or county uses the loaded regional, county
+						and hotspot data recorded beneath it. A hotspot uses only that exact
+						eBird hotspot's own loaded data, so it is narrower than its county.
+						This is recorded presence, not a complete range checklist or a
+						prediction for today. The page says how many loaded sources and which
+						years it used, and whether a whole-area source is loaded; when only
+						parts are loaded, places without loaded data are not covered. A
+						place with no loaded data shows a coverage message, which does not
+						mean there are no birds. Choose Anywhere, or
+						<strong>Clear location only</strong>, to remove the location and keep
+						your search, family, tags, sort and other options. Filters remain in
+						the URL and survive opening a species and returning to the results.
+					</li>
+					<li>
+						<strong>Filter by map and radius</strong> — under Location, choose
+						<strong>Choose on map</strong>, search for a place or tap the map, type a
+						radius from 1 to 200 miles and choose <strong>Apply location</strong>.
+						Cancel closes the map without changing your results. The Field Guide
+						then uses only loaded eBird hotspots that have recorded coordinates
+						inside that circle. State and county summaries are not counted by their
+						centre, and the part of the map you can see never limits the result.
+						No radius is chosen for you, and moving the pin changes nothing until
+						you apply. The page states how many loaded hotspots were used and how
+						many loaded hotspots had no recorded coordinates and could not be
+						checked. If none fall inside the circle, coverage is unavailable, not
+						zero birds; <a href="/forecast/data">Hotspots &amp; data</a> can load
+						more history. Picking or moving a map point needs JavaScript; the
+						Country to Hotspot lists, and a shared map link, work without it.
+						Choosing a location here does not change your saved Home location and
+						does not fetch anything from eBird.
 					</li>
 					<li>
 						<strong>Result photos</strong> — reference thumbnails help you scan the

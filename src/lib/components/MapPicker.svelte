@@ -14,10 +14,14 @@
     selected = $bindable<PickedLocation | null>(null),
     initialLat = null,
     initialLng = null,
+    initialLabel = "Saved home location",
   }: {
     selected?: PickedLocation | null;
     initialLat?: number | null;
     initialLng?: number | null;
+    /** Label for the initial marker; callers that seed something other than
+     * a saved home location name it truthfully. */
+    initialLabel?: string;
   } = $props();
 
   const API_KEY = env.PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
@@ -177,7 +181,7 @@
         placeMarker(
           initialLat as number,
           initialLng as number,
-          "Saved home location",
+          initialLabel,
         );
       }
     } catch (err) {
@@ -196,7 +200,7 @@
       aria-label="Search for a location"
     />
     <button type="submit" disabled={searching}
-      >{searching ? "Searching…" : "Search"}</button
+      >{searching ? "Searching…" : "Search place"}</button
     >
   </form>
 
@@ -227,6 +231,9 @@
   }
   .search input {
     flex: 1;
+    /* A text input's intrinsic width would otherwise push the row past a
+       320px viewport; let it shrink and keep the button at its own width. */
+    min-width: 0;
     min-height: 48px;
     font-size: 16px;
     padding: 8px 12px;
@@ -236,6 +243,7 @@
     color: var(--text);
   }
   .search button {
+    flex-shrink: 0;
     min-height: 48px;
     padding: 10px 18px;
     border-radius: 8px;

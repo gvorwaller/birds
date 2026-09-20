@@ -28,6 +28,22 @@ also added during primary review.
 
 No remaining blocker or correctness finding was found.
 
+## Production release
+
+The owner authorized release on September 19, 2026. Commit `5adddea` was pushed
+and deployed through `scripts/deploy-to-DO.sh`; all 60 migrations were already
+applied, both PM2 processes were online, and internal/public health returned
+database, worker and gallery `ok` at the exact revision.
+
+Authenticated 390px production Chromium repeated the exact eight-link Marbled
+Godwit menu and every target jump. Query and return context, history length and
+stored navigation state remained unchanged; Similar species and seasonal
+disclosures reopened; every heading received visible focus below the shell; and
+no overflow or page error occurred. The viewing-history POST was intercepted,
+so the smoke made no production data write. Evidence is retained as
+`phase07b-production.json` and `phase07b-production-phone.png` in the external
+audit workspace. td-f09c48 is closed.
+
 ## Automated gates
 
 - Focused route, helper, migration-ribbon, Help, About, media and navigation

@@ -47,6 +47,17 @@ describe("Phase 6 shell and map controls", () => {
     );
   });
 
+  it("names the picker's place-search button distinctly from any page-level Search", () => {
+    // Field Guide shows its species Search button while this picker is open, so
+    // the shared control must not expose the same accessible name.
+    expect(mapPicker).toContain('{searching ? "Searching…" : "Search place"}');
+    expect(mapPicker).not.toMatch(/"Search"\}<\/button/);
+    expect(mapPicker).toContain('aria-label="Search for a location"');
+    // The longer label must not push the row past a 320px viewport.
+    expect(mapPicker).toMatch(/\.search input \{[\s\S]*?min-width: 0;/);
+    expect(mapPicker).toMatch(/\.search button \{\s*flex-shrink: 0;/);
+  });
+
   it("keeps each touched control at the measured target", () => {
     expect(layout).toMatch(/\.hamburger[\s\S]*?width: 48px;[\s\S]*?height: 48px;/);
     expect(layout).toMatch(/\.close[\s\S]*?width: 48px;[\s\S]*?height: 48px;/);

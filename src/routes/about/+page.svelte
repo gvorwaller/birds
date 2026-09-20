@@ -120,6 +120,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Field Guide by county, hotspot or map</strong> — narrow the guide to a county or county-equivalent, one verified eBird hotspot, or a circle of 1 to 200 miles around a point you choose on the map. Each choice says exactly which loaded eBird history it uses, how many sources and years it covers, and when coverage is unavailable rather than empty. Choosing a place does not fetch new bird data from eBird, saves nothing and leaves your Home location alone, and your search, tags and shared-link options are kept.</li>
 							<li><strong>Faster species-page navigation</strong> — an On this page menu lists the sections available for that bird and jumps directly to the answer. It reopens closed Similar species and seasonal sections when needed, keeps keyboard focus visible, and preserves the Field Guide search and return path.</li>
 							<li><strong>Clearer Field Guide results</strong> — search results now appear before the detailed filter editor, show the active scope, preserve a shared link's extra options, and identify whether each match came from a name/code or from loaded descriptive notes.</li>
 							<li><strong>Keyboard-ready navigation and map picking</strong> — the menu now behaves as a modal drawer: it moves focus to Close, keeps keyboard focus inside, closes with Escape, and returns you to the menu button when dismissed. Forecast’s map chooser opens at a named heading; Cancel discards its draft pin without changing the current forecast.</li>

@@ -33,9 +33,9 @@ Phase **5A td-ea384e** is released as `c731094`; its
 [detailed specification](phase-05a-navigation-context.md): shared journey core,
 trip/hotspot/bird returns and safe place links. Phase **5B td-750277** is
 released as `9abbe8a`; its [review record](phase-05b-review.md) includes
-authenticated production journey proof. Phase **6 td-f3ccda** is independently
-accepted in its [review record](phase-06-review.md), and the owner has authorized
-its production release. Its
+authenticated production journey proof. Phase **6 td-f3ccda** is released as
+`780764a`; its [review record](phase-06-review.md) includes authenticated
+production keyboard and map-editor proof. Its
 [keyboard shell and map reveal specification](phase-06-shell-map-controls.md)
 remains the contract. Phase **7A** is now specified as the compact, answer-first
 Field Guide search/filter/result-meaning slice in
@@ -45,9 +45,15 @@ Field Guide search/filter/result-meaning slice in
 Phase 7B is specified separately for navigation within an individual species
 page in
 [phase-07b-species-section-navigation.md](phase-07b-species-section-navigation.md).
-**Phase 7B td-f09c48** is implemented and independently accepted in its
-[review record](phase-07b-review.md). The owner authorized its production
-release after acceptance.
+**Phase 7B td-f09c48** is released as `5adddea`; its
+[review record](phase-07b-review.md) includes authenticated production proof.
+
+The remaining work is sequenced in the
+[post-7B continuation plan](future-implementation-plan.md). It separates owner
+regression stabilization, geographic discovery, explicit list/time scope,
+cross-page handoff, species preferences, field-trip use and supporting
+reliability/operations work. This is planning only; no Phase 8 child exists
+until its specification is ready to implement.
 
 ## Phase queue
 

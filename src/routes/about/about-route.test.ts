@@ -69,4 +69,17 @@ describe("About route and navigation", () => {
 			"All continents (starting on the species' data-derived primary column) at desktop widths"
 		);
 	});
+
+	it("v0.1.6 announces Field Guide county, hotspot and map/radius selection (td-82fbc1)", () => {
+		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		const normalized = content.slice(start, end).replace(/\s+/g, " ");
+		expect(normalized).toContain("Field Guide by county, hotspot or map");
+		expect(normalized).toContain("1 to 200 miles");
+		expect(normalized).toContain("unavailable rather than empty");
+		expect(normalized).toContain("does not fetch new bird data from eBird");
+		expect(normalized).not.toContain("fetches nothing");
+		expect(normalized).toContain("leaves your Home location alone");
+	});
 });

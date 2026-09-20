@@ -6,6 +6,24 @@
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
   import PathNavigation from "$components/PathNavigation.svelte";
+  import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
+  import { goto } from "$app/navigation";
+  import { onMount, tick } from "svelte";
+  import {
+    GUIDE_LOCATION_PARAMS,
+    GUIDE_WAS_PARAMS,
+    GUIDE_RADIUS_MAX,
+    GUIDE_RADIUS_MIN,
+    clearGuideLocation,
+    descendantsOf,
+    guideCoverage,
+    guideLocationPairs,
+    guideMapHref,
+    guideResultsHref,
+    guideScopeText,
+    guideWasPairs,
+    type GuideLevel,
+  } from "$lib/guide-location";
   import {
     TAG_DIMENSIONS,
     TAG_VOCABULARY,
@@ -23,10 +41,10 @@
     "interest",
     "family",
     "sort",
-    "country",
-    "region",
     "tags",
     "page",
+    ...GUIDE_LOCATION_PARAMS,
+    ...GUIDE_WAS_PARAMS,
   ]);
   const unknownParams = $derived(
     [...page.url.searchParams].filter(([key]) => !ownedParams.has(key)),
@@ -41,13 +59,81 @@
     }
   }
 
-  function countryChanged(event: Event) {
+  /** Enhanced auto-submit: a changed level clears every deeper level first,
+   * matching the server contract. Apply filters stays the native fallback. */
+  function levelChanged(event: Event, level: GuideLevel) {
     const form = (event.currentTarget as HTMLSelectElement).form!;
-    const region = form.elements.namedItem(
-      "region",
-    ) as HTMLSelectElement | null;
-    if (region) region.value = "";
+    for (const lower of descendantsOf(level)) {
+      const control = form.elements.namedItem(lower) as HTMLSelectElement | null;
+      if (control) control.value = "";
+    }
     form.requestSubmit();
+  }
+
+  // The current geography as canonical hidden pairs for the native forms.
+  const locationPairs = $derived(guideLocationPairs(data.selection));
+  const clearLocationHref = $derived(
+    guideResultsHref(clearGuideLocation(page.url.searchParams)),
+  );
+  const coverage = $derived(data.location ? guideCoverage(data.location) : null);
+
+  // Map + radius chooser. Creating a marker needs JavaScript, so the control
+  // only appears once the page has hydrated; a <noscript> note explains it.
+  const chooserId = "guide-map-chooser";
+  let jsReady = $state(false);
+  onMount(() => {
+    jsReady = true;
+  });
+  let mapOpen = $state(false);
+  let picked = $state<PickedLocation | null>(null);
+  let radiusText = $state("");
+  let applyError = $state("");
+  let chooseButton = $state<HTMLButtonElement | undefined>();
+  let chooserHeading = $state<HTMLHeadingElement | undefined>();
+  const radiusValid = $derived(
+    /^\d+$/.test(radiusText.trim()) &&
+      Number(radiusText) >= GUIDE_RADIUS_MIN &&
+      Number(radiusText) <= GUIDE_RADIUS_MAX,
+  );
+  const canApply = $derived(picked !== null && radiusValid);
+
+  async function openChooser() {
+    picked = null;
+    applyError = "";
+    // No saved or default radius: only an already-applied circle is shown.
+    radiusText = data.map ? String(data.map.dist) : "";
+    mapOpen = true;
+    await tick();
+    chooserHeading?.focus({ preventScroll: true });
+    chooserHeading?.scrollIntoView({ block: "start" });
+  }
+
+  async function cancelChooser() {
+    mapOpen = false;
+    picked = null;
+    radiusText = "";
+    applyError = "";
+    await tick();
+    chooseButton?.focus();
+  }
+
+  function applyChooser() {
+    if (!picked || !radiusValid) return;
+    const built = guideMapHref(page.url.searchParams, {
+      place: picked.label,
+      lat: picked.lat,
+      lng: picked.lng,
+      dist: Number(radiusText),
+    });
+    if (!built.ok) {
+      applyError = built.message;
+      return;
+    }
+    mapOpen = false;
+    picked = null;
+    radiusText = "";
+    applyError = "";
+    goto(built.href);
   }
 
   // Tier-1 (td-97b22e): every result row SHIPS its tags + IUCN status —
@@ -90,7 +176,7 @@
 
   function activeFilterCount(): number {
     return Number(data.interestOnly) + Number(!!data.family) +
-      Number(data.sort !== "relevance") + Number(!!data.country) + data.tags.length;
+      Number(data.sort !== "relevance") + Number(!!data.location) + data.tags.length;
   }
 
   function detailHref(code: string): string {
@@ -143,8 +229,7 @@
       {#if data.interestOnly}<input type="hidden" name="interest" value="1" />{/if}
       {#if data.family}<input type="hidden" name="family" value={data.family} />{/if}
       {#if data.sort !== "relevance"}<input type="hidden" name="sort" value={data.sort} />{/if}
-      {#if data.country}<input type="hidden" name="country" value={data.country} />{/if}
-      {#if data.region}<input type="hidden" name="region" value={data.region} />{/if}
+      {#each locationPairs as [locName, locValue] (locName)}<input type="hidden" name={locName} value={locValue} />{/each}
       {#each data.tags as t (t)}<input type="hidden" name="tags" value={t} />{/each}
       <div class="search-entry">
         <input
@@ -170,11 +255,12 @@
         {/if}
         <div class="scope-items">
           {#if data.q}<span>Search: “{data.q}”</span>{/if}
-          {#if data.location}<span>{data.location.label}</span>{/if}
+          {#if data.location}<span>{guideScopeText(data.location)}</span>{/if}
           {#if data.family}<span>Family: {data.families.find((f) => f.code === data.family)?.name ?? data.family}</span>{/if}
           {#if data.interestOnly}<span>Special interest only</span>{/if}
           {#if data.sort !== "relevance"}<span>Sort: {data.sort === "name" ? "Alphabetical" : "Taxonomic"}</span>{/if}
         </div>
+        {#if data.location && coverage}<p class="coverage" role="status">{coverage.text}{#if coverage.status === "unavailable"} <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search here.{/if}</p>{/if}
         {#if data.tags.length > 0}
           <div class="active-filters">
             <span class="muted af-label">Match all selected tags:</span>
@@ -185,7 +271,10 @@
             {/each}
           </div>
         {/if}
-        <a class="clear-filters" href={clearHref()}>Clear all search and filters</a>
+        <div class="scope-actions">
+          {#if data.location}<a class="clear-filters" href={clearLocationHref}>Clear location only</a>{/if}
+          <a class="clear-filters" href={clearHref()}>Clear all search and filters</a>
+        </div>
       </div>
     {:else}
       <p class="muted scope-summary">Enter a search or use Filters and sort to browse the current taxonomy.</p>
@@ -205,17 +294,55 @@
           <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" name="sort" value={data.sort}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
         </div>
         {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
-        <div class="location-fields">
-          <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country} onchange={countryChanged}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
-          <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0} onchange={(e) => e.currentTarget.form?.requestSubmit()}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
-        </div>
+        <fieldset class="geo">
+          <legend>Location</legend>
+          {#if data.selection.kind === "map" && data.map}
+            {#each locationPairs as [locName, locValue] (locName)}<input type="hidden" name={locName} value={locValue} />{/each}
+            <p class="geo-map">Map point: <strong>{data.map.place}</strong>, within {data.map.dist} {data.map.dist === 1 ? "mile" : "miles"}.</p>
+            <a class="clear-filters" href={clearLocationHref}>Clear location to choose a country, state, county or hotspot</a>
+          {:else}
+            {#each guideWasPairs(data.selection) as [wasName, wasValue] (wasName)}<input type="hidden" name={wasName} value={wasValue} />{/each}
+            <div class="location-fields">
+              <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country} onchange={(e) => levelChanged(e, "country")}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
+              <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0} onchange={(e) => levelChanged(e, "region")}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
+              <div class="location-field"><label for="guide-county">County / equivalent</label><select id="guide-county" name="county" value={data.county} disabled={!data.region || data.counties.length === 0} onchange={(e) => levelChanged(e, "county")}><option value="">{!data.region ? "Choose a state or region first" : data.counties.length === 0 ? "No loaded counties" : "Anywhere in this state or region"}</option>{#each data.counties as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
+              <div class="location-field"><label for="guide-hotspot">Verified hotspot</label><select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={!data.county || data.hotspots.length === 0} onchange={(e) => levelChanged(e, "hotspot")}><option value="">{!data.county ? "Choose a county first" : data.hotspots.length === 0 ? "No loaded hotspots" : "Anywhere in this county"}</option>{#each data.hotspots as h (h.code)}<option value={h.code}>{h.name}</option>{/each}</select></div>
+            </div>
+            {#if data.region && data.counties.length === 0}<p class="location-hint muted">No county data is loaded for this state or region. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a county.</p>{/if}
+            {#if data.county && data.hotspots.length === 0}<p class="location-hint muted">No hotspot data is loaded for this county. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a hotspot.</p>{/if}
+          {/if}
+        </fieldset>
         <p class="location-hint muted">Optional: birds reported in this location at any time of year.</p>
-        {#if data.location}<p class="location-hint" role="status">{#if data.location.sourceCount === 0}No historical data is loaded for {data.location.label} yet. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search here.{:else}Reported in <strong>{data.location.label}</strong> · any month · {data.location.beginYear}–{data.location.endYear}. {#if !data.location.wholeArea}Based on {data.location.sourceCount} loaded areas and hotspots; places without loaded data are not covered.{/if} This shows recorded presence, not a complete list of birds that could occur here.{/if}</p>{/if}
         {#each TAG_DIMENSIONS as d (d)}
           <details class="dim"><summary>{dimensionLabel(d)}</summary><div class="chips">{#each TAG_VOCABULARY[d] as v (v)}{@const tag = `${d}:${v}`}<a class="chip" class:chip-on={selected.has(tag)} class:chip-tide={d === "tide"} href={toggleHref(tag)}>{tagLabel(d, v)}</a>{/each}</div></details>
         {/each}
         <button class="apply-filters" type="submit">Apply filters</button>
       </form>
+      <section class="map-chooser" aria-labelledby="guide-map-label">
+        <p id="guide-map-label" class="map-label">Or choose a point on the map</p>
+        <noscript><p class="muted">Choosing or moving a map point needs JavaScript. The country, state, county and hotspot choices above work without it, and a shared map link still filters the results.</p></noscript>
+        {#if jsReady}
+          <button type="button" class="secondary" bind:this={chooseButton} hidden={mapOpen} aria-expanded={mapOpen} aria-controls={chooserId} onclick={openChooser}>Choose on map</button>
+        {/if}
+        {#if mapOpen}
+          <div id={chooserId} class="chooser" role="group" aria-labelledby="guide-map-heading">
+            <h3 bind:this={chooserHeading} id="guide-map-heading" tabindex="-1">Choose a map point and radius</h3>
+            <p class="muted">Search for a place or tap the map, then enter a radius. The result covers only loaded eBird hotspots with recorded coordinates inside the circle; the part of the map you can see is never a boundary.</p>
+            <MapPicker bind:selected={picked} initialLat={data.map?.lat ?? null} initialLng={data.map?.lng ?? null} initialLabel={data.map?.place} />
+            <p class="picked">{picked ? `Chosen point: ${picked.label}` : "No point chosen yet."}</p>
+            <div class="radius-field">
+              <label for="guide-radius">Radius in miles ({GUIDE_RADIUS_MIN}–{GUIDE_RADIUS_MAX})</label>
+              <input id="guide-radius" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={radiusText} aria-describedby="guide-apply-help" aria-invalid={radiusText.trim() !== "" && !radiusValid} />
+            </div>
+            <p id="guide-apply-help" class="muted">{canApply ? "Ready to apply." : `Choose a point on the map and enter a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`}</p>
+            {#if applyError}<p class="err" role="alert">{applyError}</p>{/if}
+            <div class="chooser-actions">
+              <button type="button" class="apply-filters" disabled={!canApply} onclick={applyChooser}>Apply location</button>
+              <button type="button" class="secondary" onclick={cancelChooser}>Cancel</button>
+            </div>
+          </div>
+        {/if}
+      </section>
     </details>
   </section>
 
@@ -225,7 +352,7 @@
         {#if data.location?.sourceCount === 0}
           <p class="muted">
             Location coverage is unavailable; this does not mean there are no
-            birds here.
+            birds here. <a href="/forecast/data">Load an area in Hotspots &amp; data</a>.
           </p>
         {:else if data.counts.taxonomy === 0}
           <p class="muted">
@@ -410,6 +537,43 @@
   }
   .scope-items { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 0.89rem; }
   .clear-filters { display: inline-flex; align-items: center; min-height: 48px; width: fit-content; }
+  .coverage { margin: 0; font-size: 0.89rem; overflow-wrap: anywhere; }
+  .coverage a { display: inline-flex; align-items: center; min-height: 48px; }
+  .scope-actions { display: flex; flex-wrap: wrap; gap: 0 16px; }
+  .geo { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 12px; }
+  .geo legend { padding: 0; font-size: 0.89rem; font-weight: 600; margin-bottom: 8px; }
+  .geo-map { margin: 0; overflow-wrap: anywhere; }
+  .map-chooser { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px 0 16px; border-top: 1px solid var(--border); }
+  .map-label { margin: 0; font-weight: 600; }
+  .map-chooser button.secondary,
+  .chooser-actions button {
+    min-height: 48px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+  .map-chooser button.secondary { width: fit-content; background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
+  /* minmax(0, 1fr): an auto column would size to the picker's intrinsic search
+     row and push it past a 320px viewport. */
+  .chooser { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+  .chooser h3 { margin: 0; font-size: 1.05rem; scroll-margin-top: calc(var(--nav-h) + 16px); }
+  .chooser p { margin: 0; overflow-wrap: anywhere; }
+  .picked { font-weight: 600; }
+  .radius-field { display: grid; gap: 4px; font-size: 0.89rem; font-weight: 600; }
+  .radius-field input {
+    min-height: 48px;
+    max-width: 12rem;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .chooser-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chooser-actions .secondary { background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
+  .chooser-actions .apply-filters:disabled { opacity: 0.5; }
+  .err { color: var(--danger); font-weight: 600; }
   .filter-card { padding: 0 16px; margin-bottom: 4px; }
   .filters > summary {
     min-height: 48px;

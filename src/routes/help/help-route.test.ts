@@ -32,4 +32,24 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		expect(normalized).toContain("Full globe");
 		expect(normalized).toContain("geographic landmarks");
 	});
+
+	it("documents Field Guide county, hotspot and map/radius location choices (td-82fbc1)", () => {
+		const content = readFileSync("src/routes/help/+page.svelte", "utf8");
+		const normalized = content.replace(/\s+/g, " ");
+		expect(normalized).toContain("County / equivalent");
+		expect(normalized).toContain("Verified hotspot");
+		expect(normalized).toContain("changing a higher level clears the lower ones");
+		expect(normalized).toContain("narrower than its county");
+		expect(normalized).toContain("places without loaded data are not covered");
+		expect(normalized).toContain("Clear location only");
+		expect(normalized).toContain("Choose on map");
+		expect(normalized).toContain("Apply location");
+		expect(normalized).toContain("radius from 1 to 200 miles");
+		expect(normalized).toContain("No radius is chosen for you");
+		expect(normalized).toContain("could not be checked");
+		expect(normalized).toContain("coverage is unavailable, not zero birds");
+		expect(normalized).toContain("needs JavaScript");
+		expect(normalized).toContain("does not change your saved Home location");
+		expect(normalized).toContain("does not fetch anything from eBird");
+	});
 });

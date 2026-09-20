@@ -9,14 +9,18 @@ import {
   type GuideResult,
 } from "$server/species-enrichment";
 import { ALL_TAGS } from "$lib/species-tags";
-import { error } from "@sveltejs/kit";
+import { error, redirect } from "@sveltejs/kit";
+import { countriesList, subnational1Of } from "$server/regions";
 import {
-  countriesList,
-  getRegion,
-  regionLabel,
-  subnational1Of,
-} from "$server/regions";
-import { guideLocationCoverage } from "$server/guide-location";
+  guideCounties,
+  guideHotspots,
+  resolveGuideLocation,
+} from "$server/guide-location";
+import {
+  canonicalizeGuideLevelChange,
+  guideResultsHref,
+  parseGuideLocation,
+} from "$lib/guide-location";
 
 /**
  * Field guide (plan Phase 3): read-only search over the enriched species
@@ -27,33 +31,30 @@ import { guideLocationCoverage } from "$server/guide-location";
 export const load: PageServerLoad = async ({ locals, url, depends }) => {
   depends("app:species-views");
   depends("app:special-interest");
+  // A native (no-JavaScript) filter form submits the applied hierarchy next to
+  // the selects; canonicalize a changed level (clearing deeper ones) before
+  // anything is validated, so the person never meets a stale-descendant 400.
+  const canonical = canonicalizeGuideLevelChange(url.searchParams);
+  if (canonical) {
+    if (!canonical.ok) error(400, canonical.message);
+    redirect(303, guideResultsHref(canonical.params));
+  }
   const interestOnly = url.searchParams.get("interest") === "1";
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
   // Unknown tags are dropped, not errored — stale links degrade gracefully.
   const tags = [
     ...new Set(url.searchParams.getAll("tags").filter((t) => ALL_TAGS.has(t))),
   ];
-  let country = (url.searchParams.get("country") ?? "").trim().toUpperCase();
-  const region = (url.searchParams.get("region") ?? "").trim().toUpperCase();
-  if (region) {
-    const selectedRegion = await getRegion(region);
-    if (
-      !selectedRegion ||
-      selectedRegion.level !== "subnational1" ||
-      !selectedRegion.parent
-    ) {
-      error(400, "Choose a recognized state or region.");
-    }
-    if (country && country !== selectedRegion.parent)
-      error(400, "That region is not in the selected country.");
-    country = selectedRegion.parent;
-  }
-  if (country && (await getRegion(country))?.level !== "country")
-    error(400, "Choose a recognized country.");
-  const locationCode = region || country;
-  const coverage = locationCode
-    ? await guideLocationCoverage(locationCode)
-    : null;
+  // Geography is one strict contract (hierarchy XOR map + radius): malformed,
+  // incomplete, mixed or unverifiable selections are a 400, never a guess.
+  const parsedLocation = parseGuideLocation(url.searchParams);
+  if (!parsedLocation.ok) error(400, parsedLocation.message);
+  const selection = parsedLocation.selection;
+  const location = await resolveGuideLocation(selection);
+  const country = location?.ancestry.country ?? "";
+  const region = location?.ancestry.region ?? "";
+  const county = location?.ancestry.county ?? "";
+  const hotspot = location?.ancestry.hotspot ?? "";
   const taxonomy = await taxonomySummary();
   const family = url.searchParams.get('family') ?? '';
   if (family && !taxonomy.families.some(f => f.code === family)) error(400, 'Choose a recognized bird family.');
@@ -62,13 +63,13 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const rawPage = url.searchParams.get('page') ?? '1';
   if (!/^[1-9][0-9]*$/.test(rawPage) || !Number.isSafeInteger(Number(rawPage)) || Number(rawPage)>21474836) error(400,'Invalid results page.');
   const page = Number(rawPage);
-  const active = interestOnly || !!family || q.length > 0 || tags.length > 0 || !!locationCode;
+  const active = interestOnly || !!family || q.length > 0 || tags.length > 0 || !!location;
 
   const countsP = guideCounts();
   let results: GuideResult[] = [];
   let total = 0;
   if (active) {
-    const found = await searchGuide(q, tags, locals.scopeId!, coverage?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined});
+    const found = await searchGuide(q, tags, locals.scopeId!, location?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined});
     results = found.rows; total = found.total;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
@@ -93,8 +94,12 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     q,
     tags,
     active,
+    selection,
     country,
     region,
+    county,
+    hotspot,
+    map: location?.map ?? null,
     countries: (await countriesList())
       .map(({ code, name }) => ({ code, name }))
       // Pin US without changing the shared country list or its remaining order.
@@ -105,13 +110,18 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
           name,
         }))
       : [],
-    location: coverage
+    counties: region ? await guideCounties(region) : [],
+    hotspots: county ? await guideHotspots(county) : [],
+    location: location
       ? {
-          label: await regionLabel(locationCode),
-          sourceCount: coverage.locCodes.length,
-          wholeArea: coverage.wholeArea,
-          beginYear: coverage.beginYear,
-          endYear: coverage.endYear,
+          kind: location.kind,
+          label: location.label,
+          officialCountyName: location.officialCountyName,
+          sourceCount: location.locCodes.length,
+          wholeArea: location.wholeArea,
+          beginYear: location.beginYear,
+          endYear: location.endYear,
+          map: location.map,
         }
       : null,
     results,
