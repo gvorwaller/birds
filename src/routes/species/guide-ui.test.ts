@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const route = readFileSync(resolve(process.cwd(), "src/routes/species/+page.svelte"), "utf8");
 const loader = readFileSync(resolve(process.cwd(), "src/routes/species/+page.server.ts"), "utf8");
+const row = readFileSync(resolve(process.cwd(), "src/lib/components/GuideSpeciesRow.svelte"), "utf8");
+const listModule = readFileSync(resolve(process.cwd(), "src/lib/guide-list.ts"), "utf8");
 const mapPicker = readFileSync(resolve(process.cwd(), "src/lib/components/MapPicker.svelte"), "utf8");
 
 describe("Phase 7A Field Guide UI contract", () => {
@@ -197,9 +199,133 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
 
   it("keeps the phase 7A answer-first result layout, provenance and pagination in place", () => {
     expect(route.indexOf('class="filter-card"')).toBeLessThan(route.indexOf('class="card results"'));
-    expect(route).toContain("match-provenance");
+    expect(row).toContain("match-provenance");
     expect(route).toContain('class="pagination"');
     expect(route).toContain("withReturnTo(");
-    expect(route).toContain("page.url.pathname + page.url.search + page.url.hash");
+    expect(route).toContain('page.url.pathname + page.url.search + "#results"');
+  });
+});
+
+describe("Phase 9A All / Need / Seen UI contract (td-f02bf7)", () => {
+  const rule = (source: string, selector: string) => {
+    const at = source.indexOf(selector);
+    expect(at, `${selector} rule`).toBeGreaterThan(-1);
+    return source.slice(at, source.indexOf("}", at));
+  };
+
+  it("places a server-rendered link control after the tabs and before the search/filter summary", () => {
+    const tabs = route.indexOf('<FieldGuideTabs active="browse" />');
+    const nav = route.indexOf('<nav class="list-scope"');
+    const search = route.indexOf('<section class="card guide-search">');
+    expect(tabs).toBeGreaterThan(-1);
+    expect(nav).toBeGreaterThan(tabs);
+    expect(nav).toBeLessThan(search);
+    expect(route).toContain('aria-label="Species list: All, Need or Seen"');
+    // Links (no JavaScript needed), one per scope, with the selected one exposed and marked in a second, non-colour way.
+    expect(route).toContain("{#each GUIDE_LISTS as list (list)}");
+    expect(route).toContain("href={listHref(list)}");
+    expect(route).toContain('aria-current={data.list === list ? "true" : undefined}');
+    expect(route).toContain('{data.list === list ? "●" : "○"}');
+    expect(route).toContain("const listHref = (list: GuideList) => guideListHref(page.url.searchParams, list);");
+    const control = route.slice(nav, route.indexOf("</nav>", nav));
+    expect(control).not.toContain("onclick");
+    expect(control).not.toContain("<button");
+    expect(rule(route, ".list-scope a {")).toContain("min-height: 48px;");
+    expect(rule(route, ".list-scope a.current")).toContain("border: 2px solid var(--accent);");
+    expect(route).toContain(".list-scope a:focus-visible { outline: 3px solid var(--accent);");
+  });
+
+  it("switches scope by removing only the stale page and keeping every other parameter", () => {
+    expect(listModule).toContain('next.delete("page");');
+    expect(listModule).toContain('next.set("list", list);');
+    expect(listModule).not.toMatch(/delete\("(q|tags|family|sort|interest|country|region|county|hotspot|place|lat|lng|dist)"\)/);
+    expect(listModule).toContain("guideResultsHref(withGuideList(base, list))");
+  });
+
+  it("keeps list out of the owned parameters so forms, tag links, Clear location and Clear all carry it", () => {
+    const owned = route.slice(route.indexOf("const ownedParams = new Set(["), route.indexOf("]);", route.indexOf("const ownedParams = new Set([")));
+    expect(owned).not.toContain('"list"');
+    expect(route).toContain("[...page.url.searchParams].filter(([key]) => !ownedParams.has(key))");
+    // Both native GET forms re-emit every non-owned parameter as a hidden input, which carries list.
+    expect(route.match(/name=\{key\} value=\{value\}/g)).toHaveLength(2);
+    // Clear all deletes only owned parameters, so the list survives it; choosing All is the way out.
+    expect(route).toContain("for (const key of ownedParams) p.delete(key);");
+    expect(route).toContain("clearGuideLocation(page.url.searchParams)");
+    // Tag links start from the full current parameter set.
+    expect(route).toContain("const p = new URLSearchParams(page.url.searchParams);");
+  });
+
+  it("names the selected scope in every count, empty state and scope chip", () => {
+    expect(route).toContain("const scopeNoun = $derived(GUIDE_LIST_NOUN[data.list]);");
+    expect(route).toContain('data.location && coverage?.status === "unavailable"');
+    expect(route).toContain("<strong>{scopeNoun} unavailable for this location</strong>");
+    expect(route).toContain("of {data.total} {scopeNoun}</strong>");
+    expect(route).toContain('{:else if data.list === "all"}');
+    expect(route).toContain("<strong>No species match these filters</strong>");
+    expect(route).toContain("<strong>No {scopeNoun} match these filters</strong>");
+    expect(route).toContain("<span>List: {GUIDE_LIST_LABEL[data.list]}</span>");
+    expect(route).toContain("This is a list-scope result, not an answer about the place");
+    // The existing Phase 8 coverage explanation stays adjacent to the count and is not rewritten.
+    expect(route).toContain('{#if data.location && coverage}<p class="coverage" role="status">{coverage.text}');
+    expect(route.indexOf("<strong>No {scopeNoun} match")).toBeLessThan(route.indexOf('class="coverage"'));
+    expect(route).toContain("Location coverage is unavailable; this does not mean there are no");
+    // A scoped empty result keeps the Need/Seen recovery even when the
+    // Special-interest filter is also active; generic saved-species help is
+    // only the All-scope fallback.
+    expect(route.indexOf('{:else if data.list !== "all"}')).toBeLessThan(
+      route.indexOf("{:else if data.interestOnly}", route.indexOf('id="results"')),
+    );
+  });
+
+  it("adopts one shared species-row component for every result and keeps no inline row markup", () => {
+    expect(route).toContain('import GuideSpeciesRow from "$components/GuideSpeciesRow.svelte";');
+    expect(route.match(/<GuideSpeciesRow/g)).toHaveLength(1);
+    expect(route).not.toContain('<article class="result">');
+    expect(route).not.toContain("brokenPhotos");
+    expect(route).toContain("interest={data.interests?.includes(r.species_code) ?? false}");
+    expect(route).toContain("viewed={data.viewed[r.species_code]}");
+    expect(route).toContain("href={detailHref(r.species_code)}");
+  });
+
+  it("keeps the row hierarchy: thumbnail, names, Seen/Need then personal badges, evidence, stable target", () => {
+    const at = (needle: string) => {
+      const i = row.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(-1);
+      return i;
+    };
+    const order = [
+      "id={`guide-species-${encodeURIComponent(row.species_code)}`}", // the stable row target on the anchor
+      'class="thumbnail"',
+      'class="name">{row.com_name}',
+      '<em>{row.sci_name}</em>',
+      'kind="seen"',
+      'class="interest-badge"',
+      "<ViewedBadge",
+      "Banding code:",
+      'class="match-provenance">Name or code match',
+      "row.iucn_status",
+      'class="rowtags"',
+      'class="muted craft"',
+      'class="go"',
+      'class="photo-credit"',
+    ];
+    const positions = order.map(at);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(row).toContain("{href}");
+    expect(row).toContain("{onclick}");
+  });
+
+  it("preserves the honest thumbnail states, failed-image handling and source/licence credit", () => {
+    expect(row).toContain('{row.photo ? "Photo unavailable" : "No photo yet"}');
+    expect(row).toContain("use:checkThumbnail");
+    expect(row).toContain("onerror={() => {");
+    expect(row).toContain("image.complete && image.naturalWidth === 0");
+    expect(row).toContain('Photo: {row.photo.creator ?? "Creator not recorded"}');
+    expect(row).toContain('<a href={row.photo.sourceUrl} target="_blank" rel="noopener">source</a>');
+    expect(row).toContain("{row.photo.licenseCode}");
+    // A missing thumbnail is a labelled placeholder, never removal of the row.
+    expect(row).toContain('<span class="photo-missing">');
+    // Personal state is passed in by the caller from the SIGNED-IN account; the component reads no scope itself.
+    expect(row).not.toMatch(/scopeId|locals|fetch\(/);
   });
 });

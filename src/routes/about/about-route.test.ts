@@ -94,4 +94,16 @@ describe("About route and navigation", () => {
 		expect(normalized).toContain("reported location — hotspot status unverified");
 		expect(normalized).toContain("Searching and selecting never load bird data or change Home");
 	});
+
+	it("v0.1.6 announces the Field Guide list scope and shared rows without overclaiming (td-f02bf7)", () => {
+		const content = readFileSync("src/routes/about/+page.svelte", "utf8");
+		const start = content.indexOf("<!-- v0.1.6 -->");
+		const end = content.indexOf("<!-- v0.1.", start + 1);
+		const normalized = content.slice(start, end).replace(/\s+/g, " ");
+		expect(normalized).toContain("All, Need and Seen in the Field Guide");
+		expect(normalized).toContain("100-species pages");
+		expect(normalized).toContain("follows the life list the page displays");
+		expect(normalized).toContain("one species-row layout");
+		expect(normalized).toContain("Choosing a list never changes your data or contacts eBird");
+	});
 });

@@ -9,6 +9,7 @@ import {
   type GuideResult,
 } from "$server/species-enrichment";
 import { ALL_TAGS } from "$lib/species-tags";
+import { parseGuideList } from "$lib/guide-list";
 import { error, redirect } from "@sveltejs/kit";
 import { countriesList, subnational1Of } from "$server/regions";
 import {
@@ -39,6 +40,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     if (!canonical.ok) error(400, canonical.message);
     redirect(303, guideResultsHref(canonical.params));
   }
+  // List scope (Phase 9A): All / Need / Seen over the DISPLAY-scope life list.
+  // Unknown, blank or repeated values are a 400; an absent one is All.
+  const parsedList = parseGuideList(url.searchParams);
+  if (!parsedList.ok) error(400, parsedList.message);
+  const { list, explicit: listExplicit } = parsedList;
   const interestOnly = url.searchParams.get("interest") === "1";
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
   // Unknown tags are dropped, not errored — stale links degrade gracefully.
@@ -63,13 +69,14 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const rawPage = url.searchParams.get('page') ?? '1';
   if (!/^[1-9][0-9]*$/.test(rawPage) || !Number.isSafeInteger(Number(rawPage)) || Number(rawPage)>21474836) error(400,'Invalid results page.');
   const page = Number(rawPage);
-  const active = interestOnly || !!family || q.length > 0 || tags.length > 0 || !!location;
+  const active =
+    interestOnly || !!family || q.length > 0 || tags.length > 0 || !!location || listExplicit;
 
   const countsP = guideCounts();
   let results: GuideResult[] = [];
   let total = 0;
   if (active) {
-    const found = await searchGuide(q, tags, locals.scopeId!, location?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined});
+    const found = await searchGuide(q, tags, locals.scopeId!, location?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit});
     results = found.rows; total = found.total;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
@@ -87,6 +94,7 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   catch { interests = null; }
   return {
     interestOnly, interests,
+    list, listExplicit,
     family, sort, page, total, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
     previous: page>1 ? pageHref(page-1) : null, next: page*100<total ? pageHref(page+1) : null,
     viewed,

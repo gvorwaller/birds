@@ -799,7 +799,16 @@ export async function searchGuide(
 	tags: readonly string[],
 	seenUserId: number,
 	locationCodes: readonly string[] | null = null,
- options: { family?: string; sort?: 'relevance' | 'name' | 'taxonomic'; page?: number; interestUserId?: number } = {}
+ options: {
+  family?: string;
+  sort?: 'relevance' | 'name' | 'taxonomic';
+  page?: number;
+  interestUserId?: number;
+  /** Phase 9A list scope over the display-scope life list (`seenUserId`). Default All. */
+  list?: 'all' | 'need' | 'seen';
+  /** An explicit scope (even `all`) alone is enough to browse the whole taxonomy. */
+  listBrowse?: boolean;
+ } = {}
 ): Promise<{ rows: GuideResult[]; total: number }> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
@@ -850,7 +859,7 @@ export async function searchGuide(
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
 		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
-		        AND ($1::bool OR (($8::text[] IS NOT NULL OR $9::text IS NOT NULL OR $12::int IS NOT NULL) AND $4::text[] = '{}'))
+		        AND ($1::bool OR (($8::text[] IS NOT NULL OR $9::text IS NOT NULL OR $12::int IS NOT NULL OR $14::bool) AND $4::text[] = '{}'))
 		        AND (NOT $1::bool OR tc.species_code = $5
 		             OR tc.banding_codes @> ARRAY[upper($5)] OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
 		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
@@ -880,6 +889,9 @@ export async function searchGuide(
 		 ) deduped
 		 WHERE ($8::text[] IS NULL OR species_code IN (SELECT species_code FROM regional_species))
            AND ($12::int IS NULL OR species_code IN (SELECT species_code FROM species_special_interest WHERE user_id=$12))
+           /* Phase 9A list scope: the SAME candidate set, split by the display-scope life list. Applied here so
+              count(*) OVER(), ordering, LIMIT and OFFSET all see it. Need is exactly the complement of Seen. */
+           AND ($13::text = 'all' OR ($13::text = 'need' AND NOT seen) OR ($13::text = 'seen' AND seen))
 		 ORDER BY ${orderBy}
 		 LIMIT $10 OFFSET $11
 		 ) matches
@@ -891,7 +903,7 @@ export async function searchGuide(
 		   ORDER BY rank LIMIT 1
 		 ) photo ON true
 		 ORDER BY ${orderBy}`,
-		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes, options.family || null, options.page == null ? null : 100, options.page == null ? 0 : (options.page-1)*100, options.interestUserId ?? null]
+		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes, options.family || null, options.page == null ? null : 100, options.page == null ? 0 : (options.page-1)*100, options.interestUserId ?? null, options.list ?? 'all', options.listBrowse === true]
 	);
 	return { total: r.rows[0]?.total_matches ?? 0, rows: r.rows.map(({ name_tier: _t, rank: _r, total_matches: _n, taxon_order: _o, ...row }) => row) };
 }

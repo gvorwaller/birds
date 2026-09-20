@@ -692,6 +692,26 @@
 						does not fetch anything from eBird.
 					</li>
 					<li>
+						<strong>All, Need and Seen</strong> — the three links under the Field Guide
+						tabs choose which species the list shows, without changing your search, tags,
+						family, sort, Special-interest filter or location. <strong>All</strong> is
+						every matching species. <strong>Need</strong> is those matches that are not
+						on your life list, and <strong>Seen</strong> is those that are, so Need plus
+						Seen always equals All for the same filters and place. The selected item is
+						marked and each count names it, for example “Showing 1–100 of 439 Need
+						species”. Following All, Need or Seen on the blank page browses the whole
+						current taxonomy; links made before these controls existed still show All.
+						Seen and Need follow the life list the page displays: a family viewer sees
+						the owner's list, and their own Viewed and Special-interest markers stay
+						their own. Species retired from the taxonomy are never added to Seen. The
+						choice is only how the list is shown — it never changes your life list, loads
+						data or contacts eBird — and it is kept when you search, filter, page, clear a
+						location or open a bird and return. Choose All to leave Need or Seen. An empty
+						Need or Seen result means no matching species are in that group; for a place
+						without loaded history the coverage message still says that is not evidence
+						that there are no birds there.
+					</li>
+					<li>
 						<strong>Result photos</strong> — reference thumbnails help you scan the
 						birds, with creator, source, and license credits below each pictured
 						result. A missing or unavailable photo is labeled; it never removes

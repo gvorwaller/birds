@@ -1,7 +1,6 @@
 <script lang="ts">
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
-  import ViewedBadge from "$components/ViewedBadge.svelte";
-  import Badge from "$components/Badge.svelte";
+  import GuideSpeciesRow from "$components/GuideSpeciesRow.svelte";
   import { page } from "$app/state";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
@@ -31,6 +30,14 @@
     tagLabel,
     type TagDimension,
   } from "$lib/species-tags";
+  import {
+    GUIDE_LISTS,
+    GUIDE_LIST_LABEL,
+    GUIDE_LIST_MEANING,
+    GUIDE_LIST_NOUN,
+    guideListHref,
+    type GuideList,
+  } from "$lib/guide-list";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -50,15 +57,6 @@
     [...page.url.searchParams].filter(([key]) => !ownedParams.has(key)),
   );
   let filtersOpen = $state(false);
-  let brokenPhotos = $state(new Set<string>());
-
-  function checkThumbnail(image: HTMLImageElement, url: string) {
-    // An SSR image may fail before hydration installs its error handler.
-    if (image.complete && image.naturalWidth === 0) {
-      brokenPhotos = new Set([...brokenPhotos, url]);
-    }
-  }
-
   /** Enhanced auto-submit: a changed level clears every deeper level first,
    * matching the server contract. Apply filters stays the native fallback. */
   function levelChanged(event: Event, level: GuideLevel) {
@@ -69,6 +67,11 @@
     }
     form.requestSubmit();
   }
+
+  // List scope control (Phase 9A): links, so it works without JavaScript. A scope
+  // switch removes only the stale page and keeps every other parameter.
+  const listHref = (list: GuideList) => guideListHref(page.url.searchParams, list);
+  const scopeNoun = $derived(GUIDE_LIST_NOUN[data.list]);
 
   // The current geography as canonical hidden pairs for the native forms.
   const locationPairs = $derived(guideLocationPairs(data.selection));
@@ -136,24 +139,6 @@
     goto(built.href);
   }
 
-  // Tier-1 (td-97b22e): every result row SHIPS its tags + IUCN status —
-  // the user just filtered by tags and the rows didn't show them.
-  const IUCN_LABELS: Record<string, string> = {
-    LC: "Least Concern",
-    NT: "Near Threatened",
-    VU: "Vulnerable",
-    EN: "Endangered",
-    CR: "Critically Endangered",
-    EW: "Extinct in the Wild",
-    EX: "Extinct",
-    DD: "Data Deficient",
-  };
-  function chipText(tag: string): string {
-    const i = tag.indexOf(":");
-    if (i < 1) return tag.replace(/-/g, " ");
-    return tagLabel(tag.slice(0, i) as TagDimension, tag.slice(i + 1));
-  }
-
   /** Toggle URL for a tag chip — GET-driven, restorable, no client state. */
   function toggleHref(tag: string): string {
     const p = new URLSearchParams(page.url.searchParams);
@@ -182,7 +167,10 @@
   function detailHref(code: string): string {
     return withReturnTo(
       `/species/${encodeURIComponent(code)}`,
-      page.url.pathname + page.url.search + page.url.hash,
+      // URL fragments are not sent to the server, so `page.url.hash` is empty
+      // in SSR output even when the incoming browser URL ended at #results.
+      // Every result row returns to this route's stable results target.
+      page.url.pathname + page.url.search + "#results",
       undefined,
       "Field guide",
     );
@@ -218,6 +206,18 @@
   </header>
 
   <FieldGuideTabs active="browse" />
+  <nav class="list-scope" aria-label="Species list: All, Need or Seen">
+    {#each GUIDE_LISTS as list (list)}
+      <a
+        id={`guide-list-${list}`}
+        class:current={data.list === list}
+        href={listHref(list)}
+        aria-current={data.list === list ? "true" : undefined}
+        title={GUIDE_LIST_MEANING[list]}
+        ><span class="list-mark" aria-hidden="true">{data.list === list ? "●" : "○"}</span>{GUIDE_LIST_LABEL[list]}</a
+      >
+    {/each}
+  </nav>
   {#if data.interests === null}<p role="status">Special interest badges are temporarily unavailable.</p>{/if}
   {#if data.interestOnly}<p>Your saved species matching the filters below. <a href="/special-interest">Open the complete collection</a>, including any retired species.</p>{/if}
 
@@ -248,12 +248,17 @@
 
     {#if data.active}
       <div class="scope-summary" aria-label="Current Field Guide search and filters">
-        {#if data.results.length > 0}
-          <strong>Showing {(data.page - 1) * 100 + 1}–{(data.page - 1) * 100 + data.results.length} of {data.total} matching species</strong>
+        {#if data.location && coverage?.status === "unavailable"}
+          <strong>{scopeNoun} unavailable for this location</strong>
+        {:else if data.results.length > 0}
+          <strong>Showing {(data.page - 1) * 100 + 1}–{(data.page - 1) * 100 + data.results.length} of {data.total} {scopeNoun}</strong>
+        {:else if data.list === "all"}
+          <strong>No species match these filters</strong>
         {:else}
-          <strong>No matching species</strong>
+          <strong>No {scopeNoun} match these filters</strong>
         {/if}
         <div class="scope-items">
+          <span>List: {GUIDE_LIST_LABEL[data.list]}</span>
           {#if data.q}<span>Search: “{data.q}”</span>{/if}
           {#if data.location}<span>{guideScopeText(data.location)}</span>{/if}
           {#if data.family}<span>Family: {data.families.find((f) => f.code === data.family)?.name ?? data.family}</span>{/if}
@@ -360,6 +365,13 @@
             <a href="/settings">Settings</a> or load a forecast area on
             <a href="/forecast/data">Hotspots &amp; data</a>.
           </p>
+        {:else if data.list !== "all"}
+          <p class="muted">
+            No {scopeNoun} match these filters{data.location ? ` in the stored data for ${data.location.label}` : ""}.
+            This is a list-scope result, not an answer about the place:
+            {#each GUIDE_LISTS.filter((l) => l !== data.list) as other, i (other)}{i > 0 ? " or " : ""}<a href={listHref(other)}>choose {GUIDE_LIST_LABEL[other]}</a>{/each}
+            to see the other species that match. Choosing All includes every matching species.
+          </p>
         {:else if data.interestOnly}
           <p>No saved species match these filters. Save birds with ☆ Special interest on their species pages, or <a href="/special-interest">open your complete collection</a>.</p>
         {:else}
@@ -378,91 +390,14 @@
     {:else}
       <section class="card results" id="results">
         {#each data.results as r (r.species_code)}
-          <article class="result">
-            <a class="row path-focus-target" id={`guide-species-${encodeURIComponent(r.species_code)}`} href={detailHref(r.species_code)} onclick={speciesAction(r.species_code, r.com_name)}>
-              <span class="thumbnail">
-                {#if r.photo && !brokenPhotos.has(r.photo.url)}
-                  <img
-                    src={r.photo.url}
-                    alt=""
-                    width="88"
-                    height="88"
-                    loading="lazy"
-                    decoding="async"
-                    use:checkThumbnail={r.photo.url}
-                    onerror={() => {
-                      if (r.photo)
-                        brokenPhotos = new Set([...brokenPhotos, r.photo.url]);
-                    }}
-                  />
-                {:else}
-                  <span class="photo-missing"
-                    >{r.photo ? "Photo unavailable" : "No photo yet"}</span
-                  >
-                {/if}
-              </span>
-              <span class="row-main">
-                <span class="name">
-                  {r.com_name}
-                  {#if data.interests?.includes(r.species_code)}<span class="interest-badge">★ Special interest</span>{/if}
-                  {#if data.viewed[r.species_code]}<ViewedBadge view={data.viewed[r.species_code]} />{/if}
-                  {#if r.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
-                      kind="need"
-                      label="Need"
-                    />{/if}
-                </span>
-                {#if r.matched_banding_code}<span class="muted">Banding code: {r.matched_banding_code}</span>{/if}
-                {#if r.match_provenance === "name_or_code"}<span class="match-provenance">Name or code match</span>{/if}
-                {#if r.match_provenance === "description_or_field_note"}<span class="match-provenance">Description or field-note match</span>{/if}
-                <span class="muted sci"
-                  ><em>{r.sci_name}</em>{#if r.family}
-                    · {r.family}{/if}
-                  {#if r.iucn_status}<span
-                      class="iucn s-{r.iucn_status.toLowerCase()}"
-                      title={IUCN_LABELS[r.iucn_status] ?? "IUCN status"}
-                      >{r.iucn_status}</span
-                    >{/if}</span
-                >
-                {#if (r.tags ?? []).length > 0}
-                  <span class="rowtags">
-                    {#each r.tags as t (t)}
-                      <span class="rowtag" class:hit={selected.has(t)}
-                        >{chipText(t)}</span
-                      >
-                    {/each}
-                  </span>
-                {/if}
-                {#if r.field_craft}
-                  <span class="muted craft"
-                    >{r.field_craft.slice(0, 140)}{r.field_craft.length > 140
-                      ? "…"
-                      : ""}</span
-                  >
-                {:else if !r.wiki_fetched_at}
-                  <span class="muted craft"
-                    >Wikipedia notes not loaded yet.</span
-                  >
-                {:else if !r.has_prose}
-                  <span class="muted craft">No Wikipedia article.</span>
-                {/if}
-              </span>
-              <span class="go" aria-hidden="true">›</span>
-            </a>
-            {#if r.photo}
-              <p class="photo-credit">
-                Photo: {r.photo.creator ?? "Creator not recorded"} ·
-                <a href={r.photo.sourceUrl} target="_blank" rel="noopener"
-                  >source</a
-                >
-                ·
-                {#if r.photo.licenseUrl}
-                  <a href={r.photo.licenseUrl} target="_blank" rel="noopener"
-                    >{r.photo.licenseCode}</a
-                  >
-                {:else}{r.photo.licenseCode}{/if}
-              </p>
-            {/if}
-          </article>
+          <GuideSpeciesRow
+            row={r}
+            href={detailHref(r.species_code)}
+            onclick={speciesAction(r.species_code, r.com_name)}
+            selectedTags={selected}
+            interest={data.interests?.includes(r.species_code) ?? false}
+            viewed={data.viewed[r.species_code]}
+          />
         {/each}
       </section>
       <nav class="pagination" aria-label="More results pages">{#if data.previous}<a href={data.previous}>← Previous</a>{/if}<span>Page {data.page}</span>{#if data.next}<a href={data.next}>Next →</a>{/if}</nav>
@@ -495,7 +430,6 @@
 <style>
   .interest-filter { display:flex; align-items:center; gap:8px; min-height:48px; cursor:pointer; }
   .interest-filter input { width:24px; height:24px; min-height:24px; }
-  .interest-badge { font-size:0.8rem; color:var(--text); font-weight:600; }
  .pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin:12px 0; }
  .pagination a { min-height:48px; display:inline-flex; align-items:center; }
   .history-link { display:inline-flex; align-items:center; min-height:48px; }
@@ -574,6 +508,23 @@
   .chooser-actions .secondary { background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
   .chooser-actions .apply-filters:disabled { opacity: 0.5; }
   .err { color: var(--danger); font-weight: 600; }
+  .list-scope { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+  .list-scope a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  /* The selected scope differs in shape (filled mark, heavier border), not colour alone. */
+  .list-scope a.current { border: 2px solid var(--accent); background: var(--card); color: var(--accent); }
+  .list-scope a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .filter-card { padding: 0 16px; margin-bottom: 4px; }
   .filters > summary {
     min-height: 48px;
@@ -734,86 +685,7 @@
   .results {
     padding: 4px 0;
   }
-  .row {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: 10px 16px;
-    min-height: 48px;
-    color: inherit;
-    text-decoration: none;
-  }
-  .result + .result {
-    border-top: 1px solid var(--border);
-  }
-  .row-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .thumbnail {
-    width: 64px;
-    height: 64px;
-    flex-shrink: 0;
-    display: grid;
-    place-items: center;
-    background: var(--bg);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .thumbnail img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-  }
-  .photo-missing {
-    color: var(--muted);
-    font-size: 0.75rem;
-    text-align: center;
-  }
-  .photo-credit {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0 6px;
-    padding: 0 16px 8px;
-    margin: 0;
-    font-size: 0.78rem;
-    color: var(--muted);
-    overflow-wrap: anywhere;
-  }
-  .photo-credit a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 48px;
-  }
-  @media (min-width: 640px) {
-    .thumbnail {
-      width: 88px;
-      height: 88px;
-    }
-  }
-  .name {
-    font-weight: 600;
-    overflow-wrap: anywhere; /* long hyphenated names at 320 + zoom (GROK) */
-  }
-  .sci,
-  .craft {
-    overflow-wrap: anywhere;
-  }
-  .go {
-    align-self: center;
-    color: var(--accent);
-    font-size: 1.3em;
-    flex-shrink: 0;
-  }
   @media (hover: hover) {
-    .row:hover .name {
-      color: var(--accent);
-    }
     .chip:hover {
       border-color: var(--accent);
     }
@@ -827,72 +699,5 @@
   .attribution a {
     color: var(--muted);
   }
-  .rowtags {
-    display: flex;
-    gap: 4px 6px;
-    flex-wrap: wrap;
-    margin-top: 2px;
-  }
-  .rowtag {
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--muted);
-  }
   /* The tags the user filtered by light up on each hit. */
-  .rowtag.hit {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-  }
-  .iucn {
-    display: inline-block;
-    padding: 1px 7px;
-    border-radius: 6px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    vertical-align: middle;
-    margin-left: 6px;
-    background: #e9ecef;
-    color: #343a40;
-  }
-  .match-provenance {
-    width: fit-content;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .iucn.s-lc {
-    background: #d8ecd9;
-    color: #1e4620;
-  }
-  .iucn.s-nt {
-    background: #e8ecc9;
-    color: #4a4d1d;
-  }
-  .iucn.s-vu {
-    background: #fde8c8;
-    color: #724200;
-  }
-  .iucn.s-en {
-    background: #fcd9cc;
-    color: #842607;
-  }
-  .iucn.s-cr {
-    background: #f8d0d4;
-    color: #880e1a;
-  }
-  .iucn.s-ew,
-  .iucn.s-ex {
-    background: #43464a;
-    color: #f4f5f6;
-  }
-  .iucn.s-dd {
-    background: #e9ecef;
-    color: #343a40;
-  }
 </style>

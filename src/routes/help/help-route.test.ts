@@ -72,4 +72,23 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		expect(normalized).toContain("Typed search and shared map links work without JavaScript");
 		expect(normalized).not.toContain("A search box at the top finds any stored hotspot");
 	});
+
+	it("defines All, Need and Seen, the viewer rule and the read-only nature (td-f02bf7)", () => {
+		const content = readFileSync("src/routes/help/+page.svelte", "utf8");
+		const normalized = content.replace(/\s+/g, " ");
+		expect(normalized).toContain("All, Need and Seen");
+		expect(normalized).toContain("every matching species");
+		expect(normalized).toContain("not on your life list");
+		expect(normalized).toContain("Need plus Seen always equals All");
+		expect(normalized).toContain("“Showing 1–100 of 439 Need species”");
+		expect(normalized).toContain("links made before these controls existed still show All");
+		expect(normalized).toContain("a family viewer sees the owner's list");
+		expect(normalized).toContain("their own Viewed and Special-interest markers stay their own");
+		expect(normalized).toContain("Species retired from the taxonomy are never added to Seen");
+		expect(normalized).toContain("never changes your life list, loads data or contacts eBird");
+		expect(normalized).toContain("Choose All to leave Need or Seen");
+		expect(normalized).toContain("that is not evidence that there are no birds there");
+		// The Phase 8A location explanation is still there, unchanged in meaning.
+		expect(normalized).toContain("This is recorded presence, not a complete range checklist");
+	});
 });
