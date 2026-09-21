@@ -4,7 +4,7 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { adminLiveStatus } from "$server/admin-status";
 import { galleryHealth } from "$server/gallery";
-import { nudgeEnrichmentScan } from "$server/job-handlers";
+import { nudgeEnrichmentScan, previewEnrichmentScan } from "$server/job-handlers";
 import {
   SELECTABLE_MODELS,
   DEFAULT_MODEL_IDS,
@@ -275,9 +275,36 @@ export const actions: Actions = {
    * slot per page, and without it a compare result would render under the
    * nudge button (plan §Admin UI).
    */
-  nudge_enrichment: async ({ locals }) => {
+  nudge_enrichment: async ({ locals, request }) => {
     if (locals.user?.role !== "admin")
       return fail(403, { kind: "nudge" as const, error: "Admins only." });
+    const form = await request.formData();
+    if (form.get("approval") !== "approve-enrichment")
+      return fail(400, { kind: "nudge" as const, error: "Preview and approve the enrichment scope first." });
+    const model = String(form.get("model") ?? "");
+    const entry = SELECTABLE_MODELS.find((candidate) => candidate.id === model);
+    if (!entry)
+      return fail(400, { kind: "nudge" as const, error: "Choose a supported enrichment model." });
+    const expectedCandidates = Number(form.get("expected_candidates"));
+    const expectedScope = String(form.get("expected_scope") ?? "");
+    const current = await previewEnrichmentScan();
+    if (
+      !Number.isInteger(expectedCandidates) ||
+      expectedCandidates !== current.candidates ||
+      expectedScope !== current.scopeToken
+    ) {
+      return fail(409, {
+        kind: "enrichment_preview" as const,
+        error: "The due enrichment scope changed. Review the updated counts before approving.",
+        preview: current,
+        model: entry.id,
+        modelLabel: entry.label,
+        rate: rateFor(entry.id, new Date()),
+      });
+    }
+    // The approved model becomes the enrichment model for this run and future
+    // scheduled enrichment. Nothing is queued before this deliberate submit.
+    await setConfig(CONFIG_KEYS.enrichmentModel, { provider: "anthropic", model: entry.id });
     // Runs a scan pass SYNCHRONOUSLY — all currently-due work is queued
     // when this returns, regardless of what the recurring scan is doing
     // (CODEX1: timer nudges race a running scan's stale snapshot).
@@ -484,5 +511,24 @@ export const actions: Actions = {
     } finally {
       compareInFlight = false;
     }
+  },
+
+  preview_enrichment: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin")
+      return fail(403, { kind: "enrichment_preview" as const, error: "Admins only." });
+    const form = await request.formData();
+    const model = String(form.get("model") ?? "");
+    const entry = SELECTABLE_MODELS.find((candidate) => candidate.id === model);
+    if (!entry)
+      return fail(400, { kind: "enrichment_preview" as const, error: "Choose a supported enrichment model." });
+    const preview = await previewEnrichmentScan();
+    const rate = rateFor(entry.id, new Date());
+    return {
+      kind: "enrichment_preview" as const,
+      preview,
+      model: entry.id,
+      modelLabel: entry.label,
+      rate: rate ? { inPerMTok: rate.inPerMTok, outPerMTok: rate.outPerMTok } : null,
+    };
   },
 };

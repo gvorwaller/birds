@@ -678,7 +678,9 @@
     <section class="card">
       <h2>Users</h2>
       <p class="sub2">
-        Provision family accounts. Each user sees only their own data.
+        Provision accounts and choose which owner's life list each read-only
+        viewer displays. Viewed and Special interest remain personal to the
+        viewer.
       </p>
       {#each data.users as u (u.id)}
         <div class="obs user-row">
@@ -689,7 +691,7 @@
               <Badge kind="seen" label={u.role} />
               {#if u.views_user_id}<Badge
                   kind="notable"
-                  label="views #{u.views_user_id}"
+                  label={`views ${data.viewerOwners.find((owner) => owner.id === u.views_user_id)?.display_name ?? "unavailable owner"}`}
                 />{/if}
               {#if u.has_gallery}<Badge kind="seen" label="gallery" />{/if}
             </div>
@@ -715,6 +717,26 @@
             />
             <button type="submit" disabled={busy === `pw-${u.id}`}>Set</button>
           </form>
+          {#if u.role === "viewer"}
+            <form
+              method="POST"
+              action="?/set_viewer_owner"
+              use:enhance={track(`owner-${u.id}`)}
+              class="owner-form"
+            >
+              <input type="hidden" name="viewer_id" value={u.id} />
+              <label>
+                <span>Displayed life list</span>
+                <select name="views_user_id" required value={u.views_user_id ?? ""}>
+                  <option value="" disabled>Choose an owner</option>
+                  {#each data.viewerOwners as owner (owner.id)}
+                    <option value={owner.id}>{owner.display_name} (@{owner.username})</option>
+                  {/each}
+                </select>
+              </label>
+              <button type="submit" disabled={busy === `owner-${u.id}`}>Save owner</button>
+            </form>
+          {/if}
         </div>
       {/each}
 
@@ -751,6 +773,15 @@
             </select>
           </label>
           <label
+            ><span>Owner life list (required for a viewer)</span>
+            <select name="views_user_id">
+              <option value="">Choose an owner</option>
+              {#each data.viewerOwners as owner (owner.id)}
+                <option value={owner.id}>{owner.display_name} (@{owner.username})</option>
+              {/each}
+            </select>
+          </label>
+          <label
             ><span>Password</span><input
               type="password"
               name="new_password"
@@ -784,6 +815,9 @@
     cursor: pointer;
   }
   .sharing-choice input { width: 20px; height: 20px; }
+  .owner-form { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+  .owner-form label { display: grid; gap: 4px; }
+  .owner-form select { width: 100%; min-height: 48px; font-size: 1rem; }
   .page {
     max-width: 720px;
     margin: 0 auto;

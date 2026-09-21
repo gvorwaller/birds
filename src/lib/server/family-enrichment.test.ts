@@ -132,10 +132,20 @@ afterAll(async () => {
   await query("DELETE FROM users WHERE id=$1", [admin]);
 });
 async function job() {
-  await ensureFamilyEnrichment(true);
+  // Insert an already-running job so a real local worker pointed at birds_test
+  // cannot claim it in the gap between scheduler enqueue and this test's
+  // UPDATE. The handler contract needs a durable row, not the scheduler race.
+  await query(
+    "DELETE FROM jobs WHERE type='enrich_families' AND NOT(id=ANY($1::bigint[]))",
+    [oldJobs],
+  );
   return (
     await query<JobRow>(
-      "UPDATE jobs SET status='running',attempts=attempts+1 WHERE type='enrich_families' AND status='pending' RETURNING *",
+      `INSERT INTO jobs
+         (type,payload,status,dedup_key,requested_by,label,attempts,started_at)
+       VALUES ('enrich_families','{}','running',NULL,$1,'Family descriptions test',1,NOW())
+       RETURNING *`,
+      [admin],
     )
   ).rows[0];
 }

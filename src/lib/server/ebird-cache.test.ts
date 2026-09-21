@@ -167,6 +167,33 @@ describe("recentSpeciesInRegion (ladder rung)", () => {
 });
 
 describe("cachedFetch coalescing", () => {
+  const validObs = {
+    speciesCode: "amecro", comName: "American Crow", sciName: "Corvus brachyrhynchos",
+    locId: "L1", locName: "Test", obsDt: "2026-09-20 09:00",
+    lat: 30.1, lng: -81.6, locationPrivate: false,
+  };
+
+  it("rejects a malformed fresh cache row and replaces it from a valid live response", async () => {
+    db.query.mockReset();
+    db.query
+      .mockResolvedValueOnce({ rows: [{ payload: [{ ...validObs, speciesCode: undefined }], fetched_at: new Date().toISOString() }] })
+      .mockResolvedValueOnce({ rows: [] });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => [validObs] }) as unknown as Response));
+    const result = await recentNearbyObs("key", 30.11, -81.61, 40, 7);
+    expect(result).toMatchObject({ stale: false, data: [validObs] });
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ebird_cache"))).toBe(true);
+  });
+
+  it("keeps a valid stale cache row when the refreshed eBird schema drifts", async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ payload: [validObs], fetched_at: "2020-01-01T00:00:00.000Z" }] });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200, json: async () => [{ ...validObs, locId: undefined, locationId: "L1" }],
+    }) as unknown as Response));
+    const result = await recentNearbyObs("key", 30.12, -81.62, 40, 7);
+    expect(result).toMatchObject({ stale: true, data: [validObs] });
+  });
+
   it("retains the refresh status when serving a stale fallback", async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ payload: [], fetched_at: "2026-09-18T00:00:00.000Z" }] });

@@ -9,6 +9,12 @@ import { replaceTaxonomy } from '$server/taxonomy-sync';
 import { query, withTransaction } from '$lib/db';
 import { timed } from '$server/request-timing';
 import { decryptSecret } from '$server/crypto';
+import {
+	reportSchemaDrift,
+	validateEbirdHotspots,
+	validateEbirdObservations,
+	validateEbirdRegions
+} from '$server/upstream-schema';
 
 const API = 'https://api.ebird.org/v2';
 
@@ -232,11 +238,12 @@ const inFlight = new Map<string, Promise<CachedResult<unknown>>>();
 async function cachedFetch<T>(
 	cacheKey: string,
 	ttlMinutes: number,
-	fetcher: () => Promise<T>
+	fetcher: () => Promise<unknown>,
+	validate: (value: unknown) => T = (value) => value as T
 ): Promise<CachedResult<T>> {
 	const existing = inFlight.get(cacheKey) as Promise<CachedResult<T>> | undefined;
 	if (existing) return existing;
-	const p = cachedFetchUncoalesced(cacheKey, ttlMinutes, fetcher).finally(() =>
+	const p = cachedFetchUncoalesced(cacheKey, ttlMinutes, fetcher, validate).finally(() =>
 		inFlight.delete(cacheKey)
 	);
 	inFlight.set(cacheKey, p as Promise<CachedResult<unknown>>);
@@ -250,24 +257,33 @@ async function cachedFetch<T>(
 async function cachedFetchUncoalesced<T>(
 	cacheKey: string,
 	ttlMinutes: number,
-	fetcher: () => Promise<T>
+	fetcher: () => Promise<unknown>,
+	validate: (value: unknown) => T
 ): Promise<CachedResult<T>> {
-	const cached = await query<{ payload: T; fetched_at: string }>(
+	const cached = await query<{ payload: unknown; fetched_at: string }>(
 		'SELECT payload, fetched_at FROM ebird_cache WHERE cache_key = $1',
 		[cacheKey]
 	);
 	const row = cached.rows[0];
+	let cachedData: T | undefined;
+	if (row) {
+		try {
+			cachedData = validate(row.payload);
+		} catch (err) {
+			reportSchemaDrift(err, `cache ${cacheKey}`);
+		}
+	}
 	const fresh = row && Date.now() - new Date(row.fetched_at).getTime() < ttlMinutes * 60_000;
-	if (row && fresh) {
+	if (row && fresh && cachedData !== undefined) {
 		return {
-			data: row.payload,
+			data: cachedData,
 			fetchedAt: new Date(row.fetched_at),
 			stale: false
 		};
 	}
 
 	try {
-		const data = await fetcher();
+		const data = validate(await fetcher());
 		await query(
 			`INSERT INTO ebird_cache (cache_key, payload, fetched_at)
 			 VALUES ($1, $2, NOW())
@@ -276,9 +292,10 @@ async function cachedFetchUncoalesced<T>(
 		);
 		return { data, fetchedAt: new Date(), stale: false };
 	} catch (err) {
-		if (row) {
+		reportSchemaDrift(err, `fetch ${cacheKey}`);
+		if (row && cachedData !== undefined) {
 			return {
-				data: row.payload,
+				data: cachedData,
 				fetchedAt: new Date(row.fetched_at),
 				stale: true,
 				refreshErrorStatus: err instanceof EbirdError ? err.status : undefined
@@ -317,9 +334,9 @@ export async function recentObs(
 	back: number
 ): Promise<CachedResult<EbirdObs[]>> {
 	const region = regionCode.trim();
-	return cachedFetch(`obs:${region}:${back}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(`/data/obs/${encodeURIComponent(region)}/recent?back=${back}`, apiKey)
-	);
+	const path = `/data/obs/${encodeURIComponent(region)}/recent?back=${back}`;
+	return cachedFetch(`obs:${region}:${back}`, OBS_TTL_MIN, () => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 export async function notableObs(
@@ -328,12 +345,9 @@ export async function notableObs(
 	back: number
 ): Promise<CachedResult<EbirdObs[]>> {
 	const region = regionCode.trim();
-	return cachedFetch(`notable:${region}:${back}`, NOTABLE_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/${encodeURIComponent(region)}/recent/notable?back=${back}&detail=simple`,
-			apiKey
-		)
-	);
+	const path = `/data/obs/${encodeURIComponent(region)}/recent/notable?back=${back}&detail=simple`;
+	return cachedFetch(`notable:${region}:${back}`, NOTABLE_TTL_MIN, () => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 export async function recentNearbyObs(
@@ -346,12 +360,9 @@ export async function recentNearbyObs(
 	// Round coords in the cache key so tiny GPS jitter reuses the cache.
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
-	return cachedFetch(`geo:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/geo/recent?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}`,
-			apiKey
-		)
-	);
+	const path = `/data/obs/geo/recent?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}`;
+	return cachedFetch(`geo:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 export async function notableNearbyObs(
@@ -364,13 +375,10 @@ export async function notableNearbyObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
-	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, NOTABLE_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`,
-          apiKey,
-          { signal: opts?.signal, deadlineMs: opts?.deadlineMs }
-		)
-	);
+	const path = `/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`;
+	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, NOTABLE_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey, { signal: opts?.signal, deadlineMs: opts?.deadlineMs }),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 export async function recentNearbySpeciesObs(
@@ -383,12 +391,10 @@ export async function recentNearbySpeciesObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
-	return cachedFetch(`geosp:${speciesCode}:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}`,
-			apiKey
-		)
-	);
+	const path = `/data/obs/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}`;
+	return cachedFetch(`geosp:${speciesCode}:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 export interface EbirdHotspot {
@@ -412,9 +418,10 @@ export async function hotspotsInRegion(
 	regionCode: string
 ): Promise<CachedResult<EbirdHotspot[]>> {
 	const region = regionCode.trim();
-	return cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN, () =>
-		ebirdFetch<EbirdHotspot[]>(`/ref/hotspot/${encodeURIComponent(region)}?fmt=json`, apiKey)
-	);
+	const path = `/ref/hotspot/${encodeURIComponent(region)}?fmt=json`;
+	return cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
 }
 
 /**
@@ -437,12 +444,10 @@ export async function recentHotspotObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const loc = locId.trim();
 	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
-	return cachedFetch(`hotspotObs2:${loc}:${b}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple&includeProvisional=true`,
-			apiKey
-		)
-	);
+	const path = `/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple&includeProvisional=true`;
+	return cachedFetch(`hotspotObs2:${loc}:${b}`, OBS_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 /** eBird species-code shape — validated before entering a URL path. */
@@ -480,13 +485,10 @@ export async function nearestObsOfSpecies(
 	// callers of this key onto one promise, and a caller-owned signal would let
 	// whoever navigated away cancel the fetch another request is awaiting.
 	// Coalesced callers therefore share whichever policy started the call.
-	return cachedFetch(`nearestObs:${speciesCode}:${la}:${ln}:${b}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/nearest/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&back=${b}&includeProvisional=true&maxResults=5`,
-			apiKey,
-			{ deadlineMs: opts.deadlineMs }
-		)
-	);
+	const path = `/data/nearest/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&back=${b}&includeProvisional=true&maxResults=5`;
+	return cachedFetch(`nearestObs:${speciesCode}:${la}:${ln}:${b}`, OBS_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey, { deadlineMs: opts.deadlineMs }),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 /**
@@ -528,14 +530,11 @@ export async function recentSpeciesInRegion(
 	// Clamped BEFORE both the URL and the cache key, so `back=0` and `back=1`
 	// cannot occupy different keys while fetching identical data.
 	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
-	return cachedFetch(`spReg:${region}:${speciesCode}:${b}`, OBS_TTL_MIN, () =>
-		ebirdFetch<EbirdObs[]>(
-			`/data/obs/${encodeURIComponent(region)}/recent/${encodeURIComponent(speciesCode)}` +
-				`?back=${b}&includeProvisional=true&maxResults=${REGION_PROBE_MAX_RESULTS}`,
-			apiKey,
-			{ deadlineMs: REGION_PROBE_DEADLINE_MS }
-		)
-	);
+	const path = `/data/obs/${encodeURIComponent(region)}/recent/${encodeURIComponent(speciesCode)}` +
+		`?back=${b}&includeProvisional=true&maxResults=${REGION_PROBE_MAX_RESULTS}`;
+	return cachedFetch(`spReg:${region}:${speciesCode}:${b}`, OBS_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey, { deadlineMs: REGION_PROBE_DEADLINE_MS }),
+		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
 /** eBird hotspots within distKm of a point (ref/hotspot/geo). */
@@ -548,9 +547,10 @@ export async function hotspotsNear(
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
 	const dist = Math.min(Math.max(distKm, 1), 50);
-	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, () =>
-		ebirdFetch<EbirdHotspot[]>(`/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`, apiKey)
-	);
+	const path = `/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`;
+	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
 }
 
 export interface EbirdRegion {
@@ -567,21 +567,20 @@ export async function subregions(
 	level: 'subnational1' | 'subnational2'
 ): Promise<CachedResult<EbirdRegion[]>> {
 	const parent = parentRegion.trim();
-	return cachedFetch(`regions:${level}:${parent}`, REGION_TTL_MIN, () =>
-		ebirdFetch<EbirdRegion[]>(
-			`/ref/region/list/${level}/${encodeURIComponent(parent)}?fmt=json`,
-			apiKey
-		)
-	);
+	const path = `/ref/region/list/${level}/${encodeURIComponent(parent)}?fmt=json`;
+	return cachedFetch(`regions:${level}:${parent}`, REGION_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdRegions(value, path) as EbirdRegion[]);
 }
 
 /** All eBird countries (ref/region/list/country/world) — drives the country
  * picker for international region loads (td-f1d6da). Same cache/TTL shape
  * as subregions(): political geography barely changes. */
 export async function countries(apiKey: string): Promise<CachedResult<EbirdRegion[]>> {
-	return cachedFetch('regions:country:world', REGION_TTL_MIN, () =>
-		ebirdFetch<EbirdRegion[]>('/ref/region/list/country/world?fmt=json', apiKey)
-	);
+	const path = '/ref/region/list/country/world?fmt=json';
+	return cachedFetch('regions:country:world', REGION_TTL_MIN,
+		() => ebirdFetch<unknown>(path, apiKey),
+		(value) => validateEbirdRegions(value, path) as EbirdRegion[]);
 }
 
 /** Full taxonomy pull, validated before atomic replacement. */

@@ -27,13 +27,17 @@ const mocks = vi.hoisted(() => ({
   familyPause: vi.fn(),
   familyRetry: vi.fn(),
   nudgeEnrichmentScan: vi.fn(),
+  previewEnrichmentScan: vi.fn(),
   setWorkerPauseRequested: vi.fn(),
   generateSpeciesAnnotation: vi.fn(),
   aiStageInputFor: vi.fn(),
   similarCandidatesFor: vi.fn(),
 }));
 vi.mock("$server/family-enrichment",()=>({setFamilyPaused:mocks.familyPause,retryFamilyGaps:mocks.familyRetry,FamilyRetrySelectionError:class extends Error {}}));
-vi.mock("$server/job-handlers", () => ({ nudgeEnrichmentScan: mocks.nudgeEnrichmentScan }));
+vi.mock("$server/job-handlers", () => ({
+  nudgeEnrichmentScan: mocks.nudgeEnrichmentScan,
+  previewEnrichmentScan: mocks.previewEnrichmentScan,
+}));
 vi.mock("$server/jobs", () => ({ setWorkerPauseRequested: mocks.setWorkerPauseRequested }));
 vi.mock("$server/admin-status", () => ({ adminLiveStatus: vi.fn() }));
 vi.mock("$server/gallery", () => ({ galleryHealth: vi.fn() }));
@@ -124,6 +128,7 @@ beforeEach(() => {
   dbCalls.length = 0;
   queryHandler = () => ({ rows: [] });
   mocks.nudgeEnrichmentScan.mockReset();
+  mocks.previewEnrichmentScan.mockReset();
   mocks.setWorkerPauseRequested.mockReset();
   mocks.generateSpeciesAnnotation.mockReset();
   mocks.aiStageInputFor.mockReset();
@@ -157,9 +162,59 @@ describe("kind discriminant — the one-ActionData-slot fix", () => {
       deduped: 0,
       remaining: 0,
     });
-    const ok = (await actions.nudge_enrichment(ADMIN as never)) as { kind: string; ok: boolean };
+    mocks.previewEnrichmentScan.mockResolvedValue({
+      candidates: 0, wikiCandidates: 0, inatCandidates: 0,
+      aiCandidates: 0, mediaCandidates: 0, maxAiCalls: 0, scopeToken: "scope-zero",
+      coverage: {
+        eligible: 0, wikiAttempted: 0, wikiComplete: 0,
+        aiAttempted: 0, aiComplete: 0, inatAttempted: 0,
+        inatComplete: 0, mediaAttempted: 0, mediaComplete: 0,
+      },
+    });
+    const unapproved = await actions.nudge_enrichment({
+      ...ADMIN, request: req({ model: "claude-haiku-4-5" }),
+    } as never) as { status: number };
+    expect(unapproved.status).toBe(400);
+    expect(mocks.nudgeEnrichmentScan).not.toHaveBeenCalled();
+
+    const changed = await actions.nudge_enrichment({
+      ...ADMIN,
+      request: req({
+        approval: "approve-enrichment", model: "claude-haiku-4-5", expected_candidates: "0",
+        expected_scope: "stale-scope",
+      }),
+    } as never) as { status: number };
+    expect(changed.status).toBe(409);
+    expect(mocks.nudgeEnrichmentScan).not.toHaveBeenCalled();
+
+    const ok = (await actions.nudge_enrichment({
+      ...ADMIN,
+      request: req({
+        approval: "approve-enrichment", model: "claude-haiku-4-5", expected_candidates: "0",
+        expected_scope: "scope-zero",
+      }),
+    } as never)) as { kind: string; ok: boolean };
     expect(ok.kind).toBe("nudge");
     expect(ok.ok).toBe(true);
+  });
+
+  it("previews scope and model without queueing work", async () => {
+    mocks.previewEnrichmentScan.mockResolvedValue({
+      candidates: 12, wikiCandidates: 3, inatCandidates: 2,
+      aiCandidates: 5, mediaCandidates: 2, maxAiCalls: 8, scopeToken: "scope-twelve",
+      coverage: {
+        eligible: 200, wikiAttempted: 190, wikiComplete: 185,
+        aiAttempted: 170, aiComplete: 165, inatAttempted: 160,
+        inatComplete: 155, mediaAttempted: 180, mediaComplete: 175,
+      },
+    });
+    const preview = await actions.preview_enrichment({
+      ...ADMIN, request: req({ model: "claude-sonnet-5" }),
+    } as never) as { kind: string; preview: { candidates: number }; modelLabel: string };
+    expect(preview).toMatchObject({ kind: "enrichment_preview", modelLabel: "Claude Sonnet 5" });
+    expect(preview.preview.candidates).toBe(12);
+    expect(mocks.nudgeEnrichmentScan).not.toHaveBeenCalled();
+    expect(dbCalls.filter((c) => c.text.includes("app_config"))).toHaveLength(0);
   });
 });
 

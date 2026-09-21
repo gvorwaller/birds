@@ -10,6 +10,12 @@
  * NWS asks for a descriptive User-Agent with contact info.
  */
 import { query } from '$lib/db';
+import {
+	reportSchemaDrift,
+	UpstreamSchemaError,
+	validateNwsForecast,
+	validateNwsPoints
+} from '$server/upstream-schema';
 
 const UA = 'birds.gaylon.photos trip planner (gaylon@vorwaller.net)';
 const TTL_MIN = 60;
@@ -39,7 +45,28 @@ interface CachedPayload {
 	periods: WeatherPeriod[];
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+function validateCachedPayload(value: unknown): CachedPayload {
+	if (!value || typeof value !== 'object' || Array.isArray(value))
+		throw new UpstreamSchemaError('NWS', 'weather cache', ['payload must be an object']);
+	const row = value as Record<string, unknown>;
+	if (row.label != null && typeof row.label !== 'string')
+		throw new UpstreamSchemaError('NWS', 'weather cache', ['label must be string or null']);
+	if (!Array.isArray(row.periods))
+		throw new UpstreamSchemaError('NWS', 'weather cache', ['periods must be an array']);
+	const issues: string[] = [];
+	for (const [i, raw] of row.periods.entries()) {
+		const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+		for (const key of ['name', 'windSpeed', 'windDirection', 'shortForecast'])
+			if (typeof p[key] !== 'string' || !p[key]) issues.push(`periods[${i}].${key} must be a non-empty string`);
+		if (typeof p.isDaytime !== 'boolean') issues.push(`periods[${i}].isDaytime must be boolean`);
+		if (typeof p.tempF !== 'number' || !Number.isFinite(p.tempF)) issues.push(`periods[${i}].tempF must be numeric`);
+		if (p.precipPct != null && (typeof p.precipPct !== 'number' || !Number.isFinite(p.precipPct)))
+			issues.push(`periods[${i}].precipPct must be numeric or null`);
+	}
+	if (issues.length) throw new UpstreamSchemaError('NWS', 'weather cache', issues);
+	return value as CachedPayload;
+}
+
 async function fetchForecast(lat: number, lng: number): Promise<CachedPayload> {
 	const headers = { 'User-Agent': UA, Accept: 'application/geo+json' };
 	const pointsRes = await fetch(
@@ -48,32 +75,16 @@ async function fetchForecast(lat: number, lng: number): Promise<CachedPayload> {
 	);
 	if (pointsRes.status === 404) throw new WeatherUnavailable();
 	if (!pointsRes.ok) throw new Error(`NWS points ${pointsRes.status}`);
-	const pts = (await pointsRes.json()) as any;
-	const forecastUrl: string | undefined = pts?.properties?.forecast;
-	if (!forecastUrl) throw new Error('NWS points response missing forecast URL');
-	const rel = pts?.properties?.relativeLocation?.properties;
-	const label = rel?.city && rel?.state ? `${rel.city}, ${rel.state}` : null;
+	const { forecastUrl, label } = validateNwsPoints(await pointsRes.json());
 
 	const fRes = await fetch(forecastUrl, {
 		headers,
 		signal: AbortSignal.timeout(10000),
 	});
 	if (!fRes.ok) throw new Error(`NWS forecast ${fRes.status}`);
-	const f = (await fRes.json()) as any;
-	const periods: WeatherPeriod[] = (f?.properties?.periods ?? [])
-		.slice(0, 4)
-		.map((p: any) => ({
-			name: String(p.name ?? ''),
-			isDaytime: !!p.isDaytime,
-			tempF: Number(p.temperature),
-			precipPct: p.probabilityOfPrecipitation?.value ?? null,
-			windSpeed: String(p.windSpeed ?? ''),
-			windDirection: String(p.windDirection ?? ''),
-			shortForecast: String(p.shortForecast ?? ''),
-		}));
+	const periods: WeatherPeriod[] = validateNwsForecast(await fRes.json());
 	return { label, periods };
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
  * Current + short forecast near a coordinate. Returns null when there's no NWS
@@ -84,17 +95,22 @@ export async function weatherFor(
 	lng: number,
 ): Promise<WeatherResult | null> {
 	const key = `weather:${lat.toFixed(3)}:${lng.toFixed(3)}`;
-	const cached = await query<{ payload: CachedPayload; fetched_at: string }>(
+	const cached = await query<{ payload: unknown; fetched_at: string }>(
 		'SELECT payload, fetched_at FROM ebird_cache WHERE cache_key = $1',
 		[key],
 	);
 	const row = cached.rows[0];
+	let cachedPayload: CachedPayload | null = null;
+	if (row) {
+		try { cachedPayload = validateCachedPayload(row.payload); }
+		catch (err) { reportSchemaDrift(err, `cache ${key}`); }
+	}
 	const fresh =
 		row && Date.now() - new Date(row.fetched_at).getTime() < TTL_MIN * 60_000;
-	if (row && fresh) {
+	if (row && fresh && cachedPayload) {
 		return {
-			locationLabel: row.payload.label,
-			periods: row.payload.periods,
+			locationLabel: cachedPayload.label,
+			periods: cachedPayload.periods,
 			stale: false,
 			fetchedAt: new Date(row.fetched_at).toISOString(),
 		};
@@ -115,11 +131,12 @@ export async function weatherFor(
 			fetchedAt: new Date().toISOString(),
 		};
 	} catch (err) {
+		reportSchemaDrift(err, `fetch ${key}`);
 		if (err instanceof WeatherUnavailable) return null; // outside US — no forecast
-		if (row) {
+		if (row && cachedPayload) {
 			return {
-				locationLabel: row.payload.label,
-				periods: row.payload.periods,
+				locationLabel: cachedPayload.label,
+				periods: cachedPayload.periods,
 				stale: true,
 				fetchedAt: new Date(row.fetched_at).toISOString(),
 			};

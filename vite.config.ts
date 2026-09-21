@@ -20,5 +20,10 @@ export default defineConfig({
 	test: {
 		environment: "node",
 		include: ["src/**/*.{test,spec}.ts"],
+		// DB integration files share one production-sized birds_test database.
+		// Running files in parallel lets one file observe another's temporary
+		// taxonomy/region fixtures and makes a genuinely red suite look normal.
+		// Keep file concurrency off until those suites own isolated schemas.
+		fileParallelism: false,
 	},
 });

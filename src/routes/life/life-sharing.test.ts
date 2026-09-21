@@ -4,6 +4,7 @@ import { env } from "$env/dynamic/private";
 import { query } from "$lib/db";
 import { scopeOwnerId } from "$server/access";
 import type { SessionUser } from "$server/session";
+import { createSession, destroySession, validateSession } from "$server/session";
 import { load } from "./+page.server";
 import { actions } from "../settings/+page.server";
 
@@ -56,6 +57,15 @@ function shareEvent(
       }),
     }),
   } as Parameters<NonNullable<typeof actions.share_life_list>>[0];
+}
+function assignViewerEvent(viewerId: number, ownerId: number) {
+  return {
+    locals: { user: { id: alice.id, role: "admin" } },
+    request: new Request("http://localhost/settings?/set_viewer_owner", {
+      method: "POST",
+      body: new URLSearchParams({ viewer_id: String(viewerId), views_user_id: String(ownerId) }),
+    }),
+  } as Parameters<NonNullable<typeof actions.set_viewer_owner>>[0];
 }
 async function share(user: SessionUser, enabled: boolean) {
   return actions.share_life_list!(shareEvent(user, enabled));
@@ -174,6 +184,25 @@ describe("opt-in life-list sharing on PostgreSQL", () => {
     expect(family.selectedUser.id).toBe(alice.id);
     expect(family.canManage).toBe(false);
     expect(family.lifers.map((r) => r.species_code)).toEqual(["osprey"]);
+  });
+  it("persists an admin reassignment through the viewer's existing and next session lookup", async () => {
+    const token = await createSession(viewer.id);
+    try {
+      expect((await validateSession(token))?.views_user_id).toBe(alice.id);
+      expect(await actions.set_viewer_owner!(assignViewerEvent(viewer.id, bob.id))).toMatchObject({ ok: true });
+      const refreshed = await validateSession(token);
+      expect(refreshed?.views_user_id).toBe(bob.id);
+      expect(scopeOwnerId(refreshed!)).toBe(bob.id);
+      expect((await read(refreshed!)).lifers.map((r) => r.species_code)).toEqual(["redhea"]);
+
+      // A viewer cannot be assigned as another viewer's owner, even by
+      // forging the form with a discoverable numeric id.
+      expect(await actions.set_viewer_owner!(assignViewerEvent(viewer.id, viewer.id))).toMatchObject({ status: 400 });
+      expect((await validateSession(token))?.views_user_id).toBe(bob.id);
+    } finally {
+      await actions.set_viewer_owner!(assignViewerEvent(viewer.id, alice.id));
+      await destroySession(token);
+    }
   });
   it("lets family viewers browse opted-in owners without granting write permission", async () => {
     await share(bob, true);

@@ -535,6 +535,59 @@ const SCOPE_SQL = `
      AND tc.species_code IN (${IN_SCOPE_CODES_SQL}
          )`;
 
+export interface EnrichmentCoverage {
+	eligible: number;
+	wikiAttempted: number;
+	wikiComplete: number;
+	aiAttempted: number;
+	aiComplete: number;
+	inatAttempted: number;
+	inatComplete: number;
+	mediaAttempted: number;
+	mediaComplete: number;
+}
+
+/** Current coverage for the same in-scope universe used by the enrichment
+ * scanner. This is deliberately a read-only aggregate for the admin preflight;
+ * it does not create enrichment rows or contact any provider. */
+export async function enrichmentCoverage(): Promise<EnrichmentCoverage> {
+	const r = await query<{
+		eligible: number;
+		wiki_attempted: number;
+		wiki_complete: number;
+		ai_attempted: number;
+		ai_complete: number;
+		inat_attempted: number;
+		inat_complete: number;
+		media_attempted: number;
+		media_complete: number;
+	}>(
+		`SELECT COUNT(*)::int AS eligible,
+		        COUNT(*) FILTER (WHERE se.wiki_fetched_at IS NOT NULL)::int AS wiki_attempted,
+		        COUNT(*) FILTER (WHERE se.wiki_status IN ('ok','no_article'))::int AS wiki_complete,
+		        COUNT(*) FILTER (WHERE se.ai_attempted_at IS NOT NULL)::int AS ai_attempted,
+		        COUNT(*) FILTER (WHERE se.ai_status = 'ok')::int AS ai_complete,
+		        COUNT(*) FILTER (WHERE se.inat_similar_attempted_at IS NOT NULL)::int AS inat_attempted,
+		        COUNT(*) FILTER (WHERE se.inat_similar_status IN ('ok','none','no_mapping'))::int AS inat_complete,
+		        COUNT(*) FILTER (WHERE se.media_fetched_at IS NOT NULL)::int AS media_attempted,
+		        COUNT(*) FILTER (WHERE se.media_status IN ('ok','no_media'))::int AS media_complete
+		   FROM (${SCOPE_SQL}) scoped
+		   LEFT JOIN species_enrichment se ON se.species_code = scoped.species_code`
+	);
+	const row = r.rows[0];
+	return {
+		eligible: row?.eligible ?? 0,
+		wikiAttempted: row?.wiki_attempted ?? 0,
+		wikiComplete: row?.wiki_complete ?? 0,
+		aiAttempted: row?.ai_attempted ?? 0,
+		aiComplete: row?.ai_complete ?? 0,
+		inatAttempted: row?.inat_attempted ?? 0,
+		inatComplete: row?.inat_complete ?? 0,
+		mediaAttempted: row?.media_attempted ?? 0,
+		mediaComplete: row?.media_complete ?? 0
+	};
+}
+
 /** In-scope codes never wiki-attempted (no row, or row without a clock). */
 export async function enrichmentScope(): Promise<string[]> {
 	const r = await query<{ species_code: string }>(

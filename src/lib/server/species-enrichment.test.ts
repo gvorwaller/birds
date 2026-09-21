@@ -27,6 +27,7 @@ import {
 } from "./wikipedia";
 import { query } from "$lib/db";
 import {
+  enrichmentCoverage,
   enrichmentScope,
   factsFromWikidata,
   getEnrichment,
@@ -343,6 +344,16 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     xenoCantoId: "Testus-birdus",
   };
 
+  it("reports coverage for the production-sized in-scope corpus", { timeout: 30_000 }, async () => {
+    const coverage = await enrichmentCoverage();
+    expect(Number.isInteger(coverage.eligible)).toBe(true);
+    expect(coverage.eligible).toBeGreaterThanOrEqual(0);
+    for (const value of Object.values(coverage)) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(coverage.eligible);
+    }
+  });
+
   it("stage separation: wiki error never clears good prose; AI write keeps tsv fresh", async () => {
     await wipe();
     await upsertResolution(CODE, WD_ROW);
@@ -454,7 +465,7 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     await wipe();
   });
 
-  it("TERMINAL resolution outcomes (no_mapping/no_sitelink + clock) leave scope AND stale — no scanner loop (CODEX1 P1 #1)", async () => {
+  it("TERMINAL resolution outcomes (no_mapping/no_sitelink + clock) leave scope AND stale — no scanner loop (CODEX1 P1 #1)", { timeout: 30_000 }, async () => {
     await wipe();
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
@@ -486,7 +497,7 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     }
   });
 
-  it("weekly no_mapping lane: an 8-day-old row IS stale, a restamped one is NOT (GROK P2 pin)", async () => {
+  it("weekly no_mapping lane: an 8-day-old row IS stale, a restamped one is NOT (GROK P2 pin)", { timeout: 30_000 }, async () => {
     await wipe();
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
@@ -525,7 +536,7 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     }
   });
 
-  it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", async () => {
+  it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", { timeout: 30_000 }, async () => {
     await wipe();
     // Put the synthetic code in scope: taxonomy(species) + a seen row.
     await query(
@@ -925,7 +936,7 @@ describe.runIf(dbUp)("no_sitelink weekly lane — MISSES only (td-b7d021)", () =
     inatTaxonId: null,
     xenoCantoId: null,
   };
-  it("miss retries weekly; a fallback HIT rides the normal 180d clock", async () => {
+  it("miss retries weekly; a fallback HIT rides the normal 180d clock", { timeout: 30_000 }, async () => {
     await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [CODE]);
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
@@ -1902,7 +1913,7 @@ describe.runIf(dbUp)("AI error backoff covers the similar-note substage (td-8f0e
     await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [CODE]);
   }
 
-  it("a failed AI attempt is NOT immediately due again — it retries after the window", async () => {
+  it("a failed AI attempt is NOT immediately due again — it retries after the window", { timeout: 30_000 }, async () => {
     // Regression guard. The substage's "never attempted" clause
     // (similar_status IS NULL) is true forever unless a failure stamps it too,
     // which would make a persistently-failing species re-run the AI stage on

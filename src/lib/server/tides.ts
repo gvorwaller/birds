@@ -42,6 +42,7 @@
  */
 import { query } from "$lib/db";
 import { haversineKm } from "$lib/geo";
+import { reportSchemaDrift, UpstreamSchemaError } from "$server/upstream-schema";
 import {
   formatTideTime,
   tidePhrase,
@@ -214,18 +215,28 @@ export function parseStationList(
 ): TideStation[] {
   const raw = (json as any)?.stations;
   if (!Array.isArray(raw))
-    throw new Error("malformed station list: no stations array");
+    throw new UpstreamSchemaError("NOAA", "MDAPI stations", ["stations must be an array"]);
   const out: TideStation[] = [];
-  for (const s of raw) {
-    if (typeof s?.id !== "string" || typeof s?.name !== "string") continue;
+  const schemaIssues: string[] = [];
+  for (const [i, s] of raw.entries()) {
+    if (typeof s?.id !== "string" || typeof s?.name !== "string") {
+      schemaIssues.push(`stations[${i}].id/name must be strings`);
+      continue;
+    }
     const lat = Number(s.lat);
     const lng = Number(s.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      schemaIssues.push(`stations[${i}].lat/lng must be numeric`);
+      continue;
+    }
     const stateRaw =
       typeof s.state === "string" ? s.state.trim().toUpperCase() : "";
     const state = stateRaw || null;
     const timezonecorr = Number(s.timezonecorr);
-    if (!Number.isFinite(timezonecorr)) continue;
+    if (!Number.isFinite(timezonecorr)) {
+      schemaIssues.push(`stations[${i}].timezonecorr must be numeric`);
+      continue;
+    }
     const tz = stationTimeZone(timezonecorr, state);
     if (!tz) continue; // unresolvable tz (incl. blank/foreign state) — drop
     out.push({
@@ -237,6 +248,8 @@ export function parseStationList(
       tz,
     });
   }
+  if (schemaIssues.length)
+    reportSchemaDrift(new UpstreamSchemaError("NOAA", "MDAPI stations", schemaIssues), "fetch tideStations:v1");
   if (out.length < minStations) {
     throw new Error(
       `station list implausibly small (${out.length} < ${minStations}) — refusing to cache`,
@@ -260,19 +273,34 @@ export function parsePredictions(json: unknown): TidePredictionsPayload {
   if (body.error) throw new TideUnavailable();
   const rawPredictions = Array.isArray(body.predictions)
     ? body.predictions
-    : [];
+    : null;
+  if (!rawPredictions)
+    throw new UpstreamSchemaError("NOAA", "CO-OPS predictions", ["predictions must be an array"]);
   const extremes: RawTideExtreme[] = [];
-  for (const p of rawPredictions as any[]) {
-    if (p?.type !== "H" && p?.type !== "L") continue;
+  const schemaIssues: string[] = [];
+  for (const [i, p] of (rawPredictions as any[]).entries()) {
+    if (p?.type !== "H" && p?.type !== "L") {
+      schemaIssues.push(`predictions[${i}].type must be H or L`);
+      continue;
+    }
     const v = Number(p?.v);
-    if (!Number.isFinite(v)) continue;
+    if (!Number.isFinite(v)) {
+      schemaIssues.push(`predictions[${i}].v must be numeric`);
+      continue;
+    }
     let at: string;
     try {
       at = parseCoopsTime(String(p?.t ?? ""));
     } catch {
-      continue; // individually malformed timestamp — skip, don't fail the batch
+      schemaIssues.push(`predictions[${i}].t must be a valid GMT timestamp`);
+      continue;
     }
     extremes.push({ type: p.type, at, feetMllw: v });
+  }
+  if (schemaIssues.length) {
+    const drift = new UpstreamSchemaError("NOAA", "CO-OPS predictions", schemaIssues);
+    reportSchemaDrift(drift, "fetch tide predictions");
+    if (extremes.length === 0) throw drift;
   }
   if (extremes.length === 0) throw new TideUnavailable();
   return { extremes };
@@ -495,6 +523,10 @@ async function loadStations(opts: TideFetchOpts): Promise<TideStation[]> {
       stationMemo = { stations, loadedAt: now.getTime() };
       return stations;
     }
+    reportSchemaDrift(
+      new UpstreamSchemaError("NOAA", "tide station cache", ["cached station payload is malformed"]),
+      `cache ${STATIONS_CACHE_KEY}`,
+    );
     // malformed fresh row — treat as a cache miss, fall through to live fetch
   }
   try {
@@ -508,6 +540,7 @@ async function loadStations(opts: TideFetchOpts): Promise<TideStation[]> {
     stationMemo = { stations, loadedAt: now.getTime() };
     return stations;
   } catch (err) {
+    reportSchemaDrift(err, `fetch ${STATIONS_CACHE_KEY}`);
     if (row) {
       const stations = validateCachedStations(row.payload);
       if (stations) {
@@ -591,6 +624,10 @@ async function predictionsForStationDate(
   if (row && fresh) {
     const parsed = validateCachedPredictions(row.payload);
     if (parsed) return { extremes: parsed.extremes, stale: false };
+    reportSchemaDrift(
+      new UpstreamSchemaError("NOAA", "tide prediction cache", ["cached extremes payload is malformed"]),
+      `cache ${key}`,
+    );
     // malformed fresh row — treat as a cache miss, fall through to live fetch
   }
   try {
@@ -604,6 +641,7 @@ async function predictionsForStationDate(
     );
     return { extremes: parsed.extremes, stale: false };
   } catch (err) {
+    reportSchemaDrift(err, `fetch ${key}`);
     if (err instanceof TideUnavailable) return null; // never cache, never stale-fallback
     if (row) {
       const parsed = validateCachedPredictions(row.payload);

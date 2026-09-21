@@ -618,6 +618,13 @@
 						They can use Appearance from the menu
 						to choose their own theme without accessing private settings.
 					</li>
+					<li>
+						<strong>Viewer life-list owner (admin)</strong> — in Settings → Users,
+						an administrator chooses and can later change which owner account each
+						viewer displays. Seen and Need then follow that owner's life list;
+						Viewed species, Special interest, appearance, and sign-in remain the
+						viewer's own. Viewers cannot choose or change this relationship.
+					</li>
 				</ul>
 			</div>
 		{/if}

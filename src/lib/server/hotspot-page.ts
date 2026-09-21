@@ -13,6 +13,7 @@ import {
 	EbirdError,
 	type EbirdObs
 } from '$server/ebird';
+import { reportSchemaDrift, validateEbirdHotspotInfo } from '$server/upstream-schema';
 import {
 	FREQ_LIKELY,
 	FREQ_POSSIBLE,
@@ -161,11 +162,16 @@ export async function resolveOfficialHotspot(
 	let request = officialInfoInFlight.get(locId);
 	if (!request) {
 		request = (async () => {
+			const path = `/ref/hotspot/info/${encodeURIComponent(locId)}`;
 			const raw = await ebirdFetchOrNull<unknown>(
-				`/ref/hotspot/info/${encodeURIComponent(locId)}`,
+				path,
 				apiKey,
 				{ nullOn: [404], deadlineMs: 15_000 }
 			);
+			if (raw != null) {
+				try { validateEbirdHotspotInfo(raw, path); }
+				catch (err) { reportSchemaDrift(err, `fetch hotspotInfo:${locId}`); throw err; }
+			}
 			const meta = parseOfficialHotspotInfo(raw, locId);
 			if (!meta) return null;
 			await query(
@@ -183,8 +189,12 @@ export async function resolveOfficialHotspot(
 		const meta = await request;
 		return { meta, stale: false };
 	} catch (err) {
-		if (cachedMeta && err instanceof EbirdError) {
-			return { meta: cachedMeta, stale: true, refreshErrorStatus: err.status };
+		if (cachedMeta) {
+			return {
+				meta: cachedMeta,
+				stale: true,
+				refreshErrorStatus: err instanceof EbirdError ? err.status : undefined
+			};
 		}
 		throw err;
 	}

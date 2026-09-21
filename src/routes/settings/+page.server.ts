@@ -60,6 +60,12 @@ export const load: PageServerLoad = async ({ locals }) => {
         )
       ).rows
     : [];
+  // The admin may assign viewers only to accounts that own their data. A
+  // viewer can never become another viewer's scope, and this list never leaves
+  // the admin-only Settings loader.
+  const viewerOwners = users
+    .filter((u) => u.role === "admin" || u.role === "user")
+    .map((u) => ({ id: u.id, display_name: u.display_name, username: u.username }));
 
   const [
     ebird,
@@ -207,6 +213,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     tripStopCount: Number(tripStats.rows[0]?.stops ?? 0),
     hasGallery,
     isAdmin,
+    viewerOwners,
     users: users.map((u) => ({
       id: u.id,
       username: u.username,
@@ -673,11 +680,22 @@ export const actions: Actions = {
     if (password.length < 8) {
       return fail(400, { error: "Password must be at least 8 characters." });
     }
-    // A viewer reads a chosen owner's data; default to the creating admin.
+    // A viewer reads the explicitly chosen owner's data. Do not silently
+    // default this security-sensitive relationship to the creating admin.
     let viewsUserId: number | null = null;
     if (role === "viewer") {
       const v = Number(form.get("views_user_id"));
-      viewsUserId = Number.isInteger(v) && v > 0 ? v : locals.user!.id;
+      if (!Number.isInteger(v) || v <= 0) {
+        return fail(400, { error: "Choose whose life list this viewer displays." });
+      }
+      const owner = await query(
+        `SELECT 1 FROM users WHERE id = $1 AND role IN ('admin','user')`,
+        [v],
+      );
+      if (!owner.rowCount) {
+        return fail(400, { error: "Choose a valid owner account for this viewer." });
+      }
+      viewsUserId = v;
     }
     const exists = await query("SELECT 1 FROM users WHERE username = $1", [
       username,
@@ -693,6 +711,41 @@ export const actions: Actions = {
     return {
       ok: true as const,
       message: `Created ${role} account "${username}".`,
+    };
+  },
+
+  set_viewer_owner: async ({ locals, request }) => {
+    if (locals.user!.role !== "admin")
+      return fail(403, { error: "Admins only." });
+    const form = await request.formData();
+    const viewerId = Number(form.get("viewer_id"));
+    const ownerId = Number(form.get("views_user_id"));
+    if (
+      !Number.isInteger(viewerId) || viewerId <= 0 ||
+      !Number.isInteger(ownerId) || ownerId <= 0
+    ) {
+      return fail(400, { error: "Choose a viewer and an owner account." });
+    }
+    const updated = await query<{ display_name: string }>(
+      `UPDATE users AS viewer
+          SET views_user_id = $2
+        WHERE viewer.id = $1
+          AND viewer.role = 'viewer'
+          AND EXISTS (
+            SELECT 1 FROM users AS owner
+             WHERE owner.id = $2 AND owner.role IN ('admin','user')
+          )
+      RETURNING viewer.display_name`,
+      [viewerId, ownerId],
+    );
+    if (!updated.rowCount) {
+      // One non-disclosing response covers a stale viewer, a viewer target,
+      // and an unauthorized/invalid account id.
+      return fail(400, { error: "That viewer-to-owner assignment is not available." });
+    }
+    return {
+      ok: true as const,
+      message: `${updated.rows[0].display_name}'s displayed life list was updated.`,
     };
   },
 

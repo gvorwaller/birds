@@ -365,7 +365,7 @@
     {/if}
     <form
       method="POST"
-      action="?/nudge_enrichment"
+      action="?/preview_enrichment"
       class="nudge"
       use:enhance={() => {
         nudgeBusy = true;
@@ -375,14 +375,44 @@
         };
       }}
     >
+      <label class="nudge-model">
+        <span>Model for this enrichment run</span>
+        <select name="model" value={data.ai.current.enrichment} required>
+          {#each data.ai.models as model (model.id)}
+            <option value={model.id}>{model.label}</option>
+          {/each}
+        </select>
+      </label>
       <button type="submit" disabled={nudgeBusy}>
-        {nudgeBusy ? "Nudging…" : "⚡ Run enrichment scan now"}
+        {nudgeBusy ? "Checking…" : "Preview enrichment scan"}
       </button>
       <span class="muted">
-        Skips the idle 24h wait — queues newly in-scope species and retries
-        failed sample media now.
+        Read-only preview: nothing is queued and the model is not changed
+        until you approve the exact scope.
       </span>
     </form>
+    {#if form?.kind === "enrichment_preview" && "preview" in form && form.preview}
+      <section class="approval" aria-labelledby="enrichment-approval-heading">
+        <h3 id="enrichment-approval-heading">Approve this enrichment run?</h3>
+        {#if "error" in form && form.error}<p class="error" role="alert">{form.error}</p>{/if}
+        <p><strong>Current coverage ({form.preview.coverage.eligible} eligible species):</strong> Wikipedia {form.preview.coverage.wikiComplete} complete / {form.preview.coverage.wikiAttempted} attempted; confusion {form.preview.coverage.inatComplete} complete / {form.preview.coverage.inatAttempted} attempted; AI {form.preview.coverage.aiComplete} complete / {form.preview.coverage.aiAttempted} attempted; media {form.preview.coverage.mediaComplete} complete / {form.preview.coverage.mediaAttempted} attempted.</p>
+        <p><strong>{form.preview.candidates} work items</strong>: {form.preview.wikiCandidates} Wikipedia, {form.preview.inatCandidates} confusion sourcing, {form.preview.aiCandidates} AI-only, and {form.preview.mediaCandidates} media.</p>
+        <p><strong>Model:</strong> {form.modelLabel}. Up to {form.preview.maxAiCalls} AI calls could be attempted; the exact spend is uncertain because source availability, prompt size, output size, retries, and fallbacks vary.</p>
+        {#if form.rate}
+          <p class="muted">Current list price: ${form.rate.inPerMTok}/million input tokens and ${form.rate.outPerMTok}/million output tokens. This is a rate, not a promised total.</p>
+        {:else}
+          <p class="muted">No reliable price is available for this model; spend is explicitly unknown.</p>
+        {/if}
+        <p class="muted">The worker Pause control above remains available after approval, and queued jobs retain their Cancel controls.</p>
+        <form method="POST" action="?/nudge_enrichment" use:enhance>
+          <input type="hidden" name="approval" value="approve-enrichment" />
+          <input type="hidden" name="model" value={form.model} />
+          <input type="hidden" name="expected_candidates" value={form.preview.candidates} />
+          <input type="hidden" name="expected_scope" value={form.preview.scopeToken} />
+          <button type="submit" class="danger">Approve and queue this run</button>
+        </form>
+      </section>
+    {/if}
     {#if form?.kind === "nudge" && "message" in form && form.message}
       <p class="ok">{form.message}</p>
     {/if}
@@ -855,6 +885,10 @@
   .family-enrichment button.secondary { background:var(--card); color:var(--accent); }
   .family-enrichment summary { min-height:48px; padding-block:12px; cursor:pointer; }
   .family-enrichment form { display:flex; flex-wrap:wrap; gap:0.75rem; }
+  .nudge-model { display:grid; gap:4px; width:100%; max-width:420px; }
+  .nudge-model select { min-height:48px; font-size:1rem; width:100%; }
+  .approval { width:100%; border:2px solid var(--accent); border-radius:8px; padding:16px; margin-top:12px; }
+  .approval h3 { margin-top:0; }
 
   .page {
     max-width: 960px;

@@ -17,6 +17,7 @@
 import { query } from '$lib/db';
 import { EbirdError, ebirdFetchOrNull, getEbirdApiKey } from '$server/ebird';
 import { fetchAuthenticatedEbird, EbirdLoginError, EbirdUpstreamError } from '$server/ebird-account';
+import { reportSchemaDrift, validateEbirdHotspotCoordinates } from '$server/upstream-schema';
 
 export const LIFER_LOC_TOTAL_CAP = 40;
 export const LIFER_LOC_CAS_CAP = 25;
@@ -28,13 +29,6 @@ export interface LiferLocResolution {
 	capped: boolean;
 	stopped: boolean;
 	stopReason?: 'auth' | 'upstream' | 'timeout' | 'cancel';
-}
-
-interface HotspotInfo {
-	locId?: string;
-	name?: string;
-	latitude?: number;
-	longitude?: number;
 }
 
 type Fetcher = typeof fetch;
@@ -83,15 +77,20 @@ async function lookupHotspot(
 ): Promise<{ name: string | null; lat: number; lng: number } | null> {
 	const t = callTimeout(opts?.deadlineAt);
 	const signal = t != null ? AbortSignal.timeout(t) : undefined;
-	const hs = await ebirdFetchOrNull<HotspotInfo>(
-		`/ref/hotspot/info/${encodeURIComponent(locId)}`,
+	const path = `/ref/hotspot/info/${encodeURIComponent(locId)}`;
+	const raw = await ebirdFetchOrNull<unknown>(
+		path,
 		apiKey,
 		{ fetcher: opts?.fetcher, nullOn: [404], signal }
 	);
-	if (hs && typeof hs.latitude === 'number' && typeof hs.longitude === 'number') {
+	if (raw == null) return null;
+	try {
+		const hs = validateEbirdHotspotCoordinates(raw, path);
 		return { name: hs.name ?? null, lat: hs.latitude, lng: hs.longitude };
+	} catch (err) {
+		reportSchemaDrift(err, `fetch lifer hotspotInfo:${locId}`);
+		throw err;
 	}
-	return null;
 }
 
 type StopSignal = { stop: 'auth' | 'upstream' | 'timeout' };

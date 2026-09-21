@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { parseEbirdDate, parseLifeListCsv, importLifeList } from "./ebird-account";
 import { query } from "$lib/db";
 
@@ -68,15 +69,18 @@ describe("parseLifeListCsv — live 13-column export (td-b5986c)", () => {
 });
 
 describe.runIf(dbUp)("importLifeList detail columns (test cluster)", () => {
-  const UID_SQL = `SELECT id FROM users ORDER BY id LIMIT 1`;
   const CODES = ["gubter2", "rebnut", "egygoo"];
 
-  const wipe = async (uid: number) =>
-    query(`DELETE FROM seen_species WHERE user_id = $1 AND species_code = ANY($2)`, [uid, CODES]);
-
   it("details land; manual rows keep source + first_seen but gain details; re-import replaces", async () => {
-    const uid = (await query<{ id: number }>(UID_SQL)).rows[0].id;
-    await wipe(uid);
+    // Never borrow the first real account in the restored test database:
+    // cleanup would delete genuine life-list rows for these real species.
+    const uid = (
+      await query<{ id: number }>(
+        `INSERT INTO users (username, display_name, password_hash, role)
+         VALUES ($1, 'Life-list import QA', '!unset', 'user') RETURNING id`,
+        [`lifelist-import-${randomUUID()}`],
+      )
+    ).rows[0].id;
     try {
       // A pre-existing MANUAL lifer for one of the CSV species.
       await query(
@@ -132,7 +136,7 @@ describe.runIf(dbUp)("importLifeList detail columns (test cluster)", () => {
       );
       expect(Number(again.rows[0].n)).toBe(3);
     } finally {
-      await wipe(uid);
+      await query(`DELETE FROM users WHERE id = $1`, [uid]);
     }
   });
 });

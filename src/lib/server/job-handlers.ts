@@ -1,5 +1,6 @@
 import { runFamilyEnrichment, ensureFamilyEnrichment } from './family-enrichment';
 import { taxonomySummary } from '$server/taxonomy-reference';
+import { createHash } from 'node:crypto';
 /**
  * Worker-side job execution. One handler per job type; every handler performs
  * its own terminal transition (complete/retry/fail/cancel/requeue) using the
@@ -73,6 +74,7 @@ import {
 	ERROR_RETRY_DAYS,
 	aiDueCodes,
 	aiStageInputFor,
+	enrichmentCoverage,
 	enrichmentScope,
 	enrichSpeciesMedia,
 	markAiError,
@@ -935,6 +937,59 @@ export interface EnrichmentWorkSummary {
 	remaining: number;
 }
 
+interface EnrichmentWork {
+	wikiWork: string[];
+	inatWork: string[];
+	aiWork: string[];
+	mediaWork: string[];
+}
+
+async function collectEnrichmentWork(
+	opts: { retryRecentMediaFailures?: boolean } = {}
+): Promise<EnrichmentWork> {
+	const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
+	const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
+	const wikiSet = new Set(wikiWork);
+	const inatWork = (await inatDueCodes()).filter((c) => !wikiSet.has(c)).sort();
+	const inatSet = new Set(inatWork);
+	const aiWork = AI_STAGE_ENABLED
+		? (await aiDueCodes()).filter((c) => !wikiSet.has(c) && !inatSet.has(c)).sort()
+		: [];
+	const mediaWork = (
+		await mediaDueCodes({ includeRecentFailures: opts.retryRecentMediaFailures === true })
+	).sort();
+	return { wikiWork, inatWork, aiWork, mediaWork };
+}
+
+/** Read-only preflight for the admin approval gate. No jobs, timers, provider
+ * calls or model settings are changed. */
+export async function previewEnrichmentScan(): Promise<
+	Omit<EnrichmentWorkSummary, 'chunksEnqueued' | 'deduped' | 'remaining'> & {
+		maxAiCalls: number;
+		coverage: Awaited<ReturnType<typeof enrichmentCoverage>>;
+		scopeToken: string;
+	}
+> {
+	const [{ wikiWork, inatWork, aiWork, mediaWork }, coverage] = await Promise.all([
+		collectEnrichmentWork({ retryRecentMediaFailures: true }),
+		enrichmentCoverage()
+	]);
+	return {
+		candidates: wikiWork.length + inatWork.length + aiWork.length + mediaWork.length,
+		wikiCandidates: wikiWork.length,
+		inatCandidates: inatWork.length,
+		aiCandidates: aiWork.length,
+		mediaCandidates: mediaWork.length,
+		maxAiCalls: wikiWork.length + aiWork.length,
+		coverage,
+		// Bind approval to lane membership, not just a count: an equal-sized
+		// scope can still change between preview and submit.
+		scopeToken: createHash('sha256')
+			.update(JSON.stringify({ wikiWork, inatWork, aiWork, mediaWork }))
+			.digest('hex')
+	};
+}
+
 /**
  * One scan PASS: compute the due work (partitioned wiki vs AI-only causes)
  * and enqueue bounded chunks. Shared by the recurring scan AND the admin
@@ -952,28 +1007,7 @@ async function enqueueEnrichmentChunks(
 	// Partitioned causes (CODEX1 Phase-2 P1 #2): wiki work goes through
 	// the full pipeline; AI-only work (wiki current, AI due) becomes
 	// aiOnly chunks that never touch WDQS/Wikipedia.
-	const [missing, wikiStale] = [await enrichmentScope(), await wikiStaleCodes()];
-	const wikiWork = [...new Set([...missing, ...wikiStale])].sort();
-	const wikiSet = new Set(wikiWork);
-	// iNat sourcing (td-460b1c): a mid-wiki species has no cross_ids yet and
-	// would waste its name-search fallback — wiki lands first.
-	const inatWork = (await inatDueCodes()).filter((c) => !wikiSet.has(c)).sort();
-	const inatSet = new Set(inatWork);
-	// Source-first per species (CODEX1 F6, Phase B): a species with confusion
-	// data still due must not get a candidate-less AI call now and a second
-	// billed call after inat lands. (aiDueCodes' inat-terminal gate already
-	// excludes never-fetched species; this subtraction covers refresh overlap.)
-	const aiWork = AI_STAGE_ENABLED
-		? (await aiDueCodes()).filter((c) => !wikiSet.has(c) && !inatSet.has(c)).sort()
-		: [];
-	// Media partition (td-86a2b6): separate from wiki/AI — a media failure
-	// never blocks or is blocked by prose/annotation work. Do not subtract
-	// wikiWork here: enrich_species does not repair media, and a species can
-	// legitimately need both independent jobs in the same scan.
-	const mediaWork = (
-		await mediaDueCodes({ includeRecentFailures: opts.retryRecentMediaFailures === true })
-	)
-		.sort();
+	const { wikiWork, inatWork, aiWork, mediaWork } = await collectEnrichmentWork(opts);
 
 	let enqueued = 0;
 	let deduped = 0;
