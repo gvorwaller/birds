@@ -29,7 +29,10 @@ Remaining/future work is tracked in `td` (P3) and the plan's "Future items."
 ## Docs & rules
 
 - **Design + roadmap (authoritative):** [`docs/birds-app-design-V2-Fable-revision-plan.md`](docs/birds-app-design-V2-Fable-revision-plan.md) — the old V1 `docs/birds-app-design.md` is deprecated/removed.
-- **Agent & contributor rules:** [`cs.md`](cs.md) (authoritative) — `CLAUDE.md` and `AGENTS.md` point to it.
+- **Agent & contributor rules:** [`cs.md`](cs.md) (authoritative hard rules) and
+  [`docs/agent-development-guide.md`](docs/agent-development-guide.md)
+  (cross-agent coding, test-data safety, UI/UX, verification, and release
+  workflow). `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` point to them.
 - **Devlog:** [`docs/devlog/`](docs/devlog/).
 
 ## Develop
@@ -43,8 +46,9 @@ npm run migrate    # apply DB migrations (backend/db/migrate_pg.sh)
 npm run format     # prettier
 ```
 
-Local Postgres: a **dedicated cluster on port 5436**, db `birds`. Use the
-`npm run test:db:*` scripts for isolated test databases. See `cs.md` →
+Local development uses the guarded PostgreSQL 17 test cluster at
+`127.0.0.1:15436`, database `birds_test`. Use the `npm run test:db:*` scripts;
+never point local tests at the production cluster on port 5436. See `cs.md` →
 _Database & Schema_ / _Local Test Isolation_.
 
 ## Trips integration

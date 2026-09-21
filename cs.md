@@ -1,17 +1,21 @@
 # AI Assistant Session Guide
 
 ## Session Startup (Required)
+
 1. Read `cs.md` (this file) — hard rules that override defaults
-2. Read `docs/birds-app-design-V2-Fable-revision-plan.md` — authoritative design direction (the V1 doc `docs/birds-app-design.md.grok.old` is **deprecated**)
-3. Review `docs/mockups/` — the approved UI reference (open `index.html`)
-4. Check recent devlog entries in `docs/devlog/`
-5. Run `td usage --new-session` to see current tasks
+2. Read `docs/agent-development-guide.md` — canonical cross-agent coding,
+   test-data safety, UI/UX, verification, and release workflow
+3. Read `docs/birds-app-design-V2-Fable-revision-plan.md` — authoritative design direction (the V1 doc `docs/birds-app-design.md.grok.old` is **deprecated**)
+4. Review `docs/mockups/` — the approved UI reference (open `index.html`)
+5. Check recent devlog entries in `docs/devlog/`
+6. Run `td usage --new-session` to see current tasks
 
 ---
 
 ## Core Principles
 
 ### No Assumptions
+
 - **Never guess** when you can verify — read source code, check config files, test directly
 - **Never assume the user's environment** — don't guess what device, browser, or OS they're using
 - **Never assume infrastructure details** — read deploy scripts, config files, and connection strings instead of guessing
@@ -19,11 +23,13 @@
 - **Ask when uncertain** — one question is cheaper than one wrong assumption
 
 ### No Quick Fixes
+
 - Find root causes, not band-aids
 - Implement maintainable solutions
 - If a fix requires multiple rounds, slow down and trace the data flow
 
 ### Evidence-Based Debugging (MANDATORY)
+
 When diagnosing errors, follow this methodology instead of guessing:
 
 1. **Read the relevant source code** before forming any hypothesis
@@ -39,6 +45,7 @@ When diagnosing errors, follow this methodology instead of guessing:
 ## Production Infrastructure
 
 ### DigitalOcean Droplet (Shared with gaylonphotos, giftlist, madonnahist)
+
 - **SSH**: source the gitignored `.local/ops.env`, then use
   `ssh "$BIRDS_DROPLET_SSH"`. The configured target uses the direct host because
   the public domain resolves to Cloudflare. Never publish the target in tracked files.
@@ -50,9 +57,12 @@ When diagnosing errors, follow this methodology instead of guessing:
 - **Domain**: `birds.gaylon.photos` — proxied through Cloudflare (HTTP-only origin)
 - **No image storage** — the gallery is **link-out only**: photos live on gaylon.photos; this app stores only a `photo_links` cache of CDN URLs. No Sharp, no DO Spaces, no uploads.
 - **Deploy script**: `./scripts/deploy-to-DO.sh` (adapt from madonnahist) — push, pull on droplet, install, build, run migrations, restart PM2, health-check, conditional nginx reload. **Never deploy manually.**
-- **Health**: `/api/health` returns `{ db, gallery_source, version }`; only `db == "ok"` gates deploys
+- **Health**: `/api/health` returns database, worker, gallery, and version status;
+  both `db == "ok"` and `worker == "ok"` gate deploys. Gallery status is reported
+  separately.
 
 ### Shared Droplet Awareness
+
 Four apps share RAM/disk/CPU. This app has no image processing, so its footprint should stay small — keep PM2 `memory_restart` modest, keep `/opt/birds` to code + logs.
 
 ---
@@ -60,6 +70,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ## Project-Specific Rules
 
 ### eBird Integration (SACRED RULES)
+
 - **Never log eBird credentials** — neither the API key nor the account username/password. Both are stored encrypted in the DB (symmetric secret in `.env`).
 - **Attribution is mandatory**: every page using eBird data shows "Data from eBird.org" with a link.
 - **Cache first**: aggressive caching (15–60 min recent obs; taxonomy ~quarterly). Respect rate limits; surface clear errors when the key is missing/invalid or rate-limited; fall back to cached data.
@@ -67,16 +78,19 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Store species codes, not names** — eBird `species_code` is stable across taxonomy revisions; display names come from `taxonomy_cache`.
 
 ### Gallery (link-out only)
+
 - Source of truth is `https://gaylon.photos/api/photos?collection=birds` (public). Sync replaces `photo_links` transactionally; species-name → species_code matching order: override table → common name → scientific name → unmatched (surfaced in UI).
 - If gaylon.photos is unreachable, serve the stale cache; report `gallery_source: "error"` in health.
 - Field renames in gaylonphotos' API require a matching update here — same owner, coordinate via that repo.
 
 ### Google Maps
+
 - Reuse gaylonphotos' `PUBLIC_GOOGLE_MAPS_API_KEY` + `PUBLIC_GOOGLE_MAPS_MAP_ID` (in `gaylonphotos/.env`). The key's website restrictions must include every origin that loads a map: `birds.gaylon.photos/*`, `http://127.0.0.1:5178/*` (dev), `http://127.0.0.1:8431/*` (mockups). Add new origins in the gaylonphotos GCP project.
 - Server-side place search / reverse geocode uses `GOOGLE_GEOCODING_KEY` (also from gaylonphotos/.env) via `/api/geocode`. The map picker lives in `src/lib/components/MapPicker.svelte`; loader in `src/lib/google-maps.ts`. Patterns adapted from `gaylonphotos/src/lib/google-maps.js`, `src/routes/api/geocode/+server.js`, and `Map.svelte`.
 - Home location is set via the map picker (search + tap), never raw lat/lon entry.
 
 ### CSS & UI
+
 - **No Tailwind. No utility frameworks.** Component-scoped `<style>` blocks only.
 - **No toast notifications.** Use modal confirmation dialogs for destructive actions and feedback.
 - WCAG AAA contrast ratios (7:1) for all text — including muted text
@@ -84,7 +98,9 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Responsive is first-class**: mobile-first; two breakpoints only (640px, 1024px); fixed bottom nav <640px with safe-area inset; ≥48px tap targets; ≥16px input font; see `docs/mockups/mockup.css`
 
 ### Data Integrity
+
 **NEVER:**
+
 - Create synthetic or placeholder data (IDs, timestamps, dummy observations)
 - Use fallback data to mask broken code
 - Add schema columns/fields that don't exist
@@ -93,6 +109,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - Target the prod madonnahist (or any sibling) DB from birds code or tests
 
 **ALWAYS:**
+
 - Use actual unique constraints from the schema
 - Fix root causes when data is missing — never paper over with defaults
 - Handle missing parameters as explicit errors with user notification
@@ -104,6 +121,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ## Database & Schema (PostgreSQL)
 
 ### Connection
+
 - **Engine**: Native PostgreSQL (Homebrew on dev, package install on prod) — no Docker
 - **Port**: `5436` — birds has its OWN Postgres cluster (5433=BTC Dashboard, 5434=madonnahist, 5435=prod tunnel — never touch those)
 - **Database**: `birds` · **Roles**: `birds_owner` (migrations), `birds_app` (runtime)
@@ -114,12 +132,13 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Critical**: store timestamps as `TIMESTAMPTZ` in UTC; format for display only at the edge.
 
 ### Local Test Isolation (CRITICAL)
+
 - Dedicated `birds_test` DB on `127.0.0.1:15436` — modeled exactly on madonnahist `docs/local-test-environment.md`
 - `BIRDS_ENV=test` required by guard scripts; scripts refuse reserved ports (5433/5434/5435) and the prod DB name
 - Never seed real eBird credentials into the test DB; gallery sync in tests uses fixture JSON, never live fetches
 - Test dev server: `npx vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test`
 - **Restoring a prod snapshot into `birds_test` 500s every page until you re-key the eBird
-  secrets.** `user_ebird.api_key_enc` (and stored logins) is ciphertext bound to *prod's*
+  secrets.** `user_ebird.api_key_enc` (and stored logins) is ciphertext bound to _prod's_
   `EBIRD_KEY_SECRET`; `.env.test` holds a different one, so `decryptSecret` throws and `GET /`
   returns a bare `<h1>500</h1>` — it reads like a code regression, not a data problem. Trace:
   `Unsupported state or unable to authenticate data` → `decryptSecret` (`src/lib/server/crypto.ts`)
@@ -133,16 +152,19 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
   windows) flips as wall-clock passes the captured data. Re-seed rather than trusting those states.
 
 ### Migrations
+
 - DDL changes go in `backend/db/migrations/`, never inline in app code
 - Always use `./backend/db/migrate_pg.sh` (adapted from madonnahist; tracks applied filenames) — **never raw `psql -f`**
 - If you change DB state, CREATE A MIGRATION FILE — the deploy script runs migrations on prod automatically
 
 ### Secrets
+
 - `.env` (mode 600, root-owned on prod; gitignored): `AUTH_SECRET`, `PGPASSWORD`/`MIGRATION_PGPASSWORD`, `EBIRD_KEY_SECRET` (encrypts stored eBird credentials)
 - eBird API key + login credentials: encrypted columns in the DB, per-user
 - Never commit real keys; never log secrets
 
 ### Type Safety Across the SQL Boundary
+
 - **NUMERIC returns as strings** — use `Number()` or cast `::float8`, or you'll get string concatenation
 - **JSONB returns as objects** — never `JSON.parse()` without a typeof guard
 - **Timestamps** — `TIMESTAMPTZ`, UTC everywhere, format at the edge
@@ -150,6 +172,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ---
 
 ## Development Workflow
+
 - **Dev server port**: `5178` (5173 BTC, 5174 gaylonphotos, 5175 giftlist, 5176 madonnahist, **5178 birds**)
 - **Always `cd` back** to project root after operations
 - **Use absolute paths** when possible to avoid directory confusion
@@ -157,6 +180,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Server restarts**: Ask the user to restart the dev server after config changes
 
 ### User-Facing Documentation (Required Review)
+
 - For every user-visible feature or behavior change, review
   `src/routes/help/+page.svelte` and update it in the same change when the
   workflow, controls, data meaning, availability, or limitations need
@@ -169,6 +193,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
   change is small.
 
 ### Verification Commands
+
 - `npm run build` — production build (always run after code changes)
 - `npm run check` — type checking + framework diagnostics, 0 warnings baseline
 - Run both before committing. If `npm run check` reports new warnings, fix them before commit.
@@ -176,6 +201,7 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ---
 
 ## State Tracking Tools
+
 - `td` — task management CLI (run `td usage --new-session` at session start)
 - `/nn` — append timestamped entry to today's devlog (`docs/devlog/YYYY-MM-DD.md`)
 - `/review` — adversarial review loop before commits
@@ -183,7 +209,8 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 ---
 
 ## Historical Failures (Learn From These)
-*(Inherited from sibling projects — same infrastructure pattern, same mistakes to avoid)*
+
+_(Inherited from sibling projects — same infrastructure pattern, same mistakes to avoid)_
 
 - **SSH by domain**: The public domain resolves to Cloudflare, not the droplet.
   Use the direct target from `.local/ops.env`.
@@ -197,4 +224,5 @@ Four apps share RAM/disk/CPU. This app has no image processing, so its footprint
 - **Google Maps RefererNotAllowedMapError**: The shared Maps key is referrer-restricted. New origins (local mockup server, new subdomains) must be added to the key's Website restrictions in the gaylonphotos GCP project.
 
 ### Key Principle
+
 > Assumptions are the enemy. Read the code. Read the config. Test the layer. Only then diagnose.

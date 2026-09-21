@@ -9,7 +9,14 @@ the PostgreSQL setup (dedicated cluster on **port 5436**) + local test isolation
 migrations, secrets, and the evidence-based debugging mandate. `AGENTS.md` and this
 file both defer to `cs.md` as the single source of truth.
 
+After `cs.md`, read [`docs/agent-development-guide.md`](docs/agent-development-guide.md)
+completely. It is the canonical cross-agent implementation and verification
+workflow, including ownership-safe fixtures for the production-sized
+`birds_test` snapshot, UI/UX consistency, browser coverage, and release gates.
+
 ## Session startup (required)
+
+- Read `cs.md` and `docs/agent-development-guide.md` completely.
 - Run `td usage --new-session` at conversation start (or after `/clear`) to see
   current work; `td usage -q` for subsequent reads. `td` is the task tracker.
   Do **not** `td close` completed work — use the `td review` → `td approve` flow
@@ -17,6 +24,7 @@ file both defer to `cs.md` as the single source of truth.
 - Skim the latest `docs/devlog/` entry for recent context.
 
 ## Where things are
+
 - **Design + roadmap (authoritative):** `docs/birds-app-design-V2-Fable-revision-plan.md`
   (the old V1 `docs/birds-app-design.md` is deprecated and removed).
 - **Devlog:** `docs/devlog/YYYY-MM-DD.md`.
@@ -26,6 +34,7 @@ file both defer to `cs.md` as the single source of truth.
   copy its value into tracked documentation or scripts.
 
 ## Local development & test database
+
 There is **no separate dev cluster** locally — local work runs against the
 **isolated test cluster**, which matches prod's major version:
 
@@ -48,5 +57,6 @@ There is **no separate dev cluster** locally — local work runs against the
   shared Google keys, and `EBIRD_KEY_SECRET`. Per `cs.md`, don't commit real secrets.
 
 ## Before you commit
+
 - `npm run check` must pass (svelte-check, 0 errors).
 - Debug from evidence (curl/logs), never assumption — see `cs.md` → Evidence-Based Debugging.
