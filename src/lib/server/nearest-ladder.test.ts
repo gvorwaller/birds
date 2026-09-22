@@ -136,6 +136,20 @@ beforeEach(() => {
 });
 
 describe("fast path", () => {
+  it("merges a closer regional checklist when the direct page is full", async () => {
+    ebird.nearestObsOfSpecies.mockResolvedValue(ok([obs(32), obs(33), obs(34), obs(35), obs(36)]));
+    serve({ R1: [obs(30.4)] });
+
+    const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);
+
+    expect(ebird.recentSpeciesInRegion).toHaveBeenCalled();
+    expect(res.partial).toBe(true);
+    expect(res.rows[0].lat).toBeCloseTo(30.4, 5);
+    expect(res.rows[0].source).toBe("regional search");
+    expect(res.rows.some((row) => row.source === "nearest endpoint")).toBe(true);
+    expect(res.via).toBe("ladder");
+  });
+
   it("uses the direct endpoint when it answers, and never probes", async () => {
     ebird.nearestObsOfSpecies.mockResolvedValue(ok([obs(35), obs(31.2)]));
     const res = await nearestSpeciesReports("key", SP, HOME, 14, OPTS);

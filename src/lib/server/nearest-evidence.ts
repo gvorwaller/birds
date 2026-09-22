@@ -1,4 +1,5 @@
 import { haversineKm } from "$lib/geo";
+import { observationDateInWindow } from "$lib/report-window";
 import { dedupeObservations, observationIdentity } from "$server/observations";
 import type { EbirdObs, CachedResult } from "$server/ebird";
 import { notableNearbyObs } from "$server/ebird";
@@ -27,17 +28,6 @@ export function parseNearestControls(
   return { ok: true, value: { backDays: backValue as NearestControls["backDays"], nearestKm: parsed as NearestDistance } };
 }
 
-function localDateOf(value: string): string | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:\s+\d{2}:\d{2})?$/.exec(value);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const check = new Date(Date.UTC(year, month - 1, day));
-  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return null;
-  return `${match[1]}-${match[2]}-${match[3]}`;
-}
-
 export function filterNearbyEvidence(
   rows: EbirdObs[],
   speciesCodes: Set<string>,
@@ -46,19 +36,11 @@ export function filterNearbyEvidence(
   nearestKm: NearestDistance,
   now = new Date(),
 ): EbirdObs[] {
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
-    .toISOString().slice(0, 10);
-  // eBird's back=1 is a rolling last-24-hours query, while date-only rows
-  // carry no timezone. Include the preceding calendar boundary and reject
-  // only clearly old/future rows rather than dropping a valid local report.
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - backDays - 1))
-    .toISOString().slice(0, 10);
   const radius = nearestKm === "any" ? Infinity : nearestKm;
   return dedupeObservations(rows).filter((row) => {
     if (!speciesCodes.has(row.speciesCode)) return false;
     if (!Number.isFinite(row.lat) || !Number.isFinite(row.lng) || row.lat < -90 || row.lat > 90 || row.lng < -180 || row.lng > 180) return false;
-    const date = localDateOf(row.obsDt);
-    if (!date || date < start || date > end) return false;
+    if (!observationDateInWindow(row.obsDt, backDays, now)) return false;
     return haversineKm(home.lat, home.lon, row.lat, row.lng) <= radius;
   }).sort((a, b) => {
     const d = haversineKm(home.lat, home.lon, a.lat, a.lng) - haversineKm(home.lat, home.lon, b.lat, b.lng);

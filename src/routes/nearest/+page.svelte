@@ -115,7 +115,7 @@
       </p>
     {/if}
     {#if !t.error}<p class="muted evidence-note">Showing up to five closest reports returned by the checked feeds. A finite distance is a result filter, not complete area coverage.</p>{/if}
-    {#if t.partial && !t.error}<p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>{/if}
+    {#if t.partial && !t.error}<p class="muted">Some checked feeds were incomplete or unavailable; the reports shown may not be the closest.</p>{/if}
   </section>
 {/snippet}
 

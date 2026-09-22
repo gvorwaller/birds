@@ -391,8 +391,12 @@ export async function recentNearbySpeciesObs(
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
-	const path = `/data/obs/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}`;
-	return cachedFetch(`geosp:${speciesCode}:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN,
+	// includeProvisional=true (td-48c22e): this feed defaults to reviewed
+	// records only, so the unconfirmed checklist that fired a need alert
+	// never reached the species page. Cache key bumped (geosp2) so a
+	// provisional-free payload under the old key cannot be served.
+	const path = `/data/obs/geo/recent/${encodeURIComponent(speciesCode)}?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&includeProvisional=true`;
+	return cachedFetch(`geosp2:${speciesCode}:${la}:${ln}:${distKm}:${back}`, OBS_TTL_MIN,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }

@@ -5,6 +5,7 @@
   import PathNavigation from "$components/PathNavigation.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
+  import { relativeAge } from "$lib/alert-evidence";
 
   let { data }: { data: PageData } = $props();
 
@@ -18,23 +19,8 @@
     }
   }
 
-  // Compact relative time for list rows; absolute date once it's old enough
-  // that "days ago" stops being useful.
-  function when(iso: string): string {
-    const t = new Date(iso).getTime();
-    const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins} min ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours} hr ago`;
-    const days = Math.round(hours / 24);
-    if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  }
+  // Calendar days, matching the day header. Rounding elapsed hours made two
+  // alerts sent the same morning read as different ages for about an hour.
 
   // Tier-1 (td-97b22e): each report's own timestamp shipped unrendered.
   // eBird obsDt is NAIVE local time at the OBSERVATION's location — no zone.
@@ -99,7 +85,7 @@
         Need alerts are off — nothing new will appear here.
       {/if}
       {#if data.lastScanAt}
-        Last scan {when(data.lastScanAt)}.
+        Last scan {relativeAge(data.lastScanAt)}.
       {/if}
     </p>
     <a class="settings-link" href="/settings">Alert settings →</a>
@@ -159,7 +145,7 @@
                 </span>
               {/if}
             </span>
-            <span class="time muted">{when(row.sent_at)}</span>
+            <span class="time muted">sent {relativeAge(row.sent_at)}</span>
           </div>
         {/each}
       </section>

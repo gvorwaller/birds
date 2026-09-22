@@ -41,6 +41,7 @@ import {
   parseSpeciesLocationContext,
   SPECIES_DEFAULT_DIST_KM,
 } from "$lib/species-context";
+import { storedAlertReports } from "$lib/alert-evidence";
 
 export const load: PageServerLoad = async ({ locals, params, url, request, depends }) => {
   depends("app:special-interest");
@@ -95,7 +96,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     (c) => c.speciesCode,
   )?.speciesCode;
 
-  const [seen, photos, userRow, backSpecies, interest] = await Promise.all([
+  const [seen, photos, userRow, backSpecies, interest, alertRows] = await Promise.all([
     query<{
       first_seen: string | null;
       source: string;
@@ -135,6 +136,15 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
         )
       : Promise.resolve({ rows: [] as { com_name: string }[] }),
     specialInterestFor(locals.user!.id, [code]).then(codes => codes.includes(code)).catch(() => null),
+    // Personal alert history, not the shared life-list owner.
+    query<{ sent_at: Date | string; reports: unknown }>(
+      `SELECT sent_at, reports
+         FROM need_alert_log
+        WHERE user_id = $1 AND species_code = $2
+        ORDER BY sent_at DESC
+        LIMIT 30`,
+      [locals.user!.id, code],
+    ),
   ]);
   // Unknown code (stale link, retired taxon) keeps the generic label rather
   // than inventing a name.
@@ -347,6 +357,13 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     distKm,
     backDays,
     nearestKm: nearestControls.value.nearestKm,
+    alertReports: storedAlertReports(
+      alertRows.rows.map((row) => ({
+        sentAt: new Date(row.sent_at).toISOString(),
+        reports: row.reports,
+      })),
+      backDays,
+    ),
     returnLink,
     tide,
   };
