@@ -792,7 +792,7 @@ describe.runIf(dbUp)("user_alert_prefs + push_subscriptions (Web Push schema)", 
         WHERE user_id = $1 AND species_code = 'frigul'`,
       [userId],
     );
-    await pruneHistory();
+    await pruneHistory({ alertUserId: userId });
     const left = await query<{ species_code: string }>(
       `SELECT species_code FROM need_alert_log WHERE user_id = $1`,
       [userId],
@@ -842,7 +842,7 @@ describe.runIf(dbUp)("listing, health, prune", () => {
       `UPDATE jobs SET status = 'succeeded', finished_at = NOW() WHERE id = $1`,
       [keep.jobId],
     );
-    await pruneHistory();
+    await pruneHistory({ jobIds: [a.jobId, keep.jobId] });
     expect(await getJob(a.jobId)).toBeNull();
     expect(await getJob(keep.jobId)).not.toBeNull();
   });
@@ -875,7 +875,7 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     await put("tidePred:PRUNETEST:2026-09-01", 7);
 
     try {
-      await pruneHistory();
+      await pruneHistory({ cacheKeyLike: "%PRUNETEST%" });
 
       expect(await alive("spReg:PRUNETEST-A:bkcchi:14")).toBe(false);
       expect(await alive("geosp:PRUNETEST:30.00:-81.00:40:7")).toBe(false);

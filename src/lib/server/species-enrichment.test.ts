@@ -864,8 +864,23 @@ describe.runIf(dbUp)("td-0753d0: taxonomy-first search, unenriched rows, tier or
     }
   });
 
-  it("enrichOneNowCoalesced shares promises and cleans up after settlement", { timeout: 25_000 }, async () => {
+  it("enrichOneNowCoalesced shares promises and cleans up after settlement", async () => {
     const fakeCode = "zzztst99";
+    // td-941d03: no live Wikidata/Wikipedia traffic. The fake answers every
+    // SPARQL query with no bindings (so the species resolves to no_mapping),
+    // and holds the first operation open so the concurrent call must join it.
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetcher = (async (input: RequestInfo | URL) => {
+      calls += 1;
+      if (!String(input).includes("query.wikidata.org")) throw new Error(`unexpected fetch: ${String(input)}`);
+      await gate;
+      return new Response(JSON.stringify({ results: { bindings: [] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/sparql-results+json" },
+      });
+    }) as typeof fetch;
     await query(
       `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
        VALUES ($1, 'Coalesce Test', 'Testus coalescus', 'species', 'Testidae')
@@ -873,17 +888,22 @@ describe.runIf(dbUp)("td-0753d0: taxonomy-first search, unenriched rows, tier or
       [fakeCode],
     );
     try {
-      // Concurrent calls share one promise.
-      const p1 = enrichOneNowCoalesced(fakeCode);
-      const p2 = enrichOneNowCoalesced(fakeCode);
+      // Concurrent calls share one promise, so one operation reaches the network.
+      const p1 = enrichOneNowCoalesced(fakeCode, { fetcher });
+      const p2 = enrichOneNowCoalesced(fakeCode, { fetcher });
       expect(p1).toBe(p2);
+      release();
       const [r1, r2] = await Promise.all([p1, p2]);
-      expect(r1.outcome).toBe(r2.outcome);
+      expect(r1).toEqual({ outcome: "no_mapping" });
+      expect(r2).toBe(r1);
+      // One operation: the P3444 lookup plus its scientific-name fallback.
+      expect(calls).toBe(2);
 
       // After settlement, .finally() cleans the Map — next call creates fresh.
-      const p3 = enrichOneNowCoalesced(fakeCode);
+      const p3 = enrichOneNowCoalesced(fakeCode, { fetcher });
       expect(p3).not.toBe(p1);
-      await p3;
+      await expect(p3).resolves.toEqual({ outcome: "no_mapping" });
+      expect(calls).toBe(4);
     } finally {
       await query(`DELETE FROM species_enrichment WHERE species_code = $1`, [fakeCode]);
       await query(`DELETE FROM taxonomy_cache WHERE species_code = $1`, [fakeCode]);

@@ -531,24 +531,55 @@ export async function reclaimStartupJobs(note: string): Promise<number> {
 	return r.rows.length;
 }
 
-export async function pruneHistory(): Promise<void> {
-	await query(
-		`DELETE FROM job_events USING jobs
-		  WHERE job_events.job_id = jobs.id
-		    AND jobs.finished_at IS NOT NULL AND jobs.finished_at < NOW() - interval '30 days'`
-	);
-	await query(
-		`DELETE FROM jobs
-		  WHERE finished_at IS NOT NULL AND finished_at < NOW() - interval '90 days'`
-	);
-	await query(
-		`DELETE FROM worker_status_history
-		  WHERE id NOT IN (SELECT id FROM worker_status_history ORDER BY id DESC LIMIT 500)`
-	);
+/**
+ * Test-only scope for the retention sweeps (td-e00d6f). Integration tests run
+ * against the shared birds_test snapshot, so they must prove the retention
+ * rules on rows they own without sweeping everyone else's history. Each field
+ * limits one sweep to the caller's rows; a sweep whose field is absent is
+ * skipped entirely (worker_status_history cannot be owned, so it never runs
+ * under a scope). Production always calls pruneHistory() unscoped.
+ */
+export interface PruneScope {
+	jobIds?: readonly number[];
+	alertUserId?: number;
+	cacheKeyLike?: string;
+}
+
+export async function pruneHistory(scope?: PruneScope): Promise<void> {
+	if (!scope || scope.jobIds) {
+		const jobs = scope?.jobIds ? 'AND jobs.id = ANY($1::bigint[])' : '';
+		const params = scope?.jobIds ? [[...scope.jobIds]] : [];
+		await query(
+			`DELETE FROM job_events USING jobs
+			  WHERE job_events.job_id = jobs.id
+			    AND jobs.finished_at IS NOT NULL AND jobs.finished_at < NOW() - interval '30 days'
+			    ${jobs}`,
+			params
+		);
+		await query(
+			`DELETE FROM jobs
+			  WHERE finished_at IS NOT NULL AND finished_at < NOW() - interval '90 days'
+			    ${jobs}`,
+			params
+		);
+	}
+	if (!scope) {
+		await query(
+			`DELETE FROM worker_status_history
+			  WHERE id NOT IN (SELECT id FROM worker_status_history ORDER BY id DESC LIMIT 500)`
+		);
+	}
 	// Need-alert history (/alerts): half a year is plenty of lookback; the
 	// re-alert memory (need_alerts_sent) is separate and never pruned.
-	await query(`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days'`);
-	await pruneEbirdCache();
+	if (!scope) {
+		await query(`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days'`);
+	} else if (scope.alertUserId != null) {
+		await query(
+			`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days' AND user_id = $1`,
+			[scope.alertUserId]
+		);
+	}
+	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);
 }
 
 /**
@@ -588,15 +619,17 @@ const PRUNABLE_CACHE_FAMILIES = [
 	'weather'
 ] as const;
 
-export async function pruneEbirdCache(): Promise<number> {
+/** `cacheKeyLike` is test-only (td-e00d6f): limits the sweep to keys a test owns. */
+export async function pruneEbirdCache(cacheKeyLike?: string): Promise<number> {
 	const r = await query<{ n: string }>(
 		`WITH d AS (
 		   DELETE FROM ebird_cache
 		    WHERE fetched_at < NOW() - interval '48 hours'
 		      AND split_part(cache_key, ':', 1) = ANY($1::text[])
+		      AND ($2::text IS NULL OR cache_key LIKE $2)
 		   RETURNING 1
 		 ) SELECT COUNT(*) AS n FROM d`,
-		[[...PRUNABLE_CACHE_FAMILIES]]
+		[[...PRUNABLE_CACHE_FAMILIES], cacheKeyLike ?? null]
 	);
 	return Number(r.rows[0]?.n ?? 0);
 }
