@@ -243,6 +243,22 @@ describe('review: public history adapter behavior',()=>{
   expect(nav.trailFor(1).nodes.map(n=>n.label)).toEqual(['Home']);
  });
 
+ it('td-8214cb: the revisit splice survives when the destination page registers before goto resolves',async()=>{
+  const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Home'});
+  nav.navigateWithContext({event:event(),href:'/species/abbbab1?returnTo=%2F',label:"Abbott's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  nav.navigateWithContext({event:event(),href:'/species/horbab2?returnTo=%2Fspecies%2Fabbbab1',label:"Horsfield's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  // Real browser order: the route renders (PathNavigation registers the page)
+  // before the goto promise settles.
+  let finish!:()=>void;fixture.goto.mockImplementation(()=>new Promise<void>(resolve=>{finish=resolve}));
+  nav.navigateWithContext({event:event(),href:'/species/abbbab1?returnTo=%2Fspecies%2Fhorbab2',label:"Abbott's Babbler",accountId:1});
+  nav.navigationAfterNavigate(1,'goto');
+  fixture.page.url=new URL('https://birds.test/species/abbbab1?returnTo=%2Fspecies%2Fhorbab2');fixture.page.state={};
+  const bird=nav.ensureCurrentNode({accountId:1,label:"Abbott's Babbler"})!;
+  expect(nav.trailFor(1,bird.id).nodes.map(n=>n.label)).toEqual(['Home',"Horsfield's Babbler","Abbott's Babbler"]);
+  finish();await Promise.resolve();await Promise.resolve();
+  expect(nav.trailFor(1,bird.id).nodes.map(n=>n.label)).toEqual(['Home',"Horsfield's Babbler","Abbott's Babbler"]);
+ });
+
  it('td-8214cb: an unfiltered Field guide link does not overwrite a saved Field guide search',async()=>{
   const nav=await loadAdapter();fixture.page.url=new URL("https://birds.test/species?q=Abbott's%20Babbler");
   nav.ensureCurrentNode({accountId:1,label:'Field guide'});

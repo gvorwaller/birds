@@ -207,13 +207,29 @@ let pending: {
   node: NavigationNode;
   href: string;
   stateRef: NavigationRef | null;
+  detached: NavigationNode | null;
 } | null = null;
 let requested: {
   generation: number;
   accountId: number;
   node: NavigationNode;
   href: string;
+  detached: NavigationNode | null;
 } | null = null;
+
+/**
+ * Store a completed navigation's node. A revisit also re-parents the step
+ * that followed the spliced-out earlier visit (td-8214cb); every path that
+ * completes a navigation must apply both, whichever runs first.
+ */
+function commitNode(
+  snapshot: NavigationSnapshot,
+  node: NavigationNode,
+  detached: NavigationNode | null,
+): NavigationSnapshot {
+  const next = detached ? upsertNavigationNode(snapshot, detached) : snapshot;
+  return upsertNavigationNode(next, node);
+}
 
 export function clearNavigationAccount(
   accountId: number | null | undefined,
@@ -316,7 +332,7 @@ export function ensureCurrentNode(input: {
   if (requested && requested.accountId === accountId && requested.href === href) {
     const completed = requested;
     activeNode = completed.node;
-    writeSnapshot(accountId, upsertNavigationNode(snapshot, completed.node));
+    writeSnapshot(accountId, commitNode(snapshot, completed.node, completed.detached));
     if (routerReady)
       replaceState(
         currentHref(),
@@ -540,8 +556,9 @@ export function navigateWithContext(input: {
     node,
     href,
     stateRef: ref,
+    detached,
   };
-  requested = { generation, accountId: input.accountId, node, href };
+  requested = { generation, accountId: input.accountId, node, href, detached };
   void goto(destination, { state: mergeState(ref) })
     .then(() => {
       const winner = currentHref();
@@ -563,9 +580,8 @@ export function navigateWithContext(input: {
         !winnerRef
       )
         return;
-      let latest = readSnapshot(input.accountId!);
-      if (detached) latest = upsertNavigationNode(latest, detached);
-      writeSnapshot(input.accountId!, upsertNavigationNode(latest, node));
+      const latest = readSnapshot(input.accountId!);
+      writeSnapshot(input.accountId!, commitNode(latest, node, detached));
       routerReady = true;
       writeReloadBridge(input.accountId!, node);
       activeAccountId = input.accountId!;
@@ -669,9 +685,10 @@ export function navigationAfterNavigate(
     const completedRef = pending.stateRef;
     writeSnapshot(
       completed.accountId,
-      upsertNavigationNode(
+      commitNode(
         readSnapshot(completed.accountId),
         completed.node,
+        completed.detached,
       ),
     );
     activeAccountId = completed.accountId;
