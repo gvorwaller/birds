@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  alertLinesCloserThan,
+  alertLinesNearHome,
   omittedAlertReports,
   relativeAge,
   storedAlertReports,
@@ -22,6 +24,18 @@ describe("relativeAge", () => {
     const later = new Date(2026, 8, 19, 8, 30).toISOString();
     expect(relativeAge(earlier, viewed)).toBe("1 day ago");
     expect(relativeAge(later, viewed)).toBe("1 day ago");
+  });
+
+  it("stays in minutes across midnight instead of jumping to a day", () => {
+    const sent = new Date(2026, 8, 20, 23, 58).toISOString();
+    const viewed = new Date(2026, 8, 21, 0, 1);
+    expect(relativeAge(sent, viewed)).toBe("3 min ago");
+  });
+
+  it("stays in hours until a full day has passed", () => {
+    const sent = new Date(2026, 8, 20, 9, 0).toISOString();
+    expect(relativeAge(sent, new Date(2026, 8, 21, 8, 50))).toBe("23 hr ago");
+    expect(relativeAge(sent, new Date(2026, 8, 21, 9, 10))).toBe("1 day ago");
   });
 
   it("keeps minute precision inside the sent calendar day", () => {
@@ -89,5 +103,37 @@ describe("stored alert lines", () => {
       ]),
     ).toEqual([]);
     expect(omittedAlertReports(stored, [])).toHaveLength(1);
+  });
+});
+
+describe("alertLinesNearHome", () => {
+  const line = (distanceMi: number): StoredAlertReport => ({
+    subId: `S${distanceMi}`,
+    locName: "Pond",
+    obsDt: "2026-09-19 06:57",
+    distanceMi,
+    sentAt: "2026-09-20T12:00:00.000Z",
+  });
+
+  it("hides every line when the card is centered on a searched place", () => {
+    expect(alertLinesNearHome([line(5)], false, 50)).toEqual([]);
+  });
+
+  it("keeps only lines inside the card's radius", () => {
+    // 31 mi is ~49.9 km, inside the default 50 km; 32 mi is ~51.5 km.
+    const shown = alertLinesNearHome([line(23), line(31), line(32)], true, 50);
+    expect(shown.map((row) => row.distanceMi)).toEqual([23, 31]);
+  });
+
+  it("has no distance limit for an any-distance card", () => {
+    expect(
+      alertLinesNearHome([line(900)], true, Number.POSITIVE_INFINITY),
+    ).toHaveLength(1);
+  });
+
+  it("keeps a stored line that is strictly closer than the live nearest row", () => {
+    const stored = line(10); // 16.0934 km
+    expect(alertLinesCloserThan([stored], 16.2)).toEqual([stored]);
+    expect(alertLinesCloserThan([stored], 16)).toEqual([]);
   });
 });

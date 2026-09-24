@@ -14,6 +14,9 @@
   import RecordedSightingRow from "$components/RecordedSightingRow.svelte";
   import { formatDistance, milesToKm, type DistanceUnit } from "$lib/geo";
   import {
+    alertLinesCloserThan,
+    alertLinesNearHome,
+    alertReportKey,
     formatAlertObsDt,
     omittedAlertReports,
     relativeAge,
@@ -170,12 +173,30 @@
     ];
     return omittedAlertReports(data.alertReports, live);
   });
+  // Recent reports is centered on a searched place when one was passed;
+  // stored distances are from home, so those lines stay hidden there.
+  const nearbyAlertLines = $derived(
+    alertLinesNearHome(
+      omittedAlerts,
+      data.locationContext == null,
+      data.distKm,
+    ),
+  );
+  // Nearest is always centered on home, filtered by its own distance control.
   const closerAlertLines = $derived.by((): StoredAlertReport[] => {
     const nearest = nearestView.current;
     if (!data.wantNearest || !nearest?.ok) return [];
-    const closestKm = nearest.data.rows.reduce((min, row) =>
-      row.distanceKm != null && row.distanceKm < min ? row.distanceKm : min, Number.POSITIVE_INFINITY);
-    return omittedAlerts.filter((report) => milesToKm(report.distanceMi) + 0.5 < closestKm);
+    const closestKm = nearest.data.rows.reduce(
+      (min, row) =>
+        row.distanceKm != null && row.distanceKm < min ? row.distanceKm : min,
+      Number.POSITIVE_INFINITY,
+    );
+    const radiusKm =
+      data.nearestKm === "any" ? Number.POSITIVE_INFINITY : data.nearestKm;
+    return alertLinesCloserThan(
+      alertLinesNearHome(omittedAlerts, true, radiusKm),
+      closestKm,
+    );
   });
   // Tide never rejects (server contract) — wrap to the same shape.
   const tideView = retained<TideResult | null>(() =>
@@ -806,11 +827,11 @@
           These checklists were saved when a need alert was sent. The feeds
           checked just now did not return them.
         </p>
-        {#each rows as report (report.subId ?? `${report.locName}|${report.obsDt}`)}
+        {#each rows as report (alertReportKey(report))}
           <div class="alert-line">
             <div class="name">{report.locName}</div>
             <div class="meta">
-              <span>{distanceUnit === "mi" ? `${report.distanceMi} mi from home` : `${formatDistance(milesToKm(report.distanceMi), "km")} from home`}</span>
+              <span>{formatDistance(milesToKm(report.distanceMi), distanceUnit)} from home</span>
               <span class="muted">{formatAlertObsDt(report.obsDt)}</span>
               <span class="muted">Alerted {relativeAge(report.sentAt)}</span>
               {#if report.subId}
@@ -925,7 +946,7 @@
         </div>
       {/each}
     {/if}
-    {@render storedAlertLines(omittedAlerts)}
+    {@render storedAlertLines(nearbyAlertLines)}
   </section>
 
   {#if !data.seen && data.hasApiKey && data.hasHome}
@@ -1044,7 +1065,7 @@
         {/each}
       {/if}
       {#if nearestView.current?.ok && nearestView.current.data.partial}
-        <p class="muted">Some checked feeds were incomplete or unavailable; the reports shown may not be the closest.</p>
+        <p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>
       {/if}
       {@render storedAlertLines(closerAlertLines)}
       <!-- How the answer was reached, when that changes what it means. The

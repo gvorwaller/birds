@@ -579,7 +579,8 @@ const PRUNABLE_CACHE_FAMILIES = [
 	'notable',
 	'geo',
 	'geonote',
-	'geosp',
+	'geosp', // pre-td-48c22e key; kept so old rows age out
+	'geosp2',
 	'hotspotObs2',
 	'nearestObs',
 	'hotspots',

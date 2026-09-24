@@ -1,7 +1,7 @@
 # Alert vs species last-seen mismatch — GROK spec (td-48c22e)
 
 **Date:** 2026-09-22
-**Status:** Binding implementation spec
+**Status:** Binding implementation spec, amended 2026-09-23
 **td:** `td-48c22e` — Last seen mismatch: Alerts vs species page
 
 The Alerts page can show a close unconfirmed checklist that the species
@@ -29,15 +29,15 @@ request has its own cache key, and a longer window is not a superset
 when the payload is truncated or the checklist later leaves the notable
 list.
 
-Nearest reports prefer `/data/nearest/geo/recent` with
-`includeProvisional=true` and `maxResults=5`. If that call returns
-during its head start, the regional search is cancelled and the five
-rows are marked proven. eBird does not promise those five are the five
-closest. The regional search, which asks for provisionals up to 10,000
-rows per region, never gets to add a closer checklist. The nearest and
+Nearest reports retain the established direct-endpoint head start and
+regional fallback. An earlier draft asserted, based on a comment about a
+different region endpoint, that five direct rows could not be trusted as
+the nearest five. That assertion was not verified for
+`/data/nearest/geo/recent`, so this change does not alter the established
+race, proof semantics, or shared regional-probe budget. The nearest and
 species-recent caches last 3 hours. The alert uses a 30-minute notable
-cache and will not notify from a stale one. A reload can therefore
-agree or disagree depending on which leg wins and whether the cache
+cache and will not notify from a stale one. A reload can therefore agree
+or disagree depending on which feed answered and whether the cache
 predates the checklist.
 
 "Accepted" on the species page means `obsValid === true`. The alert
@@ -63,15 +63,12 @@ pass a searched place, so both pages are anchored on saved home.
    the payload under a new cache key (`geosp2:`) so a provisional-free
    entry cannot be served for the old key.
 
-2. **Five nearest-endpoint rows are not proof.** A direct response with
-   fewer than five reports still wins immediately and does not start
-   the regional search. A response with five reports is partial: the
-   regional search runs to its existing budget, and any closer regional
-   row is merged into the five shown, each row keeping its own source
-   (`nearest endpoint` or `regional search`). `proven` stays the regional
-   search's own coverage claim. The page says the checked feeds were
-   incomplete, so the list may not be the closest. Notable rows continue
-   to merge in `nearestWithEvidence`.
+2. **Nearest search behavior is unchanged.** The direct endpoint keeps its
+   established head start; if it returns a real answer, it wins. The
+   regional ladder starts only after that head start and shares the existing
+   page-wide probe budget. Notable rows continue to merge in
+   `nearestWithEvidence`. This ticket makes no new completeness claim about
+   direct results and does not change `proven` semantics.
 
 3. **Empty nearby copy follows the feeds.** When the merged live list
    is empty and every requested feed returned, the sentence is that
@@ -80,12 +77,12 @@ pass a searched place, so both pages are anchored on saved home.
    says the look is incomplete and that other reports may be missing.
    It does not say there are no reports in that circle.
 
-4. **Alert age uses the calendar.** Day counts use the viewer's local
-   calendar, the same calendar as the day header. Two alerts sent on
-   Saturday both say the same number of days later. Within the sent
-   day, the stamp stays minutes or hours. The row stamp is prefixed
-   "sent" so it is not read as the sighting time. The sighting time
-   stays the exact eBird clock string.
+4. **Alert age uses elapsed time, then the calendar.** For the first 24
+   hours, the stamp stays in minutes or hours even across midnight. After
+   24 hours, day counts use the viewer's local calendar, the same calendar
+   as the day header, so older alerts sent on the same date agree. The row
+   stamp is prefixed "sent" so it is not read as the sighting time. The
+   sighting time stays the exact eBird clock string.
 
 5. **Stored alert line.** For the signed-in account (not the shared
    life-list owner), the species page loads that account's stored
@@ -115,9 +112,7 @@ release. No production reads, writes, or deploy.
 
 - The nearby-species request omits `includeProvisional`, or reuses the
   `geosp:` cache key.
-- A five-row direct nearest response drops a closer regional checklist,
-  or is treated as a complete answer with no regional search.
 - Two `sent_at` values on the same local date can format as different
-  day counts.
+  day counts once both are at least 24 hours old.
 - A stored checklist whose id is absent from the live rows is hidden,
   or a checklist the live rows already contain is shown again.

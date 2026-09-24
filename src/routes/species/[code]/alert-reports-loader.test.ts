@@ -9,8 +9,9 @@ import { load } from "./+page.server";
 const dbUp = await query("SELECT 1")
   .then(() => true)
   .catch(() => false);
-const CODE = "zalrt1";
-const USER = `alert-evidence-${CODE}`;
+const RUN = `${process.pid}-${Date.now().toString(36)}`;
+const CODE = `zalrt-${RUN}`;
+const USER = `alert-evidence-${RUN}`;
 let userId = 0;
 
 async function cleanup() {

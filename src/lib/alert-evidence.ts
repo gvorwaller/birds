@@ -5,6 +5,7 @@
  * asks different feeds. These helpers keep the stored line and the
  * "sent N days ago" stamp from drifting away from that contract.
  */
+import { milesToKm } from "$lib/geo";
 import { observationDateInWindow } from "$lib/report-window";
 
 export interface StoredAlertReport {
@@ -31,7 +32,7 @@ const MONTHS_SHORT = [
   "Dec",
 ];
 
-/** Local calendar-day difference. Same function the alerts day header uses. */
+/** Local calendar-day difference: the same calendar the alerts day header groups by. */
 export function calendarDaysBefore(then: Date, now: Date): number {
   const sent = Date.UTC(then.getFullYear(), then.getMonth(), then.getDate());
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
@@ -39,15 +40,20 @@ export function calendarDaysBefore(then: Date, now: Date): number {
 }
 
 /**
- * Age of an alert send. Days follow the local calendar so two sends on
- * Saturday cannot read as different day counts. Within the sent day,
- * minutes and hours stay exact.
+ * Age of an alert send. Under 24 hours it is exact minutes or hours, so a
+ * send just before midnight does not read "1 day ago" minutes later. From
+ * 24 hours on, days follow the local calendar so two sends on Saturday
+ * cannot read as different day counts.
  */
 export function relativeAge(iso: string, now = new Date()): string {
   const then = new Date(iso);
   const t = then.getTime();
   if (!Number.isFinite(t)) return iso;
-  const days = calendarDaysBefore(then, now);
+  const mins = Math.max(0, Math.round((now.getTime() - t) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 24 * 60) return `${Math.min(23, Math.round(mins / 60))} hr ago`;
+  const days = Math.max(1, calendarDaysBefore(then, now));
   if (days >= 7) {
     return then.toLocaleDateString(undefined, {
       month: "short",
@@ -55,18 +61,13 @@ export function relativeAge(iso: string, now = new Date()): string {
       year: "numeric",
     });
   }
-  if (days >= 1) return `${days} day${days === 1 ? "" : "s"} ago`;
-  const mins = Math.max(0, Math.round((now.getTime() - t) / 60_000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.max(1, Math.round(mins / 60));
-  return `${hours} hr ago`;
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 /** eBird's naive local clock, formatted the way the alerts page already shows it. */
 export function formatAlertObsDt(obsDt: string): string {
   const m = OBS_DT.exec(obsDt);
-  if (!m) return obsDt;
+  if (!m) return `seen ${obsDt}`;
   const mon = MONTHS_SHORT[Number(m[2]) - 1] ?? m[2];
   const day = Number(m[3]);
   return m[4] ? `seen ${mon} ${day}, ${m[4]}` : `seen ${mon} ${day}`;
@@ -139,4 +140,32 @@ export function omittedAlertReports(
     ),
   );
   return stored.filter((report) => !liveKeys.has(alertReportKey(report)));
+}
+
+/**
+ * Stored lines that belong in a card centered on home. Stored distance is
+ * from home, so a card centered on a searched place gets none, and a line
+ * outside the card's radius would contradict its "within" heading.
+ * `radiusKm` of Infinity means no distance limit.
+ */
+export function alertLinesNearHome(
+  reports: StoredAlertReport[],
+  centeredOnHome: boolean,
+  radiusKm: number,
+): StoredAlertReport[] {
+  if (!centeredOnHome) return [];
+  return reports.filter((report) => milesToKm(report.distanceMi) <= radiusKm);
+}
+
+/**
+ * Keep stored lines whose recorded distance is strictly closer than live
+ * evidence.
+ */
+export function alertLinesCloserThan(
+  reports: StoredAlertReport[],
+  closestLiveKm: number,
+): StoredAlertReport[] {
+  return reports.filter(
+    (report) => milesToKm(report.distanceMi) < closestLiveKm,
+  );
 }

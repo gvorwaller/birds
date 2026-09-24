@@ -971,10 +971,8 @@
 						search struggles with a common bird a long way from where it
 						lives — it can run for a full minute and then fail. The app
 						asks that endpoint and, if it has not answered within a few
-						seconds, searches its own region list <em>at the same time</em>.
-						A direct answer with fewer than five reports is kept on its own.
-						When that endpoint returns five, the region search still finishes,
-						because a five-row page can leave out a closer report. The region search looks first where
+						seconds, searches its own region list <em>at the same time</em>
+						— first real answer wins. The region search looks first where
 						historical reports place the bird in the months covered by your
 						search, then where it has been reported in other seasons.
 						Within each group it checks closer regions first. Regions with
@@ -994,8 +992,11 @@
 						<strong>From your alerts</strong>, with the place, distance from
 						home, and sighting time stored when the alert was sent. That line
 						is separate from the live reports: it is not marked accepted or
-						unconfirmed, and it is not a map pin. The nearest card repeats it
-						only when it is closer than the live nearest rows.
+						unconfirmed, and it is not a map pin. It appears in recent
+						reports only when that card is centered on your home and the
+						stored distance is inside its radius; a searched place hides it.
+						The nearest card repeats it only when it is closer than the live
+						nearest rows.
 					</li>
 				</ul>
 			</div>
@@ -1073,8 +1074,9 @@
 						species page when eBird has no checklist link). The
 						<a href="/alerts">Alerts page</a> lists every triggering report,
 						linked whenever eBird provides the checklist. The time on the
-						right of each row is when the alert was sent, counted in calendar
-						days, so two alerts from the same day show the same age. The
+						right of each row is when the alert was sent. For the first 24
+						hours it uses minutes or hours; after that it uses local calendar
+						days, so older alerts from the same day show the same age. The
 						sighting clock stays on the report line.
 					</li>
 					<li>

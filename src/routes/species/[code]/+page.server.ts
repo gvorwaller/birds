@@ -144,7 +144,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
         ORDER BY sent_at DESC
         LIMIT 30`,
       [locals.user!.id, code],
-    ),
+    ).catch(() => ({ rows: [] as { sent_at: Date | string; reports: unknown }[] })),
   ]);
   // Unknown code (stale link, retired taxon) keeps the generic label rather
   // than inventing a name.

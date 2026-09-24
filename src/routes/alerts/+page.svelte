@@ -5,7 +5,7 @@
   import PathNavigation from "$components/PathNavigation.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
-  import { relativeAge } from "$lib/alert-evidence";
+  import { formatAlertObsDt, relativeAge } from "$lib/alert-evidence";
 
   let { data }: { data: PageData } = $props();
 
@@ -19,23 +19,12 @@
     }
   }
 
-  // Calendar days, matching the day header. Rounding elapsed hours made two
-  // alerts sent the same morning read as different ages for about an hour.
-
   // Tier-1 (td-97b22e): each report's own timestamp shipped unrendered.
   // eBird obsDt is NAIVE local time at the OBSERVATION's location — no zone.
   // Elapsed-age math against sent_at (an absolute timestamptz) is therefore
-  // untrustworthy across zones/travel (CODEX1 P1), so we render the report's
-  // own local clock verbatim, formatted by pure string work — a Date object
+  // untrustworthy across zones/travel (CODEX1 P1), so formatAlertObsDt renders
+  // the report's own local clock verbatim by pure string work — a Date object
   // would silently reinterpret it in the viewer's zone.
-  const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  function reportSeen(obsDt: string): string {
-    const m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?$/.exec(obsDt);
-    if (!m) return `seen ${obsDt}`;
-    const mon = MONTHS_SHORT[Number(m[2]) - 1] ?? m[2];
-    const day = Number(m[3]);
-    return m[4] ? `seen ${mon} ${day}, ${m[4]}` : `seen ${mon} ${day}`;
-  }
 
   // Group by calendar day so a busy stretch reads as a timeline.
   const groups = $derived.by(() => {
@@ -133,12 +122,12 @@
                         rel="noopener"
                       >
                         {r.locName} · {r.distanceMi} mi{#if r.obsDt}
-                          · {reportSeen(r.obsDt)}{/if} ↗
+                          · {formatAlertObsDt(r.obsDt)}{/if} ↗
                       </a>
                     {:else}
                       <span class="report-link muted"
                         >{r.locName} · {r.distanceMi} mi{#if r.obsDt}
-                          · {reportSeen(r.obsDt)}{/if}</span
+                          · {formatAlertObsDt(r.obsDt)}{/if}</span
                       >
                     {/if}
                   {/each}

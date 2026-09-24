@@ -98,10 +98,8 @@ export interface NearestLadderOpts {
    * Not a deadline — nothing is abandoned when it elapses. It exists only so
    * the common case costs nothing extra: the direct endpoint answers a rare
    * species in well under a second, so a short head start means those
-   * lookups never probe a single region. Past it, both strategies run.
-   * A short direct answer wins. A full page of five does not: that page
-   * can hide a closer report, so the region search still finishes and
-   * the rows are merged.
+   * lookups never probe a single region. Past it, both strategies run and
+   * the first real answer wins.
    */
   headStartMs: number;
   /** Maximum region probes for this species. */
@@ -263,15 +261,13 @@ export async function nearestSpeciesReports(
     (err) => ({ kind: "fastErr" as const, err }),
   );
 
-  type DirectResult = Awaited<ReturnType<typeof nearestObsOfSpecies>>;
-
-  const fromFast = (res: DirectResult): NearestLadderResult => {
-    const rows = dedupeObservations(res.data)
-      .sort((a, b) => distanceOf(home, a) - distanceOf(home, b))
-      .map((row) => ({
-        ...row,
-        fetchedAt: row.fetchedAt ?? res.fetchedAt.toISOString(),
-      }));
+  const fromFast = (res: Awaited<ReturnType<typeof nearestObsOfSpecies>>) => {
+    const rows = dedupeObservations(res.data).sort(
+      (a, b) => distanceOf(home, a) - distanceOf(home, b),
+    ).map((row) => ({
+      ...row,
+      fetchedAt: row.fetchedAt ?? res.fetchedAt.toISOString(),
+    }));
     return {
       rows: rows.slice(0, LADDER_TOP_N),
       stale: res.stale,
@@ -279,51 +275,7 @@ export async function nearestSpeciesReports(
       searched: { regions: 0, boundKm: null },
       capped: false,
       partial: false,
-      // Fewer than the page size means the endpoint returned its whole list.
       proven: true,
-      fetchedAt: res.fetchedAt,
-    };
-  };
-
-  /**
-   * maxResults=5 can hide a closer checklist: eBird does not order that
-   * payload by distance. Keep the direct rows, fold in the regional search,
-   * and do not call the pair proven.
-   */
-  const mergeSaturatedDirect = (
-    res: DirectResult,
-    ladder: NearestLadderResult,
-  ): NearestLadderResult => {
-    const directRows = dedupeObservations(res.data).map((row) => ({
-      ...row,
-      source: row.source ?? "nearest endpoint",
-      fetchedAt: row.fetchedAt ?? res.fetchedAt.toISOString(),
-    }));
-    const ladderRows = ladder.rows.map((row) => ({
-      ...row,
-      source: row.source ?? "regional search",
-    }));
-    const rows = dedupeObservations([...directRows, ...ladderRows])
-      .sort(
-        (a, b) =>
-          distanceOf(home, a) - distanceOf(home, b) ||
-          obsKey(a).localeCompare(obsKey(b)),
-      )
-      .slice(0, LADDER_TOP_N);
-    const closest = rows[0];
-    const closestFromRegion =
-      closest?.source === "regional search" &&
-      !closest.sources?.includes("nearest endpoint");
-    return {
-      rows,
-      stale: res.stale || ladder.stale,
-      via: closestFromRegion ? "ladder" : "nearest",
-      searched: ladder.searched,
-      capped: ladder.capped,
-      partial: true,
-      // `proven` stays the regional search's own claim. The full direct page
-      // is what makes `partial` true.
-      proven: ladder.proven,
       fetchedAt: res.fetchedAt,
     };
   };
@@ -342,10 +294,7 @@ export async function nearestSpeciesReports(
     clearTimeout(headTimer);
   }
 
-  // A short direct list is the whole answer. A full page of LADDER_TOP_N
-  // is indistinguishable from a truncated one, so the region search still runs.
-  if (first.kind === "fast" && first.res.data.length < LADDER_TOP_N)
-    return fromFast(first.res);
+  if (first.kind === "fast") return fromFast(first.res);
   if (first.kind === "fastErr") {
     // A bad key or a rate limit will fail every rung too; turning that into
     // dozens of probes is the rate-limit abuse cs.md forbids.
@@ -598,25 +547,10 @@ export async function nearestSpeciesReports(
 
   const outcome = await Promise.race([fast, ladderPromise]);
   if (outcome.kind === "fast") {
-    if (outcome.res.data.length < LADDER_TOP_N) {
-      // Better coverage, and the list is short enough to be complete.
-      // Stop the search from scheduling any further probes.
-      stopLadder.abort();
-      return fromFast(outcome.res);
-    }
-    // A full page can hide a closer checklist. Let the search finish and merge.
-    try {
-      const ladder = await ladderPromise;
-      return mergeSaturatedDirect(outcome.res, ladder.res);
-    } catch {
-      stopLadder.abort();
-      return {
-        ...fromFast(outcome.res),
-        partial: true,
-        proven: false,
-        capped: true,
-      };
-    }
+    // Better coverage, and it got here first: prefer it, and stop the
+    // search from scheduling any further probes.
+    stopLadder.abort();
+    return fromFast(outcome.res);
   }
   if (outcome.kind === "ladder") {
     if (outcome.res.rows.length > 0) return outcome.res;
@@ -659,10 +593,7 @@ export async function nearestSpeciesReports(
     } finally {
       clearTimeout(graceTimer);
     }
-    if (late.kind === "fast") {
-      if (late.res.data.length < LADDER_TOP_N) return fromFast(late.res);
-      return mergeSaturatedDirect(late.res, outcome.res);
-    }
+    if (late.kind === "fast") return fromFast(late.res);
     if (late.kind === "fastErr" && isFatalUpstream(late.err)) throw late.err;
     return outcome.res;
   }
