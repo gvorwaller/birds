@@ -13,17 +13,25 @@
   import { beforeNavigate } from "$app/navigation";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { withReturnTo } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
 
   let {
     filters,
     distanceUnit = "mi",
     canApply = false,
     onApply = () => {},
+    accountId = null,
+    sourceHref = "/",
+    sourceLabel = "Home",
   }: {
     filters: ComparisonFilters;
     distanceUnit?: DistanceUnit;
     canApply?: boolean;
     onApply?: (rows: HotspotComparisonRow[]) => void;
+    accountId?: number | null;
+    sourceHref?: string;
+    sourceLabel?: string;
   } = $props();
 
   let refs = $state<HotspotReference[]>([]);
@@ -336,10 +344,17 @@
           >
             <span class="rank">{i + 1}</span>
             <div class="grow">
-              <strong
-                >{#if row.locId}<a href={`/hotspots/${row.locId}`}
+              <strong>
+                {#if row.locId}
+                  {@const originId = `hotspot-compare-${encodeURIComponent(row.locId)}`}
+                  <a
+                    id={originId}
+                    class="path-focus-target"
+                    href={withReturnTo(`/hotspots/${encodeURIComponent(row.locId)}`, sourceHref, undefined, sourceLabel)}
+                    onclick={navigationAction(accountId, { label: row.locName, originId })}
                     >{row.locName}</a
-                  >{:else}{row.locName}{/if}</strong
+                  >
+                {:else}{row.locName}{/if}</strong
               >
               <div class="meta">
                 {#if row.count != null}{row.count}
@@ -355,12 +370,19 @@
               {#if row.species.length}<details class="species">
                   <summary>{row.species.length} matching species</summary>
                   <div class="species-list">
-                    {#each row.species as species (species.code)}<div>
-                        <a href={`/species/${species.code}`}
+                    {#each row.species as species (species.code)}
+                      {@const spOriginId = `hotspot-compare-species-${encodeURIComponent(row.locId)}-${encodeURIComponent(species.code)}`}
+                      <div>
+                        <a
+                          id={spOriginId}
+                          class="path-focus-target"
+                          href={withReturnTo(`/species/${encodeURIComponent(species.code)}`, sourceHref, undefined, sourceLabel)}
+                          onclick={navigationAction(accountId, { label: species.comName, originId: spOriginId })}
                           >{species.comName}</a
                         >{#if species.obsValid === false}
                           <span class="unconfirmed">Unconfirmed</span>{/if}
-                      </div>{/each}
+                      </div>
+                    {/each}
                   </div>
                 </details>{/if}{#if row.error}<div class="meta err">
                   {row.error}

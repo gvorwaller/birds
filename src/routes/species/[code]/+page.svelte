@@ -518,7 +518,7 @@
     {#if data.user && data.taxon.category === 'species'}
       {#key `${data.user.id}:${data.taxon.species_code}`}
         <SpecialInterestToggle code={data.taxon.species_code} name={data.taxon.com_name} accountId={data.user.id} initialSaved={data.interest} />
-        <a class="taxonomy-link" href="/special-interest">My Special interest species</a>
+        <a class="taxonomy-link path-focus-target" id="species-special-interest" href={withReturnTo("/special-interest", speciesContextHref, undefined, data.taxon.com_name)} onclick={adopt("Special interest", "species-special-interest")}>My Special interest species</a>
         <SpeciesViewed code={data.taxon.species_code} accountId={data.user.id} />
       {/key}
     {/if}
@@ -589,6 +589,8 @@
     returnTo={similarReturnTo}
     context={data.locationContext}
     bind:open={similarExpanded}
+    accountId={data.user?.id}
+    currentSpeciesName={data.taxon.com_name}
   />
 
   {#if hasFieldCraft}
@@ -654,7 +656,7 @@
           >
         {/if}
         ·
-        <a href="/species">Browse field guide →</a>
+        <a class="path-focus-target" id="species-browse-field-guide-craft" href={withReturnTo("/species", speciesContextHref, undefined, data.taxon.com_name)} onclick={adopt("Field guide", "species-browse-field-guide-craft")}>Browse field guide →</a>
       </p>
       {#if data.isAdmin}
         <form
@@ -1159,7 +1161,7 @@
         {/if}
         <p class="wiki-attrib muted">
           Wikipedia · CC BY-SA 4.0{#if retrievedOn}&nbsp;· retrieved {retrievedOn}{/if}{#if !hasFieldCraft}
-            · <a href="/species">Browse field guide →</a>{/if}
+            · <a class="path-focus-target" id="species-browse-field-guide-wiki" href={withReturnTo("/species", speciesContextHref, undefined, data.taxon.com_name)} onclick={adopt("Field guide", "species-browse-field-guide-wiki")}>Browse field guide →</a>{/if}
         </p>
         <details class="wiki-license">
           <summary>Source &amp; license</summary>
@@ -1190,7 +1192,7 @@
           No Wikipedia article for this species{en.resolution === "no_mapping"
             ? " (no Wikidata mapping)"
             : ""}{hasFacts ? " — facts above come from Wikidata." : "."}
-          <a href="/species">Browse field guide →</a>
+          <a class="path-focus-target" id="species-browse-field-guide-missing" href={withReturnTo("/species", speciesContextHref, undefined, data.taxon.com_name)} onclick={adopt("Field guide", "species-browse-field-guide-missing")}>Browse field guide →</a>
         </p>
       {:else}
         <p class="muted">Wikipedia notes haven't been loaded yet.</p>

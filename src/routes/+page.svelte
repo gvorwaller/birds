@@ -1070,13 +1070,23 @@
       {/if}
     </section>
 
-    <BestPlaces places={data.view.bestPlaces} title="Best places (area-feed preview)" {distanceUnit} />
+    <BestPlaces
+      places={data.view.bestPlaces}
+      title="Best places (area-feed preview)"
+      {distanceUnit}
+      accountId={data.user?.id}
+      sourceHref={page.url.pathname + page.url.search + page.url.hash}
+      sourceLabel="Home"
+    />
   {/if}
 
   {#if data.location}
       <HotspotComparison
         filters={{ lat: data.location.lat, lng: data.location.lng, radiusKm: data.dist, daysBack: data.back, seenStatus: "needs", rareOnly: false, anchorLabel: data.location.label }}
         {distanceUnit}
+        accountId={data.user?.id}
+        sourceHref={page.url.pathname + page.url.search + page.url.hash}
+        sourceLabel="Home"
       />
   {/if}
 

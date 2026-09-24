@@ -106,7 +106,7 @@
                 >{row.title}</a>
                 <!-- Tier-1 (td-97b22e): species_code always shipped, never
                      linked — no path from an alert to our own species page. -->
-                <a class="spx path-focus-target" id={`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`} href={withReturnTo(`/species/${encodeURIComponent(row.species_code)}`,$page.url.pathname + $page.url.search + $page.url.hash,undefined,"Alerts")} onclick={navigationAction(data.accountId,{label:row.title,originId:`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`})}
+                <a class="spx path-focus-target" id={`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`} href={withReturnTo(`/species/${encodeURIComponent(row.species_code)}`,$page.url.pathname + $page.url.search + $page.url.hash,undefined,"Alerts")} onclick={navigationAction(data.accountId,{label:row.com_name ?? row.title,originId:`alert-${encodeURIComponent(row.id)}-${encodeURIComponent(row.species_code)}`})}
                   >species page →</a
                 >
               </span>

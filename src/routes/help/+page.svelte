@@ -274,8 +274,9 @@
                 <p>Bird links from Field guide, Taxonomy, Viewed species, Special interest,
                 Photos, Life list, Home, Nearest reports, Alerts and Forecast keep a named path
                 back to the same filtered row. The saved URL includes choices such as search,
-                page, place, radius and month. Use
-                <strong>Your path</strong> to return farther back. In nearby reports,
+                page, place, radius and month. Multi-hop exploration across similar species and hotspots
+                preserves the full path; use the expandable
+                <strong>Your path</strong> trail to return farther back in oldest-first order. In nearby reports,
                 the place name opens its hotspot here; the separate eBird badge opens eBird.
                 A location without usable coordinates opens a Forecast location chooser;
                 it will not silently use Home or a remembered search.</p>
@@ -790,6 +791,9 @@
 						<em>data fetch failed</em> (the card says so and retries
 						automatically); and <em>data still loading</em> for a newly added
 						species (card absent until the background fetch lands).
+						Tapping a similar species keeps your navigation trail intact,
+						so you can explore comparisons and use <strong>Your path</strong> to
+						retrace your steps.
 					</li>
 					<li>
 						<strong>Name/code search</strong> covers the complete current eBird

@@ -17,6 +17,8 @@
 
 <script lang="ts">
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { withReturnTo } from "$lib/navigation-context";
+  import { navigationAction } from "$lib/navigation-context.svelte";
   import MapLink from "$components/MapLink.svelte";
 
   let {
@@ -24,11 +26,17 @@
     title = "Best places for your needs",
     limit = 5,
     distanceUnit = "mi",
+    accountId = null,
+    sourceHref = "/",
+    sourceLabel = "Home",
   }: {
     places?: Place[];
     title?: string;
     limit?: number;
     distanceUnit?: DistanceUnit;
+    accountId?: number | null;
+    sourceHref?: string;
+    sourceLabel?: string;
   } = $props();
 
   // Collapse state is owned here, not passed down from the page: `places`
@@ -62,7 +70,14 @@
             {#if p.isHotspot && p.locId}
               <!-- Name → internal hotspot page (Hotspot Workspace Phase 1);
                    the eBird ↗ badge stays the external path (GROK pin). -->
-              <a class="place-link" href={`/hotspots/${p.locId}`}>{p.locName}</a>
+              {@const originId = `best-place-${encodeURIComponent(p.locId)}`}
+              <a
+                id={originId}
+                class="place-link path-focus-target"
+                href={withReturnTo(`/hotspots/${encodeURIComponent(p.locId)}`, sourceHref, undefined, sourceLabel)}
+                onclick={navigationAction(accountId, { label: p.locName, originId })}
+                >{p.locName}</a
+              >
               <a
                 class="hotspot-badge"
                 href={`https://ebird.org/hotspot/${p.locId}`}
@@ -162,12 +177,18 @@
     gap: 6px;
   }
   .place-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
     color: var(--text);
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
   }
   .hotspot-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
     background: var(--info-bg);
     border: 1px solid var(--info-border);
     border-radius: 999px;

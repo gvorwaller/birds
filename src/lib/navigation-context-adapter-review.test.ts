@@ -175,4 +175,59 @@ describe('review: public history adapter behavior',()=>{
   nav.navigateWithContext({event:event(),href:'/forecast/species?species=roster&month=10&returnTo=%2Fspecies%2Fcomgra',label:'Where to find Roseate Spoonbill',accountId:1});await Promise.resolve();await Promise.resolve();
   expect(nav.trailFor(1).nodes.at(-1)?.id).not.toBe(first.id);
  });
+
+ it('td-8214cb: preserves multi-hop similar species drill-down in oldest-first order and rewinds cleanly',async()=>{
+  const nav=await loadAdapter();
+  nav.ensureCurrentNode({accountId:1,label:'Field guide'});
+  nav.navigateWithContext({event:event(),href:'/species/amerob?returnTo=%2Fspecies',label:'American Robin',accountId:1,originId:'guide-species-amerob'});await Promise.resolve();await Promise.resolve();
+  const robinTrail=nav.trailFor(1).nodes;
+  expect(robinTrail.map(n=>n.label)).toEqual(['Field guide','American Robin']);
+
+  // Hop 1 in similar species: American Robin -> Wood Thrush
+  nav.navigateWithContext({event:event(),href:'/species/woothr?returnTo=%2Fspecies%2Famerob',label:'Wood Thrush',accountId:1,originId:'species-similar-woothr'});await Promise.resolve();await Promise.resolve();
+  const woodThrushTrail=nav.trailFor(1).nodes;
+  expect(woodThrushTrail.map(n=>n.label)).toEqual(['Field guide','American Robin','Wood Thrush']);
+
+  // Hop 2 in similar species: Wood Thrush -> Hermit Thrush
+  nav.navigateWithContext({event:event(),href:'/species/herthr?returnTo=%2Fspecies%2Fwoothr',label:'Hermit Thrush',accountId:1,originId:'species-similar-herthr'});await Promise.resolve();await Promise.resolve();
+  const hermitThrushTrail=nav.trailFor(1).nodes;
+  expect(hermitThrushTrail.map(n=>n.label)).toEqual(['Field guide','American Robin','Wood Thrush','Hermit Thrush']);
+  const ancestors=hermitThrushTrail.slice(0,-1);
+  // Oldest first order: Field guide -> American Robin -> Wood Thrush
+  expect(ancestors.map(n=>n.label)).toEqual(['Field guide','American Robin','Wood Thrush']);
+
+  // Rewind back to American Robin using its existing node ID
+  const robinNode=hermitThrushTrail.find(n=>n.label==='American Robin')!;
+  nav.navigateWithContext({event:event(),href:'/species/amerob?returnTo=%2Fspecies',label:'American Robin',accountId:1,existingNodeId:robinNode.id});await Promise.resolve();await Promise.resolve();
+  const rewoundTrail=nav.trailFor(1).nodes;
+  expect(rewoundTrail.map(n=>n.label)).toEqual(['Field guide','American Robin']);
+ });
+
+ it('td-8214cb: preserves Alerts root across species and similar species drill-down',async()=>{
+  const nav=await loadAdapter();
+  nav.ensureCurrentNode({accountId:1,label:'Alerts'});
+  nav.navigateWithContext({event:event(),href:'/species/snakit?returnTo=%2Falerts',label:'Snail Kite',accountId:1,originId:'alert-1-snakit'});await Promise.resolve();await Promise.resolve();
+  const alertBirdTrail=nav.trailFor(1).nodes;
+  expect(alertBirdTrail.map(n=>n.label)).toEqual(['Alerts','Snail Kite']);
+
+  // Similar species from alert bird
+  nav.navigateWithContext({event:event(),href:'/species/miskit?returnTo=%2Fspecies%2Fsnakit',label:'Mississippi Kite',accountId:1,originId:'species-similar-miskit'});await Promise.resolve();await Promise.resolve();
+  const kiteTrail=nav.trailFor(1).nodes;
+  expect(kiteTrail.map(n=>n.label)).toEqual(['Alerts','Snail Kite','Mississippi Kite']);
+  expect(kiteTrail.slice(0,-1).map(n=>n.label)).toEqual(['Alerts','Snail Kite']);
+ });
+
+ it('td-8214cb: preserves Home root across Best Places hotspot to bird drill-down',async()=>{
+  const nav=await loadAdapter();
+  nav.ensureCurrentNode({accountId:1,label:'Home'});
+  nav.navigateWithContext({event:event(),href:'/hotspots/L123?returnTo=%2F',label:'Myakka River SP',accountId:1,originId:'best-place-L123'});await Promise.resolve();await Promise.resolve();
+  const hotspotTrail=nav.trailFor(1).nodes;
+  expect(hotspotTrail.map(n=>n.label)).toEqual(['Home','Myakka River SP']);
+
+  // Bird from hotspot
+  nav.navigateWithContext({event:event(),href:'/species/limpki?returnTo=%2Fhotspots%2FL123',label:'Limpkin',accountId:1,originId:'hotspot-recent-limpki'});await Promise.resolve();await Promise.resolve();
+  const birdTrail=nav.trailFor(1).nodes;
+  expect(birdTrail.map(n=>n.label)).toEqual(['Home','Myakka River SP','Limpkin']);
+  expect(birdTrail.slice(0,-1).map(n=>n.label)).toEqual(['Home','Myakka River SP']);
+ });
 });
