@@ -156,14 +156,15 @@ describe('review: public history adapter behavior',()=>{
   fixture.page.url=new URL('https://birds.test/help');fixture.page.state={unrelated:'winner'};finish();await Promise.resolve();await Promise.resolve();
   expect(fixture.page.state).toEqual({unrelated:'winner'});
  });
- it('reuses an existing resource node on a repeated hotspot visit',async()=>{
+ it('moves a repeated hotspot visit to the end instead of rewinding past the species (td-8214cb)',async()=>{
   const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Myakka trip'});
   nav.navigateWithContext({event:event(),href:'/hotspots/L299291?returnTo=%2Ftrips%2F9',label:'Myakka River SP',accountId:1});await Promise.resolve();await Promise.resolve();
   nav.navigateWithContext({event:event(),href:'/species/comgra?back=30&returnTo=%2Fhotspots%2FL299291',label:'Common Grackle',accountId:1});await Promise.resolve();await Promise.resolve();
   nav.navigateWithContext({event:event(),href:'/hotspots/L299291?tab=monthly&month=9&returnTo=%2Fspecies%2Fcomgra',label:'Myakka River SP',accountId:1});await Promise.resolve();await Promise.resolve();
   const trail=nav.trailFor(1).nodes;
-  expect(trail.map(n=>n.label)).toEqual(['Myakka trip','Myakka River SP']);
+  expect(trail.map(n=>n.label)).toEqual(['Myakka trip','Common Grackle','Myakka River SP']);
   expect(trail.at(-1)?.href).toContain('tab=monthly');
+  expect(new Set(trail.map(n=>n.id)).size).toBe(trail.length);
  });
  it('updates selector state for one Forecast bird but creates a node for another',async()=>{
   const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Common Grackle'});
@@ -229,5 +230,37 @@ describe('review: public history adapter behavior',()=>{
   const birdTrail=nav.trailFor(1).nodes;
   expect(birdTrail.map(n=>n.label)).toEqual(['Home','Myakka River SP','Limpkin']);
   expect(birdTrail.slice(0,-1).map(n=>n.label)).toEqual(['Home','Myakka River SP']);
+ });
+ it('td-8214cb: a reciprocal similar-species link keeps the page just left as Back',async()=>{
+  const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Home'});
+  nav.navigateWithContext({event:event(),href:'/species/abbbab1?returnTo=%2F',label:"Abbott's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  nav.navigateWithContext({event:event(),href:'/species/hosbab1?returnTo=%2Fspecies%2Fabbbab1',label:"Horsfield's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  nav.navigateWithContext({event:event(),href:'/species/abbbab1?returnTo=%2Fspecies%2Fhosbab1',label:"Abbott's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  expect(nav.trailFor(1).nodes.map(n=>n.label)).toEqual(['Home',"Horsfield's Babbler","Abbott's Babbler"]);
+  // An explicit rewind still jumps back to the named step.
+  const home=nav.trailFor(1).nodes[0];
+  nav.navigateWithContext({event:event(),href:'/',label:'Home',accountId:1,existingNodeId:home.id});await Promise.resolve();await Promise.resolve();
+  expect(nav.trailFor(1).nodes.map(n=>n.label)).toEqual(['Home']);
+ });
+
+ it('td-8214cb: an unfiltered Field guide link does not overwrite a saved Field guide search',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL("https://birds.test/species?q=Abbott's%20Babbler");
+  nav.ensureCurrentNode({accountId:1,label:'Field guide'});
+  nav.navigateWithContext({event:event(),href:'/species/abbbab1?returnTo=%2Fspecies',label:"Abbott's Babbler",accountId:1});await Promise.resolve();await Promise.resolve();
+  nav.navigateWithContext({event:event(),href:'/species?returnTo=%2Fspecies%2Fabbbab1',label:'Field guide',accountId:1});await Promise.resolve();await Promise.resolve();
+  const trail=nav.trailFor(1).nodes;
+  expect(trail.map(n=>n.label)).toEqual(['Field guide',"Abbott's Babbler",'Field guide']);
+  expect(decodeURIComponent(trail[0].href)).toContain("q=Abbott's Babbler");
+  expect(trail[2].href).not.toContain('q=');
+ });
+
+ it('td-8214cb: a link to another view of the current page updates it in place',async()=>{
+  const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Myakka trip'});
+  nav.navigateWithContext({event:event(),href:'/hotspots/L299291?returnTo=%2Ftrips%2F9',label:'Myakka River SP',accountId:1});await Promise.resolve();await Promise.resolve();
+  const before=nav.trailFor(1).nodes.at(-1)!.id;
+  nav.navigateWithContext({event:event(),href:'/hotspots/L299291?tab=monthly&returnTo=%2Ftrips%2F9',label:'Myakka River SP',accountId:1});await Promise.resolve();await Promise.resolve();
+  const trail=nav.trailFor(1).nodes;
+  expect(trail.map(n=>n.label)).toEqual(['Myakka trip','Myakka River SP']);
+  expect(trail.at(-1)!.id).toBe(before);
  });
 });

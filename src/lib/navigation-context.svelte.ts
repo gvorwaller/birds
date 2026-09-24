@@ -166,6 +166,13 @@ function resourceKey(href: string): string {
   return parsed.pathname;
 }
 
+/** One species, hotspot, trip or forecast bird, as opposed to a list/search page. */
+function isDetailResource(href: string): boolean {
+  const key = resourceKey(href);
+  return /^\/(hotspots|species|trips)\/[^/]+$/.test(key) ||
+    key.startsWith("/forecast/species/");
+}
+
 function stateRef(): NavigationRef | null {
   const state = page.state as unknown as Record<string, unknown>;
   const ref = state[NAVIGATION_STATE_KEY];
@@ -483,17 +490,37 @@ export function navigateWithContext(input: {
   }
   const snapshot = readSnapshot(input.accountId);
   const currentTrail = navigationTrail(snapshot, current?.id).nodes;
-  const existing = input.existingNodeId
-    ? nodeById(snapshot, input.existingNodeId)
+  // An explicit rewind (Back / Your path) names its node. A forward link that
+  // revisits a page already on the trail moves that page to the end instead
+  // (td-8214cb): the earlier step is spliced out, so the path never loops and
+  // the page just left stays the Back target. Only the current page is
+  // updated in place (a tab/month change on the same resource). List pages
+  // match only on the exact URL, so an unfiltered "Browse field guide" does
+  // not overwrite a saved Field guide search.
+  const revisit = input.existingNodeId
+    ? null
     : ([...currentTrail]
         .reverse()
         .find((candidate) => candidate.href === href) ??
-      [...currentTrail]
-        .reverse()
-        .find(
-          (candidate) => resourceKey(candidate.href) === resourceKey(href),
-        ) ??
+      (isDetailResource(href)
+        ? [...currentTrail]
+            .reverse()
+            .find(
+              (candidate) => resourceKey(candidate.href) === resourceKey(href),
+            )
+        : undefined) ??
       null);
+  const existing = input.existingNodeId
+    ? nodeById(snapshot, input.existingNodeId)
+    : revisit && revisit.id === current?.id
+      ? revisit
+      : null;
+  let detached: NavigationNode | null = null;
+  if (!existing && revisit) {
+    const at = currentTrail.findIndex((candidate) => candidate.id === revisit.id);
+    const child = at >= 0 ? currentTrail[at + 1] : undefined;
+    if (child) detached = { ...child, parentId: revisit.parentId };
+  }
   const node = existing
     ? { ...existing, href }
     : createNavigationNode({
@@ -536,7 +563,8 @@ export function navigateWithContext(input: {
         !winnerRef
       )
         return;
-      const latest = readSnapshot(input.accountId!);
+      let latest = readSnapshot(input.accountId!);
+      if (detached) latest = upsertNavigationNode(latest, detached);
       writeSnapshot(input.accountId!, upsertNavigationNode(latest, node));
       routerReady = true;
       writeReloadBridge(input.accountId!, node);

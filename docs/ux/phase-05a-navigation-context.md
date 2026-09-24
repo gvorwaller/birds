@@ -106,6 +106,11 @@ is a distinct node. Plain primary-navigation arrival does not silently inherit
 the prior research path. An outgoing adopted link explicitly creates the child
 relationship; an ancestor return targets the existing ancestor node, not a new
 node pointing back to its child. Deduplicate/cycle-check repeated resource visits.
+(Amended 2026-09-24, td-8214cb, Gaylon-approved: a forward link to a detail
+resource already on the trail moves it to the end — its earlier step is spliced
+out and the following step re-parented — rather than rewinding to it, so Back
+always targets the page just left. Only explicit ancestor returns rewind. List
+and search pages match only on their exact URL.)
 
 The enhancement must retain a normal fully usable href. Only unmodified primary
 clicks to same-tab internal destinations are enhanced. Preserve modifier click,

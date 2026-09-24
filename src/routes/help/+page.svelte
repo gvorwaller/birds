@@ -275,8 +275,11 @@
                 Photos, Life list, Home, Nearest reports, Alerts and Forecast keep a named path
                 back to the same filtered row. The saved URL includes choices such as search,
                 page, place, radius and month. Multi-hop exploration across similar species and hotspots
-                preserves the full path; use the expandable
-                <strong>Your path</strong> trail to return farther back in oldest-first order. In nearby reports,
+                keeps the path; use the expandable
+                <strong>Your path</strong> trail to return farther back in oldest-first order.
+                Opening a page that is already on the path moves it to the end, so Back
+                always leads to the page you just left. The path belongs to the browser tab
+                and survives a refresh; the bottom menu starts a fresh path. In nearby reports,
                 the place name opens its hotspot here; the separate eBird badge opens eBird.
                 A location without usable coordinates opens a Forecast location chooser;
                 it will not silently use Home or a remembered search.</p>
