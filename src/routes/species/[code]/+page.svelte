@@ -12,7 +12,16 @@
   import { formatMonthWindow } from "$lib/forecast-calendar";
   import MapLink from "$components/MapLink.svelte";
   import RecordedSightingRow from "$components/RecordedSightingRow.svelte";
-  import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { formatDistance, milesToKm, type DistanceUnit } from "$lib/geo";
+  import {
+    alertLinesCloserThan,
+    alertLinesNearHome,
+    alertReportKey,
+    formatAlertObsDt,
+    omittedAlertReports,
+    relativeAge,
+    type StoredAlertReport,
+  } from "$lib/alert-evidence";
   import { isHotspotLocId } from "$lib/loc-id";
   import { page } from "$app/state";
   import { windowPhrase } from "$lib/time-windows";
@@ -153,6 +162,42 @@
     () => data.nearest,
     () => `${data.taxon.species_code}|nearest|${data.homeLat ?? ""}|${data.homeLng ?? ""}|${data.backDays}|${data.nearestKm}`,
   );
+  // Stored alert lines wait until the live feeds have settled, then hide any
+  // checklist those feeds already returned.
+  const omittedAlerts = $derived.by((): StoredAlertReport[] => {
+    if (nearbyView.current == null) return [];
+    if (data.wantNearest && data.nearest != null && nearestView.current == null) return [];
+    const live = [
+      ...(nearbyView.current.ok ? nearbyView.current.data.rows : []),
+      ...(nearestView.current?.ok ? nearestView.current.data.rows : []),
+    ];
+    return omittedAlertReports(data.alertReports, live);
+  });
+  // Recent reports is centered on a searched place when one was passed;
+  // stored distances are from home, so those lines stay hidden there.
+  const nearbyAlertLines = $derived(
+    alertLinesNearHome(
+      omittedAlerts,
+      data.locationContext == null,
+      data.distKm,
+    ),
+  );
+  // Nearest is always centered on home, filtered by its own distance control.
+  const closerAlertLines = $derived.by((): StoredAlertReport[] => {
+    const nearest = nearestView.current;
+    if (!data.wantNearest || !nearest?.ok) return [];
+    const closestKm = nearest.data.rows.reduce(
+      (min, row) =>
+        row.distanceKm != null && row.distanceKm < min ? row.distanceKm : min,
+      Number.POSITIVE_INFINITY,
+    );
+    const radiusKm =
+      data.nearestKm === "any" ? Number.POSITIVE_INFINITY : data.nearestKm;
+    return alertLinesCloserThan(
+      alertLinesNearHome(omittedAlerts, true, radiusKm),
+      closestKm,
+    );
+  });
   // Tide never rejects (server contract) — wrap to the same shape.
   const tideView = retained<TideResult | null>(() =>
     data.tide.then((t) => ({ ok: true as const, data: t })),
@@ -774,6 +819,35 @@
     </section>
   {/if}
 
+  {#snippet storedAlertLines(rows: StoredAlertReport[])}
+    {#if rows.length > 0}
+      <div class="alert-evidence">
+        <h3>From your alerts</h3>
+        <p class="muted">
+          These checklists were saved when a need alert was sent. The feeds
+          checked just now did not return them.
+        </p>
+        {#each rows as report (alertReportKey(report))}
+          <div class="alert-line">
+            <div class="name">{report.locName}</div>
+            <div class="meta">
+              <span>{formatDistance(milesToKm(report.distanceMi), distanceUnit)} from home</span>
+              <span class="muted">{formatAlertObsDt(report.obsDt)}</span>
+              <span class="muted">Alerted {relativeAge(report.sentAt)}</span>
+              {#if report.subId}
+                <a
+                  class="alert-link"
+                  href={`https://ebird.org/checklist/${encodeURIComponent(report.subId)}`}
+                  target="_blank"
+                  rel="noopener">checklist ↗</a>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/snippet}
+
   <section class="card">
     <div class="card-head">
       <h2 id="recent-reports" class="section-target" tabindex="-1">
@@ -788,8 +862,8 @@
         <DistanceUnitToggle bind:unit={distanceUnit} />
       </div>
     </div>
-    {#if nearbyView.current?.ok && nearbyView.current.data.partial}
-      <p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>
+    {#if nearbyView.current?.ok && nearbyView.current.data.partial && nearbyView.current.data.rows.length > 0}
+      <p class="muted">Some checked feeds were incomplete or unavailable; the reports shown may not be the closest.</p>
     {/if}
     {#if !data.hasApiKey || !data.hasOrigin}
       <p class="muted">
@@ -809,7 +883,11 @@
       <p class="muted">{nearbyView.current.error}</p>
     {:else if nearbyView.current.data.rows.length === 0}
       <p class="muted">
-        No reports within {formatDistance(data.distKm, distanceUnit)} in this window.
+        {#if nearbyView.current.data.partial}
+          Some checked feeds were incomplete or unavailable, so this is not a complete look within {formatDistance(data.distKm, distanceUnit)} in this window. Other reports may be missing.
+        {:else}
+          No matching reports returned by the checked feeds within {formatDistance(data.distKm, distanceUnit)} in this window.
+        {/if}
       </p>
     {:else}
       {#each nearbyView.current.data.rows as o (observationIdentity(o))}
@@ -868,6 +946,7 @@
         </div>
       {/each}
     {/if}
+    {@render storedAlertLines(nearbyAlertLines)}
   </section>
 
   {#if !data.seen && data.hasApiKey && data.hasHome}
@@ -988,6 +1067,7 @@
       {#if nearestView.current?.ok && nearestView.current.data.partial}
         <p class="muted">Some checked feeds were unavailable; the reports shown are incomplete.</p>
       {/if}
+      {@render storedAlertLines(closerAlertLines)}
       <!-- How the answer was reached, when that changes what it means. The
            direct lookup covers eBird's whole database; the region search covers
            the regions we hold, so it must say so rather than let the heading's
@@ -1244,6 +1324,18 @@
     outline-offset: 3px;
   }
   .obs .place-link, .nplace { display: inline-flex; align-items: center; min-height: 48px; }
+  .alert-evidence { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .alert-evidence h3 { margin: 0 0 4px; font-size: 1rem; }
+  .alert-line { padding: 8px 0; }
+  .alert-line .name { font-weight: 600; overflow-wrap: anywhere; }
+  .alert-line .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+  .alert-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    color: var(--link);
+    font-weight: 600;
+  }
   .taxonomy-link { display:inline-flex; align-items:center; min-height:48px; }
   .ribbon-disclosure > summary {
     display: flex;

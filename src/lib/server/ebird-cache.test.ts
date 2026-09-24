@@ -122,6 +122,18 @@ describe("request deadline", () => {
   });
 });
 
+describe("recentNearbySpeciesObs", () => {
+  it("asks for unconfirmed records under a new cache key", async () => {
+    await recentNearbySpeciesObs("key", "brwhaw", 30.33, -81.66, 50, 14);
+    const url = fetchCalls[0] ?? "";
+    expect(url).toContain("/data/obs/geo/recent/brwhaw");
+    expect(url).toContain("includeProvisional=true");
+    const keys = db.query.mock.calls.map((call) => call[1]?.[0]).filter((key): key is string => typeof key === "string");
+    expect(keys.some((key) => key.startsWith("geosp2:brwhaw:"))).toBe(true);
+    expect(keys.some((key) => key.startsWith("geosp:"))).toBe(false);
+  });
+});
+
 describe("recentSpeciesInRegion (ladder rung)", () => {
   let urls: string[];
   beforeEach(() => {

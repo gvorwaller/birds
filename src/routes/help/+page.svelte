@@ -986,6 +986,18 @@
 						regions it checked and links you to eBird's map for the species,
 						rather than telling you the bird is nowhere.
 					</li>
+					<li>
+						If a need alert for this bird saved a checklist that the feeds
+						checked just now did not return, the species page lists it under
+						<strong>From your alerts</strong>, with the place, distance from
+						home, and sighting time stored when the alert was sent. That line
+						is separate from the live reports: it is not marked accepted or
+						unconfirmed, and it is not a map pin. It appears in recent
+						reports only when that card is centered on your home and the
+						stored distance is inside its radius; a searched place hides it.
+						The nearest card repeats it only when it is closer than the live
+						nearest rows.
+					</li>
 				</ul>
 			</div>
 		{/if}
@@ -1061,7 +1073,11 @@
 						notification opens the eBird checklist that triggered it (or the
 						species page when eBird has no checklist link). The
 						<a href="/alerts">Alerts page</a> lists every triggering report,
-						linked whenever eBird provides the checklist.
+						linked whenever eBird provides the checklist. The time on the
+						right of each row is when the alert was sent. For the first 24
+						hours it uses minutes or hours; after that it uses local calendar
+						days, so older alerts from the same day show the same age. The
+						sighting clock stays on the report line.
 					</li>
 					<li>
 						No notification arriving? Check your phone allows notifications
