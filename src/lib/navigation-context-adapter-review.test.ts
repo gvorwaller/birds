@@ -269,6 +269,16 @@ describe('review: public history adapter behavior',()=>{
   expect(decodeURIComponent(trail[0].href)).toContain("q=Abbott's Babbler");
   expect(trail[2].href).not.toContain('q=');
  });
+ it('td-8214cb: planner searches reuse only an exact canonical href',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL('https://birds.test/trips/plan?place=Myakka&lat=27.2&lng=-82.3');
+  nav.ensureCurrentNode({accountId:1,label:'Plan a trip'});
+  nav.navigateWithContext({event:event(),href:'/species/limpki?returnTo=%2Ftrips%2Fplan',label:'Limpkin',accountId:1});await Promise.resolve();await Promise.resolve();
+  nav.navigateWithContext({event:event(),href:'/trips/plan?place=Huguenot&lat=30.4&lng=-81.4&returnTo=%2Fspecies%2Flimpki',label:'Plan a trip',accountId:1});await Promise.resolve();await Promise.resolve();
+  const trail=nav.trailFor(1).nodes;
+  expect(trail.map(n=>n.label)).toEqual(['Plan a trip','Limpkin','Plan a trip']);
+  expect(trail[0].href).toContain('place=Myakka');
+  expect(trail[2].href).toContain('place=Huguenot');
+ });
 
  it('td-8214cb: a link to another view of the current page updates it in place',async()=>{
   const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Myakka trip'});

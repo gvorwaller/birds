@@ -168,9 +168,18 @@ function resourceKey(href: string): string {
 
 /** One species, hotspot, trip or forecast bird, as opposed to a list/search page. */
 function isDetailResource(href: string): boolean {
-  const key = resourceKey(href);
-  return /^\/(hotspots|species|trips)\/[^/]+$/.test(key) ||
-    key.startsWith("/forecast/species/");
+  const parsed = parseLocalHref(href);
+  if (!parsed) return false;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length === 2 && (parts[0] === "hotspots" || parts[0] === "species"))
+    return true;
+  if (parts.length === 2 && parts[0] === "trips") return parts[1] !== "plan";
+  return (
+    parts.length === 2 &&
+    parts[0] === "forecast" &&
+    parts[1] === "species" &&
+    /^[A-Za-z0-9_-]+$/.test(parsed.searchParams.get("species") ?? "")
+  );
 }
 
 function stateRef(): NavigationRef | null {
