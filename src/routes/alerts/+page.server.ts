@@ -25,16 +25,18 @@ export const load: PageServerLoad = async ({ locals }) => {
     query<{
       id: string;
       species_code: string;
+      com_name: string | null;
       title: string;
       body: string;
       url: string;
       reports: { subId: string | null; locName: string; obsDt: string; distanceMi: number }[];
       sent_at: string;
     }>(
-      `SELECT id::text, species_code, title, body, url, reports, sent_at::text
-         FROM need_alert_log
-        WHERE user_id = $1
-        ORDER BY sent_at DESC, id DESC
+      `SELECT l.id::text, l.species_code, t.com_name, l.title, l.body, l.url, l.reports, l.sent_at::text
+         FROM need_alert_log l
+         LEFT JOIN taxonomy_cache t ON t.species_code = l.species_code
+        WHERE l.user_id = $1
+        ORDER BY l.sent_at DESC, l.id DESC
         LIMIT 200`,
       [user.id],
     ),

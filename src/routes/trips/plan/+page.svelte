@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
+  import { page } from "$app/state";
   import Badge from "$components/Badge.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
@@ -372,6 +373,9 @@
       {distanceUnit}
       canApply={!!data.query}
       onApply={applyCompared}
+      accountId={data.user?.id}
+      sourceHref={page.url.pathname + page.url.search + page.url.hash}
+      sourceLabel="Trip planner"
     />
   {/if}
 

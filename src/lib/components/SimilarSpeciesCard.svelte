@@ -37,6 +37,8 @@
 	// to know"). 'none' and 'pending' stay hidden (decision 7).
 	import Badge from './Badge.svelte';
 	import { speciesLinkHref, type SpeciesLocationContext } from '$lib/species-context';
+	import { withReturnTo } from '$lib/navigation-context';
+	import { navigationAction } from '$lib/navigation-context.svelte';
 
 	let {
 		similar,
@@ -45,7 +47,9 @@
 		backDays,
 		returnTo,
 		context = null,
-		open = $bindable(true)
+		open = $bindable(true),
+		accountId = null,
+		currentSpeciesName = null
 	}: {
 		similar: SimilarSpeciesRow[];
 		unresolved: UnresolvedSimilarRow[];
@@ -54,6 +58,8 @@
 		returnTo: string;
 		context?: SpeciesLocationContext | null;
 		open?: boolean;
+		accountId?: number | null;
+		currentSpeciesName?: string | null;
 	} = $props();
 
 	const showCard = $derived(
@@ -65,7 +71,9 @@
 </script>
 
 {#snippet row(item: SimilarSpeciesRow)}
-	{@const href = speciesLinkHref(item.species_code, { backDays, returnTo, context })}
+	{@const baseHref = speciesLinkHref(item.species_code, { backDays, returnTo, context })}
+	{@const href = withReturnTo(baseHref, returnTo, undefined, currentSpeciesName)}
+	{@const originId = `species-similar-${encodeURIComponent(item.species_code)}`}
 	<div class="similar-row">
 		{#if item.photo && item.photo.thumbnail_url}
 			<div class="photo-col">
@@ -97,7 +105,12 @@
 
 		<div class="info-col">
 			<div class="name-line">
-				<a class="species-link" {href}>
+				<a
+					id={originId}
+					class="species-link path-focus-target"
+					{href}
+					onclick={navigationAction(accountId, { label: item.com_name, originId })}
+				>
 					<span class="com-name">{item.com_name}</span>
 					<em class="sci-name">{item.sci_name}</em>
 				</a>
