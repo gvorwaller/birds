@@ -309,12 +309,33 @@ with the relevant account roles and realistic stored data. At minimum verify:
 - refresh and Back/Forward; direct/shared URLs when URL state changed;
 - both Chromium and WebKit for navigation, forms, selects, sticky/fixed UI, or
   responsive behavior when both engines are available;
+- for taps, focus/blur, the on-screen keyboard, pointer events, comboboxes, or
+  sticky UI, a Mobile Safari pass on the iOS Simulator (procedure below);
 - JavaScript disabled when the route promises server-rendered forms/links or
   progressive enhancement;
 - before/after test-data invariants and fixture cleanup.
 
+A desktop Chromium or desktop WebKit run does not cover iOS Safari touch
+behavior. `pointerdown` `preventDefault()` cancels the following tap in iOS
+Safari (Field Guide Place option, td-daff98; fixed in `d71470f`). For the
+touch-sensitive cases above, boot the simulator and open the test app there.
+No Xcode app project is required. The simulator shares the Mac's network, so
+the local test server is reachable at `127.0.0.1:5178`:
+
+```sh
+xcrun simctl boot "iPhone 16 Pro"
+open -a Simulator
+xcrun simctl openurl booted http://127.0.0.1:5178/species
+```
+
+Drive taps and typing with XcodeBuildMCP UI automation when it is available,
+otherwise with Appium's XCUITest driver. Save evidence with
+`xcrun simctl io booted screenshot <file>`. Report that run as an iOS Simulator
+result. A check on Gaylon's physical iPhone remains the final gate.
+
 Do not claim Safari, physical iPhone, PWA, or installed-app verification from a
-desktop WebKit run. List physical-device checks as outstanding until performed.
+desktop WebKit run or from the simulator. List physical-device checks as
+outstanding until performed.
 
 ### D. Run repository gates
 
