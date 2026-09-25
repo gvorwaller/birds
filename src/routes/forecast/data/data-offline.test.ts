@@ -40,10 +40,18 @@ describe("Hotspots & data never contacts eBird from a discovery or selection vie
     seen.calls.length = 0;
   });
 
-  it("the guard is effective: an ordinary keyed visit DOES fan out to eBird region lists", async () => {
+  it("an ordinary keyed visit makes no eBird request either: county totals come from one cache read (td-9eae4f)", async () => {
     const data = await run("/forecast/data");
     expect(data.hasApiKey).toBe(true);
     expect(data.offlineView).toBe(false);
+    // Used to fan out one subregions() call per loaded state (3,110 in
+    // production), each able to hit eBird inside the page request.
+    expect(seen.calls).toEqual([]);
+  });
+
+  it("the guard is effective: a network-capable eBird helper records its call", async () => {
+    const ebird = await import("$server/ebird");
+    await expect((async () => ebird.subregions("placeholder-key", "US-FL", "subnational2"))()).rejects.toThrow("external eBird call");
     expect(seen.calls).toContain("subregions");
   });
 

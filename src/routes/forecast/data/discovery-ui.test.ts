@@ -197,7 +197,10 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
     // Server: the region-list fan-out is skipped whenever the URL carries discovery or selection state.
     expect(loader).toMatch(/const offlineView =\s*parsedDiscovery\.state\.mode !== "none" \|\| !!showParam \|\| !!regionParam \|\| !!countryParamRaw;/);
     expect(loader).toContain('const countryParamRaw = singleParam("country");');
-    expect(loader).toContain('(childLvl === "subnational2" && (!apiKey || offlineView))');
+    // td-9eae4f: no view fans out to eBird for county lists any more; every
+    // view reads the cached lists in one query.
+    expect(loader).toContain("cachedSubregionLists(countyListParents)");
+    expect(loader).not.toMatch(/subregions\(apiKey!?, g\.stateCode/);
     expect(loader).toMatch(/offlineView,\n\s+focus,/);
     // Client: hotspot tallies (an eBird-backed API) wait for a real interaction, tracked without reactivity.
     expect(page).toContain("let engaged = false;");

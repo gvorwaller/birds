@@ -6,6 +6,7 @@ import { streamed } from "$lib/streamed";
 import {
   getEbirdApiKey,
   subregions,
+  cachedSubregionLists,
   EbirdError,
 } from "$server/ebird";
 import {
@@ -510,24 +511,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // children answers all of them; per-group coverage is then computed in
   // memory from the shared maps.
   const childLists = new Map<string, { code: string; name: string }[]>();
-  await Promise.all(
-    allGroups.map(async (g) => {
-      const childLvl = childLevel(g.level);
-      if (!childLvl || (childLvl === "subnational2" && (!apiKey || offlineView))) return;
-      try {
-        // A country group's children come from the LOCAL reference set (works
-        // without an eBird key); subnational2 county lists stay
-        // live-from-eBird by design (plan decision 2), cache-first.
-        const list =
-          childLvl === "subnational1"
-            ? (await subnational1Of(g.stateCode)).map((r) => ({ code: r.code, name: r.name }))
-            : (await subregions(apiKey!, g.stateCode, "subnational2")).data;
-        childLists.set(g.stateCode, list);
-      } catch {
-        // Left unset — the group reports unknown totals below, as before.
-      }
-    }),
-  );
+  // td-9eae4f: county lists for every state come from ONE cache read, never
+  // from eBird during the page request. A state whose list isn't cached yet
+  // shows an unknown total until it's opened (which refreshes it).
+  const countyListParents = allGroups
+    .filter((g) => childLevel(g.level) === "subnational2")
+    .map((g) => g.stateCode);
+  const [cachedCountyLists] = await Promise.all([
+    cachedSubregionLists(countyListParents),
+    Promise.all(
+      allGroups
+        .filter((g) => childLevel(g.level) === "subnational1")
+        .map(async (g) => {
+          // A country group's children come from the LOCAL reference set.
+          childLists.set(
+            g.stateCode,
+            (await subnational1Of(g.stateCode)).map((r) => ({ code: r.code, name: r.name })),
+          );
+        }),
+    ),
+  ]);
+  for (const [parent, list] of cachedCountyLists)
+    childLists.set(parent, list.map((r) => ({ code: r.code, name: r.name })));
   const allChildCodes = [
     ...new Set([...childLists.values()].flat().map((c) => c.code)),
   ];

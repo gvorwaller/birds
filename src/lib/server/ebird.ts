@@ -564,6 +564,35 @@ export interface EbirdRegion {
 
 const REGION_TTL_MIN = 43_200; // 30 days — political subdivisions barely change
 
+/**
+ * Already-cached county (subnational2) lists for many parents in ONE query,
+ * never calling eBird (td-9eae4f). Hotspots & data needs a list for every
+ * loaded state to show "N of M counties"; asking subregions() per state made
+ * one cache lookup per state (3,110 in production) and a live eBird request
+ * for each missing or expired one, inside the page request. Stale lists are
+ * still returned: political subdivisions barely change, and the list is
+ * refreshed when that state is opened (see /api/region-detail). A parent
+ * with no cached list is simply absent from the map.
+ */
+export async function cachedSubregionLists(parents: readonly string[]): Promise<Map<string, EbirdRegion[]>> {
+	const out = new Map<string, EbirdRegion[]>();
+	if (parents.length === 0) return out;
+	const keys = [...new Set(parents)].map((p) => `regions:subnational2:${p}`);
+	const { rows } = await query<{ cache_key: string; payload: unknown }>(
+		'SELECT cache_key, payload FROM ebird_cache WHERE cache_key = ANY($1::text[])',
+		[keys]
+	);
+	for (const row of rows) {
+		const parent = row.cache_key.slice('regions:subnational2:'.length);
+		try {
+			out.set(parent, validateEbirdRegions(row.payload, `cache ${row.cache_key}`) as EbirdRegion[]);
+		} catch (err) {
+			reportSchemaDrift(err, `cache ${row.cache_key}`);
+		}
+	}
+	return out;
+}
+
 /** Child regions of a parent (ref/region/list): states of a country, counties of a state. */
 export async function subregions(
 	apiKey: string,

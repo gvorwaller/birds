@@ -288,6 +288,54 @@ async function loadEvidence() {
 /** @internal */
 export type Evidence = Awaited<ReturnType<typeof loadEvidence>>;
 
+/**
+ * A cheap fingerprint of everything loadEvidence() reads (td-9eae4f). The full
+ * evidence load expands every cached hotspot list (13 MB / 186k hotspots in
+ * production, ~1.3 s of SQL before any JS), and it used to run on every
+ * search. Reuse it until one of its inputs changes. Includes the last
+ * complete year because buildCandidates' load states depend on it.
+ */
+async function evidenceRevision(): Promise<string> {
+  const { rows } = await query<{ revision: string }>(
+    `SELECT concat_ws('/',
+       (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code,
+                 begin_year, end_year, n_species, fetched_at), ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch),
+       (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code, error),
+                 ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch_attempts WHERE status = 'error'),
+       (SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '')
+          FROM ebird_cache
+         WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
+            OR cache_key LIKE 'hotspotInfo:%'),
+       (SELECT count(*) || ':' || coalesce(max(updated_at)::text, '') FROM ebird_locations)
+     ) AS revision`,
+  );
+  return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
+}
+
+let discoveryCache:
+  | { revision: string; value: Promise<{ ev: Evidence; candidates: Candidate[] }> }
+  | undefined;
+
+/** Evidence + candidates, rebuilt only when an input changed. Callers only
+ * read them (results are copied through strip()), so sharing is safe. */
+async function discoveryIndex(): Promise<{ ev: Evidence; candidates: Candidate[] }> {
+  const revision = await evidenceRevision();
+  if (discoveryCache?.revision === revision) return discoveryCache.value;
+  const value = loadEvidence().then((ev) => ({ ev, candidates: buildCandidates(ev) }));
+  discoveryCache = { revision, value };
+  // A failed build must not be served to the next search.
+  value.catch(() => {
+    if (discoveryCache?.value === value) discoveryCache = undefined;
+  });
+  return value;
+}
+
+export function __resetDiscoveryCacheForTests(): void {
+  discoveryCache = undefined;
+}
+
 const EVIDENCE_LABEL = {
   reference: "reference geography",
   county: "loaded county or equivalent",
@@ -570,8 +618,7 @@ function paginate<T>(items: T[], page: number): { slice: T[]; pageCount: number;
 export async function hubDiscover(
   state: Exclude<HubDiscoveryState, { mode: "none" }>,
 ): Promise<HubDiscovery> {
-  const ev = await loadEvidence();
-  const candidates = buildCandidates(ev);
+  const { ev, candidates } = await discoveryIndex();
 
   if (state.mode === "typed") {
     const folded = fold(state.find);

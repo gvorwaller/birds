@@ -1,6 +1,8 @@
 import { json, error } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { regionDetail } from "$server/region-detail";
+import { getEbirdApiKey, subregions } from "$server/ebird";
+import { parseRegionCode } from "$lib/region-code";
 
 /**
  * County blocks + nested hotspots for ONE region group on /forecast/data,
@@ -17,5 +19,14 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   // Display name only reaches the county Maps query string; the client
   // already has it, and it is never trusted as an identifier.
   const stateName = (url.searchParams.get("name") ?? region).slice(0, 120);
+  // td-9eae4f: the page no longer asks eBird for county lists while loading.
+  // Opening a state is the one moment its list is worth refreshing, so warm
+  // that single cache entry here (cache-first: no request while it's fresh),
+  // without making the person wait for it.
+  if (parseRegionCode(region)?.level === "subnational1") {
+    void getEbirdApiKey(locals.scopeId)
+      .then((apiKey) => (apiKey ? subregions(apiKey, region, "subnational2") : null))
+      .catch(() => {});
+  }
   return json(await regionDetail(region, stateName));
 };
