@@ -84,6 +84,12 @@
   function adopt(label: string, originId: string) {
     return (event: MouseEvent) => navigationAction(data.user?.id, { label, originId, ui: { expanded: showAllMonthly } })(event);
   }
+  // td-c52c37: the loaded-history species count opens the Field Guide list.
+  const speciesListLink = $derived(
+    data.speciesListHref
+      ? withReturnTo(data.speciesListHref, page.url.pathname + page.url.search + page.url.hash, undefined, data.locName ?? data.locId)
+      : null,
+  );
   function speciesHref(code: string, source: string): string {
     const context = data.lat != null && data.lng != null
       ? { lat: data.lat, lng: data.lng, distKm: 50, label: data.locName ?? data.locId }
@@ -137,7 +143,18 @@
         · {formatDistance(data.distanceKm, distanceUnit)}
         <DistanceUnitToggle bind:unit={distanceUnit} /> from home
       {/if}
-      {#if data.numSpeciesAllTime != null}· {data.numSpeciesAllTime} species all-time{/if}
+      {#if data.numSpeciesAllTime != null}
+        · {data.numSpeciesAllTime} species all-time{#if speciesListLink}
+          <a
+            id="hotspot-all-time-species-list"
+            class="specieslist path-focus-target"
+            href={speciesListLink}
+            aria-label="See species in this hotspot's loaded history in the Field Guide; this list may differ from the eBird all-time count"
+            onclick={adopt("Field guide", "hotspot-all-time-species-list")}
+            >see loaded history →</a
+          >
+        {/if}
+      {/if}
     </p>
     {#if data.verified && data.venueTypes.length > 0}
       <p class="venues">
@@ -221,7 +238,15 @@
       {:else if data.freq}
         <p>
           Loaded {data.freq.beginYear}–{data.freq.endYear} ·
-          {data.freq.nSpecies} species ·
+          {data.freq.nSpecies} species{#if speciesListLink}
+            <a
+              id="hotspot-species-list"
+              class="specieslist path-focus-target"
+              href={speciesListLink}
+              aria-label={`See the ${data.freq.nSpecies} species recorded here in the Field Guide`}
+              onclick={adopt("Field guide", "hotspot-species-list")}
+              >see them →</a
+            >{/if} ·
           {data.freq.totalChecklists.toLocaleString()} checklists ·
           {#if data.freq.current}<Badge kind="seen" label="current" />{:else}<Badge
               kind="stale"
@@ -729,5 +754,14 @@
   }
   .attribution a {
     color: var(--muted);
+  }
+  .specieslist {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 4px;
+    color: var(--link);
+    font-weight: 600;
+    white-space: nowrap;
   }
 </style>

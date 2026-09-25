@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, recentHotspotObs, EbirdError } from "$server/ebird";
 import { frequencyMeta, lastCompleteYear } from "$server/barchart";
+import { guidePlaceListHref } from "$lib/guide-location";
 import { seenSet } from "$server/needs";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
@@ -41,7 +42,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       : new Date().getMonth() + 1;
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel"));
 
-  const [listMeta, officialCache, place, freqMap, seen, home, lastLoad] = await Promise.all([
+  const [listMeta, officialCache, place, freqMap, seen, home, lastLoad, guideCountyRes] = await Promise.all([
     hotspotFromCache(locId),
     officialHotspotCacheEntry(locId),
     hotspotPlace(locId),
@@ -61,6 +62,15 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
           AND payload->'locs' @> jsonb_build_array(jsonb_build_object('code', $1::text))
         ORDER BY finished_at DESC NULLS LAST
         LIMIT 1`,
+      [locId],
+    ),
+    // td-c52c37: the Field Guide opens a hotspot only inside its LOADED county,
+    // so the species-list link exists only when both rows are stored.
+    query<{ county: string }>(
+      `SELECT f.region_code AS county
+         FROM frequency_fetch f
+         JOIN frequency_fetch c ON c.loc_code = f.region_code AND c.loc_kind = 'region'
+        WHERE f.loc_code = $1 AND f.loc_kind = 'hotspot'`,
       [locId],
     ),
   ]);
@@ -132,6 +142,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     numSpeciesAllTime: meta?.numSpeciesAllTime ?? null,
     latestObsDt: meta?.latestObsDt ?? null,
     distanceKm,
+    speciesListHref: freq ? guidePlaceListHref(locId, guideCountyRes.rows[0]?.county ?? null) : null,
     freq: freq
       ? {
           beginYear: freq.beginYear,

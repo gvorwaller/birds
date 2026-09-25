@@ -373,6 +373,20 @@
 						These totals include all loaded years and seasons, not a complete range
 						checklist; missing areas are not evidence of absence. Counts load
 						separately so the controls remain usable, and Reload updates them.
+						Next to a country, state/region, county or hotspot count where
+						the Field guide can identify the same loaded place,
+						<strong>see the species →</strong> opens that list in the
+						<a href="/species">Field guide</a>, already set to that place and
+						<strong>All</strong>. Switch to Need or Seen there, or add tags, and
+						Back returns you to the same row. A hotspot's list opens only when
+						its county is loaded too, because the Field guide finds a hotspot
+						through its county. A hotspot page does the same from its loaded
+						species count; its eBird "all-time" number comes from eBird itself,
+						not from the loaded history, so its link says <strong>see loaded
+						history</strong> and the two can differ. A county row describes that
+						county's own export, while its Field guide list also combines loaded
+						hotspots in the county, so those can differ too. Continent and
+						worldwide totals have no single place to open.
 						Each row
 						shows its year span, species count (with any unmatched
 						bar-chart rows), load date, and a Refresh; failed loads keep a

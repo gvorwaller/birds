@@ -5,7 +5,11 @@
   import { onMount, tick } from "svelte";
   import { page } from "$app/state";
   import PathNavigation from "$components/PathNavigation.svelte";
-  import { navigationAction } from "$lib/navigation-context.svelte";
+  import {
+    navigationAction,
+    shouldRestoreNavigationOrigin,
+    trailFor,
+  } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
   import {
     groupCountriesByGeographicArea,
@@ -20,7 +24,7 @@
   import Skeleton from "$components/Skeleton.svelte";
   import type { ActionData, PageData } from "./$types";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
-  import { GUIDE_RADIUS_MAX, GUIDE_RADIUS_MIN } from "$lib/guide-location";
+  import { GUIDE_RADIUS_MAX, GUIDE_RADIUS_MIN, guidePlaceListHref } from "$lib/guide-location";
   import {
     HUB_DISCOVERY_PARAMS,
     HUB_FIND_MIN,
@@ -328,20 +332,26 @@
   };
   let groupDetail = $state<Record<string, GroupDetail>>({});
   const detailFetched = new Set<string>();
+  // Groups whose detail request failed: they count as "settled" for return
+  // focus, so a failure never blocks restoring the person's place.
+  let detailFailed = $state<string[]>([]);
   async function loadGroupDetail(code: string, name: string) {
     if (!browser || detailFetched.has(code) || data.focusDetail[code]) return;
     detailFetched.add(code);
+    detailFailed = detailFailed.filter((c) => c !== code);
     try {
       const res = await fetch(
         `/api/region-detail?region=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
       );
       if (!res.ok) {
         detailFetched.delete(code); // transient — allow a retry on reopen
+        detailFailed = [...detailFailed, code];
         return;
       }
       groupDetail = { ...groupDetail, [code]: (await res.json()) as GroupDetail };
     } catch {
       detailFetched.delete(code);
+      detailFailed = [...detailFailed, code];
     }
   }
   /** Blocks for a group once fetched; empty until then. */
@@ -352,6 +362,18 @@
     );
   }
   const hasDetail = (code: string) => !!(groupDetail[code] ?? data.focusDetail[code]);
+  // Return focus (Back from a species list or hotspot) must wait until every
+  // open group's rows have arrived: they're fetched after the page loads, so
+  // restoring earlier finds no row and drops focus on the page (td-c52c37).
+  const groupCodes = $derived(
+    new Set([
+      ...data.stateGroups.map((g) => g.stateCode),
+      ...data.countrySections.flatMap((sec) => [sec.countryCode, ...sec.groups.map((g) => g.stateCode)]),
+    ]),
+  );
+  const hubContentReady = $derived(
+    openStates.every((code) => !groupCodes.has(code) || hasDetail(code) || detailFailed.includes(code)),
+  );
 
   // Hotspot tallies per county ("229 of 312 loaded · 83 to load"), fetched
   // only for groups you actually open — one cached eBird request per region
@@ -583,6 +605,16 @@
     hotspot: "verified eBird hotspot",
     reported: "reported location — hotspot status unverified",
   };
+  // td-c52c37: a species count opens the Field Guide list of those species
+  // (All, that place), joining the path so Back returns to this row.
+  function speciesListHref(code: string, county: string | null = null): string | null {
+    const href = guidePlaceListHref(code, county);
+    return href
+      ? withReturnTo(href, page.url.pathname + page.url.search + page.url.hash, undefined, "Hotspots & data")
+      : null;
+  }
+  const speciesListId = (code: string) => `forecast-data-species-${code.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+
   function stateText(r: HubResult): string {
     const span = r.row ? `${r.row.beginYear}–${r.row.endYear} · ${r.row.nSpecies.toLocaleString()} species` : "";
     switch (r.loadState) {
@@ -681,6 +713,12 @@
             ? "region-select"
             : null;
     if (!browser || !target) return;
+    // Returning to a row the person left from (Back / Your path) takes
+    // priority: PathNavigation restores focus to that row, and landing on the
+    // section here would take focus first and stop it (GROK, td-c52c37).
+    // Read-only lookup: never creates a path step as a side effect.
+    const node = trailFor(data.accountId).nodes.at(-1);
+    if (shouldRestoreNavigationOrigin() && (node?.focusId || node?.originId)) return;
     void tick().then(() => {
       const el = document.getElementById(target);
       if (!el) return;
@@ -867,7 +905,7 @@
   {/if}
 {/snippet}
 
-{#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number])}
+{#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number], county: string | null = null)}
   <td>
     {r.beginYear}–{r.endYear}
     {#if !r.current}
@@ -879,6 +917,19 @@
       <span class="unm" title="spuhs, slashes, and hybrids excluded from forecasts">
         · {r.nUnmatched} non-species</span
       >{/if}
+    {#if r.nSpecies > 0}
+      {@const listHref = speciesListHref(r.locCode, r.locKind === "hotspot" ? county : null)}
+      {#if listHref}
+        <a
+          id={speciesListId(`row-${r.locCode}`)}
+          class="specieslist path-focus-target"
+          href={listHref}
+          aria-label={`See the species list for ${r.locName} in the Field Guide`}
+          onclick={navigationAction(data.accountId, { label: "Field guide", originId: speciesListId(`row-${r.locCode}`) })}
+          >see →</a
+        >
+      {/if}
+    {/if}
   </td>
   <td>{fmtDate(r.fetchedAt)}</td>
   {#if !data.isViewer}
@@ -910,6 +961,7 @@
 {#snippet dataRowCells(
   r: PageData["stateGroups"][number]["stateHotspots"][number],
   indent: boolean,
+  county: string | null = null,
 )}
   <tr class:indent>
     <td>
@@ -928,7 +980,7 @@
       {/if}
       <span class="code">{r.locCode}</span>
     </td>
-    {@render metaCells(r)}
+    {@render metaCells(r, county)}
   </tr>
 {/snippet}
 
@@ -965,7 +1017,7 @@
   >
     <summary id={hubNodeId(g.stateCode)} class="hub-target">
       <strong>{g.stateName}</strong>
-      <span class="groupmeta">{groupStatusText(g)} · {@render speciesTotal("regions", g.stateCode)}</span>
+      <span class="groupmeta">{groupStatusText(g)} · {@render speciesTotal("regions", g.stateCode, g.stateName)}</span>
     </summary>
     <!-- Lazy body (Gaylon 2026-08-31): a <details> keeps its contents in the
          DOM even when closed, so all 3,459 loaded county rows used to render
@@ -1079,7 +1131,9 @@
                 </tr>
                 {#if open}
                   {#each b.hotspots as h (h.locCode)}
-                    {@render dataRowCells(h, true)}
+                    <!-- A hotspot's list opens only inside its LOADED county
+                         (the Field Guide validates it there). -->
+                    {@render dataRowCells(h, true, b.county ? b.countyCode : null)}
                   {/each}
                 {/if}
               {/each}
@@ -1110,7 +1164,7 @@
   >
     <summary id={hubNodeId(s.countryCode)} class="hub-target">
       <strong>{s.countryName}</strong>
-      <span class="groupmeta">{sectionStatusText(s)} · {@render speciesTotal("regions", s.countryCode)}</span>
+      <span class="groupmeta">{sectionStatusText(s)} · {@render speciesTotal("regions", s.countryCode, s.countryName)}</span>
     </summary>
     <!-- Same lazy body as the state groups above: a closed <details> still
          hydrates everything inside it. -->
@@ -1185,7 +1239,7 @@
   </li>
 {/snippet}
 
-{#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string)}
+{#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string, name: string = "")}
   <span class="species-total">
     {#await data.speciesCounts}
       Counting species…
@@ -1193,6 +1247,21 @@
       {@const count = result.ok ? (kind === "world" ? result.data.world : result.data[kind][code]) : undefined}
       {#if count !== undefined}
         {count.toLocaleString()} species
+        <!-- Countries and states open the Field Guide list; continent groups
+             and the worldwide total have no Field Guide place to open. -->
+        {#if kind === "regions" && count > 0}
+          {@const listHref = speciesListHref(code)}
+          {#if listHref}
+            · <a
+              id={speciesListId(code)}
+              class="specieslist path-focus-target"
+              href={listHref}
+              aria-label={`See the species list for ${name || code} in the Field Guide`}
+              onclick={navigationAction(data.accountId, { label: "Field guide", originId: speciesListId(code) })}
+              >see the species →</a
+            >
+          {/if}
+        {/if}
       {:else}
         Species counts unavailable
       {/if}
@@ -1237,6 +1306,7 @@
     fallbackLabel={data.returnLink.href !== "/" ? data.returnLink.label : "Forecast"}
     hasExplicitSource={data.returnLink.href !== "/"}
     hideWhenNoPath={data.returnLink.href === "/"}
+    contentReady={hubContentReady}
   />
   <h1>Hotspots &amp; data</h1>
   <ForecastTabs mode="data" />
@@ -1401,6 +1471,19 @@
                   <span class="hittype" data-type={r.type}>{TYPE_LABEL[r.type]}</span>
                   {#if r.distanceMiles != null}<span> · {r.distanceMiles.toLocaleString()} mi</span>{/if}
                   <span> · {stateText(r)}</span>
+                  {#if r.type !== "reported" && (r.row || r.loadedBeneath > 0)}
+                    {@const listHref = speciesListHref(r.id, r.guideCounty ?? null)}
+                    {#if listHref}
+                      <span> · </span><a
+                        id={speciesListId(`hit-${r.id}`)}
+                        class="specieslist path-focus-target"
+                        href={listHref}
+                        aria-label={`See the species list for ${r.name} in the Field Guide`}
+                        onclick={navigationAction(data.accountId, { label: "Field guide", originId: speciesListId(`hit-${r.id}`) })}
+                        >see the species →</a
+                      >
+                    {/if}
+                  {/if}
                   {#if r.type === "hotspot" && r.evidence.length > 1}
                     <span class="evidence"> · evidence: {r.evidence.slice(1).join("; ")}</span>
                   {/if}
@@ -2626,5 +2709,16 @@
     color: var(--muted);
     font-size: 0.85rem;
     margin: 0 0 8px;
+  }
+  /* td-c52c37: species count → Field Guide list. The target contributes its
+     full 48px to layout so adjacent rows never overlap it. */
+  .specieslist {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 4px;
+    color: var(--link);
+    font-weight: 600;
+    white-space: nowrap;
   }
 </style>

@@ -53,6 +53,9 @@ export interface HubResult {
   distanceMiles: number | null;
   error: string | null;
   target: HubTarget;
+  /** For a loaded hotspot: its loaded county, so the species count can open
+   * the Field Guide list for it (td-c52c37). Null when there isn't one. */
+  guideCounty?: string | null;
 }
 
 export interface HubSummaryArea {
@@ -433,6 +436,12 @@ export function buildCandidates(ev: Evidence): Candidate[] {
       evidence: [EVIDENCE_LABEL.hotspot, ...sources],
       loadState,
       row: loadedRow ? { beginYear: Number(loadedRow.begin_year), endYear: Number(loadedRow.end_year), nSpecies: Number(loadedRow.n_species) } : null,
+      guideCounty:
+        loadedRow?.region_code &&
+        parseRegionCode(loadedRow.region_code)?.level === "subnational2" &&
+        ev.loaded.get(loadedRow.region_code)?.loc_kind === "region"
+          ? loadedRow.region_code
+          : null,
       loadedBeneath: 0,
       lat: h.lat,
       lng: h.lng,
@@ -542,6 +551,7 @@ function strip(c: Candidate): HubResult {
     id: c.id, type: c.type, name: c.name, context: c.context, evidence: c.evidence,
     loadState: c.loadState, row: c.row, loadedBeneath: c.loadedBeneath, lat: c.lat, lng: c.lng,
     distanceMiles: c.distanceMiles, error: c.error, target: c.target,
+    guideCounty: c.guideCounty ?? null,
   };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseGuideChoicesRequest,
+  guidePlaceListHref,
   GUIDE_LOCATION_PARAMS,
   GUIDE_WAS_PARAMS,
   canonicalizeGuideLevelChange,
@@ -531,5 +532,42 @@ describe("parseGuideChoicesRequest (td-daff98)", () => {
   it("rejects an unknown level and a parent of the wrong level", () => {
     for (const q of ["level=country&parent=US", "level=region&parent=US-FL", "level=county&parent=US", "level=hotspot&parent=US-FL", "level=hotspot&parent=L123"])
       expect(parse(q).ok, q).toBe(false);
+  });
+});
+
+describe("guidePlaceListHref (td-c52c37)", () => {
+  const selectionOf = (href: string | null) => {
+    expect(href).not.toBeNull();
+    const url = new URL(href!, "http://x");
+    expect(url.pathname).toBe("/species");
+    expect(url.hash).toBe("#results");
+    expect(url.searchParams.get("list")).toBe("all");
+    const parsed = parseGuideLocation(url.searchParams);
+    if (!parsed.ok) throw new Error(parsed.message);
+    return parsed.selection;
+  };
+  it("opens a country, state or county with All selected and ancestors filled in", () => {
+    expect(selectionOf(guidePlaceListHref("US"))).toEqual({ kind: "country", country: "US" });
+    expect(selectionOf(guidePlaceListHref("us-fl"))).toEqual({ kind: "region", country: "US", region: "US-FL" });
+    expect(selectionOf(guidePlaceListHref("US-FL-115"))).toEqual({
+      kind: "county",
+      country: "US",
+      region: "US-FL",
+      county: "US-FL-115",
+    });
+  });
+  it("opens a hotspot inside its county", () => {
+    expect(selectionOf(guidePlaceListHref("L127348", "US-FL-115"))).toEqual({
+      kind: "hotspot",
+      country: "US",
+      region: "US-FL",
+      county: "US-FL-115",
+      hotspot: "L127348",
+    });
+  });
+  it("gives no link where the Field Guide can't select the place", () => {
+    expect(guidePlaceListHref("L127348")).toBeNull();
+    expect(guidePlaceListHref("L127348", "US-FL")).toBeNull();
+    expect(guidePlaceListHref("not a place")).toBeNull();
   });
 });

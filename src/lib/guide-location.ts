@@ -505,3 +505,26 @@ export function parseGuideChoicesRequest(params: URLSearchParams): GuideChoicesR
     );
   return { ok: true, level: typed, parent };
 }
+
+/**
+ * The Field Guide's "all species" list for one loaded place (td-c52c37): the
+ * link behind a species count on Hotspots & data or a hotspot page. A region
+ * code opens that country/state/county; a hotspot also needs its loaded
+ * county, because the Field Guide validates a hotspot inside its county.
+ * Returns null when the Field Guide can't select the place (a hotspot with no
+ * loaded county), so callers show the count without a link, never a 400.
+ */
+export function guidePlaceListHref(code: string, county?: string | null): string | null {
+  const base = new URLSearchParams({ list: "all" });
+  if (isHotspotLocId(code)) {
+    if (!county || parseRegionCode(county)?.level !== "subnational2") return null;
+    const next = withGuideLevel(base, "county", county);
+    next.set("hotspot", code.trim().toUpperCase());
+    return guideResultsHref(next);
+  }
+  const parsed = parseRegionCode(code);
+  if (!parsed) return null;
+  const level: GuideLevel =
+    parsed.level === "country" ? "country" : parsed.level === "subnational1" ? "region" : "county";
+  return guideResultsHref(withGuideLevel(base, level, parsed.code));
+}
