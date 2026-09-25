@@ -107,6 +107,33 @@
     text = committedLabel;
   }
 
+  // Option presses. A MOUSE press is cancelled so the input keeps focus and
+  // doesn't dismiss the list before the click commits. A TOUCH press must not
+  // be cancelled: iOS Safari derives pointer events from touch events, so
+  // cancelling pointerdown also cancels the tap and no click ever fires (seen
+  // on the owner's iPhone, 2026-09-25). Instead a touch press marks the list
+  // as being tapped, so a blur during the tap doesn't dismiss it.
+  let touchPress = false;
+  let touchTimer: ReturnType<typeof setTimeout> | undefined;
+  function optionPointerDown(event: PointerEvent) {
+    if (event.pointerType === "mouse") {
+      event.preventDefault();
+      return;
+    }
+    touchPress = true;
+    clearTimeout(touchTimer);
+  }
+  /** A touch that ends without a click (a scroll, a drag away) releases the
+   * list; if focus has already left the field, close it like any dismissal. */
+  function optionPointerEnd() {
+    if (!touchPress) return;
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(() => {
+      touchPress = false;
+      if (open && document.activeElement !== input) dismiss();
+    }, 400);
+  }
+
   function activate(i: number) {
     const row = rows[i];
     if (!row) return;
@@ -115,12 +142,17 @@
       active = i;
       return;
     }
+    const byTouch = touchPress;
+    touchPress = false;
+    clearTimeout(touchTimer);
     open = false;
     typed = false;
     pages = 1;
     active = -1;
     onCommit(row.code);
     text = row.kind === "anywhere" ? "" : row.name;
+    // Put the on-screen keyboard away so the next field is visible.
+    if (byTouch) input?.blur();
   }
 
   function onInput(event: Event) {
@@ -201,7 +233,7 @@
       onkeydown={onKeydown}
       onfocus={() => input?.select()}
       onclick={() => (open ? null : openPopup())}
-      onblur={() => { if (open) dismiss(); }}
+      onblur={() => { if (open && !touchPress) dismiss(); }}
     />
     {#if value && !disabled && !loading}
       <button type="button" class="clear" aria-label={`Clear ${label.toLowerCase()}`} onclick={clear}>✕</button>
@@ -222,7 +254,9 @@
             aria-selected="false"
             class="more"
             class:active={i === active}
-            onpointerdown={(e) => e.preventDefault()}
+            onpointerdown={optionPointerDown}
+            onpointerup={optionPointerEnd}
+            onpointercancel={optionPointerEnd}
             onclick={() => activate(i)}
           >Show next {Math.min(PLACE_PAGE_SIZE, page.remaining)} of {page.remaining.toLocaleString()} more</li>
         {:else}
@@ -233,7 +267,9 @@
             aria-selected={row.code === value}
             class:active={i === active}
             class:anywhere={row.kind === "anywhere"}
-            onpointerdown={(e) => e.preventDefault()}
+            onpointerdown={optionPointerDown}
+            onpointerup={optionPointerEnd}
+            onpointercancel={optionPointerEnd}
             onclick={() => activate(i)}
           >{row.name}</li>
         {/if}

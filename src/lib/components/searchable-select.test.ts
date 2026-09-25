@@ -31,9 +31,12 @@ describe("SearchableSelect", () => {
     expect(source).toMatch(/function dismiss\(\)[\s\S]*?text = committedLabel;/);
     expect(source).toMatch(/case "Escape":[\s\S]*?dismiss\(\)/);
     expect(source).toMatch(/case "Tab":[\s\S]*?dismiss\(\)/);
-    expect(source).toContain("onblur={() => { if (open) dismiss(); }}");
-    // Option presses don't blur the input before they commit (touch included).
-    expect(source.match(/onpointerdown=\{\(e\) => e\.preventDefault\(\)\}/g)).toHaveLength(2);
+    expect(source).toContain("onblur={() => { if (open && !touchPress) dismiss(); }}");
+    // Option presses: only a MOUSE press is cancelled (keeps focus). A touch
+    // press must not be, or iOS Safari cancels the tap and no click fires.
+    expect(source.match(/onpointerdown=\{optionPointerDown\}/g)).toHaveLength(2);
+    expect(source).toMatch(/if \(event\.pointerType === "mouse"\) \{\s*event\.preventDefault\(\);\s*return;\s*\}\s*touchPress = true;/);
+    expect(source).not.toContain("onpointerdown={(e) => e.preventDefault()}");
   });
 
   it("never submits the form on Enter and ignores Enter during IME composition", () => {
