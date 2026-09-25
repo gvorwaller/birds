@@ -460,3 +460,48 @@ export function guideScopeText(
       return view.label;
   }
 }
+
+/** The Place levels whose choices the page loads beneath a chosen parent. */
+export const GUIDE_CHOICES_LEVELS = ["region", "county", "hotspot"] as const;
+export type GuideChoicesLevel = (typeof GUIDE_CHOICES_LEVELS)[number];
+
+/** The region-code level a parent must have for each choices level. */
+const CHOICES_PARENT_LEVEL = {
+  region: "country",
+  county: "subnational1",
+  hotspot: "subnational2",
+} as const;
+
+export type GuideChoicesRequest =
+  | { ok: true; level: GuideChoicesLevel; parent: string }
+  | { ok: false; message: string };
+
+/**
+ * Syntax and cardinality for `/api/guide-locations` (td-daff98): exactly one
+ * non-blank `level` and `parent`, no other keys, and a parent whose code shape
+ * fits the level. Whether the parent EXISTS is a server question
+ * (`guideChoicesFor`), not answered here.
+ */
+export function parseGuideChoicesRequest(params: URLSearchParams): GuideChoicesRequest {
+  for (const key of new Set(params.keys()))
+    if (key !== "level" && key !== "parent") return fail(`Unexpected parameter: ${key}.`);
+  const levels = params.getAll("level");
+  const parents = params.getAll("parent");
+  if (levels.length !== 1 || parents.length !== 1)
+    return fail("Give exactly one level and one parent.");
+  const level = levels[0].trim();
+  const parent = parents[0].trim().toUpperCase();
+  if (!level || !parent) return fail("Give exactly one level and one parent.");
+  if (!(GUIDE_CHOICES_LEVELS as readonly string[]).includes(level))
+    return fail("Choose region, county or hotspot choices.");
+  const typed = level as GuideChoicesLevel;
+  if (parseRegionCode(parent)?.level !== CHOICES_PARENT_LEVEL[typed])
+    return fail(
+      typed === "region"
+        ? "Choose a recognized country."
+        : typed === "county"
+          ? "Choose a recognized state or region."
+          : "Choose a recognized county.",
+    );
+  return { ok: true, level: typed, parent };
+}

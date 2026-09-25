@@ -660,15 +660,34 @@
 					<li>
 						<strong>Search anything</strong> — use the always-visible search for a name ("godwit"), or words
 						from how you'd describe a bird ("granary trees", "probes
-						mudflats"). With Relevance selected, exact species and banding codes rank before names, then description or field-note matches. Each result says which kind of match it is. Open <strong>Filters and sort</strong> for location, family, tags and other filters.
+						mudflats"). With Relevance selected, exact species and banding codes rank before names, then description or field-note matches. Each result says which kind of match it is. Open <strong>Filters and sort</strong> for place, family, tags and other filters.
 					</li>
 					<li>
-						<strong>Filter by location</strong> — open <strong>Filters and sort</strong>
-						and use <strong>Location</strong>. Choose a Country, then optionally a
-						State / region, a County / equivalent and a Verified hotspot (for
-						example United States → Florida → Sarasota County → Myakka River SP).
-						Each list offers every loaded choice beneath your previous one, and
-						changing a higher level clears the lower ones. Location combines with
+						<strong>Filters wait for Apply</strong> — everything you change in
+						<strong>Filters and sort</strong> (place, map point, Special interest,
+						family, sort and tag choices) is a draft until you choose
+						<strong>Apply filters</strong>; the results don't change before then. The
+						panel says <em>changes not applied</em> while you have a draft, even when
+						it is folded shut, and <strong>Discard changes</strong> puts back what is
+						applied. The ✕ on an applied tag, <strong>Clear location only</strong>,
+						<strong>Clear all search and filters</strong>, All / Need / Seen and the
+						page links act straight away. The Search box at the top also acts
+						straight away, using the applied filters, and drops any unapplied panel
+						changes.
+					</li>
+					<li>
+						<strong>Filter by place</strong> — open <strong>Filters and sort</strong>
+						and use <strong>Place</strong>, the first section. It lists all species
+						recorded in that place in the loaded eBird history, any time of year;
+						pair it with All, Need or Seen. Type in each field to find a choice:
+						Country, then optionally State / region, County / equivalent and
+						Verified hotspot (for example "uni" → United States, "flo" → Florida,
+						"sara" → Sarasota County, "myak" → Myakka River SP). Typing ignores case
+						and accents and lists the best matches first; a hotspot also matches its
+						eBird L-code, and a long list offers <strong>Show next</strong> to keep
+						going. Each list offers every loaded choice beneath your previous one.
+						Changing a higher Place choice clears the deeper choices right away, but
+						the results don't change until you choose Apply filters. Place combines with
 						your search text and every selected tag, or works on its own. It
 						includes birds reported in any month of the displayed historical
 						years. A country, state or county uses the loaded regional, county
@@ -685,15 +704,17 @@
 						the URL and survive opening a species and returning to the results.
 					</li>
 					<li>
-						<strong>Filter by map and radius</strong> — under Location, choose
+						<strong>Filter by map and radius</strong> — under Place, choose
 						<strong>Choose on map</strong>, search for a place or tap the map, type a
-						radius from 1 to 200 miles and choose <strong>Apply location</strong>.
-						Cancel closes the map without changing your results. The Field Guide
+						radius from 1 to 200 miles and choose <strong>Use this point</strong>, then
+						<strong>Apply filters</strong>. A map point replaces a country, state,
+						county or hotspot choice, and the reverse. Cancel closes the map without
+						changing anything. The Field Guide
 						then uses only loaded eBird hotspots that have recorded coordinates
 						inside that circle. State and county summaries are not counted by their
 						centre, and the part of the map you can see never limits the result.
 						No radius is chosen for you, and moving the pin changes nothing until
-						you apply. The page states how many loaded hotspots were used and how
+						you apply it. The page states how many loaded hotspots were used and how
 						many loaded hotspots had no recorded coordinates and could not be
 						checked. If none fall inside the circle, coverage is unavailable, not
 						zero birds; <a href="/forecast/data">Hotspots &amp; data</a> can load

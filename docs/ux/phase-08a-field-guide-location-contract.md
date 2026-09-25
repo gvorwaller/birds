@@ -290,3 +290,30 @@ implementation writer through Claude Relay. After Codex review is clean,
 acceptance above. Confirmed defects return to CC1; GROK retests them; Codex
 performs final review. The child ticket moves to review only after this record
 is complete. Commit and deployment require a separate owner instruction.
+
+## Amendment 2026-09-25 (td-daff98, owner-approved)
+
+The Filters and sort panel is now a **draft** form: changing a Place level,
+the map point, Special interest, family, sort or a trait choice changes nothing
+until **Apply filters**. The contract above is unchanged. Hierarchy XOR map,
+strict identity, levels clearing their descendants, and the no-JS `was_*`
+canonicalization all still hold, with these additions:
+
+- **Cascade without navigation.** `GET /api/guide-locations?level=region|county|hotspot&parent=…`
+  returns the same lists the loader renders (`guideRegions`, `guideCounties`,
+  `guideHotspots`), after proving the parent exists (a well-shaped but unknown
+  parent is a 400; a real parent with nothing loaded is `[]`). Session
+  required; DB/reference data only; `Cache-Control: private, max-age=300`.
+- **Searchable Place fields.** After hydration, each native select becomes an
+  accessible combobox (`SearchableSelect`) that submits its committed code
+  through one hidden input. Typing filters case- and accent-insensitively,
+  best matches first; long lists page with "Show next", and nothing is capped.
+  Unfiltered lists use one fixed collator order (`comparePlaceChoices`).
+- **`was_*` only without JavaScript.** Once the searchable fields take over,
+  the `was_*` inputs are disabled, because the submitted hierarchy is already
+  consistent. The loader's strict parse then applies. Before hydration they
+  still submit, and the loader canonicalizes as before.
+- **Map "Use this point".** The chooser now puts the point into the draft; the
+  single Apply filters button applies it.
+- **Immediate actions unchanged.** Result ✕ chips, Clear location only, Clear
+  all, All/Need/Seen and pagination act on the applied state straight away.

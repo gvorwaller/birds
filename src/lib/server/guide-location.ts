@@ -5,7 +5,9 @@ import { isHotspotLocId } from "$lib/loc-id";
 import { parseRegionCode } from "$lib/region-code";
 import type { GuideLocationSelection } from "$lib/guide-location";
 import { countyMeta } from "$server/county-meta";
-import { getRegion, regionLabel } from "$server/regions";
+import { getRegion, regionLabel, subnational1Of } from "$server/regions";
+import { comparePlaceChoices } from "$lib/place-filter";
+import type { GuideChoicesLevel } from "$lib/guide-location";
 
 interface LoadedLocation {
   loc_code: string;
@@ -78,13 +80,51 @@ export async function guideLocationCoverage(code: string): Promise<GuideCoverage
   };
 }
 
-const byNameThenCode = (a: GuideChoice, b: GuideChoice) =>
-  a.name.localeCompare(b.name) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0);
+// One fixed, runtime-locale-independent order shared with the combobox
+// (td-daff98): name, then code.
+const byNameThenCode = comparePlaceChoices;
 
 /** The display name of a county-equivalent: official label when this exact
  * code is known, otherwise the stored eBird name unchanged. */
 function countyName(code: string, storedName: string): string {
   return countyMeta(code)?.name ?? storedName;
+}
+
+/** A country's first-level regions (states), name-sorted with the shared order. */
+export async function guideRegions(country: string): Promise<GuideChoice[]> {
+  return (await subnational1Of(country))
+    .map(({ code, name }) => ({ code, name }))
+    .sort(byNameThenCode);
+}
+
+/**
+ * Choices for one Place level beneath an already-validated `parent`
+ * (td-daff98's /api/guide-locations). The parent's IDENTITY is proven first:
+ * the list helpers return [] for a well-shaped code that doesn't exist, which
+ * must not read as "a real place with nothing loaded". Returns null for an
+ * unknown parent; [] means the parent is real and has no loaded children.
+ * Reads DB/reference data only.
+ */
+export async function guideChoicesFor(
+  level: GuideChoicesLevel,
+  parent: string,
+): Promise<GuideChoice[] | null> {
+  if (level === "region") {
+    if ((await getRegion(parent))?.level !== "country") return null;
+    return guideRegions(parent);
+  }
+  if (level === "county") {
+    if ((await getRegion(parent))?.level !== "subnational1") return null;
+    return guideCounties(parent);
+  }
+  // A hotspot list needs the exact loaded county row, as the loader requires
+  // before it accepts a county selection (resolveGuideLocation).
+  const { rows } = await query<{ n: number }>(
+    `SELECT 1 AS n FROM frequency_fetch WHERE loc_kind = 'region' AND loc_code = $1`,
+    [parent],
+  );
+  if (rows.length === 0 || parseRegionCode(parent)?.level !== "subnational2") return null;
+  return guideHotspots(parent);
 }
 
 /** Every loaded second-level region directly beneath `region`, name-sorted. */

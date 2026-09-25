@@ -11,10 +11,11 @@ import {
 import { ALL_TAGS } from "$lib/species-tags";
 import { parseGuideList } from "$lib/guide-list";
 import { error, redirect } from "@sveltejs/kit";
-import { countriesList, subnational1Of } from "$server/regions";
+import { countriesList } from "$server/regions";
 import {
   guideCounties,
   guideHotspots,
+  guideRegions,
   resolveGuideLocation,
 } from "$server/guide-location";
 import {
@@ -22,6 +23,7 @@ import {
   guideResultsHref,
   parseGuideLocation,
 } from "$lib/guide-location";
+import { comparePlaceChoices } from "$lib/place-filter";
 
 /**
  * Field guide (plan Phase 3): read-only search over the enriched species
@@ -110,14 +112,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     map: location?.map ?? null,
     countries: (await countriesList())
       .map(({ code, name }) => ({ code, name }))
-      // Pin US without changing the shared country list or its remaining order.
+      .sort(comparePlaceChoices)
+      // Owner decision (Phase 8A, reaffirmed 2026-09-25 for td-daff98): the
+      // United States stays first; the rest keep the one shared order.
       .sort((a, b) => Number(b.code === "US") - Number(a.code === "US")),
-    regions: country
-      ? (await subnational1Of(country)).map(({ code, name }) => ({
-          code,
-          name,
-        }))
-      : [],
+    regions: country ? await guideRegions(country) : [],
     counties: region ? await guideCounties(region) : [],
     hotspots: county ? await guideHotspots(county) : [],
     location: location

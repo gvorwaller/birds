@@ -38,12 +38,14 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		const normalized = content.replace(/\s+/g, " ");
 		expect(normalized).toContain("County / equivalent");
 		expect(normalized).toContain("Verified hotspot");
-		expect(normalized).toContain("changing a higher level clears the lower ones");
+		// td-daff98: the level rule now applies inside the draft.
+		expect(normalized).toContain("Changing a higher Place choice clears the deeper choices right away, but the results don't change until you choose Apply filters");
+		expect(normalized).toContain("Filters wait for Apply");
 		expect(normalized).toContain("narrower than its county");
 		expect(normalized).toContain("places without loaded data are not covered");
 		expect(normalized).toContain("Clear location only");
 		expect(normalized).toContain("Choose on map");
-		expect(normalized).toContain("Apply location");
+		expect(normalized).toContain("Use this point");
 		expect(normalized).toContain("radius from 1 to 200 miles");
 		expect(normalized).toContain("No radius is chosen for you");
 		expect(normalized).toContain("could not be checked");

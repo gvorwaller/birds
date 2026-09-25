@@ -8,6 +8,7 @@ import {
 import { guideLocationCoverage } from "$server/guide-location";
 import { load } from "./+page.server";
 import { countriesList } from "$server/regions";
+import { comparePlaceChoices } from "$lib/place-filter";
 
 const dbUp = await query("SELECT 1")
   .then(() => true)
@@ -155,10 +156,12 @@ describe.runIf(dbUp)("Field Guide location and thumbnail integration", () => {
     )) as any;
     expect(data.country).toBe("US");
     const countries = await countriesList();
-    expect(data.countries.map((c: { code: string }) => c.code)).toEqual([
-      "US",
-      ...countries.filter((c) => c.code !== "US").map((c) => c.code),
-    ]);
+    // United States pinned first (owner decision), then the shared order.
+    const rest = countries
+      .filter((c) => c.code !== "US")
+      .map(({ code, name }) => ({ code, name }))
+      .sort(comparePlaceChoices);
+    expect(data.countries).toEqual([{ code: "US", name: countries.find((c) => c.code === "US")!.name }, ...rest]);
     expect(data.region).toBe("US-FL");
     expect(data.location.label).toBe("Florida, United States");
     expect(

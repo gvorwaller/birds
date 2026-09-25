@@ -7,6 +7,7 @@ const loader = readFileSync(resolve(process.cwd(), "src/routes/species/+page.ser
 const row = readFileSync(resolve(process.cwd(), "src/lib/components/GuideSpeciesRow.svelte"), "utf8");
 const listModule = readFileSync(resolve(process.cwd(), "src/lib/guide-list.ts"), "utf8");
 const mapPicker = readFileSync(resolve(process.cwd(), "src/lib/components/MapPicker.svelte"), "utf8");
+const placeFilter = readFileSync(resolve(process.cwd(), "src/lib/place-filter.ts"), "utf8");
 
 describe("Phase 7A Field Guide UI contract", () => {
   it("keeps unknown query parameters on both native GET forms and tag links", () => {
@@ -51,7 +52,10 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
 
   it("carries the current geography in both native GET forms without duplicating owned parameters", () => {
     expect(route).toContain("const locationPairs = $derived(guideLocationPairs(data.selection))");
-    expect(route.match(/\{#each locationPairs as \[locName, locValue\] \(locName\)\}/g)).toHaveLength(2);
+    // The search form carries the APPLIED geography; the filter form carries
+    // the DRAFT map point (hierarchy fields submit themselves) (td-daff98).
+    expect(route.match(/\{#each locationPairs as \[locName, locValue\] \(locName\)\}/g)).toHaveLength(1);
+    expect(route).toContain("{#each guideLocationPairs(draftMap) as [locName, locValue] (locName)}");
     expect(route.match(/name=\{key\} value=\{value\}/g)).toHaveLength(2);
   });
 
@@ -70,29 +74,39 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     // Every option is rendered: no slice, sample or cap on either list.
     expect(route).not.toMatch(/data\.(counties|hotspots)\.slice/);
     expect(loader).not.toMatch(/(counties|hotspots).*slice\(/);
+    expect(loader).toContain(".sort(comparePlaceChoices)");
+    expect(placeFilter).toContain('new Intl.Collator("en"');
   });
 
-  it("keeps native submission working: the selects live in the GET filter form with an Apply fallback", () => {
-    const form = route.slice(route.indexOf('<form method="GET" action="/species#results" class="filter-form">'));
+  it("keeps native submission working, and nothing searches until Apply filters (td-daff98)", () => {
+    const form = route.slice(route.indexOf('<form id="guide-filter-form" method="GET" action="/species#results" class="filter-form">'));
     const formEnd = form.indexOf("</form>");
-    for (const name of ['name="country"', 'name="region"', 'name="county"', 'name="hotspot"', "Apply filters"])
+    for (const name of ['name="country"', 'name="region"', 'name="county"', 'name="hotspot"'])
       expect(form.slice(0, formEnd)).toContain(name);
-    // Auto-submit is an enhancement that clears deeper levels via the shared contract.
-    expect(route).toContain("descendantsOf(level)");
-    expect(route).toContain("form.requestSubmit()");
-    expect(route).toContain('onchange={(e) => levelChanged(e, "country")}');
-    expect(route).toContain('onchange={(e) => levelChanged(e, "hotspot")}');
+    // No auto-submit: a Place change edits the draft and loads the next list.
+    expect(route).not.toContain("requestSubmit");
+    expect(route).not.toContain("levelChanged");
+    expect(route).not.toContain("goto(");
+    expect(route).toContain('onCommit={(code) => chooseLevel("country", code)}');
+    expect(route).toContain('onCommit={(code) => chooseLevel("hotspot", code)}');
+    // Controls outside the <form> element still belong to it and Apply submits it.
+    expect(route).toContain('<button class="apply-filters" type="submit" form="guide-filter-form">Apply filters</button>');
+    for (const control of ['name="interest"', 'name="family"', 'name="sort"', 'name="tags" value={tag}'])
+      expect(route).toMatch(new RegExp(`form="guide-filter-form" ${control.replace(/[{}]/g, "\\$&")}`));
+    // Searchable fields replace the native selects only after hydration, and
+    // then the "was" intent fields stop submitting.
+    expect(route).toContain("{#if placeHydrated}");
+    expect(route).toContain("disabled={placeHydrated}");
   });
 
   it("submits the applied hierarchy with the selects so a native form can clear stale descendants", () => {
     expect(route).toContain("...GUIDE_WAS_PARAMS");
     expect(route).toContain("{#each guideWasPairs(data.selection) as [wasName, wasValue] (wasName)}");
-    const form = route.slice(route.indexOf('<form method="GET" action="/species#results" class="filter-form">'));
+    const form = route.slice(route.indexOf('<form id="guide-filter-form" method="GET" action="/species#results" class="filter-form">'));
     const hierarchy = form.slice(0, form.indexOf("</form>"));
     // The intent fields live in the same native form as the selects and Apply filters.
     expect(hierarchy).toContain("guideWasPairs(data.selection)");
     expect(hierarchy.indexOf("guideWasPairs(data.selection)")).toBeLessThan(hierarchy.indexOf('name="country"'));
-    expect(hierarchy).toContain("Apply filters");
     // No instruction asking a reader to reset lower lists by hand.
     expect(route).not.toContain("set the lower lists to Anywhere");
     expect(loader).toContain("canonicalizeGuideLevelChange(url.searchParams)");
@@ -101,7 +115,8 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
   });
 
   it("swaps the hierarchy selects for a summary and native clear action while a map point is applied", () => {
-    expect(route).toContain('data.selection.kind === "map" && data.map');
+    expect(route).toContain("{#if draftMap}");
+    expect(route).toContain("Choose a country, state, county or hotspot instead");
     expect(route).toContain("Clear location to choose a country, state, county or hotspot");
     expect(route).toContain("Clear location only");
     expect(route).toContain("clearGuideLocation(page.url.searchParams)");
@@ -126,7 +141,7 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     expect(route).not.toContain("google-maps");
     expect(route).not.toContain("maps.googleapis");
     expect(route).toContain("<MapPicker bind:selected={picked}");
-    expect(route).toContain("initialLabel={data.map?.place}");
+    expect(route).toContain("initialLabel={chooserSeed?.place}");
     expect(mapPicker).toContain('initialLabel = "Saved home location"');
     // While the chooser is open the page also shows its species "Search" button.
     expect(route).toContain('<button type="submit">Search</button>');
@@ -140,7 +155,7 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
 
   it("has no hidden default or saved radius and disables Apply until a point and valid radius exist", () => {
     expect(route).toContain('let radiusText = $state("")');
-    expect(route).toContain("radiusText = data.map ? String(data.map.dist) : \"\"");
+    expect(route).toContain("radiusText = chooserSeed ? String(chooserSeed.dist) : \"\"");
     expect(route).not.toMatch(/radiusText = \$state\(["']?\d/);
     expect(route).not.toMatch(/name="dist"[^>]*value="\d/);
     expect(route).toContain("const canApply = $derived(picked !== null && radiusValid)");
@@ -148,8 +163,9 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     expect(route).toContain('<label for="guide-radius">Radius in miles ({GUIDE_RADIUS_MIN}–{GUIDE_RADIUS_MAX})</label>');
     expect(route).toContain('inputmode="numeric"');
     expect(route).toContain('aria-describedby="guide-apply-help"');
-    expect(route).toContain("Apply location");
-    expect(route).toContain("guideMapHref(page.url.searchParams");
+    expect(route).toContain("Use this point");
+    expect(route).not.toContain("Apply location");
+    expect(route).toContain("guideMapSelection({");
     expect(route).toContain("Chosen point: {picked.label}".replace("{picked.label}", "${picked.label}"));
   });
 
@@ -166,10 +182,10 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     expect(route).toContain('chooserHeading?.scrollIntoView({ block: "start" })');
     expect(route).toContain("aria-controls={chooserId}");
     expect(route).toContain("aria-expanded={mapOpen}");
-    expect(route).toMatch(/async function cancelChooser\(\)[\s\S]*?await tick\(\);\s*chooseButton\?\.focus\(\);/);
+    expect(route).toMatch(/async function cancelChooser\(\)[\s\S]*?await tick\(\);\s*\(draftMap \? mapSummaryButton : chooseButton\)\?\.focus\(\);/);
     expect(route).toMatch(/\.chooser h3[\s\S]*?scroll-margin-top: calc\(var\(--nav-h\) \+ 16px\);/);
     // Cancel changes nothing: it never navigates.
-    const cancel = route.slice(route.indexOf("async function cancelChooser()"), route.indexOf("function applyChooser()"));
+    const cancel = route.slice(route.indexOf("async function cancelChooser()"), route.indexOf("async function useChosenPoint()"));
     expect(cancel).not.toContain("goto(");
   });
 

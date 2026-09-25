@@ -2,27 +2,40 @@
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import GuideSpeciesRow from "$components/GuideSpeciesRow.svelte";
   import { page } from "$app/state";
+  import { browser } from "$app/environment";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
   import PathNavigation from "$components/PathNavigation.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
-  import { goto } from "$app/navigation";
-  import { onMount, tick } from "svelte";
+  import SearchableSelect from "$components/SearchableSelect.svelte";
+  import { onMount, tick, untrack } from "svelte";
   import {
     GUIDE_LOCATION_PARAMS,
     GUIDE_WAS_PARAMS,
     GUIDE_RADIUS_MAX,
     GUIDE_RADIUS_MIN,
     clearGuideLocation,
-    descendantsOf,
     guideCoverage,
     guideLocationPairs,
-    guideMapHref,
+    guideMapSelection,
     guideResultsHref,
     guideScopeText,
     guideWasPairs,
+    type GuideChoicesLevel,
     type GuideLevel,
+    type GuideLocationSelection,
   } from "$lib/guide-location";
+  import {
+    PlaceChoiceLoader,
+    childLevel,
+    fetchGuideChoices,
+    guideDraftKey,
+    placeLevels,
+    toggledTag,
+    withDraftLevel,
+    type GuideDraft,
+  } from "$lib/guide-draft";
+  import type { PlaceChoice } from "$lib/place-filter";
   import {
     TAG_DIMENSIONS,
     TAG_VOCABULARY,
@@ -57,15 +70,139 @@
     [...page.url.searchParams].filter(([key]) => !ownedParams.has(key)),
   );
   let filtersOpen = $state(false);
-  /** Enhanced auto-submit: a changed level clears every deeper level first,
-   * matching the server contract. Apply filters stays the native fallback. */
-  function levelChanged(event: Event, level: GuideLevel) {
-    const form = (event.currentTarget as HTMLSelectElement).form!;
-    for (const lower of descendantsOf(level)) {
-      const control = form.elements.namedItem(lower) as HTMLSelectElement | null;
-      if (control) control.value = "";
+
+  // ---- Draft filters (td-daff98) ------------------------------------------
+  // Every control in Filters and sort edits this draft; only Apply filters runs
+  // the search. The applied state is what the loader normalized.
+  const applied = $derived<GuideDraft>({
+    interest: data.interestOnly,
+    family: data.family,
+    sort: data.sort as GuideDraft["sort"],
+    tags: [...data.tags].sort(),
+    place: data.selection,
+  });
+  const copyDraft = (d: GuideDraft): GuideDraft => ({ ...d, tags: [...d.tags], place: { ...d.place } });
+  let draft = $state<GuideDraft>(untrack(() => copyDraft(applied)));
+  const dirty = $derived(guideDraftKey(draft) !== guideDraftKey(applied));
+  const draftLevels = $derived(placeLevels(draft.place));
+  const draftMap = $derived(draft.place.kind === "map" ? draft.place : null);
+
+  // Place choices below the chosen level, loaded without navigating.
+  const PARENT_OF: Record<GuideChoicesLevel, GuideLevel> = { region: "country", county: "region", hotspot: "county" };
+  const CHOICE_NOUN: Record<GuideChoicesLevel, string> = { region: "states or regions", county: "counties", hotspot: "hotspots" };
+  const loader = new PlaceChoiceLoader(fetchGuideChoices);
+  let lists = $state<Record<GuideChoicesLevel, PlaceChoice[]>>(
+    untrack(() => ({ region: data.regions, county: data.counties, hotspot: data.hotspots })),
+  );
+  let loadingLevel = $state<GuideChoicesLevel | null>(null);
+  let choiceError = $state<{ level: GuideChoicesLevel; parent: string; message: string } | null>(null);
+
+  function seedLists() {
+    lists = { region: data.regions, county: data.counties, hotspot: data.hotspots };
+    loader.seed("region", data.country, data.regions);
+    loader.seed("county", data.region, data.counties);
+    loader.seed("hotspot", data.county, data.hotspots);
+  }
+
+  /** Discard the draft and every transient edit state. */
+  function resetToApplied() {
+    loader.invalidate();
+    loadingLevel = null;
+    choiceError = null;
+    mapOpen = false;
+    picked = null;
+    radiusText = "";
+    applyError = "";
+    seedLists();
+    draft = copyDraft(applied);
+  }
+
+  // Any applied change (Back/Forward, a chip, a scope link, paging, Apply)
+  // resets the panel before it renders, so no frame shows an old draft.
+  const appliedSignature = $derived(`${guideDraftKey(applied)}|${page.url.search}`);
+  let seenSignature = untrack(() => appliedSignature);
+  $effect.pre(() => {
+    const signature = appliedSignature;
+    if (signature === seenSignature) return;
+    seenSignature = signature;
+    untrack(resetToApplied);
+  });
+
+  async function loadChoices(level: GuideChoicesLevel, parent: string) {
+    loadingLevel = level;
+    choiceError = null;
+    const result = await loader.load(level, parent, () => placeLevels(draft.place)[PARENT_OF[level]]);
+    if (result.status === "stale") return;
+    loadingLevel = null;
+    if (result.status === "ok") lists = { ...lists, [level]: result.choices };
+    else choiceError = { level, parent, message: result.message };
+  }
+
+  /** Choose one Place level: clears deeper levels (and any map point) in the
+   * draft, then loads the choices the new value unlocks. */
+  function chooseLevel(level: GuideLevel, code: string) {
+    // Re-picking the current value changes nothing (and keeps deeper choices).
+    if (code.trim().toUpperCase() === placeLevels(draft.place)[level]) return;
+    loader.invalidate();
+    loadingLevel = null;
+    choiceError = null;
+    draft.place = withDraftLevel(draft.place, level, code);
+    const levels = placeLevels(draft.place);
+    let cleared = false;
+    const next = { ...lists };
+    for (const l of ["region", "county", "hotspot"] as GuideChoicesLevel[]) {
+      if (l === childLevel(level)) cleared = true;
+      if (cleared) next[l] = [];
     }
-    form.requestSubmit();
+    lists = next;
+    const child = childLevel(level);
+    if (child && levels[level]) {
+      const hit = loader.cached(child, levels[level]);
+      if (hit) lists = { ...lists, [child]: hit };
+      else void loadChoices(child, levels[level]);
+    }
+  }
+
+  function toggleTag(tag: string) {
+    draft.tags = toggledTag(draft.tags, tag);
+  }
+
+  // Native selects render until hydration; the searchable fields replace them
+  // only after reading what the person may already have changed in the DOM, and
+  // never while one of those selects has focus.
+  let placeHydrated = $state(false);
+  const PLACE_SELECT_IDS: Record<GuideLevel, string> = {
+    country: "guide-country",
+    region: "guide-region",
+    county: "guide-county",
+    hotspot: "guide-hotspot",
+  };
+  function readNativePlace(): Partial<Record<GuideLevel, string>> {
+    const out: Partial<Record<GuideLevel, string>> = {};
+    for (const level of ["country", "region", "county", "hotspot"] as GuideLevel[]) {
+      const el = document.getElementById(PLACE_SELECT_IDS[level]);
+      if (el instanceof HTMLSelectElement) out[level] = el.value.trim().toUpperCase();
+    }
+    return out;
+  }
+  // Captured while this script first runs, BEFORE hydration re-applies the
+  // server's select values: a choice made in the server-rendered page before
+  // JavaScript finished loading would otherwise be reset and lost (GROK).
+  const nativePlaceAtBoot = browser ? readNativePlace() : {};
+  function adoptNativePlace() {
+    const now = readNativePlace();
+    for (const level of ["country", "region", "county", "hotspot"] as GuideLevel[]) {
+      const current = placeLevels(draft.place)[level];
+      const live =
+        now[level] !== undefined && now[level] !== current
+          ? now[level]!
+          : (nativePlaceAtBoot[level] ?? current);
+      if (live !== current) {
+        chooseLevel(level, live);
+        break;
+      }
+    }
+    placeHydrated = true;
   }
 
   // List scope control (Phase 9A): links, so it works without JavaScript. A scope
@@ -86,6 +223,14 @@
   let jsReady = $state(false);
   onMount(() => {
     jsReady = true;
+    const focused = document.activeElement;
+    const isPlaceSelect = (el: Element | null) =>
+      el instanceof HTMLSelectElement && Object.values(PLACE_SELECT_IDS).includes(el.id);
+    if (isPlaceSelect(focused)) {
+      focused!.addEventListener("blur", () => requestAnimationFrame(adoptNativePlace), { once: true });
+    } else {
+      adoptNativePlace();
+    }
   });
   let mapOpen = $state(false);
   let picked = $state<PickedLocation | null>(null);
@@ -99,12 +244,16 @@
       Number(radiusText) <= GUIDE_RADIUS_MAX,
   );
   const canApply = $derived(picked !== null && radiusValid);
+  // Reopening the chooser shows the draft point when there is one, then the
+  // applied one (CODEX1).
+  const chooserSeed = $derived(draftMap ?? data.map);
+  let mapSummaryButton = $state<HTMLButtonElement | undefined>();
 
   async function openChooser() {
     picked = null;
     applyError = "";
-    // No saved or default radius: only an already-applied circle is shown.
-    radiusText = data.map ? String(data.map.dist) : "";
+    // No saved or default radius: only a draft or applied circle is shown.
+    radiusText = chooserSeed ? String(chooserSeed.dist) : "";
     mapOpen = true;
     await tick();
     chooserHeading?.focus({ preventScroll: true });
@@ -117,12 +266,14 @@
     radiusText = "";
     applyError = "";
     await tick();
-    chooseButton?.focus();
+    (draftMap ? mapSummaryButton : chooseButton)?.focus();
   }
 
-  function applyChooser() {
+  /** "Use this point": the map point goes into the draft (replacing any
+   * country/county choice); Apply filters runs it with everything else. */
+  async function useChosenPoint() {
     if (!picked || !radiusValid) return;
-    const built = guideMapHref(page.url.searchParams, {
+    const built = guideMapSelection({
       place: picked.label,
       lat: picked.lat,
       lng: picked.lng,
@@ -132,11 +283,21 @@
       applyError = built.message;
       return;
     }
+    loader.invalidate();
+    loadingLevel = null;
+    choiceError = null;
+    draft.place = built.selection as GuideLocationSelection;
     mapOpen = false;
     picked = null;
     radiusText = "";
     applyError = "";
-    goto(built.href);
+    await tick();
+    mapSummaryButton?.focus();
+  }
+
+  function usePlaceNames() {
+    draft.place = { kind: "anywhere" };
+    lists = { region: [], county: [], hotspot: [] };
   }
 
   /** Toggle URL for a tag chip — GET-driven, restorable, no client state. */
@@ -288,66 +449,101 @@
 
   <section class="card filter-card">
     <details class="filters" bind:open={filtersOpen}>
-      <summary>Filters and sort{activeFilterCount() ? ` (${activeFilterCount()} active)` : ""}</summary>
-      <form method="GET" action="/species#results" class="filter-form">
+      <summary>Filters and sort{activeFilterCount() ? ` (${activeFilterCount()} active)` : ""}{dirty ? " · changes not applied" : ""}</summary>
+      <!-- One filter form. The map chooser holds MapPicker's own search <form>,
+           which cannot nest, so the chooser sits outside this element and the
+           controls after it join the form through form="guide-filter-form". -->
+      <form id="guide-filter-form" method="GET" action="/species#results" class="filter-form">
         {#each unknownParams as [key, value], index (`filter-${index}-${key}-${value}`)}<input type="hidden" name={key} value={value} />{/each}
         {#if data.q}<input type="hidden" name="q" value={data.q} />{/if}
-        {#each data.tags as t (t)}<input type="hidden" name="tags" value={t} />{/each}
-        <label class="interest-filter"><input type="checkbox" name="interest" value="1" checked={data.interestOnly} /> Special interest only</label>
-        <div class="location-fields">
-          <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" name="family" value={data.family}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
-          <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" name="sort" value={data.sort}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
-        </div>
-        {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
-        <fieldset class="geo">
-          <legend>Location</legend>
-          {#if data.selection.kind === "map" && data.map}
-            {#each locationPairs as [locName, locValue] (locName)}<input type="hidden" name={locName} value={locValue} />{/each}
-            <p class="geo-map">Map point: <strong>{data.map.place}</strong>, within {data.map.dist} {data.map.dist === 1 ? "mile" : "miles"}.</p>
-            <a class="clear-filters" href={clearLocationHref}>Clear location to choose a country, state, county or hotspot</a>
+        <fieldset class="geo place">
+          <legend>Place</legend>
+          <p class="location-hint muted">All species recorded in this place in loaded eBird history, any time of year. Combine with All, Need or Seen above.</p>
+          {#if draftMap}
+            {#each guideLocationPairs(draftMap) as [locName, locValue] (locName)}<input type="hidden" name={locName} value={locValue} />{/each}
+            <p class="geo-map">Map point: <strong>{draftMap.place}</strong>, within {draftMap.dist} {draftMap.dist === 1 ? "mile" : "miles"}.</p>
+            {#if jsReady}
+              <div class="place-actions">
+                <button type="button" class="secondary" bind:this={mapSummaryButton} onclick={openChooser}>Change map point</button>
+                <button type="button" class="secondary" onclick={usePlaceNames}>Choose a country, state, county or hotspot instead</button>
+              </div>
+            {:else}
+              <a class="clear-filters" href={clearLocationHref}>Clear location to choose a country, state, county or hotspot</a>
+            {/if}
           {:else}
-            {#each guideWasPairs(data.selection) as [wasName, wasValue] (wasName)}<input type="hidden" name={wasName} value={wasValue} />{/each}
+            <!-- Without JavaScript the server works out which level changed from
+                 these; once the searchable fields take over they are disabled,
+                 because the submitted hierarchy is already consistent. -->
+            {#each guideWasPairs(data.selection) as [wasName, wasValue] (wasName)}<input type="hidden" name={wasName} value={wasValue} disabled={placeHydrated} />{/each}
             <div class="location-fields">
-              <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country} onchange={(e) => levelChanged(e, "country")}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
-              <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0} onchange={(e) => levelChanged(e, "region")}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
-              <div class="location-field"><label for="guide-county">County / equivalent</label><select id="guide-county" name="county" value={data.county} disabled={!data.region || data.counties.length === 0} onchange={(e) => levelChanged(e, "county")}><option value="">{!data.region ? "Choose a state or region first" : data.counties.length === 0 ? "No loaded counties" : "Anywhere in this state or region"}</option>{#each data.counties as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
-              <div class="location-field"><label for="guide-hotspot">Verified hotspot</label><select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={!data.county || data.hotspots.length === 0} onchange={(e) => levelChanged(e, "hotspot")}><option value="">{!data.county ? "Choose a county first" : data.hotspots.length === 0 ? "No loaded hotspots" : "Anywhere in this county"}</option>{#each data.hotspots as h (h.code)}<option value={h.code}>{h.name}</option>{/each}</select></div>
+              {#if placeHydrated}
+                <SearchableSelect id="guide-country" name="country" label="Country" choices={data.countries} value={draftLevels.country} anywhereLabel="Anywhere" onCommit={(code) => chooseLevel("country", code)} />
+                <SearchableSelect id="guide-region" name="region" label="State / region" choices={lists.region} value={draftLevels.region} anywhereLabel="Anywhere in this country" disabled={!draftLevels.country} disabledText="Choose a country first" loading={loadingLevel === "region"} emptyText="No loaded states or regions" onCommit={(code) => chooseLevel("region", code)} />
+                <SearchableSelect id="guide-county" name="county" label="County / equivalent" choices={lists.county} value={draftLevels.county} anywhereLabel="Anywhere in this state or region" disabled={!draftLevels.region} disabledText="Choose a state or region first" loading={loadingLevel === "county"} emptyText="No loaded counties" onCommit={(code) => chooseLevel("county", code)} />
+                <SearchableSelect id="guide-hotspot" name="hotspot" label="Verified hotspot" choices={lists.hotspot} value={draftLevels.hotspot} anywhereLabel="Anywhere in this county" disabled={!draftLevels.county} disabledText="Choose a county first" loading={loadingLevel === "hotspot"} emptyText="No loaded hotspots" onCommit={(code) => chooseLevel("hotspot", code)} />
+              {:else}
+                <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
+                <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
+                <div class="location-field"><label for="guide-county">County / equivalent</label><select id="guide-county" name="county" value={data.county} disabled={!data.region || data.counties.length === 0}><option value="">{!data.region ? "Choose a state or region first" : data.counties.length === 0 ? "No loaded counties" : "Anywhere in this state or region"}</option>{#each data.counties as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
+                <div class="location-field"><label for="guide-hotspot">Verified hotspot</label><select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={!data.county || data.hotspots.length === 0}><option value="">{!data.county ? "Choose a county first" : data.hotspots.length === 0 ? "No loaded hotspots" : "Anywhere in this county"}</option>{#each data.hotspots as h (h.code)}<option value={h.code}>{h.name}</option>{/each}</select></div>
+              {/if}
             </div>
-            {#if data.region && data.counties.length === 0}<p class="location-hint muted">No county data is loaded for this state or region. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a county.</p>{/if}
-            {#if data.county && data.hotspots.length === 0}<p class="location-hint muted">No hotspot data is loaded for this county. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a hotspot.</p>{/if}
+            {#if loadingLevel}<p class="muted place-status" role="status">Loading {CHOICE_NOUN[loadingLevel]}…</p>{/if}
+            {#if choiceError}
+              {@const failed = choiceError}
+              <p class="err place-status" role="alert">
+                Couldn't load {CHOICE_NOUN[failed.level]}. Your other choices are kept.
+                <button type="button" class="secondary retry" aria-label={`Retry loading ${CHOICE_NOUN[failed.level]}`} onclick={() => loadChoices(failed.level, failed.parent)}>Retry</button>
+              </p>
+            {/if}
+            {#if draftLevels.region && !draftLevels.county && !loadingLevel && !choiceError && lists.county.length === 0}<p class="location-hint muted">No county data is loaded for this state or region. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a county.</p>{/if}
+            {#if draftLevels.county && !draftLevels.hotspot && !loadingLevel && !choiceError && lists.hotspot.length === 0}<p class="location-hint muted">No hotspot data is loaded for this county. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a hotspot.</p>{/if}
           {/if}
         </fieldset>
-        <p class="location-hint muted">Optional: birds reported in this location at any time of year.</p>
-        {#each TAG_DIMENSIONS as d (d)}
-          <details class="dim"><summary>{dimensionLabel(d)}</summary><div class="chips">{#each TAG_VOCABULARY[d] as v (v)}{@const tag = `${d}:${v}`}<a class="chip" class:chip-on={selected.has(tag)} class:chip-tide={d === "tide"} href={toggleHref(tag)}>{tagLabel(d, v)}</a>{/each}</div></details>
-        {/each}
-        <button class="apply-filters" type="submit">Apply filters</button>
       </form>
       <section class="map-chooser" aria-labelledby="guide-map-label">
         <p id="guide-map-label" class="map-label">Or choose a point on the map</p>
         <noscript><p class="muted">Choosing or moving a map point needs JavaScript. The country, state, county and hotspot choices above work without it, and a shared map link still filters the results.</p></noscript>
-        {#if jsReady}
+        {#if jsReady && !draftMap}
           <button type="button" class="secondary" bind:this={chooseButton} hidden={mapOpen} aria-expanded={mapOpen} aria-controls={chooserId} onclick={openChooser}>Choose on map</button>
         {/if}
         {#if mapOpen}
           <div id={chooserId} class="chooser" role="group" aria-labelledby="guide-map-heading">
             <h3 bind:this={chooserHeading} id="guide-map-heading" tabindex="-1">Choose a map point and radius</h3>
             <p class="muted">Search for a place or tap the map, then enter a radius. The result covers only loaded eBird hotspots with recorded coordinates inside the circle; the part of the map you can see is never a boundary.</p>
-            <MapPicker bind:selected={picked} initialLat={data.map?.lat ?? null} initialLng={data.map?.lng ?? null} initialLabel={data.map?.place} />
+            <MapPicker bind:selected={picked} initialLat={chooserSeed?.lat ?? null} initialLng={chooserSeed?.lng ?? null} initialLabel={chooserSeed?.place} />
             <p class="picked">{picked ? `Chosen point: ${picked.label}` : "No point chosen yet."}</p>
             <div class="radius-field">
               <label for="guide-radius">Radius in miles ({GUIDE_RADIUS_MIN}–{GUIDE_RADIUS_MAX})</label>
-              <input id="guide-radius" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={radiusText} aria-describedby="guide-apply-help" aria-invalid={radiusText.trim() !== "" && !radiusValid} />
+              <input id="guide-radius" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={radiusText} aria-describedby="guide-apply-help" aria-invalid={radiusText.trim() !== "" && !radiusValid} onkeydown={(e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void useChosenPoint(); } }} />
             </div>
-            <p id="guide-apply-help" class="muted">{canApply ? "Ready to apply." : `Choose a point on the map and enter a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`}</p>
+            <p id="guide-apply-help" class="muted">{canApply ? "Ready to use. Apply filters then runs the search." : `Choose a point on the map and enter a whole number of miles from ${GUIDE_RADIUS_MIN} to ${GUIDE_RADIUS_MAX}.`}</p>
             {#if applyError}<p class="err" role="alert">{applyError}</p>{/if}
             <div class="chooser-actions">
-              <button type="button" class="apply-filters" disabled={!canApply} onclick={applyChooser}>Apply location</button>
+              <button type="button" class="apply-filters" disabled={!canApply} onclick={useChosenPoint}>Use this point</button>
               <button type="button" class="secondary" onclick={cancelChooser}>Cancel</button>
             </div>
           </div>
         {/if}
       </section>
+      <div class="filter-form filter-rest">
+        <label class="interest-filter"><input type="checkbox" form="guide-filter-form" name="interest" value="1" checked={draft.interest} onchange={(e) => (draft.interest = e.currentTarget.checked)} /> Special interest only</label>
+        <div class="location-fields">
+          <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" form="guide-filter-form" name="family" value={draft.family} onchange={(e) => (draft.family = e.currentTarget.value)}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
+          <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" form="guide-filter-form" name="sort" value={draft.sort} onchange={(e) => (draft.sort = e.currentTarget.value as GuideDraft["sort"])}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
+        </div>
+        {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}
+        {#each TAG_DIMENSIONS as d (d)}
+          <details class="dim"><summary>{dimensionLabel(d)}</summary><div class="chips">{#each TAG_VOCABULARY[d] as v (v)}{@const tag = `${d}:${v}`}<label class="chip chip-choice" class:chip-on={draft.tags.includes(tag)} class:chip-tide={d === "tide"}><input type="checkbox" form="guide-filter-form" name="tags" value={tag} checked={draft.tags.includes(tag)} onchange={() => toggleTag(tag)} />{tagLabel(d, v)}</label>{/each}</div></details>
+        {/each}
+        <div class="apply-bar">
+          <button class="apply-filters" type="submit" form="guide-filter-form">Apply filters</button>
+          {#if dirty}
+            <button type="button" class="secondary discard" onclick={resetToApplied}>Discard changes</button>
+            <span class="unapplied">Changes not applied yet</span>
+          {/if}
+        </div>
+      </div>
     </details>
   </section>
 
@@ -508,6 +704,29 @@
   .chooser-actions .secondary { background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
   .chooser-actions .apply-filters:disabled { opacity: 0.5; }
   .err { color: var(--danger); font-weight: 600; }
+  .place-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .place-actions .secondary,
+  .place-status .retry,
+  .apply-bar .secondary { min-height: 48px; padding: 10px 16px; border-radius: 8px; background: var(--card); color: var(--accent); border: 1px solid var(--accent); font-weight: 600; }
+  .place-status { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  /* Apply stays in reach while scrolling a long panel. */
+  .apply-bar {
+    position: sticky;
+    bottom: calc(var(--bottomnav-h, 0px) + 8px);
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+  }
+  .unapplied { font-weight: 600; color: var(--accent); }
+  /* Trait choices are real checkboxes (they wait for Apply) styled as chips. */
+  .chip-choice { position: relative; cursor: pointer; }
+  .chip-choice input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+  .chip-choice:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
   .list-scope { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
   .list-scope a {
     display: inline-flex;

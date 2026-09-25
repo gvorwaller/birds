@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseGuideChoicesRequest,
   GUIDE_LOCATION_PARAMS,
   GUIDE_WAS_PARAMS,
   canonicalizeGuideLevelChange,
@@ -513,5 +514,22 @@ describe("native (no-JavaScript) level changes", () => {
     expect(reject(`${wasAll}&country=US&region=US-FL&county=US-FL-115&hotspot=L1&hotspot=L2`)).toBe("Use only one hotspot value.");
     // A well-formed one is accepted, including an omitted disabled select.
     expect(canonicalizeGuideLevelChange(new URLSearchParams(`${wasAll}&country=US`))).toMatchObject({ ok: true });
+  });
+});
+
+describe("parseGuideChoicesRequest (td-daff98)", () => {
+  const parse = (q: string) => parseGuideChoicesRequest(new URLSearchParams(q));
+  it("accepts one level with a parent of the matching shape", () => {
+    expect(parse("level=region&parent=us")).toEqual({ ok: true, level: "region", parent: "US" });
+    expect(parse("level=county&parent=US-FL")).toEqual({ ok: true, level: "county", parent: "US-FL" });
+    expect(parse("level=hotspot&parent=US-FL-115")).toEqual({ ok: true, level: "hotspot", parent: "US-FL-115" });
+  });
+  it("rejects missing, blank, repeated and extra keys", () => {
+    for (const q of ["", "level=region", "parent=US", "level=&parent=US", "level=region&parent=%20", "level=region&level=county&parent=US", "level=region&parent=US&parent=CA", "level=region&parent=US&x=1"])
+      expect(parse(q).ok, q).toBe(false);
+  });
+  it("rejects an unknown level and a parent of the wrong level", () => {
+    for (const q of ["level=country&parent=US", "level=region&parent=US-FL", "level=county&parent=US", "level=hotspot&parent=US-FL", "level=hotspot&parent=L123"])
+      expect(parse(q).ok, q).toBe(false);
   });
 });
