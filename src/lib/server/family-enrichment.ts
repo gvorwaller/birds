@@ -235,6 +235,11 @@ export async function familyEnrichmentStatus() {
     ),
   };
 }
+/** Idle reschedule: until the next scheduled retry, between a minute and a day. */
+export function idleFamilyDelay(untilNextMs: number | null): number {
+  if (untilNextMs == null || !Number.isFinite(untilNextMs)) return DAY;
+  return Math.min(DAY, Math.max(60_000, Math.ceil(untilNextMs)));
+}
 function params(admin: number, delay: number) {
   return {
     type: "enrich_families" as const,
@@ -389,9 +394,18 @@ export async function runFamilyEnrichment(
   ORDER BY (e.content IS NULL) DESC,e.next_attempt_at,e.family_code LIMIT 1`)
   ).rows[0];
   if (!due) {
+    // Nothing due: sleep until the earliest scheduled retry, at most a day
+    // (td-cc1b97; it was hourly, 167 idle runs a week on prod). Everything
+    // that makes a family due sooner nudges the job: taxonomy sync, unpause,
+    // admin retry, and worker startup (a deploy can change the prompt).
+    const next = (
+      await query<{ ms: number | null }>(`SELECT EXTRACT(EPOCH FROM MIN(e.next_attempt_at)-NOW())*1000 AS ms
+  FROM family_enrichment e
+  WHERE EXISTS(SELECT 1 FROM taxonomy_cache t WHERE t.category='species' AND t.family_code=e.family_code)`)
+    ).rows[0]?.ms;
     await finish(
       { message: "All family descriptions are current or awaiting retry" },
-      3600_000,
+      idleFamilyDelay(next == null ? null : Number(next)),
     );
     return;
   }

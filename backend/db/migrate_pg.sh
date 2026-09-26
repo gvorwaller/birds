@@ -2,6 +2,10 @@
 # backend/db/migrate_pg.sh
 # Apply PostgreSQL migrations (all *.sql files in migrations/) once, in order.
 # Connects as MIGRATION_PGUSER (birds_owner), NOT the runtime PGUSER.
+# Files containing an exact `-- migrate: no-transaction` marker run outside
+# the default wrapper (required by operations such as CREATE INDEX
+# CONCURRENTLY). Such files must be safely rerunnable because their SQL and
+# schema_migrations record cannot be atomic.
 #
 # Usage:
 #   ./migrate_pg.sh                         # apply pending migrations
@@ -153,7 +157,17 @@ for f in $PG_MIGRATIONS; do
 
   echo "${YELLOW}→${NC} applying: $base"
 
-  if {
+  if grep -Fxq -- '-- migrate: no-transaction' "$f"; then
+    if run_psql -v ON_ERROR_STOP=1 -f "$f" &&
+       run_psql -v ON_ERROR_STOP=1 -c "INSERT INTO admin.schema_migrations (filename) VALUES ('$base')"
+    then
+      echo "${GREEN}✔${NC} applied: $base"
+      APPLIED=$((APPLIED + 1))
+    else
+      echo "${RED}✘ FAILED: $base${NC}" >&2
+      exit 1
+    fi
+  elif {
     echo "BEGIN;"
     echo "-- Migration: $base"
     cat "$f"

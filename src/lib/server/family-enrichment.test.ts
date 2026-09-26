@@ -12,6 +12,7 @@ import {
   setFamilyPaused,
   retryFamilyGaps,
   collectFamilySource,
+  idleFamilyDelay,
 } from "./family-enrichment";
 import {
   FamilySourceInsufficient,
@@ -221,6 +222,28 @@ it("automatically publishes sourced audited content, then skips fresh work", asy
   expect(r.note?.source).not.toHaveProperty("text");
   await runFamilyEnrichment(await job(), ctx, d);
   expect(d.generate).toHaveBeenCalledTimes(1);
+});
+it("idles until the next scheduled retry, at most a day (td-cc1b97)", async () => {
+  const DAY = 86_400_000;
+  expect(idleFamilyDelay(null)).toBe(DAY);
+  expect(idleFamilyDelay(90 * DAY)).toBe(DAY);
+  expect(idleFamilyDelay(2 * 3_600_000)).toBe(2 * 3_600_000);
+  expect(idleFamilyDelay(-5_000)).toBe(60_000);
+  expect(idleFamilyDelay(Number.NaN)).toBe(DAY);
+
+  const d = deps();
+  await runFamilyEnrichment(await job(), ctx, d);
+  const idle = await job();
+  await runFamilyEnrichment(idle, ctx, d);
+  const done = (await query("SELECT result FROM jobs WHERE id=$1", [idle.id])).rows[0];
+  expect(done.result.message).toMatch(/current or awaiting retry/);
+  const next = (
+    await query<{ ms: number }>(
+      "SELECT EXTRACT(EPOCH FROM next_retry_at-NOW())*1000 AS ms FROM jobs WHERE type='enrich_families' AND status='pending'",
+    )
+  ).rows[0];
+  expect(Number(next.ms)).toBeGreaterThan(55_000);
+  expect(Number(next.ms)).toBeLessThanOrEqual(DAY);
 });
 it("deduplicates the recurring scheduler", async () => {
   await Promise.all([

@@ -99,7 +99,9 @@ async function main(): Promise<void> {
 	startMemorySampler('worker');
 	console.log(`[birds-worker] started pid=${process.pid} version=${VERSION}`);
 
-	await ensureFamilyEnrichment();
+	// Nudged: an idle family job can be a day out (td-cc1b97), and a deploy
+	// that changes the family prompt must be noticed now, not tomorrow.
+	await ensureFamilyEnrichment(true);
 	let familyCheckedAt = Date.now();
 	let draining = false;
 	let currentJobId: number | null = null;

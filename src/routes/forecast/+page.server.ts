@@ -120,7 +120,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     location && apiKey
       ? streamed(
           (async () => {
-            const seen = await seenSet(userId);
+            // Started here, awaited inside forecastNeedsNear alongside the
+            // hotspot lookup, and reused for the county ranking.
+            const seen = seenSet(userId);
             const v = await forecastNeedsNear(
               userId,
               apiKey,
@@ -138,7 +140,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
               // Seat + county-outlining Maps query per county (td-01ddb6).
               const stateName = v.regionName ?? v.regionCode;
               counties = (
-                await rankCountiesForNeeds(userId, v.regionCode, month, seen)
+                await rankCountiesForNeeds(userId, v.regionCode, month, await seen)
               ).map((c) => ({
                 ...c,
                 seat: countySeat(c.code),

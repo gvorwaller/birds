@@ -409,6 +409,9 @@ describe.skipIf(!dbUp)("forecast SQL against birds_test", () => {
     expect(ranks[0].likely).toBe(0);
     expect(ranks[0].possible).toBe(1);
     expect(ranks[0].n).toBe(400);
+    // A species on the life list is never a need (filtered in SQL, td-3bf3a2).
+    expect(await rankCountiesForNeeds(0, "US-QQ", 1, new Set(["testsp"]))).toEqual([]);
+    expect(await rankCountiesForNeeds(0, "US-QQ", 1, new Set(["othersp"]))).toHaveLength(1);
   });
 
   it("rankCountiesForNeeds handles variable-width codes and excludes grandchildren under a country-level code (td-f1d6da)", async () => {

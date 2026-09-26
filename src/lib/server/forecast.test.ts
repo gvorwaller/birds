@@ -818,10 +818,42 @@ describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
       freq,
     }));
   }
-  function mockDb(teaserRows: unknown[]) {
-    dbMocks.query.mockImplementation(async (sql: string) => {
+  type WeekRow = { loc_code: string; loc_name: string; sample_sizes: number[]; week: number | null; freq: number | null };
+  // Serves the teaser's three reads from one weekly fixture: the monthly
+  // rollup it ranks with (td-3bf3a2), and the stored barchart meta and
+  // weekly rows for the peers it shows.
+  function mockDb(teaserRows: WeekRow[], missingMetaFor = new Set<string>()) {
+    const reported = teaserRows.filter((r) => r.week != null && r.freq != null);
+    dbMocks.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes("FROM regions")) return { rows: REGION_ROWS };
-      if (sql.includes("FROM frequency_fetch")) return { rows: teaserRows };
+      if (sql.includes("FROM species_month_freq")) {
+        const byKey = new Map<string, { loc_code: string; loc_name: string; month: number; num: number; n: number }>();
+        for (const r of reported) {
+          const month = Math.floor((r.week! - 1) / 4) + 1;
+          const key = `${r.loc_code}|${month}`;
+          const n = r.sample_sizes.slice((month - 1) * 4, month * 4).reduce((a, b) => a + b, 0);
+          const row = byKey.get(key) ?? { loc_code: r.loc_code, loc_name: r.loc_name, month, num: 0, n };
+          row.num += r.freq! * r.sample_sizes[r.week! - 1];
+          byKey.set(key, row);
+        }
+        return { rows: [...byKey.values()] };
+      }
+      if (sql.includes("FROM frequency_fetch")) {
+        const codes = new Set((params?.[0] as string[]) ?? []);
+        const seen = new Map<string, WeekRow>();
+        for (const r of teaserRows)
+          if (codes.has(r.loc_code) && !missingMetaFor.has(r.loc_code)) seen.set(r.loc_code, r);
+        return {
+          rows: [...seen.values()].map((r) => ({
+            loc_code: r.loc_code, loc_kind: "region", loc_name: r.loc_name, begin_year: 2015,
+            end_year: 2024, sample_sizes: r.sample_sizes, n_species: 1, n_unmatched: 0,
+            unmatched_names: [], fetched_at: "2026-09-01T00:00:00Z",
+          })),
+        };
+      }
+      if (sql.includes("FROM species_frequency")) {
+        return { rows: reported.filter((r) => r.loc_code === params?.[0]).map((r) => ({ week: r.week, freq: r.freq })) };
+      }
       return { rows: [] };
     });
   }
@@ -883,6 +915,12 @@ describe("pickSpeciesTeaserState — peers (refactor plan Phase 5)", () => {
       { loc_code: "US-FL", loc_name: "Florida", sample_sizes: sizes, week: null, freq: null },
     ]);
     expect(await pickSpeciesTeaserState("gbbgul", { home: HOME })).toBeNull();
+  });
+
+  it("fails soft when a chosen location is deleted between ranking and detail reads", async () => {
+    const { pickSpeciesTeaserState } = await import("./forecast");
+    mockDb(freqRows("US-FL", "Florida", 0.4), new Set(["US-FL"]));
+    await expect(pickSpeciesTeaserState("gbbgul", { home: HOME })).resolves.toBeNull();
   });
 });
 

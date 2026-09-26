@@ -658,8 +658,13 @@ export async function forecastNeedsNear(
 	lng: number,
 	distKm: number,
 	month: number,
-	seen?: ReadonlySet<string>
+	seen?: ReadonlySet<string> | Promise<ReadonlySet<string>>
 ): Promise<ForecastNeedsView> {
+	// The life list is independent of the hotspot lookup: read both at once.
+	const seenP = Promise.resolve(seen ?? seenSet(userId));
+	// Nothing awaits seenP until the hotspot reads succeed; don't let a
+	// rejection surface as unhandled in the meantime.
+	seenP.catch(() => {});
 	const hotspots = await hotspotsNear(apiKey, lat, lng, distKm);
 	const inRange = hotspots.data;
 	// EVERY loaded hotspot in range counts (GBV 2026-08-15): which hotspots the
@@ -676,11 +681,15 @@ export async function forecastNeedsNear(
 	let species: ForecastSpecies[] = [];
 	let year: MonthRichness[] = richnessFromSpecies(new Map());
 	if (withData.length > 0) {
-		const [aggRes, denomRes, seenResolved] = await Promise.all([
+		const seenResolved = await seenP;
+		const [aggRes, denomRes] = await Promise.all([
 			// Reads the 0049 monthly rollup instead of re-aggregating 23.6 M
 			// weekly rows per request (td-3bf3a2). Same arithmetic, maintained
 			// transactionally by storeFrequencies; measured 935 ms -> 26 ms on
-			// the equivalent county query.
+			// the equivalent county query. Species on the life list are left
+			// out here rather than in buildForecastSpecies, which would drop
+			// them anyway: near home that is most rows (Jacksonville, 324
+			// loaded hotspots: 160,089 rows -> 13,909).
 			query<{
 				species_code: string;
 				com_name: string;
@@ -693,16 +702,15 @@ export async function forecastNeedsNear(
 				        smf.month::int AS month, smf.num
 				   FROM species_month_freq smf
 				   JOIN taxonomy_cache tc ON tc.species_code = smf.species_code
-				  WHERE smf.loc_code = ANY($1)`,
-				[withData]
+				  WHERE smf.loc_code = ANY($1) AND NOT (smf.species_code = ANY($2::text[]))`,
+				[withData, [...seenResolved]]
 			),
 			query<{ loc_code: string; month: number; n: number }>(
 				`SELECT loc_code, month::int AS month, n
 				   FROM loc_month_samples
 				  WHERE loc_code = ANY($1)`,
 				[withData]
-			),
-			seen ?? seenSet(userId)
+			)
 		]);
 		const locNames = new Map(loaded.map((h) => [h.locId, h.locName]));
 		const byMonth = new Map<number, ForecastSpecies[]>();
@@ -1051,8 +1059,9 @@ export async function rankCountiesForNeeds(
 		   FROM species_month_freq smf
 		   JOIN loc_month_samples lms
 		     ON lms.loc_code = smf.loc_code AND lms.month = smf.month
-		  WHERE smf.loc_code = ANY($1) AND smf.month = $2`,
-		[codes, month]
+		  WHERE smf.loc_code = ANY($1) AND smf.month = $2
+		    AND NOT (smf.species_code = ANY($3::text[]))`,
+		[codes, month, [...seenResolved]]
 	);
 	const byLoc = new Map<
 		string,
@@ -1312,63 +1321,55 @@ export async function pickSpeciesTeaserState(
 		home?: { lat: number; lon: number } | null;
 	} = {}
 ): Promise<SpeciesTeaserPick | null> {
+	// Candidates come from the monthly rollup (0049), read through its
+	// species-leading index (0064): one contiguous index range instead of a
+	// probe into the 1.5 GB weekly table for every loaded region, which
+	// measured 250-1,250 ms cold on prod (td-3bf3a2). num/n is exactly
+	// monthlyStat's checklist-weighted frequency. Only months the species
+	// was reported in come back; the rest are zero and bestMonth never picks
+	// a zero month, so the partial curve picks the same month. Regions with
+	// no rows are never reported and could not win either picker.
 	const r = await query<{
 		loc_code: string;
 		loc_name: string;
-		sample_sizes: number[];
-		week: number | null;
-		freq: number | null;
+		month: number;
+		num: number;
+		n: number;
 	}>(
-		`SELECT ff.loc_code, ff.loc_name, ff.sample_sizes, sf.week, sf.freq
-		   FROM frequency_fetch ff
-		   LEFT JOIN species_frequency sf
-		     ON sf.loc_code = ff.loc_code AND sf.species_code = $1
-		  WHERE ff.loc_kind = 'region' AND ff.loc_code ~ '^[A-Z]{2}(-[^-]+)?$'`,
+		`SELECT smf.loc_code, ff.loc_name, smf.month, smf.num, lms.n
+		   FROM species_month_freq smf
+		   JOIN frequency_fetch ff ON ff.loc_code = smf.loc_code
+		   JOIN loc_month_samples lms ON lms.loc_code = smf.loc_code AND lms.month = smf.month
+		  WHERE smf.species_code = $1
+		    AND ff.loc_kind = 'region' AND ff.loc_code ~ '^[A-Z]{2}(-[^-]+)?$'`,
 		[speciesCode]
 	);
 	if (r.rows.length === 0) return null;
 
-	const byLoc = new Map<
-		string,
-		{ locName: string; sampleSizes: number[]; freqByWeek: Map<number, number> }
-	>();
+	const byLoc = new Map<string, { locName: string; curve: MonthStat[] }>();
 	for (const row of r.rows) {
 		let entry = byLoc.get(row.loc_code);
 		if (!entry) {
-			const sizes = Array.isArray(row.sample_sizes) ? row.sample_sizes.map((n) => Number(n)) : [];
-			entry = {
-				locName: row.loc_name,
-				sampleSizes: sizes,
-				freqByWeek: new Map()
-			};
+			entry = { locName: row.loc_name, curve: [] };
 			byLoc.set(row.loc_code, entry);
 		}
-		if (row.week != null && row.freq != null) {
-			const week = Number(row.week);
-			if (week >= 1 && week <= WEEKS) entry.freqByWeek.set(week, Number(row.freq));
-		}
+		const n = Number(row.n);
+		entry.curve.push({ month: Number(row.month), freq: n > 0 ? Number(row.num) / n : 0, n });
 	}
 
-	const built: {
-		candidate: TeaserCandidate;
-		curve: MonthStat[];
-		peakPhrase: string | null;
-	}[] = [];
+	const built: { candidate: TeaserCandidate }[] = [];
 	for (const [locCode, e] of byLoc) {
-		const curve = monthCurve(e.freqByWeek, e.sampleSizes);
-		const best = bestMonth(curve);
-		const rawPeak = peakWeekPhrase(e.freqByWeek, e.sampleSizes);
-		const peakPhrase =
-			best && rawPeak && rawPeak.endsWith(MONTH_NAMES[best.month - 1]) ? rawPeak : null;
+		// PostgreSQL does not promise row order without ORDER BY. The old weekly
+		// path always built January..December; keep that deterministic tie rule
+		// when two months have the same frequency.
+		e.curve.sort((a, b) => a.month - b.month);
 		built.push({
 			candidate: {
 				locCode,
 				locName: e.locName,
-				best,
-				neverReported: e.freqByWeek.size === 0
-			},
-			curve,
-			peakPhrase
+				best: bestMonth(e.curve),
+				neverReported: false
+			}
 		});
 	}
 	const candidates = built.map((b) => b.candidate);
@@ -1385,10 +1386,15 @@ export async function pickSpeciesTeaserState(
 		kind: TeaserPeer['kind'],
 		locCode: string,
 		distanceKm: number | null
-	): Promise<TeaserPeer> => {
+	): Promise<TeaserPeer | null> => {
+		// The rows shown come from the weekly data, exactly as
+		// speciesLocForecast builds them: two PK lookups for at most two peers.
 		const win = built.find((b) => b.candidate.locCode === locCode)!;
-		const e = byLoc.get(locCode)!;
-		const weeks = weekCurve(e.freqByWeek, e.sampleSizes);
+		const forecast = await speciesLocForecast(locCode, speciesCode);
+		// A frequency reload/delete can commit between the rollup ranking and
+		// this detail read. The teaser is optional; stale selection must hide it
+		// for this request rather than fail the whole species page.
+		if (!forecast?.best) return null;
 		return {
 			kind,
 			locCode,
@@ -1399,12 +1405,12 @@ export async function pickSpeciesTeaserState(
 			// countries. Unknown code → never a guess: the stored loc_name.
 			label: (await regionLabel(locCode)) ?? win.candidate.locName,
 			distanceKm,
-			curve: win.curve,
-			weeks,
-			migration: migrationSentence(weeks),
-			best: win.candidate.best,
-			peakPhrase: win.peakPhrase,
-			good: goodMonths(win.curve)
+			curve: forecast.curve,
+			weeks: forecast.weeks,
+			migration: migrationSentence(forecast.weeks),
+			best: forecast.best,
+			peakPhrase: forecast.peakPhrase,
+			good: forecast.good
 		};
 	};
 	const distanceTo = (locCode: string): number | null => {
@@ -1421,19 +1427,25 @@ export async function pickSpeciesTeaserState(
 	if (nearest && nearest.locCode === globalPick.locCode) {
 		// Closest and best are the same region — one static row (AGY-reviewed
 		// edge case 1), with its distance.
-		peers = [await makePeer('both', globalPick.locCode, nearest.distanceKm)];
+		const peer = await makePeer('both', globalPick.locCode, nearest.distanceKm);
+		if (!peer) return null;
+		peers = [peer];
 		defaultLocCode = globalPick.locCode;
 	} else if (nearest) {
 		// Closest first — the actionable row is the default selection.
-		peers = [
-			await makePeer('closest', nearest.locCode, nearest.distanceKm),
-			await makePeer('best', globalPick.locCode, distanceTo(globalPick.locCode))
-		];
+		const selected = await Promise.all([
+			makePeer('closest', nearest.locCode, nearest.distanceKm),
+			makePeer('best', globalPick.locCode, distanceTo(globalPick.locCode))
+		]);
+		if (selected.some((peer) => peer == null)) return null;
+		peers = selected as TeaserPeer[];
 		defaultLocCode = nearest.locCode;
 	} else {
 		// No origin (or an empty pool for the nearest picker): a single "best"
 		// row. NEVER a "closest" row with a null distance (AGY edge case 2).
-		peers = [await makePeer('best', globalPick.locCode, null)];
+		const peer = await makePeer('best', globalPick.locCode, null);
+		if (!peer) return null;
+		peers = [peer];
 		defaultLocCode = globalPick.locCode;
 	}
 	return { peers, defaultLocCode, poolSize: pool.length, hasOrigin: home != null };
