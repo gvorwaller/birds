@@ -2,7 +2,7 @@
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
   import { goto, invalidateAll, replaceState } from "$app/navigation";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/state";
   import PathNavigation from "$components/PathNavigation.svelte";
   import {
@@ -97,6 +97,7 @@
         countrywide: usCountry?.state ?? null,
         countryHotspots: [],
         groups: usStates,
+        groupCount: usStates.length,
         hotspotCount:
           (usCountry?.hotspotCount ?? 0) +
           usStates.reduce((sum, state) => sum + state.hotspotCount, 0),
@@ -166,7 +167,7 @@
   function sectionStatusText(s: PageData["countrySections"][number]): string {
     const parts: string[] = [];
     if (s.countryCode === "US") {
-      parts.push(`${s.groups.length} state${s.groups.length === 1 ? "" : "s"}`);
+      parts.push(`${s.groupCount} state${s.groupCount === 1 ? "" : "s"}`);
       parts.push(`${s.hotspotCount} hotspot${s.hotspotCount === 1 ? "" : "s"}`);
       return parts.join(" · ");
     }
@@ -189,7 +190,7 @@
   }
   function areaStatusText(area: LoadedArea): string {
     const regionCount = area.countries.reduce(
-      (sum, country) => sum + country.groups.length,
+      (sum, country) => sum + country.groupCount,
       0,
     );
     const hotspotCount = area.countries.reduce(
@@ -281,6 +282,62 @@
     }
   }
 
+  // The failed-loads section opens itself for a ?show= of a failed hotspot.
+  let failedOpen = $state(untrack(() => data.focus?.kind === "failed"));
+  $effect(() => {
+    if (data.focus?.kind === "failed") failedOpen = true;
+  });
+
+  // td-b6be76: a country's state/region groups arrive when it's opened (the
+  // page ships only each country's summary). A ?show= landing's country comes
+  // with its groups already.
+  type Group = PageData["stateGroups"][number];
+  let countryGroups = $state<Record<string, Group[]>>({});
+  let countryGroupsFailed = $state<string[]>([]);
+  const countryGroupsFetched = new Set<string>();
+  // SvelteKit keeps this page component alive across same-route invalidations.
+  // Drop on-demand rows when its server data changes so Reload and completed
+  // analysis jobs cannot leave an old country inventory on screen.
+  let countryGroupsData = untrack(() => data);
+  $effect(() => {
+    if (data === countryGroupsData) return;
+    countryGroupsData = data;
+    countryGroups = {};
+    countryGroupsFailed = [];
+    countryGroupsFetched.clear();
+  });
+  function groupsOf(s: { countryCode: string; groups: Group[]; groupCount: number }): Group[] {
+    return s.groups.length > 0 || s.groupCount === 0 ? s.groups : (countryGroups[s.countryCode] ?? []);
+  }
+  const countryGroupsPending = (s: { countryCode: string; groups: Group[]; groupCount: number }) =>
+    s.groupCount > 0 && groupsOf(s).length === 0 && !countryGroupsFailed.includes(s.countryCode);
+  async function loadCountryGroups(code: string) {
+    const sec = data.countrySections.find((x) => x.countryCode === code);
+    if (!browser || !sec || sec.groupCount === 0 || sec.groups.length > 0) return;
+    if (countryGroupsFetched.has(code)) return;
+    countryGroupsFetched.add(code);
+    countryGroupsFailed = countryGroupsFailed.filter((c) => c !== code);
+    const source = data;
+    try {
+      const res = await fetch(`/api/hub-country?country=${encodeURIComponent(code)}`);
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as { groups: Group[] };
+      if (data !== source) return;
+      countryGroups = { ...countryGroups, [code]: body.groups };
+    } catch {
+      if (data !== source) return;
+      countryGroupsFetched.delete(code); // transient — Retry or reopen tries again
+      countryGroupsFailed = [...countryGroupsFailed, code];
+    }
+  }
+  /** A state/region group anywhere on the page, including lazily loaded ones. */
+  function findGroup(code: string): Group | undefined {
+    return (
+      data.stateGroups.find((x) => x.stateCode === code) ??
+      data.countrySections.flatMap((x) => groupsOf(x)).find((x) => x.stateCode === code)
+    );
+  }
+
   // Which state sections are expanded — remembered across sessions (GBV).
   const OPEN_KEY = "forecast-data-open-states";
   function readOpen(): string[] {
@@ -307,12 +364,13 @@
     if (open) {
       if (!landingOpen) void loadHotspotCounts(code);
       // Detail is fetched on expand, not shipped with the page (td-3bf3a2).
-      const g =
-        data.stateGroups.find((x) => x.stateCode === code) ??
-        data.countrySections.flatMap((x) => x.groups).find((x) => x.stateCode === code);
+      const g = findGroup(code);
       const sec = data.countrySections.find((x) => x.countryCode === code);
       if (g) void loadGroupDetail(g.stateCode, g.stateName);
-      else if (sec) void loadGroupDetail(sec.countryCode, sec.countryName);
+      else if (sec) {
+        void loadGroupDetail(sec.countryCode, sec.countryName);
+        void loadCountryGroups(sec.countryCode);
+      }
     }
     if (browser) {
       try {
@@ -368,11 +426,15 @@
   const groupCodes = $derived(
     new Set([
       ...data.stateGroups.map((g) => g.stateCode),
-      ...data.countrySections.flatMap((sec) => [sec.countryCode, ...sec.groups.map((g) => g.stateCode)]),
+      ...data.countrySections.flatMap((sec) => [sec.countryCode, ...groupsOf(sec).map((g) => g.stateCode)]),
     ]),
   );
   const hubContentReady = $derived(
-    openStates.every((code) => !groupCodes.has(code) || hasDetail(code) || detailFailed.includes(code)),
+    openStates.every((code) => {
+      const sec = data.countrySections.find((x) => x.countryCode === code);
+      if (sec && countryGroupsPending(sec)) return false;
+      return !groupCodes.has(code) || hasDetail(code) || detailFailed.includes(code);
+    }),
   );
 
   // Hotspot tallies per county ("229 of 312 loaded · 83 to load"), fetched
@@ -416,12 +478,15 @@
   $effect(() => {
     for (const code of openStates) {
       if (!data.offlineView) void loadHotspotCounts(code);
-      const g =
-        data.stateGroups.find((x) => x.stateCode === code) ??
-        data.countrySections.flatMap((x) => x.groups).find((x) => x.stateCode === code);
+      // findGroup reads the lazily loaded country groups, so a state restored
+      // open inside a country re-runs this once that country's groups arrive.
+      const g = findGroup(code);
       if (g) void loadGroupDetail(g.stateCode, g.stateName);
       const sec = data.countrySections.find((x) => x.countryCode === code);
-      if (sec) void loadGroupDetail(sec.countryCode, sec.countryName);
+      if (sec) {
+        void loadGroupDetail(sec.countryCode, sec.countryName);
+        void loadCountryGroups(sec.countryCode);
+      }
     }
   });
 
@@ -1211,7 +1276,15 @@
         {/if}
         {@render dataTable("Hotspot", cdetail.stateHotspots)}
       {/if}
-      {#each s.groups as g (g.stateCode)}
+      {#if countryGroupsFailed.includes(s.countryCode)}
+        <p class="notice err" role="alert">
+          Couldn't load {s.countryName}'s regions.
+          <button type="button" class="secondary" onclick={() => loadCountryGroups(s.countryCode)}>Retry</button>
+        </p>
+      {:else if countryGroupsPending(s)}
+        <p class="muted" role="status">Loading {s.groupCount.toLocaleString()} region{s.groupCount === 1 ? "" : "s"}…</p>
+      {/if}
+      {#each groupsOf(s) as g (g.stateCode)}
         {@render regionGroup(g, true)}
       {/each}
     {/if}
@@ -1810,7 +1883,7 @@
 
   {#if data.failed.length > 0}
     <section class="card">
-      <details class="failed-section" open={data.focus?.kind === "failed"}>
+      <details class="failed-section" bind:open={failedOpen}>
         <summary>
           <h2>Failed loads ({data.failed.length})</h2>
         </summary>
@@ -1818,6 +1891,9 @@
           These locations were attempted but have no stored data. eBird's export
           sometimes errors on individual hotspots — retrying later often works.
         </p>
+        <!-- td-b6be76: hundreds of rows, built only while the section is open
+             (a closed <details> still builds and hydrates its contents). -->
+        {#if failedOpen}
         <ul class="failed">
           {#each data.failed as f (f.locCode)}
             <li id={hubFailedId(f.locCode)} class="hub-target" class:unverified={f.unverified} tabindex="-1">
@@ -1861,6 +1937,7 @@
             </li>
           {/each}
         </ul>
+        {/if}
       </details>
     </section>
   {/if}

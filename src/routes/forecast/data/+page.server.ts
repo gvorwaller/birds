@@ -21,10 +21,11 @@ import {
 import { sweepAreaHotspots } from "$server/hotspot-sweep";
 import {
   coverageFromMeta,
+  FAILED_RETRY_COOLDOWN_MS,
   recentFailures,
   sortByProximity,
 } from "$server/forecast";
-import { attemptMeta, frequencyMeta, lastCompleteYear } from "$server/barchart";
+import { lastCompleteYear } from "$server/barchart";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
@@ -176,7 +177,18 @@ interface CountryJobStateRow {
 
 // Inventory of stored barchart data. Reads Postgres (and the official-API
 // region-list cache for country/region names) — never ebird.org/barchartData.
-export const load: PageServerLoad = async ({ locals, url }) => {
+/**
+ * The page data, shared with /api/hub-country (td-b6be76). `expand` names the
+ * ONE country whose nested state/region groups are included; every other
+ * country ships only its summary (groupCount), because sending all ~3,000
+ * folded groups made this a 1.5 MB page.
+ */
+type HubDataEvent = { locals: App.Locals; url: URL };
+
+async function hubInventoryData(
+  { locals, url }: HubDataEvent,
+  opts: { expand?: string } = {},
+) {
   const userId = locals.scopeId!;
   const isViewer = locals.user?.role === "viewer";
   // Discovery (Phase 8B): strict typed / map state, rendered on the server so
@@ -204,10 +216,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // the person acts). Explicit actions keep their normal behavior.
   const offlineView =
     parsedDiscovery.state.mode !== "none" || !!showParam || !!regionParam || !!countryParamRaw;
-  // Stream the counts: the inventory and its controls need not wait for the
-  // all-world distinct aggregation. Failure is explicit, never shown as zero.
-  const speciesCounts = streamed(loadedSpeciesCounts(), () => "Species counts unavailable");
-
   const [loadedRes, failedRes, correctionsRes, countryJobStateRes, apiKey] = await Promise.all([
     query<LoadedRow>(
       `SELECT loc_code, loc_kind, loc_name, begin_year, end_year, n_species,
@@ -536,11 +544,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const allChildCodes = [
     ...new Set([...childLists.values()].flat().map((c) => c.code)),
   ];
-  const [childMeta, childAttempts] = await Promise.all([
-    frequencyMeta(allChildCodes),
-    attemptMeta(allChildCodes),
-  ]);
-  const childFailures = recentFailures(childAttempts, new Date());
+  // td-b6be76: coverage needs only each child's end year, which every loaded
+  // row already carries (loadedRes); frequencyMeta() re-read ~3,500 rows with
+  // their 48-week sample arrays. And only RECENT errors matter (the 24 h
+  // cooldown), so read just those instead of every attempt for every child.
+  const childMeta = new Map<string, { endYear: number }>(
+    loadedRes.rows.map((r) => [r.loc_code, { endYear: Number(r.end_year) }]),
+  );
+  const recentErrorRes = await query<{ loc_code: string; last_attempt_at: string }>(
+    `SELECT loc_code, last_attempt_at FROM frequency_fetch_attempts
+      WHERE status = 'error' AND last_attempt_at > NOW() - make_interval(secs => $1 / 1000.0)
+        AND loc_code = ANY($2::text[])`,
+    [FAILED_RETRY_COOLDOWN_MS, allChildCodes],
+  );
+  const childFailures = recentFailures(
+    new Map(
+      recentErrorRes.rows.map((r) => [
+        r.loc_code,
+        { status: "error", lastAttemptAt: new Date(r.last_attempt_at) },
+      ]),
+    ),
+    new Date(),
+  );
   for (const g of allGroups) {
     const list = childLists.get(g.stateCode);
     if (!list) {
@@ -631,6 +656,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   );
 
   // Which failed rows have no hotspot evidence (local reads only).
+  // td-b6be76: answered from the cached discovery index instead of expanding
+  // every cached hotspot list (13 MB in production) on each page load.
   const verifiedFailed = await verifiedHotspotIdsAmong(failedRes.rows.map((r) => r.loc_code));
 
   // Country-qualified labels for the failed-loads list (rev 3: it mixes
@@ -719,12 +746,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     focusDetail,
     preselectRegion,
     hasHome: home != null,
-    speciesCounts,
     stateGroups: stateGroups.map(stripDetail),
+    // td-b6be76: a country's groups ship only when this request is about that
+    // country (a ?show= landing chain, or /api/hub-country's expand); the page
+    // fetches the rest when a country is opened.
     countrySections: sortedCountrySections.map((s) => ({
       ...s,
       countryHotspots: [],
-      groups: s.groups.map(stripDetail),
+      groupCount: s.groups.length,
+      groups:
+        s.countryCode === opts.expand ||
+        (focus?.kind === "area" && focus.states[0] === s.countryCode)
+          ? s.groups.map(stripDetail)
+          : [],
     })),
     orphanHotspots,
     failed: failedRes.rows.map((r) => {
@@ -776,7 +810,23 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     isViewer,
     nextEnrichmentScanAt: nextScan.rows[0]?.next_retry_at ?? null,
   };
-};
+}
+
+/** The narrow lazy-country boundary. It intentionally does not start the
+ * streamed worldwide species aggregation that only the full page renders. */
+export async function _hubCountryGroups(event: HubDataEvent, country: string) {
+  const data = await hubInventoryData(event, { expand: country });
+  return data.countrySections.find((s) => s.countryCode === country)?.groups ?? null;
+}
+
+export async function _hubData(event: HubDataEvent, opts: { expand?: string } = {}) {
+  // Start the streamed counts alongside the inventory for the page. The
+  // country-groups endpoint above deliberately bypasses this page-only work.
+  const speciesCounts = streamed(loadedSpeciesCounts(), () => "Species counts unavailable");
+  return { ...(await hubInventoryData(event, opts)), speciesCounts };
+}
+
+export const load: PageServerLoad = (event) => _hubData(event);
 
 export const actions: Actions = {
   /**

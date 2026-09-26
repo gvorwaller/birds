@@ -563,25 +563,14 @@ export function buildCandidates(ev: Evidence): Candidate[] {
 export async function verifiedHotspotIdsAmong(ids: readonly string[]): Promise<Set<string>> {
   const wanted = [...new Set(ids.filter((id) => isHotspotLocId(id)))];
   if (wanted.length === 0) return new Set();
-  const [lists, info] = await Promise.all([
-    query<{ loc_id: string }>(
-      `SELECT DISTINCT h->>'locId' AS loc_id
-         FROM ebird_cache c
-        CROSS JOIN LATERAL jsonb_array_elements(
-               CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
-        WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
-          AND jsonb_typeof(h) = 'object' AND h->>'locId' = ANY($1::text[])`,
-      [wanted],
-    ),
-    query<{ cache_key: string; payload: unknown }>(
-      `SELECT cache_key, payload FROM ebird_cache WHERE cache_key = ANY($1::text[])`,
-      [wanted.map((id) => `hotspotInfo:${id}`)],
-    ),
-  ]);
-  const verified = new Set(lists.rows.map((r) => r.loc_id));
-  for (const row of info.rows) {
-    const id = row.cache_key.slice("hotspotInfo:".length);
-    if (parseOfficialHotspotInfo(row.payload, id)) verified.add(id);
+  // td-b6be76: the same evidence the discovery index already holds (official
+  // hotspot lists + valid hotspot info), reused instead of re-expanding every
+  // cached list on each Hotspots & data load.
+  const { ev } = await discoveryIndex();
+  const verified = new Set<string>();
+  for (const id of wanted) {
+    const h = ev.hotspots.get(id);
+    if (h && (h.sources.has("list") || h.sources.has("info"))) verified.add(id);
   }
   return verified;
 }

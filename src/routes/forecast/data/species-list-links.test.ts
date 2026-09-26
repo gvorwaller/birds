@@ -42,7 +42,9 @@ describe("Hotspots & data species-count links", () => {
 describe("return focus to a lazily loaded row (GROK)", () => {
   it("waits for every open group's rows before restoring focus", () => {
     expect(hub).toContain("contentReady={hubContentReady}");
-    expect(hub).toMatch(/const hubContentReady = \$derived\(\s*openStates\.every\(\(code\) => !groupCodes\.has\(code\) \|\| hasDetail\(code\) \|\| detailFailed\.includes\(code\)\),/);
+    expect(hub).toContain("return !groupCodes.has(code) || hasDetail(code) || detailFailed.includes(code);");
+    // td-b6be76: an open country also waits for its lazily loaded groups.
+    expect(hub).toContain("if (sec && countryGroupsPending(sec)) return false;");
     // A failed detail request settles the wait instead of blocking it.
     expect(hub.match(/detailFailed = \[\.\.\.detailFailed, code\];/g)).toHaveLength(2);
     // Landing on a ?show= section yields to a return-to-row restore.

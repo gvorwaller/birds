@@ -147,7 +147,11 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
     expect(page).toContain('<summary id={hubNodeId(g.stateCode)} class="hub-target">');
     expect(page).toContain('<summary id={hubNodeId(s.countryCode)} class="hub-target">');
     expect(page).toContain('<td id={hubNodeId(b.countyCode)} class="hub-target" tabindex="-1">');
-    expect(page).toContain('open={data.focus?.kind === "failed"}');
+    // td-b6be76: the failed section is bound to state that starts open for a
+    // failed-hotspot landing (and its rows render only while it's open).
+    expect(page).toContain('<details class="failed-section" bind:open={failedOpen}>');
+    expect(page).toContain('let failedOpen = $state(untrack(() => data.focus?.kind === "failed"));');
+    expect(page).toContain("{#if failedOpen}");
     expect(page).toContain('<li id={hubFailedId(f.locCode)} class="hub-target" class:unverified={f.unverified} tabindex="-1">');
     expect(page).toContain("el.focus({ preventScroll: true })");
     expect(rule(".hub-target {")).toContain("scroll-margin-top: calc(var(--nav-h) + 16px);");
@@ -237,7 +241,11 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
   });
 
   it("routes a reported location to the failed-load recovery row and labels that row", () => {
-    expect(page).toContain("open={data.focus?.kind === \"failed\"}");
+    // td-b6be76: the failed section is bound to state that starts open for a
+    // failed-hotspot landing (and its rows render only while it's open).
+    expect(page).toContain('<details class="failed-section" bind:open={failedOpen}>');
+    expect(page).toContain('let failedOpen = $state(untrack(() => data.focus?.kind === "failed"));');
+    expect(page).toContain("{#if failedOpen}");
     expect(page).toContain('<span class="unverified-tag">reported location — hotspot status unverified</span>');
     expect(page).toContain("Retrying reloads history; it does not verify that this is a hotspot or say anything about public access.");
     // The service, not the page, decides the target: a reported location never gets a hotspot target.
