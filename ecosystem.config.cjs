@@ -31,8 +31,13 @@ module.exports = {
 			restart_delay: 5000,
 			max_restarts: 10,
 			min_uptime: '30s',
-			// No image processing in this app — keep the footprint modest (cs.md).
-			max_memory_restart: '600M',
+			// Measured 2026-09-26 with the production build and the 384 MB heap cap:
+			// JavaScript data stays ~100-150 MB, but RSS plateaus at ~600-660 MB
+			// (up to ~860 MB with parallel requests) because the allocator keeps
+			// memory freed after large Postgres results. That is not a leak, but
+			// the old 600M limit sat below it and restarted the app (502s). 1G
+			// leaves room on the 4 GB droplet (other apps ~1.3 GB together).
+			max_memory_restart: '1G',
 
 			out_file: '/var/log/pm2/birds.out.log',
 			error_file: '/var/log/pm2/birds.err.log',
@@ -42,7 +47,11 @@ module.exports = {
 			env: {
 				NODE_ENV: 'production',
 				HOST: '127.0.0.1',
-				PORT: 3003
+				PORT: 3003,
+				// glibc keeps one malloc arena per thread by default; two arenas
+				// greatly reduce the freed-but-retained memory above (2026-09-26).
+				// Must be in the process environment at start: .env is too late.
+				MALLOC_ARENA_MAX: '2'
 			}
 		},
 		{
