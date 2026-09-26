@@ -97,6 +97,8 @@ describe("page wiring", () => {
     // parallel per-country builds pushed production past 600 MB, 2026-09-26).
     expect(server).toMatch(/export async function _hubCountryGroups[\s\S]*?hubInventoryData\(event, \{ expand: "\*" \}\)/);
     expect(server).toContain("if (countryGroupsCache?.revision !== revision) {");
+    expect(server).toContain("last_attempt_at > NOW() - make_interval(secs => $1 / 1000.0)");
+    expect(server).not.toContain("date_trunc('hour', NOW())");
     expect(server).toMatch(/export async function _hubData[\s\S]*?streamed\(loadedSpeciesCounts\(\)/);
   });
 

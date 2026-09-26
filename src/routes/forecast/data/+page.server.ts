@@ -820,9 +820,9 @@ async function hubInventoryData(
 type HubGroups = Awaited<ReturnType<typeof hubInventoryData>>["countrySections"][number]["groups"];
 
 /**
- * What the country groups depend on: loaded rows, recent failures (their 24 h
- * cooldown also ages out, so the hour is part of it), cached county lists,
- * and the last complete year. Not the viewer: groups are the same for everyone.
+ * What the country groups depend on: loaded rows, failures still inside their
+ * 24 h cooldown, cached county lists, and the last complete year. Not the
+ * viewer: groups are the same for everyone.
  */
 async function countryGroupsRevision(): Promise<string> {
   const { rows } = await query<{ revision: string }>(
@@ -830,12 +830,14 @@ async function countryGroupsRevision(): Promise<string> {
        (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code,
                  begin_year, end_year, n_species, n_unmatched, fetched_at), ',' ORDER BY loc_code COLLATE "C"))
           FROM frequency_fetch),
-       (SELECT md5(string_agg(concat_ws(':', loc_code, status, last_attempt_at), ',' ORDER BY loc_code COLLATE "C"))
-          FROM frequency_fetch_attempts WHERE status = 'error'),
+       (SELECT md5(string_agg(concat_ws(':', loc_code, last_attempt_at), ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch_attempts
+         WHERE status = 'error'
+           AND last_attempt_at > NOW() - make_interval(secs => $1 / 1000.0)),
        (SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '')
-          FROM ebird_cache WHERE cache_key LIKE 'regions:subnational2:%'),
-       date_trunc('hour', NOW())::text
+          FROM ebird_cache WHERE cache_key LIKE 'regions:subnational2:%')
      ) AS revision`,
+    [FAILED_RETRY_COOLDOWN_MS],
   );
   return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
 }
