@@ -16,7 +16,12 @@ module.exports = {
 		{
 			name: 'birds',
 			script: 'build/index.js',
-			node_args: '--env-file=.env',
+			// Cap the V8 heap well below max_memory_restart (2026-09-26): with the
+			// default ceiling (~2 GB on this 4 GB droplet) V8 collects lazily and
+			// RSS sailed past 600M before any GC, so PM2 restarted the app (502s).
+			// Measured locally: 20 page loads + 12 searches peaked at 2.7 GB RSS
+			// uncapped vs 1.0 GB with a 400 MB cap (heap held at 230-260 MB).
+			node_args: '--env-file=.env --max-old-space-size=384',
 			cwd: '/opt/birds',
 
 			instances: 1,
