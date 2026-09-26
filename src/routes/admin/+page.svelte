@@ -31,7 +31,64 @@
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
   type Surface = "enrichment" | "familyEnrichment" | "guidance";
-  let activeTab = $state<"status" | "ai">("status");
+  let activeTab = $state<"status" | "ai" | "health">("status");
+  const ADMIN_TABS = ["status", "ai", "health"] as const;
+  function onAdminTabKeydown(event: KeyboardEvent) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const current = ADMIN_TABS.indexOf(activeTab);
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? ADMIN_TABS.length - 1
+        : (current + (event.key === "ArrowRight" ? 1 : -1) + ADMIN_TABS.length) % ADMIN_TABS.length;
+    activeTab = ADMIN_TABS[next];
+    queueMicrotask(() => document.getElementById(`admin-tab-${activeTab}`)?.focus());
+  }
+
+  // Server health tab (td-7739c2): 7-day memory chart, one line per process,
+  // with each process's PM2 restart limit drawn as a dashed line.
+  const CHART_W = 640;
+  const CHART_H = 160;
+  function healthChart(proc: "web" | "worker") {
+    const h = data.health;
+    if (!h) return null;
+    const points = h.history.filter((p) => p.process === proc);
+    const limit = h.limits[proc];
+    const end = Date.parse(h.now);
+    const start = end - h.retentionDays * 86_400_000;
+    const top = Math.max(limit * 1.1, ...points.map((p) => p.rssMb));
+    const x = (t: number) => Math.max(0, Math.min(CHART_W, ((t - start) / (end - start)) * CHART_W));
+    const y = (v: number) => CHART_H - (v / top) * CHART_H;
+    const line = (key: "rssMb" | "heapUsedMb") =>
+      points.map((p) => `${x(Date.parse(p.at)).toFixed(1)},${y(p[key]).toFixed(1)}`).join(" ");
+    return {
+      rss: line("rssMb"),
+      heap: line("heapUsedMb"),
+      limitY: y(limit).toFixed(1),
+      limit,
+      peak: points.reduce((m, p) => Math.max(m, p.rssMb), 0),
+      count: points.length,
+    };
+  }
+  function fmtUptime(seconds: number): string {
+    const d = Math.floor(seconds / 86400);
+    const hh = Math.floor((seconds % 86400) / 3600);
+    const mm = Math.floor((seconds % 3600) / 60);
+    return d > 0 ? `${d} d ${hh} h` : hh > 0 ? `${hh} h ${mm} min` : `${mm} min`;
+  }
+  const fmtWhen = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  type HealthRun = NonNullable<PageData["health"]>["runs"][number];
+  function isCurrentRun(run: HealthRun): boolean {
+    if (run.process === "web") {
+      return !!data.health && run.pid === data.health.web.pid && run.startedAt === data.health.web.startedAt;
+    }
+    return !!data.health && liveWorker.alive && run.pid === liveWorker.pid && run.startedAt === data.health.worker?.startedAt;
+  }
+  function runEnd(run: HealthRun): string {
+    if (isCurrentRun(run)) return "Running";
+    return run.endReason === "graceful shutdown" ? "Clean shutdown" : "Unknown";
+  }
   const SURFACES: { key: Surface; title: string; blurb: string }[] = [
     { key: "familyEnrichment", title: "Family descriptions", blurb: "Drafting and source checks; Sonnet 5 or Opus 5" },
     { key: "enrichment", title: "Enrichment", blurb: "worker batch jobs" },
@@ -248,24 +305,46 @@
     <button
       type="button"
       role="tab"
+      id="admin-tab-status"
+      aria-controls="admin-panel-status"
       aria-selected={activeTab === "status"}
+      tabindex={activeTab === "status" ? 0 : -1}
       class:active={activeTab === "status"}
       onclick={() => (activeTab = "status")}
+      onkeydown={onAdminTabKeydown}
     >
       Status
     </button>
     <button
       type="button"
       role="tab"
+      id="admin-tab-ai"
+      aria-controls="admin-panel-ai"
       aria-selected={activeTab === "ai"}
+      tabindex={activeTab === "ai" ? 0 : -1}
       class:active={activeTab === "ai"}
       onclick={() => (activeTab = "ai")}
+      onkeydown={onAdminTabKeydown}
     >
       AI &amp; Cost
+    </button>
+    <button
+      type="button"
+      role="tab"
+      id="admin-tab-health"
+      aria-controls="admin-panel-health"
+      aria-selected={activeTab === "health"}
+      tabindex={activeTab === "health" ? 0 : -1}
+      class:active={activeTab === "health"}
+      onclick={() => (activeTab = "health")}
+      onkeydown={onAdminTabKeydown}
+    >
+      Server health
     </button>
   </div>
 
   {#if activeTab === "status"}
+  <div id="admin-panel-status" role="tabpanel" aria-labelledby="admin-tab-status">
   <section class="card family-enrichment" aria-labelledby="family-enrichment-heading">
       <h2 id="family-enrichment-heading">Family descriptions</h2>
       <p>{liveFamilies.ready} of {liveFamilies.total} families have descriptions · {liveFamilies.pending} awaiting enrichment · {liveFamilies.noSource} without a usable source · {liveFamilies.errors} needing retry.</p>
@@ -546,7 +625,9 @@
       </table>
     </div>
   </CollapsibleCard>
-  {:else}
+  </div>
+  {:else if activeTab === "ai"}
+  <div id="admin-panel-ai" role="tabpanel" aria-labelledby="admin-tab-ai">
   <CollapsibleCard id="usage" title="Usage meter">
     <p class="muted">
       The live status above updates worker state only — Refresh reloads this
@@ -824,6 +905,77 @@
       </div>
     {/if}
   </CollapsibleCard>
+  </div>
+  {:else}
+  <div id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health">
+  <section class="card health" aria-labelledby="health-heading">
+    <h2 id="health-heading">Server health</h2>
+    {#if !data.health}
+      <p class="error" role="alert">Server health data is unavailable right now.</p>
+    {:else}
+      {@const h = data.health}
+      {@const previousWebRun = h.runs.find((r) => r.process === "web" && !isCurrentRun(r))}
+      <p class="muted">
+        PM2 restarts the web app above {h.limits.web.toLocaleString()} MB and the worker above
+        {h.limits.worker} MB of total memory. JavaScript data is capped at {h.web.heapLimitMb} MB; the
+        rest of total memory is mostly space kept by the allocator after large database results.
+        Refresh the page for current numbers.
+      </p>
+      <h3>Web app (now)</h3>
+      <div class="stat-grid">
+        <div class="stat-tile"><span class="stat-label">Total memory</span><span class="stat-value">{h.web.rssMb} MB</span><span class="muted">of {h.limits.web.toLocaleString()} MB limit</span></div>
+        <div class="stat-tile"><span class="stat-label">JavaScript data</span><span class="stat-value">{h.web.heapUsedMb} MB</span><span class="muted">{h.web.heapTotalMb} MB reserved · cap {h.web.heapLimitMb} MB</span></div>
+        <div class="stat-tile"><span class="stat-label">Other native</span><span class="stat-value">{h.web.externalMb} MB</span><span class="muted">buffers outside the heap</span></div>
+        <div class="stat-tile"><span class="stat-label">Up for</span><span class="stat-value">{fmtUptime(h.web.uptimeSeconds)}</span><span class="muted">since {fmtWhen(h.web.startedAt)} · pid {h.web.pid}</span></div>
+        <div class="stat-tile"><span class="stat-label">Previous web run</span>{#if previousWebRun}<span class="stat-value">{previousWebRun.peakRssMb} MB peak</span><span class="muted">Ended: {runEnd(previousWebRun).toLowerCase()} · last sample {fmtWhen(previousWebRun.lastSampleAt)}</span>{:else}<span class="stat-value">Not recorded</span><span class="muted">History begins with this run</span>{/if}</div>
+      </div>
+      <h3>Worker (latest sample)</h3>
+      {#if h.worker}
+        <p>{h.worker.rssMb} MB total · {h.worker.heapUsedMb} MB JavaScript data · of {h.limits.worker} MB limit · sampled {fmtWhen(h.worker.at)} · run started {fmtWhen(h.worker.startedAt)}{h.worker.endReason === "graceful shutdown" ? " · cleanly shut down" : liveWorker.alive && liveWorker.pid === h.worker.pid ? " · running" : " · end unknown"}</p>
+      {:else}
+        <p class="muted">No worker samples yet. The worker records one when it starts and every {h.sampleIntervalMinutes} minutes.</p>
+      {/if}
+      {#each ["web", "worker"] as const as proc (proc)}
+        {@const c = healthChart(proc)}
+        <h3>{proc === "web" ? "Web app" : "Worker"}: last {h.retentionDays} days</h3>
+        {#if c && c.count > 1}
+          <svg class="memchart" viewBox="0 0 {CHART_W} {CHART_H}" preserveAspectRatio="none" role="img"
+            aria-label={`${proc === "web" ? "Web app" : "Worker"} total memory over ${h.retentionDays} days, peak ${c.peak} MB, restart limit ${c.limit} MB`}>
+            <line class="limit" x1="0" x2={CHART_W} y1={c.limitY} y2={c.limitY} />
+            <polyline class="heap" points={c.heap} />
+            <polyline class="rss" points={c.rss} />
+          </svg>
+          <p class="muted chart-key"><span class="key rss">Total memory</span> · <span class="key heap">JavaScript data</span> · <span class="key limit">restart limit {c.limit} MB</span> · peak {c.peak} MB</p>
+        {:else}
+          <p class="muted">Not enough samples yet (one every {h.sampleIntervalMinutes} minutes).</p>
+        {/if}
+      {/each}
+      <h3>Runs in the last {h.retentionDays} days</h3>
+      <p class="muted">A new run means the process started again after a deploy or restart. Only a clean worker drain has a known end; crashes and forced restarts stay “Unknown” because the app cannot prove their cause.</p>
+      {#if h.runs.length === 0}
+        <p class="muted">No samples recorded yet.</p>
+      {:else}
+        <div class="table-scroll">
+          <table class="runs">
+            <thead><tr><th scope="col">Process</th><th scope="col">Started</th><th scope="col">Last sample</th><th scope="col">Peak</th><th scope="col">Last</th><th scope="col">Ended</th></tr></thead>
+            <tbody>
+              {#each h.runs as r (`${r.process}-${r.pid}-${r.startedAt}`)}
+                <tr class:nearlimit={r.peakRssMb >= h.limits[r.process] * 0.85}>
+                  <td>{r.process === "web" ? "Web app" : "Worker"}</td>
+                  <td>{fmtWhen(r.startedAt)}</td>
+                  <td>{fmtWhen(r.lastSampleAt)}</td>
+                  <td>{r.peakRssMb} MB</td>
+                  <td>{r.lastRssMb} MB</td>
+                  <td>{runEnd(r)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    {/if}
+  </section>
+  </div>
   {/if}
 </div>
 
@@ -1114,6 +1266,27 @@
     background: var(--accent);
     color: var(--on-accent);
   }
+  .seg { flex-wrap: wrap; max-width: 100%; }
+
+  /* Server health (td-7739c2) */
+  .health h3 { margin: 18px 0 6px; font-size: 1rem; }
+  /* Health tiles: label, value and caption on their own lines, matching the
+     AI & Cost tiles (GROK: inline spans ran together, "Total memory307 MBof…"). */
+  .health .stat-tile > span { display: block; }
+  .health .stat-value { font-size: 1.4rem; font-weight: 700; margin: 4px 0 2px; }
+  .health .stat-tile > .muted { font-size: 0.78rem; }
+  .memchart { display: block; width: 100%; height: 160px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  .memchart polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .memchart polyline.rss { stroke: var(--accent); }
+  .memchart polyline.heap { stroke: var(--muted); stroke-dasharray: 2 3; }
+  .memchart line.limit { stroke: var(--danger); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+  .chart-key .key { font-weight: 600; }
+  .chart-key .key.rss { color: var(--accent); }
+  .chart-key .key.limit { color: var(--danger); }
+  .table-scroll { overflow-x: auto; }
+  .runs { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  .runs th, .runs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .runs tr.nearlimit td { color: var(--danger); font-weight: 600; }
 
   /* Usage meter */
   .stat-grid {

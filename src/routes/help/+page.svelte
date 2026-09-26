@@ -1196,6 +1196,15 @@
 						The pause setting survives worker restarts and deployments until an
 						admin explicitly resumes it.
 					</li>
+					<li>
+						<strong>Server health</strong> (its own Admin tab) shows the web app's
+						memory right now, the worker's latest reading, a 7-day memory chart for
+						each with its restart limit, and every run in that week. A new run means
+						the process started again, after a deploy or a restart. A clean worker
+						shutdown is labeled; other end causes stay unknown because the app cannot
+						prove whether a deploy, crash, or memory restart caused them.
+						Samples are taken every 5 minutes and kept for 7 days.
+					</li>
 				</ul>
 			</div>
 		{/if}

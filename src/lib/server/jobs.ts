@@ -541,6 +541,8 @@ export async function reclaimStartupJobs(note: string): Promise<number> {
  */
 export interface PruneScope {
 	jobIds?: readonly number[];
+	/** td-7739c2: limit the memory-sample sweep to these rows. */
+	memorySampleIds?: readonly number[];
 	alertUserId?: number;
 	cacheKeyLike?: string;
 }
@@ -577,6 +579,16 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 		await query(
 			`DELETE FROM need_alert_log WHERE sent_at < NOW() - interval '180 days' AND user_id = $1`,
 			[scope.alertUserId]
+		);
+	}
+	// Server health memory samples (td-7739c2): 7 days.
+	if (!scope) {
+		await query(`DELETE FROM process_memory_samples WHERE sampled_at < NOW() - interval '7 days'`);
+	} else if (scope.memorySampleIds) {
+		await query(
+			`DELETE FROM process_memory_samples
+			  WHERE sampled_at < NOW() - interval '7 days' AND id = ANY($1::bigint[])`,
+			[[...scope.memorySampleIds]]
 		);
 	}
 	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);

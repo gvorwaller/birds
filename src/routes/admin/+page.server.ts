@@ -1,3 +1,4 @@
+import { serverHealth } from "$server/process-health";
 import { setFamilyPaused, retryFamilyGaps, FamilyRetrySelectionError } from '$server/family-enrichment';
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
@@ -124,7 +125,11 @@ export const load: PageServerLoad = async ({ locals }) => {
   ]);
 
   const now = new Date();
+  // Server health tab (td-7739c2). A failure here must not break the admin
+  // page; the tab says the data is unavailable instead.
+  const health = await serverHealth().catch(() => null);
   return {
+    health,
     families: liveStatus.families,
     now: liveStatus.now,
     worker: liveStatus.worker,

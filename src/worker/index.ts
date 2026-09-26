@@ -16,6 +16,7 @@ import { ensureFamilyEnrichment } from '$server/family-enrichment';
 process.env.BIRDS_DB_APP_NAME = 'birds-worker';
 
 import pg from 'pg';
+import { recordMemorySample, startMemorySampler } from '$server/process-health';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
 import { runJob, ensureNeedAlertScan, ensureEnrichmentScan } from '$server/job-handlers';
 
@@ -94,6 +95,8 @@ async function main(): Promise<void> {
 		);
 	});
 	await markWorkerStarted(process.pid, VERSION);
+	// Server health (td-7739c2): the admin page reads the worker's samples.
+	startMemorySampler('worker');
 	console.log(`[birds-worker] started pid=${process.pid} version=${VERSION}`);
 
 	await ensureFamilyEnrichment();
@@ -220,6 +223,14 @@ async function main(): Promise<void> {
 		{ pid: process.pid, version: VERSION, state: 'draining', currentJobId: null },
 		'shutdown'
 	);
+	// A clean drain is the one end cause the app can state as fact. Crashes and
+	// forced restarts intentionally have no end marker and render as unknown.
+	await recordMemorySample('worker', 'graceful shutdown').catch((err) => {
+		console.error(
+			'[birds-worker] final memory sample failed:',
+			err instanceof Error ? err.message : err
+		);
+	});
 	await lockClient.end();
 	console.log('[birds-worker] drained — exiting');
 	process.exit(0);

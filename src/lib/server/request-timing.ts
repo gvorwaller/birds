@@ -98,7 +98,9 @@ export function perfLogLine(
 	shellMs: number,
 	totalMs: number,
 	bag: TimingBag,
-	weight?: { bytes: number; tags: number | null }
+	weight?: { bytes: number; tags: number | null },
+	/** td-7739c2: the process memory the request finished with. */
+	memory?: { rss: number; heapUsed: number }
 ): string {
 	const parts = [
 		`perf path=${pathname}`,
@@ -112,6 +114,10 @@ export function perfLogLine(
 	}
 	for (const [name, b] of Object.entries(bag.buckets)) {
 		if (b.n > 0) parts.push(`${name}=${b.n}/${Math.round(b.ms)}ms`);
+	}
+	if (memory) {
+		parts.push(`rss=${Math.round(memory.rss / (1024 * 1024))}MB`);
+		parts.push(`heap=${Math.round(memory.heapUsed / (1024 * 1024))}MB`);
 	}
 	return parts.join(' ');
 }

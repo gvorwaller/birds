@@ -4,7 +4,8 @@ import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
 import { isSpecialInterestRequest } from '$lib/special-interest';
 import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
-import { dev } from '$app/environment';
+import { building, dev } from '$app/environment';
+import { startMemorySampler } from '$server/process-health';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
 	newTimingBag,
@@ -14,6 +15,11 @@ import {
 	serverTimingHeader,
 	type TimingBag
 } from '$server/request-timing';
+
+
+// Server health (td-7739c2): sample this process's memory for the admin page.
+// Not during a build, and not under Vitest (tests import hooks directly).
+if (!building && !process.env.VITEST) startMemorySampler('web');
 
 export const SESSION_COOKIE_OPTS = {
 	path: '/',
@@ -170,7 +176,7 @@ function withBodyCompletionLog(
 				perfLogLine(pathname, response.status, shellMs, totalMs, bag, {
 					bytes,
 					tags: isHtml ? tags : null
-				})
+				}, process.memoryUsage())
 			);
 		}
 	};
