@@ -5,18 +5,35 @@ const { getKey, resolve, compare } = vi.hoisted(() => ({
   resolve: vi.fn(),
   compare: vi.fn(),
 }));
-vi.mock("$server/ebird", () => ({ getEbirdApiKey: getKey }));
+const { EbirdError } = vi.hoisted(() => ({
+  EbirdError: class EbirdError extends Error {
+    constructor(
+      message: string,
+      public status?: number,
+      public retryAfterMs?: number,
+    ) {
+      super(message);
+    }
+  },
+}));
+vi.mock("$server/ebird", () => ({ getEbirdApiKey: getKey, EbirdError }));
 vi.mock("$server/hotspot-comparison", () => ({
   ComparisonError: class ComparisonError extends Error {
     status = 400;
     stopScheduling = false;
   },
+  MAX_INLINE_WAIT_MS: 15_000,
   resolveComparison: resolve,
   compareHotspotBatch: compare,
   emptyRows: (refs: unknown[]) => refs,
 }));
 
 import { GET } from "./+server";
+import {
+  __resetEbirdRateForTests,
+  noteEbirdResponse,
+  PaceDeferred,
+} from "$server/ebird-rate";
 
 const locals = { user: { id: 7, role: "owner" }, scopeId: 42 };
 const base =
@@ -24,6 +41,7 @@ const base =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetEbirdRateForTests();
   getKey.mockResolvedValue("secret");
   resolve.mockResolvedValue({
     value: "identity",
@@ -76,6 +94,15 @@ describe("hotspot comparison route", () => {
     } as never);
     expect(init.status).toBe(200);
     expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith(
+      "secret",
+      expect.anything(),
+      { accountId: 7, scopeOwnerId: 42 },
+      expect.objectContaining({
+        pace: expect.any(Function),
+        paceSignal: expect.any(AbortSignal),
+      }),
+    );
     expect(compare).not.toHaveBeenCalled();
     const batch = await GET({
       locals,
@@ -91,6 +118,73 @@ describe("hotspot comparison route", () => {
       "identity",
       expect.any(AbortSignal),
     );
+  });
+
+  it("returns the reference feed's real 429 wait so the client can auto-resume", async () => {
+    noteEbirdResponse(
+      "secret",
+      new Headers({ "retry-after": "9" }),
+      429,
+    );
+    resolve.mockResolvedValueOnce({
+      value: "identity",
+      references: [{ locId: "L1" }],
+      referenceFetchedAt: "2026-09-19T00:00:00.000Z",
+      referenceStale: true,
+      referenceRefreshErrorStatus: 429,
+      seen: new Set(),
+    });
+    const res = await GET({
+      locals,
+      url: new URL(base),
+      request: new Request(base),
+    } as never);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      stopScheduling: true,
+      stopReason: "rate",
+      resumeAfterMs: expect.any(Number),
+    });
+    expect(body.resumeAfterMs).toBeGreaterThan(8_000);
+  });
+
+  it("returns a prompt rate stop when an uncached reference refresh would outwait the request", async () => {
+    resolve.mockRejectedValueOnce(new PaceDeferred("rate", 90_000));
+    const res = await GET({
+      locals,
+      url: new URL(base),
+      request: new Request(base),
+    } as never);
+    await expect(res.json()).resolves.toMatchObject({
+      status: "ready",
+      references: [],
+      rows: [],
+      stopScheduling: true,
+      stopReason: "rate",
+      resumeAfterMs: 90_000,
+    });
+  });
+
+  it.each([401, 403])(
+    "a cold eBird %s on the hotspot list says the key failed, with a Settings pointer (td-5003e2)",
+    async (status) => {
+      resolve.mockRejectedValueOnce(new EbirdError("eBird API key is missing or invalid", status));
+      const res = await GET({ locals, url: new URL(base), request: new Request(base) } as never);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({ status: "unavailable", stopReason: "auth" });
+      expect(body.message).toMatch(/authorization failed.*Settings/);
+    },
+  );
+
+  it("a cold eBird 429 on the hotspot list is a resumable rate stop, not 'unavailable'", async () => {
+    noteEbirdResponse("secret", new Headers({ "retry-after": "4" }), 429);
+    resolve.mockRejectedValueOnce(new EbirdError("eBird API rate limit hit.", 429, 4000));
+    const res = await GET({ locals, url: new URL(base), request: new Request(base) } as never);
+    const body = await res.json();
+    expect(body).toMatchObject({ status: "ready", stopScheduling: true, stopReason: "rate" });
+    expect(body.resumeAfterMs).toBeGreaterThan(3000);
+    expect(body.resumeAfterMs).toBeLessThanOrEqual(4000);
   });
 
   it("allows viewers to read and gives missing-key users a settings action", async () => {

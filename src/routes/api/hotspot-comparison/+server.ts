@@ -1,12 +1,19 @@
 import { json, type RequestHandler } from "@sveltejs/kit";
-import { getEbirdApiKey } from "$server/ebird";
+import { EbirdError, getEbirdApiKey } from "$server/ebird";
 import {
   ComparisonError,
+  MAX_INLINE_WAIT_MS,
   compareHotspotBatch,
   emptyRows,
   resolveComparison,
 } from "$server/hotspot-comparison";
 import type { ComparisonFilters } from "$lib/hotspot-comparison";
+import {
+  belowHourlyReserve,
+  comparisonPacer,
+  ebirdRateState,
+  PaceDeferred,
+} from "$server/ebird-rate";
 
 function response(body: unknown, status = 200): Response {
   return json(body, {
@@ -95,14 +102,43 @@ export const GET: RequestHandler = async ({ locals, url, request }) => {
   const account = { accountId: locals.user.id, scopeOwnerId: locals.scopeId };
   try {
     if (!ids) {
-      const init = await resolveComparison(apiKey, filters, account);
+      const paceSignal = request.signal;
+      const inlineWaitUntil = Date.now() + MAX_INLINE_WAIT_MS;
+      const init = await resolveComparison(apiKey, filters, account, {
+        pace: () =>
+          comparisonPacer.acquire(apiKey, paceSignal, {
+            maxBlockMs: Math.max(0, inlineWaitUntil - Date.now()),
+            preserveHourlyReserve: true,
+          }),
+        paceSignal,
+      });
+      const refStatus = init.referenceRefreshErrorStatus;
+      const quotaRemaining =
+        refStatus === 429 ? belowHourlyReserve(apiKey) : null;
+      const stopReason =
+        refStatus === 401 || refStatus === 403
+          ? "auth"
+          : refStatus === 429
+            ? quotaRemaining != null
+              ? "quota"
+              : "rate"
+            : null;
+      const retryWait = Math.max(
+        0,
+        ebirdRateState(apiKey).blockedUntil - Date.now(),
+      );
       return response({
         status: "ready",
         identity: init.value,
         references: init.references,
         referenceFetchedAt: init.referenceFetchedAt,
         referenceStale: init.referenceStale,
-        stopScheduling: !!init.referenceRefreshErrorStatus,
+        stopScheduling: !!refStatus,
+        stopReason,
+        resumeAfterMs:
+          stopReason === "rate" ? Math.max(retryWait, 1000) : undefined,
+        quotaRemaining:
+          stopReason === "quota" ? quotaRemaining : undefined,
         rows: emptyRows(init.references),
       });
     }
@@ -131,8 +167,23 @@ export const GET: RequestHandler = async ({ locals, url, request }) => {
       referenceStale: batch.identity.referenceStale,
       rows: batch.rows,
       stopScheduling: batch.stopScheduling,
+      stopReason: batch.stopReason,
+      resumeAfterMs: batch.resumeAfterMs,
+      quotaRemaining: batch.quotaRemaining,
     });
   } catch (err) {
+    if (err instanceof PaceDeferred)
+      return response({
+        status: "ready",
+        references: ids ? undefined : [],
+        rows: [],
+        stopScheduling: true,
+        stopReason: err.reason,
+        resumeAfterMs:
+          err.reason === "rate" ? Math.max(err.retryAfterMs ?? 0, 1000) : undefined,
+        quotaRemaining:
+          err.reason === "quota" ? err.quotaRemaining : undefined,
+      });
     if (err instanceof ComparisonError)
       return response(
         {
@@ -147,6 +198,30 @@ export const GET: RequestHandler = async ({ locals, url, request }) => {
         },
         err.status,
       );
+    // A live eBird refusal with nothing cached to fall back on (a cold
+    // hotspot list): say which one it was, never "temporarily unavailable"
+    // (td-5003e2 — GROK hit this with an invalid key).
+    if (err instanceof EbirdError && (err.status === 401 || err.status === 403))
+      return response({
+        status: "unavailable",
+        stopReason: "auth",
+        message:
+          "eBird authorization failed — check your eBird API key in Settings.",
+      });
+    if (err instanceof EbirdError && err.status === 429) {
+      const quotaRemaining = belowHourlyReserve(apiKey);
+      const wait = ebirdRateState(apiKey).blockedUntil - Date.now();
+      return response({
+        status: "ready",
+        references: ids ? undefined : [],
+        rows: [],
+        stopScheduling: true,
+        stopReason: quotaRemaining != null ? "quota" : "rate",
+        resumeAfterMs:
+          quotaRemaining != null ? undefined : Math.max(wait, err.retryAfterMs ?? 0, 1000),
+        quotaRemaining: quotaRemaining ?? undefined,
+      });
+    }
     return response(
       {
         status: "unavailable",

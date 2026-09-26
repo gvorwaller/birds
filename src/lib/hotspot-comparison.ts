@@ -62,6 +62,49 @@ export interface ComparisonInitResponse {
 export interface ComparisonBatchResponse extends ComparisonInitResponse {
   rows?: HotspotComparisonRow[];
   stopScheduling?: boolean;
+  stopReason?: ComparisonStopReason | null;
+  resumeAfterMs?: number;
+  quotaRemaining?: number;
+}
+
+/** Why the server stopped scheduling (td-5003e2); see hotspot-comparison.ts. */
+export type ComparisonStopReason = "auth" | "rate" | "quota";
+
+/** A rate-limit wait up to this long resumes on its own; longer ones stop. */
+export const AUTO_RESUME_MAX_MS = 120_000;
+/** Consecutive rate stops with no new hotspot answered before giving up. */
+export const AUTO_RESUME_MAX_STALLS = 5;
+
+/** The status line for a run the server stopped. */
+export function comparisonStopMessage(
+  reason: ComparisonStopReason | null | undefined,
+  opts: {
+    quotaRemaining?: number;
+    unqueried?: number;
+    resumeAfterMs?: number;
+  },
+): string {
+  const left =
+    opts.unqueried == null
+      ? null
+      : `${opts.unqueried} hotspot${opts.unqueried === 1 ? "" : "s"} not checked yet`;
+  if (reason === "auth")
+    return "eBird authorization failed — check your eBird API key in Settings.";
+  if (reason === "quota")
+    return (
+      `Stopped to save eBird's hourly request allowance for the rest of the app` +
+      (opts.quotaRemaining != null ? ` (${opts.quotaRemaining} of 500 left this hour)` : "") +
+      (left ? `. ${left}; use Retry incomplete later.` : ". Try again later.")
+    );
+  if (reason === "rate") {
+    const secs = Math.ceil((opts.resumeAfterMs ?? 0) / 1000);
+    return (
+      `eBird asked us to slow down` +
+      (secs > 0 ? ` for about ${secs < 120 ? `${secs} s` : `${Math.ceil(secs / 60)} min`}` : "") +
+      (left ? `. ${left}; use Retry incomplete.` : ". The comparison will retry shortly.")
+    );
+  }
+  return "Further hotspot checks stopped after an eBird error response.";
 }
 
 export interface RawComparisonObservation {

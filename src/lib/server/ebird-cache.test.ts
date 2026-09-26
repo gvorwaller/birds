@@ -33,6 +33,7 @@ const {
   recentSpeciesInRegion,
   notableNearbyObs,
   hotspotsNear,
+  recentHotspotObs,
 } = await import("./ebird");
 
 /** Always a cache miss, so every call reaches the coalescing path. */
@@ -214,6 +215,49 @@ describe("cachedFetch coalescing", () => {
     expect(result).toMatchObject({ stale: true, refreshErrorStatus: 429, data: [] });
   });
 
+  it("records a 429's Retry-After for the key and logs the status, never the key (td-5003e2)", async () => {
+    const { ebirdRateState, __resetEbirdRateForTests } = await import("./ebird-rate");
+    __resetEbirdRateForTests();
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ payload: [], fetched_at: "2026-09-18T00:00:00.000Z" }] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Too Many Requests", {
+      status: 429,
+      headers: { "retry-after": "1", ratelimit: '"policy";r=474,"burst";r=0' },
+    })));
+    const before = Date.now();
+    await hotspotsNear("secret-key-value", 30.33, -81.66, 40);
+    const state = ebirdRateState("secret-key-value");
+    expect(state.blockedUntil).toBeGreaterThanOrEqual(before + 1000);
+    expect(state.policyRemaining).toBe(474);
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/\[ebird\] 429 \/ref\/hotspot\/geo retry-after=1000ms/);
+    expect(logged).not.toContain("secret-key-value");
+    expect(logged).not.toContain("?");
+    warn.mockRestore();
+  });
+
+  it("serves a stale reference row when pacing defers a long wait, without a live request", async () => {
+    const { PaceDeferred } = await import("./ebird-rate");
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({
+      rows: [{ payload: [], fetched_at: "2026-09-18T00:00:00.000Z" }],
+    });
+    const paceSignal = new AbortController().signal;
+    const result = await hotspotsNear("key", 30.34, -81.67, 40, {
+      pace: async () => {
+        throw new PaceDeferred("rate", 90_000);
+      },
+      paceSignal,
+    });
+    expect(result).toMatchObject({
+      stale: true,
+      refreshErrorStatus: 429,
+      data: [],
+    });
+    expect(fetchCalls).toEqual([]);
+  });
+
   it("shares one upstream request between concurrent callers of the same key", async () => {
     const [a, b, c] = await Promise.all([
       recentNearbyObs("key", 30.33, -81.66, 40, 7),
@@ -224,6 +268,51 @@ describe("cachedFetch coalescing", () => {
     expect(fetchCalls).toHaveLength(1);
     // Every caller still gets a real result, not a null placeholder.
     for (const r of [a, b, c]) expect(r.data).toEqual([]);
+  });
+
+  it("does not let one paced cache-miss owner's cancellation fail an active coalesced caller", async () => {
+    const { PaceAborted } = await import("./ebird-rate");
+    const cancelled = new AbortController();
+    const active = new AbortController();
+    const cancelledPace = vi.fn(async () => {
+      cancelled.abort();
+      throw new PaceAborted();
+    });
+    const activePace = vi.fn(async () => {});
+
+    const [first, second] = await Promise.allSettled([
+      recentHotspotObs("key", "L900001", 7, {
+        pace: cancelledPace,
+        paceSignal: cancelled.signal,
+      }),
+      recentHotspotObs("key", "L900001", 7, {
+        pace: activePace,
+        paceSignal: active.signal,
+      }),
+    ]);
+
+    expect(first).toMatchObject({ status: "rejected", reason: expect.any(PaceAborted) });
+    expect(second).toMatchObject({ status: "fulfilled" });
+    expect(activePace).toHaveBeenCalledTimes(1);
+    expect(fetchCalls).toHaveLength(1);
+  });
+
+  it("an unpaced caller (the hotspot page) sharing a cancelled paced owner's fetch still gets data", async () => {
+    const { PaceAborted } = await import("./ebird-rate");
+    const cancelled = new AbortController();
+    const [first, second] = await Promise.allSettled([
+      recentHotspotObs("key", "L900002", 7, {
+        pace: async () => {
+          cancelled.abort();
+          throw new PaceAborted();
+        },
+        paceSignal: cancelled.signal,
+      }),
+      recentHotspotObs("key", "L900002", 7),
+    ]);
+    expect(first).toMatchObject({ status: "rejected", reason: expect.any(PaceAborted) });
+    expect(second).toMatchObject({ status: "fulfilled" });
+    expect(fetchCalls).toHaveLength(1);
   });
 
   it("does not coalesce different keys", async () => {

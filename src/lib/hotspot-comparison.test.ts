@@ -3,6 +3,7 @@ import {
   aggregateComparisonObservations,
   chunkIds,
   comparisonComplete,
+  comparisonStopMessage,
   progressForRows,
   sortedComparisonRows,
 } from "./hotspot-comparison";
@@ -100,5 +101,19 @@ describe("hotspot comparison", () => {
       ["1", "2", "3", "4"],
       ["5", "6"],
     ]);
+  });
+});
+
+describe("comparisonStopMessage (td-5003e2)", () => {
+  it("tells a bad key apart from being asked to slow down", () => {
+    expect(comparisonStopMessage("auth", { unqueried: 297 })).toMatch(/authorization failed.*Settings/);
+    expect(comparisonStopMessage("rate", { unqueried: 297, resumeAfterMs: 600_000 })).toBe(
+      "eBird asked us to slow down for about 10 min. 297 hotspots not checked yet; use Retry incomplete.",
+    );
+  });
+  it("reports the true remaining counts when saving the hourly allowance", () => {
+    expect(comparisonStopMessage("quota", { unqueried: 1, quotaRemaining: 97 })).toBe(
+      "Stopped to save eBird's hourly request allowance for the rest of the app (97 of 500 left this hour). 1 hotspot not checked yet; use Retry incomplete later.",
+    );
   });
 });

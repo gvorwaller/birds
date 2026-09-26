@@ -1,7 +1,10 @@
 <script lang="ts">
   import {
+    AUTO_RESUME_MAX_MS,
+    AUTO_RESUME_MAX_STALLS,
     chunkIds,
     comparisonComplete,
+    comparisonStopMessage,
     comparisonQueryKey,
     progressForRows,
     sortedComparisonRows,
@@ -132,10 +135,15 @@
   }
 
   async function start() {
+    await startWithRateStalls(0);
+  }
+
+  async function startWithRateStalls(rateStalls: number) {
     generation++;
     const expected = generation;
     controller?.abort();
     controller = new AbortController();
+    const local = controller;
     status = "loading";
     message = "Loading verified hotspot references…";
     try {
@@ -164,15 +172,34 @@
           token: null,
         }));
       showAll = false;
+      if (init.stopScheduling) {
+        const wait = init.resumeAfterMs ?? 0;
+        const nextStalls = rateStalls + 1;
+        if (
+          init.stopReason === "rate" &&
+          wait <= AUTO_RESUME_MAX_MS &&
+          nextStalls < AUTO_RESUME_MAX_STALLS
+        ) {
+          if (!(await waitForResume(wait, local))) return;
+          if (
+            expected !== generation ||
+            local.signal.aborted ||
+            (status as string) === "paused"
+          )
+            return;
+          return startWithRateStalls(nextStalls);
+        }
+        status = "partial";
+        message = comparisonStopMessage(init.stopReason, {
+          quotaRemaining: init.quotaRemaining,
+          resumeAfterMs: init.resumeAfterMs,
+          unqueried: refs.length ? progress.unqueried : undefined,
+        });
+        return;
+      }
       if (refs.length === 0) {
         status = "complete";
         message = "No verified hotspots were found in this radius.";
-        return;
-      }
-      if (init.stopScheduling) {
-        status = "partial";
-        message =
-          "Further hotspot checks stopped because the reference refresh hit an eBird authorization or rate limit response.";
         return;
       }
       status = "running";
@@ -196,7 +223,42 @@
     }
   }
 
-  async function runRemaining(expected = generation, run = runSerial) {
+  /**
+   * Shows a real seconds countdown and resolves after `ms`, or false early if
+   * the run was paused or replaced.
+   */
+  function waitForResume(
+    ms: number,
+    local: AbortController,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (local.signal.aborted) return resolve(false);
+      const until = Date.now() + ms;
+      const update = () => {
+        if (!local.signal.aborted && controller === local)
+          message = `eBird asked us to slow down — resuming in ${Math.max(0, Math.ceil((until - Date.now()) / 1000))} s…`;
+      };
+      update();
+      const ticker = setInterval(update, 1000);
+      const t = setTimeout(() => {
+        clearInterval(ticker);
+        local.signal.removeEventListener("abort", onAbort);
+        resolve(true);
+      }, ms);
+      const onAbort = () => {
+        clearInterval(ticker);
+        clearTimeout(t);
+        resolve(false);
+      };
+      local.signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  async function runRemaining(
+    expected = generation,
+    run = runSerial,
+    stalls = 0,
+  ) {
     if (!identity || expected !== generation) return;
     const local = controller;
     if (!local) return;
@@ -237,12 +299,38 @@
           message = body.message ?? "Hotspot comparison is unavailable.";
           return;
         }
-        referenceStale = !!body.referenceStale;
+        if (typeof body.referenceStale === "boolean")
+          referenceStale = body.referenceStale;
+        const before = progress.unqueried;
         mergeBatch(body.rows ?? []);
         if (body.stopScheduling) {
+          // eBird asked for a short pause (td-5003e2): wait it out and carry
+          // on, with the count visible, instead of abandoning the run. Give
+          // up if pauses keep coming without any hotspot getting answered.
+          const wait = body.resumeAfterMs ?? 0;
+          const progressed = progress.unqueried < before;
+          const nextStalls = progressed ? 0 : stalls + 1;
+          if (
+            body.stopReason === "rate" &&
+            wait <= AUTO_RESUME_MAX_MS &&
+            nextStalls < AUTO_RESUME_MAX_STALLS
+          ) {
+            if (!(await waitForResume(wait, local))) return;
+            if (
+              expected !== generation ||
+              run !== runSerial ||
+              (status as string) === "paused"
+            )
+              return;
+            message = "Resuming hotspot checks…";
+            return runRemaining(expected, run, nextStalls);
+          }
           status = "partial";
-          message =
-            "Further hotspot checks stopped after an eBird authorization or rate limit response.";
+          message = comparisonStopMessage(body.stopReason, {
+            quotaRemaining: body.quotaRemaining,
+            resumeAfterMs: body.resumeAfterMs,
+            unqueried: progress.unqueried,
+          });
           return;
         }
       } catch (err) {
@@ -283,7 +371,7 @@
     await runRemaining(generation, ++runSerial);
   }
   async function retry() {
-    if (referenceStale) {
+    if (!identity || referenceStale) {
       await start();
       return;
     }

@@ -14,7 +14,31 @@ import {
   hotspotsNear,
   notableObs,
   recentHotspotObs,
+  type FeedOpts,
 } from "$server/ebird";
+import {
+  belowHourlyReserve,
+  comparisonPacer,
+  ebirdRateState,
+  HOURLY_RESERVE,
+  PaceAborted,
+  PaceDeferred,
+} from "$server/ebird-rate";
+
+/**
+ * Why a batch stopped scheduling further hotspots (td-5003e2):
+ * - auth: eBird rejected the key (401/403) — nothing will work until it is fixed.
+ * - rate: eBird asked for a wait longer than a request should hold open;
+ *   `resumeAfterMs` says when the client may continue.
+ * - quota: the key's hourly allowance is down to the reserve kept for the
+ *   rest of the app; `quotaRemaining` is eBird's own count.
+ */
+export type ComparisonStopReason = "auth" | "rate" | "quota";
+
+/** A 429 wait up to this long is absorbed inside the request. */
+export const MAX_INLINE_WAIT_MS = 15_000;
+/** 429s on one hotspot before it is given up for this run. */
+const MAX_RATE_RETRIES = 3;
 
 export class ComparisonError extends Error {
   constructor(
@@ -153,10 +177,11 @@ export async function resolveComparison(
   apiKey: string,
   filters: ComparisonFilters,
   account: AccountScope,
+  feedOpts: FeedOpts = {},
 ): Promise<ComparisonIdentity> {
   validFilters(filters);
   const [reference, seen] = await Promise.all([
-    hotspotsNear(apiKey, filters.lat, filters.lng, filters.radiusKm),
+    hotspotsNear(apiKey, filters.lat, filters.lng, filters.radiusKm, feedOpts),
     seenSet(account.scopeOwnerId),
   ]);
   const refs = referenceRows(reference.data, filters);
@@ -219,22 +244,64 @@ export async function compareHotspotBatch(
 ): Promise<{
   rows: HotspotComparisonRow[];
   stopScheduling: boolean;
+  stopReason: ComparisonStopReason | null;
+  resumeAfterMs?: number;
+  quotaRemaining?: number;
   identity: ComparisonIdentity;
 }> {
   if (ids.length < 1 || ids.length > 4 || new Set(ids).size !== ids.length)
     throw new ComparisonError("Choose one to four unique hotspots.");
-  const identity = await resolveComparison(apiKey, filters, account);
+  let stopReason: ComparisonStopReason | null = null;
+  let resumeAfterMs: number | undefined;
+  let quotaRemaining: number | undefined;
+  // Stopping also cancels siblings still waiting for a pacing slot. A live
+  // fetch is deliberately not cancelled because another request may share it
+  // through cachedFetch.
+  const stopped = new AbortController();
+  const paceSignal = signal
+    ? AbortSignal.any([signal, stopped.signal])
+    : stopped.signal;
+  const inlineWaitUntil = Date.now() + MAX_INLINE_WAIT_MS;
+  const stop = (reason: ComparisonStopReason) => {
+    // auth outranks the others: it is the one the user must act on.
+    if (!stopReason || reason === "auth") stopReason = reason;
+    stopped.abort();
+  };
+  const pace = () =>
+    comparisonPacer.acquire(apiKey, paceSignal, {
+      maxBlockMs: Math.max(0, inlineWaitUntil - Date.now()),
+      preserveHourlyReserve: true,
+    });
+  const identity = await resolveComparison(apiKey, filters, account, {
+    pace,
+    paceSignal,
+  });
   if (identity.value !== expectedIdentity)
     throw new ComparisonError(
       "The comparison scope changed. Restart the comparison.",
       409,
     );
-  if (
-    identity.referenceRefreshErrorStatus === 401 ||
-    identity.referenceRefreshErrorStatus === 403 ||
-    identity.referenceRefreshErrorStatus === 429
-  ) {
-    return { rows: [], stopScheduling: true, identity };
+  const refStatus = identity.referenceRefreshErrorStatus;
+  if (refStatus === 401 || refStatus === 403)
+    return { rows: [], stopScheduling: true, stopReason: "auth", identity };
+  if (refStatus === 429) {
+    const left = belowHourlyReserve(apiKey);
+    if (left != null)
+      return {
+        rows: [],
+        stopScheduling: true,
+        stopReason: "quota",
+        quotaRemaining: left,
+        identity,
+      };
+    const wait = Math.max(0, ebirdRateState(apiKey).blockedUntil - Date.now());
+    return {
+      rows: [],
+      stopScheduling: true,
+      stopReason: "rate",
+      resumeAfterMs: Math.max(wait, 1000),
+      identity,
+    };
   }
   const refs = ids.map((id) =>
     identity.references.find((ref) => ref.locId === id),
@@ -243,40 +310,122 @@ export async function compareHotspotBatch(
     throw new ComparisonError(
       "One or more hotspots are outside the comparison references.",
     );
-  let stopScheduling = false;
+  const failedRow = (
+    ref: HotspotReference,
+    error: string,
+  ): HotspotComparisonRow => ({
+    ...ref,
+    state: "failed",
+    count: null,
+    species: [],
+    latestObsDt: null,
+    fetchedAt: null,
+    stale: false,
+    error,
+    token: null,
+  });
+  /**
+   * After a 429 (thrown, or a stale row whose refresh got one): keep going
+   * when the wait is short, otherwise stop with the reason. eBird's
+   * Retry-After was recorded per key by the fetch itself, so this reads it
+   * from there — the stale path carries only the status.
+   */
+  const afterRateLimit = (): "retry" | "stop" => {
+    const left = belowHourlyReserve(apiKey);
+    if (left != null) {
+      quotaRemaining = left;
+      stop("quota");
+      return "stop";
+    }
+    const wait = ebirdRateState(apiKey).blockedUntil - Date.now();
+    if (wait > Math.max(0, inlineWaitUntil - Date.now())) {
+      resumeAfterMs = Math.max(resumeAfterMs ?? 0, wait);
+      stop("rate");
+      return "stop";
+    }
+    return "retry";
+  };
+  const stopForRate = () => {
+    const wait = Math.max(0, ebirdRateState(apiKey).blockedUntil - Date.now());
+    resumeAfterMs = Math.max(resumeAfterMs ?? 0, wait, 1000);
+    stop("rate");
+  };
   const runOne = async (
     ref: HotspotReference,
   ): Promise<HotspotComparisonRow | null> => {
-    if (signal?.aborted || stopScheduling) return null;
+    if (signal?.aborted || stopReason) return null;
     const release = await fetchSlots.acquire();
     try {
-      if (signal?.aborted || stopScheduling) return null;
       let result;
-      try {
-        result = filters.rareOnly
-          ? await notableObs(apiKey, ref.locId, filters.daysBack)
-          : await recentHotspotObs(apiKey, ref.locId, filters.daysBack);
-      } catch (err) {
-        const status = err instanceof EbirdError ? err.status : undefined;
-        if (status === 401 || status === 403 || status === 429)
-          stopScheduling = true;
-        return {
-          ...ref,
-          state: "failed",
-          count: null,
-          species: [],
-          latestObsDt: null,
-          fetchedAt: null,
-          stale: false,
-          error:
-            status === 401 || status === 403
-              ? "eBird authorization failed."
-              : status === 429
-                ? "eBird rate limit reached."
-                : "This hotspot could not be checked.",
-          token: null,
-        };
+      for (let attempt = 0; ; attempt++) {
+        if (signal?.aborted || stopReason) return null;
+        // Don't start a hotspot that would spend the rest of the app's hour,
+        // or one that would sit out a long Retry-After inside this request.
+        const left = belowHourlyReserve(apiKey);
+        if (left != null) {
+          quotaRemaining = left;
+          stop("quota");
+          return null;
+        }
+        const blocked = ebirdRateState(apiKey).blockedUntil - Date.now();
+        if (blocked > Math.max(0, inlineWaitUntil - Date.now())) {
+          resumeAfterMs = Math.max(resumeAfterMs ?? 0, blocked);
+          stop("rate");
+          return null;
+        }
+        try {
+          result = filters.rareOnly
+            ? await notableObs(apiKey, ref.locId, filters.daysBack, {
+                pace,
+                paceSignal,
+              })
+            : await recentHotspotObs(apiKey, ref.locId, filters.daysBack, {
+                pace,
+                paceSignal,
+              });
+        } catch (err) {
+          if (signal?.aborted) return null;
+          const status = err instanceof EbirdError ? err.status : undefined;
+          if (status === 401 || status === 403) {
+            stop("auth");
+            return failedRow(
+              ref,
+              "eBird authorization failed — check your eBird API key in Settings.",
+            );
+          }
+          if (err instanceof PaceDeferred) {
+            if (stopReason) return null;
+            if (err.reason === "quota") {
+              quotaRemaining = err.quotaRemaining;
+              stop("quota");
+            } else {
+              resumeAfterMs = Math.max(
+                resumeAfterMs ?? 0,
+                err.retryAfterMs ?? 0,
+                1000,
+              );
+              stop("rate");
+            }
+            return null;
+          }
+          if (err instanceof PaceAborted || stopReason) return null;
+          if (status === 429) {
+            const action = afterRateLimit();
+            if (attempt < MAX_RATE_RETRIES && action === "retry") continue;
+            if (!stopReason) stopForRate();
+            // Stopped before this hotspot got an answer: leave it for later.
+            return null;
+          }
+          return failedRow(ref, "This hotspot could not be checked.");
+        }
+        if (result.refreshErrorStatus === 429) {
+          const action = afterRateLimit();
+          if (attempt < MAX_RATE_RETRIES && action === "retry") continue;
+          if (!stopReason) stopForRate();
+        }
+        break;
       }
+      if (signal?.aborted) return null;
       const aggregate = aggregateComparisonObservations(
         result.data,
         ref.locId,
@@ -316,8 +465,8 @@ export async function compareHotspotBatch(
         stale: result.stale,
       };
       const staleStatus = result.refreshErrorStatus;
-      if (staleStatus === 401 || staleStatus === 403 || staleStatus === 429)
-        stopScheduling = true;
+      if (staleStatus === 401 || staleStatus === 403) stop("auth");
+      else if (staleStatus === 429 && !stopReason) stop("rate");
       return {
         ...ref,
         state: result.stale ? "stale" : "fresh",
@@ -340,7 +489,17 @@ export async function compareHotspotBatch(
   const out = (
     await Promise.all((refs as HotspotReference[]).map(runOne))
   ).filter((row): row is HotspotComparisonRow => !!row);
-  return { rows: out, stopScheduling, identity };
+  const reason = stopReason as ComparisonStopReason | null;
+  return {
+    rows: out,
+    stopScheduling: reason != null,
+    stopReason: reason,
+    ...(reason === "rate"
+      ? { resumeAfterMs: Math.max(resumeAfterMs ?? 0, 1000) }
+      : {}),
+    ...(reason === "quota" && quotaRemaining != null ? { quotaRemaining } : {}),
+    identity,
+  };
 }
 
-export { emptyRows };
+export { emptyRows, HOURLY_RESERVE };

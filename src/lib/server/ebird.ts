@@ -8,6 +8,7 @@ import { replaceTaxonomy } from '$server/taxonomy-sync';
  */
 import { query, withTransaction } from '$lib/db';
 import { timed } from '$server/request-timing';
+import { noteEbirdResponse, PaceAborted, PaceDeferred } from '$server/ebird-rate';
 import { decryptSecret } from '$server/crypto';
 import {
 	reportSchemaDrift,
@@ -21,11 +22,35 @@ const API = 'https://api.ebird.org/v2';
 export class EbirdError extends Error {
 	constructor(
 		message: string,
-		public status?: number
+		public status?: number,
+		/** From a 429's Retry-After (or the measured 5 s burst window when absent). */
+		public retryAfterMs?: number
 	) {
 		super(message);
 		this.name = 'EbirdError';
 	}
+}
+
+/**
+ * Every eBird response: record the key's rate-limit headers, and log any
+ * non-2xx with its status, Retry-After and remaining allowance (td-5003e2 —
+ * a comparison once stopped on a status nobody could see afterwards). The
+ * path is logged without its query string; the key never is.
+ */
+function observeResponse(
+	res: Response,
+	path: string,
+	apiKey: string
+): { retryAfterMs: number | null } {
+	const noted = noteEbirdResponse(apiKey, res.headers, res.status);
+	if (!res.ok && res.status !== 404) {
+		console.warn(
+			`[ebird] ${res.status} ${path.split('?')[0]}` +
+				(noted.retryAfterMs != null ? ` retry-after=${noted.retryAfterMs}ms` : '') +
+				` ratelimit=${res.headers?.get('ratelimit') ?? '-'}`
+		);
+	}
+	return noted;
 }
 
 export interface EbirdObs {
@@ -120,9 +145,10 @@ export async function ebirdFetchOrNull<T>(
 		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
+	const noted = observeResponse(res, path, apiKey);
 	if (nullOn.includes(res.status)) return null;
 	if (res.status === 429) {
-		throw new EbirdError('eBird API rate limit hit.', 429);
+		throw new EbirdError('eBird API rate limit hit.', 429, noted.retryAfterMs ?? undefined);
 	}
 	if (!res.ok) {
 		throw new EbirdError(`eBird API error ${res.status} for ${path}`, res.status);
@@ -202,11 +228,16 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 		}
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
+	const noted = observeResponse(res, path, apiKey);
 	if (res.status === 403 || res.status === 401) {
 		throw new EbirdError('eBird API key is missing or invalid — check Settings.', res.status);
 	}
 	if (res.status === 429) {
-		throw new EbirdError('eBird API rate limit hit — showing cached data if available.', 429);
+		throw new EbirdError(
+			'eBird API rate limit hit — showing cached data if available.',
+			429,
+			noted.retryAfterMs ?? undefined
+		);
 	}
 	if (!res.ok) {
 		throw new EbirdError(`eBird API error ${res.status} for ${path}`, res.status);
@@ -292,13 +323,23 @@ async function cachedFetchUncoalesced<T>(
 		);
 		return { data, fetchedAt: new Date(), stale: false };
 	} catch (err) {
-		reportSchemaDrift(err, `fetch ${cacheKey}`);
+		// A cancelled pacing owner must not turn a valid stale row into a
+		// provider-refresh failure for every caller coalesced onto its promise.
+		// Paced feed wrappers let still-active callers retry and become the next
+		// cache-miss owner.
+		if (err instanceof PaceAborted) throw err;
+		if (!(err instanceof PaceDeferred)) reportSchemaDrift(err, `fetch ${cacheKey}`);
 		if (row && cachedData !== undefined) {
 			return {
 				data: cachedData,
 				fetchedAt: new Date(row.fetched_at),
 				stale: true,
-				refreshErrorStatus: err instanceof EbirdError ? err.status : undefined
+				refreshErrorStatus:
+					err instanceof PaceDeferred
+						? 429
+						: err instanceof EbirdError
+							? err.status
+							: undefined
 			};
 		}
 		throw err;
@@ -339,14 +380,59 @@ export async function recentObs(
 		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
+/**
+ * Bulk callers (Compare hotspots) pass `pace`, awaited before a live request
+ * only: a fresh cache hit never calls the fetcher, so it never waits.
+ */
+export interface FeedOpts {
+	pace?: () => Promise<void>;
+	/** Signal used by `pace`; never passed to the shared live HTTP request. */
+	paceSignal?: AbortSignal;
+}
+
+/**
+ * Pace only the caller that owns a real cache miss. If that owner's pacing
+ * wait is cancelled, another coalesced caller sees the same rejection; an
+ * active caller retries and can safely become the new owner, while the
+ * cancelled caller exits.
+ */
+async function pacedCachedFetch<T>(
+	cacheKey: string,
+	ttlMinutes: number,
+	opts: FeedOpts,
+	fetcher: () => Promise<unknown>,
+	validate: (value: unknown) => T
+): Promise<CachedResult<T>> {
+	for (;;) {
+		try {
+			return await cachedFetch(
+				cacheKey,
+				ttlMinutes,
+				async () => {
+					await opts.pace?.();
+					return fetcher();
+				},
+				validate
+			);
+		} catch (err) {
+			// Any caller still active retries, including an unpaced one (the
+			// hotspot page) that coalesced onto a paced owner that was cancelled.
+			if (err instanceof PaceAborted && !opts.paceSignal?.aborted) continue;
+			throw err;
+		}
+	}
+}
+
 export async function notableObs(
 	apiKey: string,
 	regionCode: string,
-	back: number
+	back: number,
+	opts: FeedOpts = {}
 ): Promise<CachedResult<EbirdObs[]>> {
 	const region = regionCode.trim();
 	const path = `/data/obs/${encodeURIComponent(region)}/recent/notable?back=${back}&detail=simple`;
-	return cachedFetch(`notable:${region}:${back}`, NOTABLE_TTL_MIN, () => ebirdFetch<unknown>(path, apiKey),
+	return pacedCachedFetch(`notable:${region}:${back}`, NOTABLE_TTL_MIN, opts,
+		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
 
@@ -444,12 +530,13 @@ export async function hotspotsInRegion(
 export async function recentHotspotObs(
 	apiKey: string,
 	locId: string,
-	back: number
+	back: number,
+	opts: FeedOpts = {}
 ): Promise<CachedResult<EbirdObs[]>> {
 	const loc = locId.trim();
 	const b = Math.min(Math.max(Math.trunc(back), 1), 30);
 	const path = `/data/obs/${encodeURIComponent(loc)}/recent?back=${b}&detail=simple&includeProvisional=true`;
-	return cachedFetch(`hotspotObs2:${loc}:${b}`, OBS_TTL_MIN,
+	return pacedCachedFetch(`hotspotObs2:${loc}:${b}`, OBS_TTL_MIN, opts,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }
@@ -546,13 +633,14 @@ export async function hotspotsNear(
 	apiKey: string,
 	lat: number,
 	lng: number,
-	distKm: number
+	distKm: number,
+	opts: FeedOpts = {}
 ): Promise<CachedResult<EbirdHotspot[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
 	const dist = Math.min(Math.max(distKm, 1), 50);
 	const path = `/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`;
-	return cachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN,
+	return pacedCachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, opts,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
 }
