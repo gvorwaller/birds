@@ -1121,7 +1121,7 @@
 					{/each}
 					{#if drillRows.length > 8 && !ribbonState.drillExpanded}
 						<button type="button" class="btn more" onclick={() => (ribbonState.drillExpanded = true)}>
-							Show all {drillRows.length}{drillCapped ? ` (of ${drillTotal})` : ''}
+							{drillCapped ? `Show top ${drillRows.length} of ${drillTotal}` : `Show all ${drillRows.length}`}
 						</button>
 					{/if}
 				{/if}

@@ -24,7 +24,8 @@
   }
 </script>
 
-<div class="unit-toggle" aria-label="Distance units">
+<!-- A span, not a div: callers put this inline inside <p> text (td-40a6a1). -->
+<span class="unit-toggle" role="group" aria-label="Distance units">
   <button
     type="button"
     class:active={unit === "mi"}
@@ -37,7 +38,7 @@
     aria-pressed={unit === "km"}
     onclick={() => setUnit("km")}>km</button
   >
-</div>
+</span>
 
 <style>
   .unit-toggle {

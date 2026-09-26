@@ -931,8 +931,8 @@
 						reporting rate and the regions behind that latitude band. On a phone,
 						you can also use the month slider or ◀ ▶ buttons. The region list
 						shows January–December patterns, sorted by each region's highest
-						monthly rate, with up to 40 regions available. Use <strong>Show all</strong>
-						to expand the initial eight. Tap a region to show its full-year chart
+						monthly rate, with up to 40 regions available. Use <strong>Show all</strong> (or
+						<strong>Show top 40</strong> when a band has more) to expand the initial eight. Tap a region to show its full-year chart
 						in <strong>Best time of year</strong> below.
 					</li>
 					<li>
