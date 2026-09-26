@@ -60,7 +60,11 @@ module.exports = {
 			// instances > 1 (a Postgres advisory lock enforces it besides).
 			name: 'birds-worker',
 			script: 'build/worker.js',
-			node_args: '--env-file=.env',
+			// Heap cap below the 300M restart limit (2026-09-26), same reason as
+			// the web app: the default V8 ceiling here is ~2 GB (Server health
+			// reported heap_limit 2006 MB), so V8 collects lazily and RSS can pass
+			// max_memory_restart before garbage is reclaimed.
+			node_args: '--env-file=.env --max-old-space-size=192',
 			cwd: '/opt/birds',
 
 			instances: 1,
