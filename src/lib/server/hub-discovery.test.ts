@@ -24,6 +24,7 @@ const H_LIST = "L99771002"; // official list only
 const H_INFO = "L99771003"; // strict positive official info only
 const H_BOTH = "L99771004"; // loaded row AND list: one result
 const H_FAILED = "L99771008"; // verified by list, last load failed
+const H_MERGED = "L99771009"; // list precedence, with missing fields filled from info
 // Never verified: must not appear as hotspots.
 const X_OBS = "L99771005"; // ebird_locations only
 const X_NEG = "L99771006"; // hotspotInfo with isHotspot false
@@ -47,6 +48,7 @@ const CACHE_KEYS = [
   "hotspotsRegion:ZZ-DISC-B",
   "hotspotsRegion:ZZ-DISC-P",
   `hotspotInfo:${H_INFO}`,
+  `hotspotInfo:${H_MERGED}`,
   `hotspotInfo:${X_NEG}`,
 ];
 const FF = [COUNTY, H_LOADED, H_BOTH, M_LOADEDNOCOORD];
@@ -124,12 +126,24 @@ describe("Hotspots & data discovery service", () => {
       entry(H_LIST, "Zqdisc List Only", 27.8, -82.8, STATE, COUNTY),
       entry(H_BOTH, "Zqdisc Both", 27.6, -82.6, STATE, COUNTY),
       entry(H_FAILED, "Zqdisc Verified But Failed", 27.9, -82.9, STATE, COUNTY),
+      {
+        locId: H_MERGED,
+        locName: "  Zqmerge List Name  ",
+        lat: 91,
+        lng: -82.4,
+        subnational1Code: STATE,
+        countryCode: "not-a-country",
+      },
       { locName: "No locId here", lat: 1, lng: 1 },
       { locId: "not-an-id", locName: "Bad id", lat: 1, lng: 1 },
     ]);
     await cache(`hotspotInfo:${H_INFO}`, {
       locId: H_INFO, name: "Zqdisc Info Only", latitude: 28.1, longitude: -82.1,
       isHotspot: true, subnational1Code: STATE, subnational2Code: COUNTY,
+    });
+    await cache(`hotspotInfo:${H_MERGED}`, {
+      locId: H_MERGED, name: "Zqmerge Info Name", latitude: 28.4, longitude: -82.4,
+      isHotspot: true, subnational1Code: "US-GA", subnational2Code: COUNTY,
     });
     await cache(`hotspotInfo:${X_NEG}`, {
       locId: X_NEG, name: "Zqdisc Negative Info", latitude: 28.2, longitude: -82.2, isHotspot: false,
@@ -218,9 +232,23 @@ describe("Hotspots & data discovery service", () => {
       expect((await typed("zqdisc")).results.filter((r) => r.id === H_BOTH)).toHaveLength(1);
     });
 
-    // Several full searches, each building the discovery index (~1 s on the
-    // prod-sized snapshot); it is deliberately not retained between searches.
-    it("never promotes an observation-only, name-only, negative-info or malformed entry to a hotspot", { timeout: 20_000 }, async () => {
+    it("preserves list precedence while valid info fills its missing coordinates and ancestry", async () => {
+      const merged = (await typed(H_MERGED)).results[0];
+      expect(merged).toMatchObject({
+        id: H_MERGED,
+        name: "Zqmerge List Name",
+        context: "Zqsarasota, Florida, United States",
+        lat: 28.4,
+        lng: -82.4,
+        evidence: ["verified eBird hotspot", "official hotspot list", "official hotspot information"],
+        loadState: "available-not-loaded",
+        row: null,
+        error: null,
+        target: { kind: "hotspot", id: H_MERGED },
+      });
+    });
+
+    it("never promotes an observation-only, name-only, negative-info or malformed entry to a hotspot", async () => {
       for (const id of [X_OBS, X_NEG, "not-an-id"]) expect((await typed(id)).total, id).toBe(0);
       expect((await typed("Zqdisc Observation Only")).total).toBe(0);
       expect((await typed("Zqdisc Negative Info")).total).toBe(0);

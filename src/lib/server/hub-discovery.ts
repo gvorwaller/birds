@@ -126,6 +126,87 @@ interface HotspotEvidence {
   sources: Set<"loaded" | "list" | "info">;
 }
 
+const SRC_LOADED = 1;
+const SRC_LIST = 2;
+const SRC_INFO = 4;
+
+/**
+ * The verified-hotspot union in parallel arrays (td-7f03b6). Production has
+ * ~186,000 cached hotspots; one object (with its own Set) per hotspot, plus a
+ * second full Candidate object each, made a single search allocate hundreds
+ * of MB (evidence +96 MB and candidates +98 MB for 160k on the test snapshot).
+ * Region codes are interned, so the thousands of hotspots in one county share
+ * one string. `get()` builds a HotspotEvidence view on demand for callers
+ * that want one hotspot.
+ */
+export class HotspotStore {
+  private readonly index = new Map<string, number>();
+  private readonly pool = new Map<string, string>();
+  readonly ids: string[] = [];
+  readonly names: (string | null)[] = [];
+  readonly lat: (number | null)[] = [];
+  readonly lng: (number | null)[] = [];
+  readonly county: (string | null)[] = [];
+  readonly state: (string | null)[] = [];
+  readonly country: (string | null)[] = [];
+  readonly sources: number[] = [];
+
+  get size(): number {
+    return this.ids.length;
+  }
+  has(id: string): boolean {
+    return this.index.has(id);
+  }
+  indexOf(id: string): number | undefined {
+    return this.index.get(id);
+  }
+  /** Position of `id`, adding an empty record the first time it's seen. */
+  ensure(id: string): number {
+    let i = this.index.get(id);
+    if (i === undefined) {
+      i = this.ids.length;
+      this.index.set(id, i);
+      this.ids.push(id);
+      this.names.push(null);
+      this.lat.push(null);
+      this.lng.push(null);
+      this.county.push(null);
+      this.state.push(null);
+      this.country.push(null);
+      this.sources.push(0);
+    }
+    return i;
+  }
+  /** One shared string per distinct region code. */
+  intern(code: string | null): string | null {
+    if (code == null) return null;
+    let hit = this.pool.get(code);
+    if (hit === undefined) {
+      hit = code;
+      this.pool.set(code, code);
+    }
+    return hit;
+  }
+  get(id: string): HotspotEvidence | undefined {
+    const i = this.index.get(id);
+    if (i === undefined) return undefined;
+    const sources = new Set<"loaded" | "list" | "info">();
+    if (this.sources[i] & SRC_LOADED) sources.add("loaded");
+    if (this.sources[i] & SRC_LIST) sources.add("list");
+    if (this.sources[i] & SRC_INFO) sources.add("info");
+    return {
+      id,
+      name: this.names[i],
+      lat: this.lat[i],
+      lng: this.lng[i],
+      county: this.county[i],
+      state: this.state[i],
+      country: this.country[i],
+      sources,
+    };
+  }
+}
+
 const finite = (v: unknown, min: number, max: number): number | null =>
   typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null;
 
@@ -164,31 +245,41 @@ async function loadEvidence() {
           AND NOT EXISTS (SELECT 1 FROM frequency_fetch f WHERE f.loc_code = a.loc_code)`,
     ),
     // Official hotspot lists only (regional and point-radius). The newest copy of
-    // an ID wins; entries carry their own official ancestry codes.
+    // an ID wins; entries carry their own official ancestry codes. Returned as
+    // seven column arrays rather than ~186k row objects (td-7f03b6).
     query<{
-      loc_id: string;
-      loc_name: string | null;
-      lat: number | null;
-      lng: number | null;
-      s1: string | null;
-      s2: string | null;
-      cc: string | null;
+      ids: string[] | null;
+      names: (string | null)[] | null;
+      lats: (number | null)[] | null;
+      lngs: (number | null)[] | null;
+      s1: (string | null)[] | null;
+      s2: (string | null)[] | null;
+      cc: (string | null)[] | null;
     }>(
-      `SELECT DISTINCT ON (x.loc_id) x.loc_id, x.loc_name, x.lat, x.lng, x.s1, x.s2, x.cc
+      `SELECT array_agg(loc_id ORDER BY loc_id) AS ids,
+              array_agg(loc_name ORDER BY loc_id) AS names,
+              array_agg(lat ORDER BY loc_id) AS lats,
+              array_agg(lng ORDER BY loc_id) AS lngs,
+              array_agg(s1 ORDER BY loc_id) AS s1,
+              array_agg(s2 ORDER BY loc_id) AS s2,
+              array_agg(cc ORDER BY loc_id) AS cc
          FROM (
-           SELECT h->>'locId' AS loc_id, h->>'locName' AS loc_name,
-                  CASE WHEN jsonb_typeof(h->'lat') = 'number' THEN (h->>'lat')::float8 END AS lat,
-                  CASE WHEN jsonb_typeof(h->'lng') = 'number' THEN (h->>'lng')::float8 END AS lng,
-                  h->>'subnational1Code' AS s1, h->>'subnational2Code' AS s2,
-                  h->>'countryCode' AS cc, c.fetched_at
-             FROM ebird_cache c
-            CROSS JOIN LATERAL jsonb_array_elements(
-                   CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
-            WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
-              AND jsonb_typeof(h) = 'object'
-              AND h->>'locId' ~ '^L[0-9]+$'
-         ) x
-        ORDER BY x.loc_id, x.fetched_at DESC`,
+           SELECT DISTINCT ON (x.loc_id) x.loc_id, x.loc_name, x.lat, x.lng, x.s1, x.s2, x.cc
+             FROM (
+               SELECT h->>'locId' AS loc_id, h->>'locName' AS loc_name,
+                      CASE WHEN jsonb_typeof(h->'lat') = 'number' THEN (h->>'lat')::float8 END AS lat,
+                      CASE WHEN jsonb_typeof(h->'lng') = 'number' THEN (h->>'lng')::float8 END AS lng,
+                      h->>'subnational1Code' AS s1, h->>'subnational2Code' AS s2,
+                      h->>'countryCode' AS cc, c.fetched_at
+                 FROM ebird_cache c
+                CROSS JOIN LATERAL jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
+                WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
+                  AND jsonb_typeof(h) = 'object'
+                  AND h->>'locId' ~ '^L[0-9]+$'
+             ) x
+            ORDER BY x.loc_id, x.fetched_at DESC
+         ) y`,
     ),
     query<{ cache_key: string; payload: unknown }>(
       `SELECT cache_key, payload FROM ebird_cache WHERE cache_key LIKE 'hotspotInfo:%'`,
@@ -209,66 +300,68 @@ async function loadEvidence() {
   const refByCode = new Map(reference.map((r) => [r.code, r]));
 
   // Verified hotspot union, deduplicated by exact eBird location ID.
-  const hotspots = new Map<string, HotspotEvidence>();
-  const ensure = (id: string): HotspotEvidence => {
-    let h = hotspots.get(id);
-    if (!h) {
-      h = { id, name: null, lat: null, lng: null, county: null, state: null, country: null, sources: new Set() };
-      hotspots.set(id, h);
-    }
-    return h;
-  };
-  for (const x of listRes.rows) {
-    const h = ensure(x.loc_id);
-    h.sources.add("list");
-    h.name = x.loc_name?.trim() || h.name;
-    h.lat = finite(x.lat, -90, 90);
-    h.lng = finite(x.lng, -180, 180);
-    if (h.lat == null || h.lng == null) h.lat = h.lng = null;
-    if (x.s2 && parseRegionCode(x.s2)?.level === "subnational2") h.county = x.s2;
-    if (x.s1 && parseRegionCode(x.s1)?.level === "subnational1") h.state = x.s1;
-    if (x.cc && parseRegionCode(x.cc)?.level === "country") h.country = x.cc;
+  const hotspots = new HotspotStore();
+  const lists = listRes.rows[0];
+  const ids = lists?.ids ?? [];
+  for (let k = 0; k < ids.length; k++) {
+    const i = hotspots.ensure(ids[k]);
+    hotspots.sources[i] |= SRC_LIST;
+    hotspots.names[i] = lists!.names?.[k]?.trim() || hotspots.names[i];
+    let lat = finite(lists!.lats?.[k], -90, 90);
+    let lng = finite(lists!.lngs?.[k], -180, 180);
+    if (lat == null || lng == null) lat = lng = null;
+    hotspots.lat[i] = lat;
+    hotspots.lng[i] = lng;
+    const s2 = lists!.s2?.[k];
+    const s1 = lists!.s1?.[k];
+    const cc = lists!.cc?.[k];
+    if (s2 && parseRegionCode(s2)?.level === "subnational2") hotspots.county[i] = hotspots.intern(s2);
+    if (s1 && parseRegionCode(s1)?.level === "subnational1") hotspots.state[i] = hotspots.intern(s1);
+    if (cc && parseRegionCode(cc)?.level === "country") hotspots.country[i] = hotspots.intern(cc);
   }
   for (const x of infoRes.rows) {
     const id = x.cache_key.slice("hotspotInfo:".length);
     if (!isHotspotLocId(id)) continue;
     const meta = parseOfficialHotspotInfo(x.payload, id);
     if (!meta) continue;
-    const h = ensure(id);
-    h.sources.add("info");
-    h.name = h.name ?? meta.locName;
-    if (h.lat == null && meta.lat != null && meta.lng != null) {
-      h.lat = meta.lat;
-      h.lng = meta.lng;
+    const i = hotspots.ensure(id);
+    hotspots.sources[i] |= SRC_INFO;
+    hotspots.names[i] = hotspots.names[i] ?? meta.locName;
+    if (hotspots.lat[i] == null && meta.lat != null && meta.lng != null) {
+      hotspots.lat[i] = meta.lat;
+      hotspots.lng[i] = meta.lng;
     }
-    if (!h.county && meta.countyCode && parseRegionCode(meta.countyCode)?.level === "subnational2")
-      h.county = meta.countyCode;
-    if (!h.state && meta.stateCode && parseRegionCode(meta.stateCode)?.level === "subnational1")
-      h.state = meta.stateCode;
+    if (!hotspots.county[i] && meta.countyCode && parseRegionCode(meta.countyCode)?.level === "subnational2")
+      hotspots.county[i] = hotspots.intern(meta.countyCode);
+    if (!hotspots.state[i] && meta.stateCode && parseRegionCode(meta.stateCode)?.level === "subnational1")
+      hotspots.state[i] = hotspots.intern(meta.stateCode);
   }
   const coords = new Map(coordRes.rows.map((r) => [r.loc_id, r]));
   for (const row of loadedRes.rows) {
     if (row.loc_kind !== "hotspot" || !isHotspotLocId(row.loc_code)) continue;
-    const h = ensure(row.loc_code);
-    h.sources.add("loaded");
-    h.name = h.name ?? row.loc_name;
+    const i = hotspots.ensure(row.loc_code);
+    hotspots.sources[i] |= SRC_LOADED;
+    hotspots.names[i] = hotspots.names[i] ?? row.loc_name;
     const c = coords.get(row.loc_code);
-    if (h.lat == null && c) {
+    if (hotspots.lat[i] == null && c) {
       const lat = finite(c.lat, -90, 90);
       const lng = finite(c.lng, -180, 180);
       if (lat != null && lng != null) {
-        h.lat = lat;
-        h.lng = lng;
+        hotspots.lat[i] = lat;
+        hotspots.lng[i] = lng;
       }
     }
     const rc = row.region_code ? parseRegionCode(row.region_code) : null;
-    if (rc?.level === "subnational2" && !h.county) h.county = rc.code;
-    if (rc?.level === "subnational1" && !h.state) h.state = rc.code;
-    if (rc && !h.country) h.country = rc.country;
+    if (rc?.level === "subnational2" && !hotspots.county[i]) hotspots.county[i] = hotspots.intern(rc.code);
+    if (rc?.level === "subnational1" && !hotspots.state[i]) hotspots.state[i] = hotspots.intern(rc.code);
+    if (rc && !hotspots.country[i]) hotspots.country[i] = hotspots.intern(rc.country);
   }
-  for (const h of hotspots.values()) {
-    if (h.county && !h.state) h.state = parentOf(h.county);
-    if (!h.country) h.country = parseRegionCode(h.county ?? h.state ?? "")?.country ?? null;
+  for (let i = 0; i < hotspots.size; i++) {
+    if (hotspots.county[i] && !hotspots.state[i]) hotspots.state[i] = hotspots.intern(parentOf(hotspots.county[i]!));
+    if (!hotspots.country[i])
+      hotspots.country[i] = hotspots.intern(
+        parseRegionCode(hotspots.county[i] ?? hotspots.state[i] ?? "")?.country ?? null,
+      );
   }
 
   // Loaded rows recorded beneath each country/region (own row excluded).
@@ -290,22 +383,59 @@ export type Evidence = Awaited<ReturnType<typeof loadEvidence>>;
 
 
 /**
- * Evidence + candidates for one search (built per call again, 2026-09-26).
- * td-9eae4f kept this index in memory between searches, but it holds every
- * loaded row, reference region and cached hotspot as objects: ~180 MB even
- * on the test snapshot, far more in production (186k hotspots). Once the
- * Hotspots & data page also used it (td-b6be76), every page load built and
- * retained it, and production passed PM2's 600 MB limit (963 MB / 1.4 GB,
- * restarts and a 502). Concurrent searches still share one in-flight build.
+ * A cheap fingerprint of everything loadEvidence() reads, so the index is
+ * rebuilt only when an input changes: loaded rows, failed attempts, hotspot
+ * list/info cache rows, hotspot coordinates, and the last complete year.
  */
-let inFlightIndex: Promise<{ ev: Evidence; candidates: Candidate[] }> | undefined;
-async function discoveryIndex(): Promise<{ ev: Evidence; candidates: Candidate[] }> {
-  if (inFlightIndex) return inFlightIndex;
-  const value = loadEvidence().then((ev) => ({ ev, candidates: buildCandidates(ev) }));
-  inFlightIndex = value;
-  value.finally(() => {
-    if (inFlightIndex === value) inFlightIndex = undefined;
-  }).catch(() => {});
+async function evidenceRevision(): Promise<string> {
+  const { rows } = await query<{ revision: string }>(
+    `SELECT concat_ws('/',
+       (SELECT md5(string_agg(jsonb_build_array(loc_code, loc_kind, loc_name, region_code,
+                 begin_year, end_year, n_species, fetched_at)::text, ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch),
+       (SELECT md5(string_agg(jsonb_build_array(a.loc_code, a.loc_kind, a.loc_name, a.region_code, a.error)::text,
+                 ',' ORDER BY a.loc_code COLLATE "C"))
+          FROM frequency_fetch_attempts a
+         WHERE a.status = 'error'
+           AND NOT EXISTS (SELECT 1 FROM frequency_fetch f WHERE f.loc_code = a.loc_code)),
+       (SELECT md5(string_agg(jsonb_build_array(cache_key, fetched_at)::text,
+                 ',' ORDER BY cache_key COLLATE "C"))
+          FROM ebird_cache
+         WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
+            OR cache_key LIKE 'hotspotInfo:%'),
+       (SELECT md5(string_agg(jsonb_build_array(e.loc_id, e.lat, e.lng, e.updated_at)::text,
+                 ',' ORDER BY e.loc_id COLLATE "C"))
+          FROM ebird_locations e
+         WHERE EXISTS (SELECT 1 FROM frequency_fetch f
+                        WHERE f.loc_code = e.loc_id AND f.loc_kind = 'hotspot'))
+     ) AS revision`,
+  );
+  return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
+}
+
+/**
+ * Evidence + eager candidates, reused until an input changes. td-9eae4f kept
+ * the ORIGINAL index (one object per hotspot, plus a candidate each: ~194 MB
+ * on the test snapshot, more in production), which helped push production
+ * past PM2's 600 MB limit, so it was dropped on 2026-09-26. The compact store
+ * (td-7f03b6) holds the same evidence in ~64 MB (160k hotspots), which is
+ * affordable to keep under the 384 MB heap cap and makes repeat searches
+ * fast. Concurrent callers share one in-flight build.
+ */
+type DiscoveryIndex = { ev: Evidence; candidates: Candidate[]; helpers: CandidateHelpers };
+let discoveryCache: { revision: string; value: Promise<DiscoveryIndex> } | undefined;
+async function discoveryIndex(): Promise<DiscoveryIndex> {
+  const revision = await evidenceRevision();
+  if (discoveryCache?.revision === revision) return discoveryCache.value;
+  const value = loadEvidence().then((ev) => {
+    const helpers = candidateHelpers(ev);
+    return { ev, candidates: buildCandidates(ev, helpers), helpers };
+  });
+  discoveryCache = { revision, value };
+  // A failed build must not be served to the next search.
+  value.catch(() => {
+    if (discoveryCache?.value === value) discoveryCache = undefined;
+  });
   return value;
 }
 
@@ -354,7 +484,7 @@ async function verifiedHotspotIds(): Promise<Set<string>> {
 }
 
 export function __resetDiscoveryCacheForTests(): void {
-  inFlightIndex = undefined;
+  discoveryCache = undefined;
   verifiedIdsCache = undefined;
 }
 
@@ -380,9 +510,9 @@ export interface Candidate extends HubResult {
   evidenceRank: number;
 }
 
-/** @internal Exported so target construction can be tested with a hand-built evidence set. */
-export function buildCandidates(ev: Evidence): Candidate[] {
-  const out: Candidate[] = [];
+/** Display/match helpers shared by the eager candidates and the on-demand
+ * hotspot candidates: each distinct ancestry's context is built and folded once. */
+function candidateHelpers(ev: Evidence) {
   // Computed once: lastCompleteYear() builds an Intl formatter on every call.
   const completeYear = lastCompleteYear();
   const nameOf = (code: string | null): string | null => {
@@ -427,6 +557,63 @@ export function buildCandidates(ev: Evidence): Candidate[] {
     }
     return folded;
   };
+  return { completeYear, nameOf, contextFor, contextOf, ancestryContext, foldedContext };
+}
+export type CandidateHelpers = ReturnType<typeof candidateHelpers>;
+
+/**
+ * One hotspot's full candidate, built only when it's a match being returned
+ * (td-7f03b6). Same fields and rules the eager build used to produce for all
+ * ~186k hotspots.
+ */
+function hotspotCandidate(ev: Evidence, i: number, helpers: CandidateHelpers): Candidate {
+  const store = ev.hotspots as HotspotStore;
+  const id = store.ids[i];
+  const row = ev.loaded.get(id);
+  const loadedRow = row?.loc_kind === "hotspot" ? row : undefined;
+  const failed = ev.attempts.get(id);
+  const name = store.names[i] ?? id;
+  const src = store.sources[i];
+  const sources = [
+    src & SRC_LOADED ? "loaded hotspot row" : null,
+    src & SRC_LIST ? "official hotspot list" : null,
+    src & SRC_INFO ? "official hotspot information" : null,
+  ].filter((x): x is string => !!x);
+  const context = helpers.contextOf(store.county[i], store.state[i], store.country[i]);
+  return {
+    id,
+    type: "hotspot",
+    name,
+    context,
+    evidence: [EVIDENCE_LABEL.hotspot, ...sources],
+    loadState: loadStateOf(loadedRow, !!failed, helpers.completeYear),
+    row: loadedRow ? { beginYear: Number(loadedRow.begin_year), endYear: Number(loadedRow.end_year), nSpecies: Number(loadedRow.n_species) } : null,
+    guideCounty:
+      loadedRow?.region_code &&
+      parseRegionCode(loadedRow.region_code)?.level === "subnational2" &&
+      ev.loaded.get(loadedRow.region_code)?.loc_kind === "region"
+        ? loadedRow.region_code
+        : null,
+    loadedBeneath: 0,
+    lat: store.lat[i],
+    lng: store.lng[i],
+    distanceMiles: null,
+    error: !loadedRow && failed ? (failed.error ?? "unknown error") : null,
+    target: { kind: "hotspot", id },
+    names: [fold(name), ...(loadedRow ? [fold(loadedRow.loc_name)] : [])],
+    evidenceRank: loadedRow ? 0 : failed ? 2 : 1,
+    contextFolded: helpers.foldedContext(context),
+  };
+}
+
+/**
+ * @internal Exported so target construction can be tested with a hand-built
+ * evidence set. Countries, regions, counties and failed/reported locations;
+ * hotspot candidates are built on demand for matches (td-7f03b6).
+ */
+export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candidateHelpers(ev)): Candidate[] {
+  const out: Candidate[] = [];
+  const { completeYear, nameOf, contextOf, ancestryContext, foldedContext } = helpers;
   const add = (c: Omit<Candidate, "contextFolded"> & { context: string }) =>
     out.push({ ...c, contextFolded: foldedContext(c.context) });
 
@@ -486,42 +673,9 @@ export function buildCandidates(ev: Evidence): Candidate[] {
     });
   }
 
-  // 3. Verified hotspots: the deduplicated evidence union.
-  for (const h of ev.hotspots.values()) {
-    const row = ev.loaded.get(h.id);
-    const loadedRow = row?.loc_kind === "hotspot" ? row : undefined;
-    const failed = ev.attempts.get(h.id);
-    const name = h.name ?? h.id;
-    const sources = [
-      h.sources.has("loaded") ? "loaded hotspot row" : null,
-      h.sources.has("list") ? "official hotspot list" : null,
-      h.sources.has("info") ? "official hotspot information" : null,
-    ].filter((x): x is string => !!x);
-    const loadState = loadStateOf(loadedRow, !!failed, completeYear);
-    add({
-      id: h.id,
-      type: "hotspot",
-      name,
-      context: contextOf(h.county, h.state, h.country),
-      evidence: [EVIDENCE_LABEL.hotspot, ...sources],
-      loadState,
-      row: loadedRow ? { beginYear: Number(loadedRow.begin_year), endYear: Number(loadedRow.end_year), nSpecies: Number(loadedRow.n_species) } : null,
-      guideCounty:
-        loadedRow?.region_code &&
-        parseRegionCode(loadedRow.region_code)?.level === "subnational2" &&
-        ev.loaded.get(loadedRow.region_code)?.loc_kind === "region"
-          ? loadedRow.region_code
-          : null,
-      loadedBeneath: 0,
-      lat: h.lat,
-      lng: h.lng,
-      distanceMiles: null,
-      error: !loadedRow && failed ? (failed.error ?? "unknown error") : null,
-      target: { kind: "hotspot", id: h.id },
-      names: [fold(name), ...(loadedRow ? [fold(loadedRow.loc_name)] : [])],
-      evidenceRank: loadedRow ? 0 : failed ? 2 : 1,
-    });
-  }
+  // 3. Verified hotspots are NOT built here: ~186k objects each (td-7f03b6).
+  //    hubDiscover ranks them from the compact store and builds candidates
+  //    only for the matches it returns (hotspotCandidate).
 
   // 4. Failed loads that are NOT established elsewhere, kept only so the recovery
   // workflow stays reachable. A hotspot-shaped one stays "reported — unverified".
@@ -623,44 +777,98 @@ function paginate<T>(items: T[], page: number): { slice: T[]; pageCount: number;
 export async function hubDiscover(
   state: Exclude<HubDiscoveryState, { mode: "none" }>,
 ): Promise<HubDiscovery> {
-  const { ev, candidates } = await discoveryIndex();
+  if (state.mode === "typed" && fold(state.find).length < HUB_FIND_MIN) {
+    return {
+      mode: "typed", find: state.find, submitted: state.submitted ?? state.find, tooShort: true, map: null, total: 0, counts: emptyCounts(),
+      page: 1, pageSize: HUB_PAGE_SIZE, pageCount: 1, first: 0, last: 0, results: [], summary: null,
+    };
+  }
+  const { ev, candidates, helpers } = await discoveryIndex();
+  const store = ev.hotspots as HotspotStore;
 
   if (state.mode === "typed") {
     const folded = fold(state.find);
-    if (folded.length < HUB_FIND_MIN) {
-      return {
-        mode: "typed", find: state.find, submitted: state.submitted ?? state.find, tooShort: true, map: null, total: 0, counts: emptyCounts(),
-        page: 1, pageSize: HUB_PAGE_SIZE, pageCount: 1, first: 0, last: 0, results: [], summary: null,
-      };
-    }
     const code = state.find.replace(/\s+/g, "").toUpperCase();
-    const ranked: { c: Candidate; rank: number }[] = [];
-    for (const c of candidates) {
+    const nameRank = (n: string) =>
+      n === folded ? 1 : n.startsWith(folded) ? 2 : n.includes(folded) ? 3 : -1;
+    // One packed integer per match: low two bits are rank, bit 2 marks a
+    // hotspot, remaining bits are the candidate/store index. A broad context
+    // query can match nearly every hotspot; retaining one JS object per match
+    // would otherwise recreate a sizeable search-time heap spike.
+    const HOTSPOT_MATCH = 4;
+    const pack = (i: number, hotspot: boolean, rank: number) => (i << 3) | (hotspot ? HOTSPOT_MATCH : 0) | rank;
+    const matchRank = (m: number) => m & 3;
+    const isHotspotMatch = (m: number) => (m & HOTSPOT_MATCH) !== 0;
+    const matchIndex = (m: number) => m >>> 3;
+    const ranked: number[] = [];
+    const hotspotEvidenceRanks = new Uint8Array(store.size);
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
       let rank = -1;
       if (c.id.toUpperCase() === code) rank = 0;
       else {
         for (const n of c.names) {
-          const r = n === folded ? 1 : n.startsWith(folded) ? 2 : n.includes(folded) ? 3 : -1;
+          const r = nameRank(n);
           if (r !== -1 && (rank === -1 || r < rank)) rank = r;
         }
         if (rank === -1 && c.contextFolded.includes(folded)) rank = 3;
       }
-      if (rank !== -1) ranked.push({ c, rank });
+      if (rank !== -1) ranked.push(pack(i, false, rank));
     }
-    ranked.sort(
-      (a, b) =>
-        a.rank - b.rank ||
-        a.c.evidenceRank - b.c.evidenceRank ||
-        a.c.name.localeCompare(b.c.name) ||
-        (a.c.id < b.c.id ? -1 : a.c.id > b.c.id ? 1 : 0),
-    );
+    for (let i = 0; i < store.size; i++) {
+      const id = store.ids[i];
+      const row = ev.loaded.get(id);
+      const loadedRow = row?.loc_kind === "hotspot" ? row : undefined;
+      const name = store.names[i] ?? id;
+      hotspotEvidenceRanks[i] = loadedRow ? 0 : ev.attempts.has(id) ? 2 : 1;
+      let rank = -1;
+      if (id.toUpperCase() === code) rank = 0;
+      else {
+        // Same rule as an eager candidate: best of its names, then its context.
+        rank = nameRank(fold(name));
+        if (loadedRow != null) {
+          const r = nameRank(fold(loadedRow.loc_name));
+          if (r !== -1 && (rank === -1 || r < rank)) rank = r;
+        }
+        if (rank === -1 && helpers.contextFor(store.county[i], store.state[i], store.country[i]).folded.includes(folded))
+          rank = 3;
+      }
+      if (rank !== -1) ranked.push(pack(i, true, rank));
+    }
+    const matchEvidenceRank = (m: number) => {
+      const i = matchIndex(m);
+      return isHotspotMatch(m) ? hotspotEvidenceRanks[i] : candidates[i].evidenceRank;
+    };
+    const matchName = (m: number) => {
+      const i = matchIndex(m);
+      return isHotspotMatch(m) ? (store.names[i] ?? store.ids[i]) : candidates[i].name;
+    };
+    const matchId = (m: number) => {
+      const i = matchIndex(m);
+      return isHotspotMatch(m) ? store.ids[i] : candidates[i].id;
+    };
+    ranked.sort((a, b) => {
+      const rank = matchRank(a) - matchRank(b);
+      if (rank) return rank;
+      const evidence = matchEvidenceRank(a) - matchEvidenceRank(b);
+      if (evidence) return evidence;
+      const name = matchName(a).localeCompare(matchName(b));
+      if (name) return name;
+      const aid = matchId(a);
+      const bid = matchId(b);
+      return aid < bid ? -1 : aid > bid ? 1 : 0;
+    });
     const counts = emptyCounts();
-    for (const { c } of ranked) counts[c.type] += 1;
+    for (const m of ranked)
+      counts[isHotspotMatch(m) ? "hotspot" : candidates[matchIndex(m)].type] += 1;
     const { slice, pageCount, first, last } = paginate(ranked, state.page);
     return {
       mode: "typed", find: state.find, submitted: state.submitted ?? state.find, tooShort: false, map: null, total: ranked.length, counts,
       page: state.page, pageSize: HUB_PAGE_SIZE, pageCount, first, last,
-      results: slice.map(({ c }) => strip(c)), summary: null,
+      results: slice.map((m) => {
+        const i = matchIndex(m);
+        return strip(isHotspotMatch(m) ? hotspotCandidate(ev, i, helpers) : candidates[i]);
+      }), summary: null,
     };
   }
 
@@ -668,25 +876,35 @@ export async function hubDiscover(
   // radius. Distance is the shared haversine (periodic in longitude, so a circle
   // crossing 180 degrees is exact); no centroid or region box is ever used.
   const km = state.dist * MILES_TO_KM;
-  const verified = candidates.filter((c) => c.type === "hotspot");
-  const measured = verified.filter((c) => c.lat != null && c.lng != null);
-  const inside = measured
-    .map((c) => ({ c, miles: haversineKm(state.lat, state.lng, c.lat!, c.lng!) / MILES_TO_KM }))
-    .filter(({ miles }) => miles * MILES_TO_KM <= km)
-    .sort(
-      (a, b) =>
-        a.miles - b.miles ||
-        a.c.name.localeCompare(b.c.name) ||
-        (a.c.id < b.c.id ? -1 : a.c.id > b.c.id ? 1 : 0),
-    );
+  // Verified hotspots straight from the compact store (td-7f03b6); only the
+  // returned page becomes full candidates.
+  const inside: number[] = [];
+  const milesByIndex = new Float64Array(store.size);
+  let evaluated = 0;
+  for (let i = 0; i < store.size; i++) {
+    const lat = store.lat[i];
+    const lng = store.lng[i];
+    if (lat == null || lng == null) continue;
+    evaluated += 1;
+    const km2 = haversineKm(state.lat, state.lng, lat, lng);
+    if (km2 > km) continue;
+    milesByIndex[i] = km2 / MILES_TO_KM;
+    inside.push(i);
+  }
+  inside.sort(
+    (a, b) =>
+      milesByIndex[a] - milesByIndex[b] ||
+      (store.names[a] ?? store.ids[a]).localeCompare(store.names[b] ?? store.ids[b]) ||
+      (store.ids[a] < store.ids[b] ? -1 : store.ids[a] > store.ids[b] ? 1 : 0),
+  );
   const { slice, pageCount, first, last } = paginate(inside, state.page);
 
   // Areas represented by these hotspots' RECORDED ancestry — not a claim that
   // the map point lies inside any boundary, and never whole-area frequency rows.
   const tally = new Map<string, number>();
-  for (const { c } of inside) {
-    const h = ev.hotspots.get(c.id)!;
-    for (const code of [h.country, h.state, h.county]) if (code) tally.set(code, (tally.get(code) ?? 0) + 1);
+  for (const i of inside) {
+    for (const code of [store.country[i], store.state[i], store.county[i]])
+      if (code) tally.set(code, (tally.get(code) ?? 0) + 1);
   }
   const summaryFor = (level: "country" | "subnational1" | "subnational2"): HubSummaryArea[] => {
     const areas: HubSummaryArea[] = [];
@@ -723,13 +941,16 @@ export async function hubDiscover(
     tooShort: false,
     map: {
       place: state.place, lat: state.lat, lng: state.lng, dist: state.dist,
-      evaluated: measured.length,
-      unevaluable: verified.length - measured.length,
+      evaluated,
+      unevaluable: store.size - evaluated,
     },
     total: inside.length,
     counts,
     page: state.page, pageSize: HUB_PAGE_SIZE, pageCount, first, last,
-    results: slice.map(({ c, miles }) => ({ ...strip(c), distanceMiles: Math.round(miles * 10) / 10 })),
+    results: slice.map((i) => ({
+      ...strip(hotspotCandidate(ev, i, helpers)),
+      distanceMiles: Math.round(milesByIndex[i] * 10) / 10,
+    })),
     summary: { countries: summaryFor("country"), regions: summaryFor("subnational1"), counties: summaryFor("subnational2") },
   };
 }
