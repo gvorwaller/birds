@@ -187,6 +187,8 @@ type HubDataEvent = { locals: App.Locals; url: URL };
 
 async function hubInventoryData(
   { locals, url }: HubDataEvent,
+  /** `expand`: one country code, or "*" for every country (the shared
+   * country-groups build below). */
   opts: { expand?: string } = {},
 ) {
   const userId = locals.scopeId!;
@@ -755,6 +757,7 @@ async function hubInventoryData(
       countryHotspots: [],
       groupCount: s.groups.length,
       groups:
+        opts.expand === "*" ||
         s.countryCode === opts.expand ||
         (focus?.kind === "area" && focus.states[0] === s.countryCode)
           ? s.groups.map(stripDetail)
@@ -814,9 +817,59 @@ async function hubInventoryData(
 
 /** The narrow lazy-country boundary. It intentionally does not start the
  * streamed worldwide species aggregation that only the full page renders. */
+type HubGroups = Awaited<ReturnType<typeof hubInventoryData>>["countrySections"][number]["groups"];
+
+/**
+ * What the country groups depend on: loaded rows, recent failures (their 24 h
+ * cooldown also ages out, so the hour is part of it), cached county lists,
+ * and the last complete year. Not the viewer: groups are the same for everyone.
+ */
+async function countryGroupsRevision(): Promise<string> {
+  const { rows } = await query<{ revision: string }>(
+    `SELECT concat_ws('/',
+       (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code,
+                 begin_year, end_year, n_species, n_unmatched, fetched_at), ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch),
+       (SELECT md5(string_agg(concat_ws(':', loc_code, status, last_attempt_at), ',' ORDER BY loc_code COLLATE "C"))
+          FROM frequency_fetch_attempts WHERE status = 'error'),
+       (SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '')
+          FROM ebird_cache WHERE cache_key LIKE 'regions:subnational2:%'),
+       date_trunc('hour', NOW())::text
+     ) AS revision`,
+  );
+  return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
+}
+
+let countryGroupsCache:
+  | { revision: string; value: Promise<Map<string, HubGroups>> }
+  | undefined;
+
+/**
+ * One country's groups for /api/hub-country. ALL countries' groups are built
+ * ONCE and shared until their inputs change (td-b6be76 follow-up): a page
+ * restoring several open countries fired one request per country, each
+ * rebuilding the whole ~13,000-row inventory at the same time, and in
+ * production that pushed the process past PM2's 600 MB limit (963 MB and
+ * 1.4 GB on 2026-09-26, both followed by a restart and a 502). Concurrent
+ * requests now wait on the same build.
+ */
 export async function _hubCountryGroups(event: HubDataEvent, country: string) {
-  const data = await hubInventoryData(event, { expand: country });
-  return data.countrySections.find((s) => s.countryCode === country)?.groups ?? null;
+  const revision = await countryGroupsRevision();
+  if (countryGroupsCache?.revision !== revision) {
+    const value = hubInventoryData(event, { expand: "*" }).then(
+      (data) => new Map(data.countrySections.map((s) => [s.countryCode, s.groups] as const)),
+    );
+    countryGroupsCache = { revision, value };
+    // A failed build must not be served to the next request.
+    value.catch(() => {
+      if (countryGroupsCache?.value === value) countryGroupsCache = undefined;
+    });
+  }
+  return (await countryGroupsCache.value).get(country) ?? null;
+}
+
+export function __resetCountryGroupsCacheForTests(): void {
+  countryGroupsCache = undefined;
 }
 
 export async function _hubData(event: HubDataEvent, opts: { expand?: string } = {}) {

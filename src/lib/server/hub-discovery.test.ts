@@ -218,7 +218,9 @@ describe("Hotspots & data discovery service", () => {
       expect((await typed("zqdisc")).results.filter((r) => r.id === H_BOTH)).toHaveLength(1);
     });
 
-    it("never promotes an observation-only, name-only, negative-info or malformed entry to a hotspot", async () => {
+    // Several full searches, each building the discovery index (~1 s on the
+    // prod-sized snapshot); it is deliberately not retained between searches.
+    it("never promotes an observation-only, name-only, negative-info or malformed entry to a hotspot", { timeout: 20_000 }, async () => {
       for (const id of [X_OBS, X_NEG, "not-an-id"]) expect((await typed(id)).total, id).toBe(0);
       expect((await typed("Zqdisc Observation Only")).total).toBe(0);
       expect((await typed("Zqdisc Negative Info")).total).toBe(0);

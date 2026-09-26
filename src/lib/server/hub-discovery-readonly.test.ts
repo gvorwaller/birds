@@ -31,7 +31,9 @@ await requireTestDb(query as unknown as (sql: string) => Promise<unknown>);
 const WRITE = /\b(INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|COPY|NOTIFY|LISTEN|VACUUM|LOCK|MERGE|CALL)\b/i;
 
 describe("Hotspots & data discovery is read-only", () => {
-  it("sends only SELECT statements, opens no transaction and touches no job across typed, map and paged searches", async () => {
+  // Several full searches, each building the discovery index (~1 s on the
+  // prod-sized snapshot); it is deliberately not retained between searches.
+  it("sends only SELECT statements, opens no transaction and touches no job across typed, map and paged searches", { timeout: 20_000 }, async () => {
     sent.sql.length = 0;
     sent.transactions = 0;
     await hubDiscover({ mode: "typed", find: "Sarasota", page: 1 });

@@ -288,52 +288,74 @@ async function loadEvidence() {
 /** @internal */
 export type Evidence = Awaited<ReturnType<typeof loadEvidence>>;
 
+
 /**
- * A cheap fingerprint of everything loadEvidence() reads (td-9eae4f). The full
- * evidence load expands every cached hotspot list (13 MB / 186k hotspots in
- * production, ~1.3 s of SQL before any JS), and it used to run on every
- * search. Reuse it until one of its inputs changes. Includes the last
- * complete year because buildCandidates' load states depend on it.
+ * Evidence + candidates for one search (built per call again, 2026-09-26).
+ * td-9eae4f kept this index in memory between searches, but it holds every
+ * loaded row, reference region and cached hotspot as objects: ~180 MB even
+ * on the test snapshot, far more in production (186k hotspots). Once the
+ * Hotspots & data page also used it (td-b6be76), every page load built and
+ * retained it, and production passed PM2's 600 MB limit (963 MB / 1.4 GB,
+ * restarts and a 502). Concurrent searches still share one in-flight build.
  */
-async function evidenceRevision(): Promise<string> {
-  const { rows } = await query<{ revision: string }>(
-    `SELECT concat_ws('/',
-       (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code,
-                 begin_year, end_year, n_species, fetched_at), ',' ORDER BY loc_code COLLATE "C"))
-          FROM frequency_fetch),
-       (SELECT md5(string_agg(concat_ws(':', loc_code, loc_kind, loc_name, region_code, error),
-                 ',' ORDER BY loc_code COLLATE "C"))
-          FROM frequency_fetch_attempts WHERE status = 'error'),
-       (SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '')
-          FROM ebird_cache
-         WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
-            OR cache_key LIKE 'hotspotInfo:%'),
-       (SELECT count(*) || ':' || coalesce(max(updated_at)::text, '') FROM ebird_locations)
-     ) AS revision`,
-  );
-  return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
+let inFlightIndex: Promise<{ ev: Evidence; candidates: Candidate[] }> | undefined;
+async function discoveryIndex(): Promise<{ ev: Evidence; candidates: Candidate[] }> {
+  if (inFlightIndex) return inFlightIndex;
+  const value = loadEvidence().then((ev) => ({ ev, candidates: buildCandidates(ev) }));
+  inFlightIndex = value;
+  value.finally(() => {
+    if (inFlightIndex === value) inFlightIndex = undefined;
+  }).catch(() => {});
+  return value;
 }
 
-let discoveryCache:
-  | { revision: string; value: Promise<{ ev: Evidence; candidates: Candidate[] }> }
-  | undefined;
-
-/** Evidence + candidates, rebuilt only when an input changed. Callers only
- * read them (results are copied through strip()), so sharing is safe. */
-async function discoveryIndex(): Promise<{ ev: Evidence; candidates: Candidate[] }> {
-  const revision = await evidenceRevision();
-  if (discoveryCache?.revision === revision) return discoveryCache.value;
-  const value = loadEvidence().then((ev) => ({ ev, candidates: buildCandidates(ev) }));
-  discoveryCache = { revision, value };
-  // A failed build must not be served to the next search.
+/**
+ * The IDs of verified hotspots (in an official hotspot list, or with valid
+ * official hotspot info): a lean Set of short strings, kept until those cache
+ * rows change. This is all the Hotspots & data page needs to label failed
+ * loads, without building or retaining the whole discovery index.
+ */
+let verifiedIdsCache: { revision: string; value: Promise<Set<string>> } | undefined;
+async function verifiedHotspotIds(): Promise<Set<string>> {
+  const { rows } = await query<{ revision: string }>(
+    `SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '') AS revision
+       FROM ebird_cache
+      WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
+         OR cache_key LIKE 'hotspotInfo:%'`,
+  );
+  const revision = rows[0]?.revision ?? "";
+  if (verifiedIdsCache?.revision === revision) return verifiedIdsCache.value;
+  const value = (async () => {
+    const [lists, info] = await Promise.all([
+      query<{ loc_id: string }>(
+        `SELECT DISTINCT h->>'locId' AS loc_id
+           FROM ebird_cache c
+          CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
+          WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
+            AND jsonb_typeof(h) = 'object' AND h->>'locId' ~ '^L[0-9]+$'`,
+      ),
+      query<{ cache_key: string; payload: unknown }>(
+        `SELECT cache_key, payload FROM ebird_cache WHERE cache_key LIKE 'hotspotInfo:%'`,
+      ),
+    ]);
+    const ids = new Set(lists.rows.map((r) => r.loc_id));
+    for (const row of info.rows) {
+      const id = row.cache_key.slice("hotspotInfo:".length);
+      if (isHotspotLocId(id) && parseOfficialHotspotInfo(row.payload, id)) ids.add(id);
+    }
+    return ids;
+  })();
+  verifiedIdsCache = { revision, value };
   value.catch(() => {
-    if (discoveryCache?.value === value) discoveryCache = undefined;
+    if (verifiedIdsCache?.value === value) verifiedIdsCache = undefined;
   });
   return value;
 }
 
 export function __resetDiscoveryCacheForTests(): void {
-  discoveryCache = undefined;
+  inFlightIndex = undefined;
+  verifiedIdsCache = undefined;
 }
 
 const EVIDENCE_LABEL = {
@@ -563,16 +585,10 @@ export function buildCandidates(ev: Evidence): Candidate[] {
 export async function verifiedHotspotIdsAmong(ids: readonly string[]): Promise<Set<string>> {
   const wanted = [...new Set(ids.filter((id) => isHotspotLocId(id)))];
   if (wanted.length === 0) return new Set();
-  // td-b6be76: the same evidence the discovery index already holds (official
-  // hotspot lists + valid hotspot info), reused instead of re-expanding every
-  // cached list on each Hotspots & data load.
-  const { ev } = await discoveryIndex();
-  const verified = new Set<string>();
-  for (const id of wanted) {
-    const h = ev.hotspots.get(id);
-    if (h && (h.sources.has("list") || h.sources.has("info"))) verified.add(id);
-  }
-  return verified;
+  // Same rule as before (official hotspot list or valid hotspot info), from a
+  // lean cached ID set instead of re-expanding every cached list per load.
+  const verified = await verifiedHotspotIds();
+  return new Set(wanted.filter((id) => verified.has(id)));
 }
 
 const emptyCounts = (): Record<HubResultType, number> => ({

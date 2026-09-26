@@ -93,7 +93,10 @@ describe("page wiring", () => {
   it("does not start page-only species aggregation for a country request", () => {
     expect(endpoint).toContain('import { _hubCountryGroups } from "../../forecast/data/+page.server";');
     expect(endpoint).not.toContain("_hubData(");
-    expect(server).toMatch(/export async function _hubCountryGroups[\s\S]*?hubInventoryData\(event, \{ expand: country \}\)/);
+    // One shared build of every country's groups, not one per request (the
+    // parallel per-country builds pushed production past 600 MB, 2026-09-26).
+    expect(server).toMatch(/export async function _hubCountryGroups[\s\S]*?hubInventoryData\(event, \{ expand: "\*" \}\)/);
+    expect(server).toContain("if (countryGroupsCache?.revision !== revision) {");
     expect(server).toMatch(/export async function _hubData[\s\S]*?streamed\(loadedSpeciesCounts\(\)/);
   });
 
