@@ -461,7 +461,9 @@
        stays out of the way of the Needs/Notable content on a mobile screen,
        rather than a full "card" of rows the user has to scroll past to reach
        it. -->
-  <section class="card glance">
+  <details class="card glance" open>
+    <summary><h2>At a glance</h2></summary>
+    <div class="glance-content">
     <div class="glance-item">
       <span class="glance-label">Life list</span>
       <span class="glance-value">{data.seenCount}</span>
@@ -490,9 +492,11 @@
         {/if}
       </span>
     </div>
-  </section>
+    </div>
+  </details>
 
-  <section class="card">
+  <details class="card" open>
+    <summary><h2>Search area</h2></summary>
     <form method="GET" class="filters">
       <label class="grow-field">
         <span>View a different area</span>
@@ -550,11 +554,11 @@
         {/if}
       </div>
     {/if}
-  </section>
+  </details>
 
   {#if data.needsLocation}
-    <section class="card">
-      <h2>Pick a place to start</h2>
+    <details class="card" open>
+      <summary><h2>Pick a place to start</h2></summary>
       <p class="muted">
         {#if isViewer}
           Search a place above to see needs and notable reports.
@@ -564,12 +568,12 @@
           > to default to it.
         {/if}
       </p>
-    </section>
+    </details>
   {/if}
 
   {#if !data.hasApiKey}
-    <section class="card">
-      <h2>Get set up</h2>
+    <details class="card" open>
+      <summary><h2>Get set up</h2></summary>
       <p class="muted">
         {#if isViewer}
           Live eBird data isn't available on this account right now.
@@ -578,13 +582,14 @@
           needs and notable reports.
         {/if}
       </p>
-    </section>
+    </details>
   {/if}
 
   <!-- Guarded on the location, NOT on `mapCenter`: focus mode deliberately
        passes a null center (see its comment) and the map must stay rendered. -->
   {#if data.view && data.location}
-    <section class="card map-card">
+    <details class="card map-card" open>
+      <summary><h2>Map</h2></summary>
       <ObsMap points={mapPoints} center={mapCenter} fitKey={mapFitKey} />
       <p class="legend">
         {#if focused}
@@ -601,17 +606,18 @@
           <span class="dot home"></span> selected location
         {/if}
       </p>
-    </section>
+    </details>
   {/if}
 
   {#if data.error}
-    <section class="card">
+    <details class="card" open>
+      <summary><h2>Report status</h2></summary>
       <p class="muted">{data.error}</p>
-    </section>
+    </details>
   {/if}
 
-  <section class="card recorded-card">
-    <h2>{isViewer ? "Family list recorded sightings" : "Your recorded sightings"}</h2>
+  <details class="card recorded-card" open>
+    <summary><h2>{isViewer ? "Family list recorded sightings" : "Your recorded sightings"}</h2></summary>
     <p class="muted intro">
       First-seen life-list records, not complete checklist history, and separate
       from public totals. Recorded dates {data.recordedDateStart}–{data.recordedDateEnd}.
@@ -633,10 +639,12 @@
       <p class="muted">Undated records are available in the <a href="/life">Life list</a>.</p>
     {/if}
     <p class="muted"><a href="/life">See the full Life list →</a></p>
-  </section>
+  </details>
 
   {#if data.view}
-    <section class="card search-card">
+    <details class="card search-card" open>
+      <summary><h2>Filter birds and places</h2></summary>
+      <div class="search-content">
       <label class="sr-only" for="home-search"
         >Filter these birds and places</label
       >
@@ -661,7 +669,8 @@
               }`}</span
         >
       {/if}
-    </section>
+      </div>
+    </details>
 
     <p aria-live="polite" class="sr-only">
       {#if focused}
@@ -717,7 +726,8 @@
            made the escape hatch unreachable exactly when someone was searching
            for somewhere new. -->
       {#if placeHits.length === 0}
-        <section class="card">
+        <details class="card" open>
+          <summary><h2>Location search</h2></summary>
           <p class="muted">
             <!-- While the per-species places are still streaming, a definitive
                  "no place matches" would be contradicted a second later by a
@@ -736,19 +746,19 @@
             {/if} —
             <a href={geocodeHref}>search it as a location instead →</a>
           </p>
-        </section>
+        </details>
       {/if}
     {/if}
 
-    <section class="card">
-      <h2>
+    <details class="card" open>
+      <summary><h2>
         Notable reports — {windowPhrase(data.back)}
         <Badge kind="notable" label="Notable" />
         {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
         {#if data.view.fetchedAt}
           <span class="asof">reports as of {asOf(data.view.fetchedAt)}</span>
         {/if}
-      </h2>
+      </h2></summary>
       <p class="muted intro">
         eBird notable reports near {data.location?.label ?? "here"} —
         {windowPhrase(data.back)}. Species you still need appear in Needs below
@@ -861,11 +871,10 @@
           </div>
         </div>
       {/each}
-    </section>
+    </details>
 
-    <section class="card">
-      <div class="needs-head">
-        <h2>
+    <details class="card" open>
+      <summary><h2>
           {#if focused}
             {needsMatched.length}
             {needsMatched.length === 1 ? "need" : "needs"} at {focused.locName} — {windowPhrase(
@@ -878,7 +887,8 @@
           {#if data.view.fetchedAt}
             <span class="asof">as of {asOf(data.view.fetchedAt)}</span>
           {/if}
-        </h2>
+        </h2></summary>
+      <div class="needs-head">
         {#if needsAll.length > 1}
           <label class="sort-control">
             <span>Sort</span>
@@ -1068,7 +1078,7 @@
             : `Show all ${needsMatched.length} needs`}
         </button>
       {/if}
-    </section>
+    </details>
 
     <BestPlaces
       places={data.view.bestPlaces}
@@ -1157,17 +1167,40 @@
   }
   .card h2 {
     font-size: 1.05rem;
+    margin: 0;
+  }
+  .card > summary {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .card > summary::-webkit-details-marker {
+    display: none;
+  }
+  .card > summary::after {
+    content: "▾";
+    margin-left: auto;
+    color: var(--muted);
+  }
+  .card:not([open]) > summary::after {
+    content: "▸";
+  }
+  .card[open] > summary {
     margin-bottom: 10px;
   }
   /* Item 5: a single compact strip rather than a full card of `.obs` rows, so
      it reads at a glance and does not push the Needs card below the fold on a
      mobile screen. */
   .glance {
+    padding: 12px 16px;
+  }
+  .glance-content {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 24px;
     align-items: baseline;
-    padding: 12px 16px;
   }
   .glance-item {
     display: flex;
@@ -1222,12 +1255,9 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 8px 12px;
     margin-bottom: 10px;
-  }
-  .needs-head h2 {
-    margin-bottom: 0;
   }
   .sort-control {
     display: flex;
@@ -1334,6 +1364,9 @@
     white-space: nowrap;
   }
   .search-card {
+    display: block;
+  }
+  .search-content {
     display: flex;
     align-items: center;
     gap: 12px;

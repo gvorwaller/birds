@@ -57,10 +57,11 @@
 </script>
 
 {#if places.length > 0}
-  <section class="card">
-    <h2>{title}</h2>
+  <details class="card" open>
+    <summary><h2>{title}</h2></summary>
     <p class="muted intro">
-      Area-feed preview of reported needs; compare hotspots below for per-location coverage.
+      Area-feed preview of reported needs; compare hotspots below for
+      per-location coverage.
     </p>
     {#each shown as p, i (p.locId ?? p.locName)}
       <div class="place">
@@ -74,9 +75,16 @@
               <a
                 id={originId}
                 class="place-link path-focus-target"
-                href={withReturnTo(`/hotspots/${encodeURIComponent(p.locId)}`, sourceHref, undefined, sourceLabel)}
-                onclick={navigationAction(accountId, { label: p.locName, originId })}
-                >{p.locName}</a
+                href={withReturnTo(
+                  `/hotspots/${encodeURIComponent(p.locId)}`,
+                  sourceHref,
+                  undefined,
+                  sourceLabel,
+                )}
+                onclick={navigationAction(accountId, {
+                  label: p.locName,
+                  originId,
+                })}>{p.locName}</a
               >
               <a
                 class="hotspot-badge"
@@ -113,15 +121,11 @@
       </div>
     {/each}
     {#if places.length > limit}
-      <button
-        type="button"
-        class="more"
-        onclick={() => (showAll = !showAll)}
-      >
+      <button type="button" class="more" onclick={() => (showAll = !showAll)}>
         {showAll ? "Show fewer" : `Show all ${places.length}`}
       </button>
     {/if}
-  </section>
+  </details>
 {/if}
 
 <style>
@@ -134,6 +138,27 @@
   }
   .card h2 {
     font-size: 1.05rem;
+    margin: 0;
+  }
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::after {
+    content: "▾";
+    margin-left: auto;
+    color: var(--muted);
+  }
+  details:not([open]) summary::after {
+    content: "▸";
+  }
+  details[open] summary {
     margin-bottom: 4px;
   }
   .intro {

@@ -6,6 +6,8 @@
     comparisonComplete,
     comparisonStopMessage,
     comparisonQueryKey,
+    comparisonStorageKey,
+    parsePersistedComparison,
     progressForRows,
     sortedComparisonRows,
     type ComparisonFilters,
@@ -13,6 +15,7 @@
     type HotspotReference,
   } from "$lib/hotspot-comparison";
   import { onDestroy } from "svelte";
+  import { browser } from "$app/environment";
   import { beforeNavigate } from "$app/navigation";
   import MapLink from "$components/MapLink.svelte";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
@@ -41,6 +44,7 @@
   let rows = $state<HotspotComparisonRow[]>([]);
   let identity = $state<string | null>(null);
   let referenceStale = $state(false);
+  let savedAt = $state<string | null>(null);
   let status = $state<
     | "idle"
     | "loading"
@@ -56,16 +60,19 @@
   let generation = 0;
   let runSerial = 0;
   let activeKey = "";
+  let activeStorageKey = "";
 
   const key = $derived(comparisonQueryKey(filters));
+  const storageKey = $derived(comparisonStorageKey(accountId, key));
   const progress = $derived(progressForRows(rows));
   const complete = $derived(comparisonComplete(rows, referenceStale));
   const ranked = $derived(sortedComparisonRows(rows));
   const shown = $derived(showAll ? ranked : ranked.slice(0, 5));
 
   $effect(() => {
-    if (key !== activeKey) {
+    if (storageKey !== activeStorageKey) {
       activeKey = key;
+      activeStorageKey = storageKey;
       generation++;
       controller?.abort();
       controller = null;
@@ -73,9 +80,55 @@
       rows = [];
       identity = null;
       referenceStale = false;
+      savedAt = null;
       status = "idle";
       message = "";
       showAll = false;
+      if (browser) {
+        const saved = parsePersistedComparison(
+          localStorage.getItem(storageKey),
+          key,
+        );
+        if (saved) {
+          refs = saved.references;
+          rows = saved.rows;
+          identity = saved.identity;
+          referenceStale = saved.referenceStale;
+          savedAt = saved.savedAt;
+          status = comparisonComplete(saved.rows, saved.referenceStale)
+            ? "complete"
+            : "partial";
+          message = `Restored saved hotspot results from ${new Date(saved.savedAt).toLocaleString()}.`;
+        }
+      }
+    }
+  });
+
+  $effect(() => {
+    if (
+      !browser ||
+      !activeKey ||
+      !identity ||
+      !savedAt ||
+      refs.length === 0 ||
+      rows.length !== refs.length
+    )
+      return;
+    try {
+      localStorage.setItem(
+        activeStorageKey,
+        JSON.stringify({
+          version: 1,
+          queryKey: activeKey,
+          savedAt,
+          identity,
+          references: refs,
+          rows,
+          referenceStale,
+        }),
+      );
+    } catch {
+      // Private mode or full storage: the live comparison still works.
     }
   });
 
@@ -132,6 +185,7 @@
           token: null,
         },
     );
+    savedAt = new Date().toISOString();
   }
 
   async function start() {
@@ -158,6 +212,7 @@
       refs = init.references ?? [];
       identity = init.identity ?? null;
       referenceStale = !!init.referenceStale;
+      savedAt = new Date().toISOString();
       rows =
         init.rows ??
         refs.map((ref: HotspotReference) => ({
@@ -227,10 +282,7 @@
    * Shows a real seconds countdown and resolves after `ms`, or false early if
    * the run was paused or replaced.
    */
-  function waitForResume(
-    ms: number,
-    local: AbortController,
-  ): Promise<boolean> {
+  function waitForResume(ms: number, local: AbortController): Promise<boolean> {
     return new Promise((resolve) => {
       if (local.signal.aborted) return resolve(false);
       const until = Date.now() + ms;
@@ -387,10 +439,10 @@
   }
 </script>
 
-<section class="card comparison" aria-labelledby="compare-title">
+<details class="card comparison" open>
+  <summary><h2 id="compare-title">Compare hotspots</h2></summary>
   <div class="head">
     <div>
-      <h2 id="compare-title">Compare hotspots</h2>
       <p class="muted">
         Compare recent public reports from every verified hotspot in this area.
         A zero means no matching reports were returned. Birds may still be
@@ -407,6 +459,8 @@
       <button type="button" onclick={continueRun}>Continue</button>
     {:else if status === "partial"}
       <button type="button" onclick={retry}>Retry incomplete</button>
+    {:else if status === "complete"}
+      <button type="button" onclick={start}>Refresh</button>
     {/if}
   </div>
   <p class="muted scope">
@@ -438,9 +492,16 @@
                   <a
                     id={originId}
                     class="path-focus-target"
-                    href={withReturnTo(`/hotspots/${encodeURIComponent(row.locId)}`, sourceHref, undefined, sourceLabel)}
-                    onclick={navigationAction(accountId, { label: row.locName, originId })}
-                    >{row.locName}</a
+                    href={withReturnTo(
+                      `/hotspots/${encodeURIComponent(row.locId)}`,
+                      sourceHref,
+                      undefined,
+                      sourceLabel,
+                    )}
+                    onclick={navigationAction(accountId, {
+                      label: row.locName,
+                      originId,
+                    })}>{row.locName}</a
                   >
                 {:else}{row.locName}{/if}</strong
               >
@@ -464,9 +525,16 @@
                         <a
                           id={spOriginId}
                           class="path-focus-target"
-                          href={withReturnTo(`/species/${encodeURIComponent(species.code)}`, sourceHref, undefined, sourceLabel)}
-                          onclick={navigationAction(accountId, { label: species.comName, originId: spOriginId })}
-                          >{species.comName}</a
+                          href={withReturnTo(
+                            `/species/${encodeURIComponent(species.code)}`,
+                            sourceHref,
+                            undefined,
+                            sourceLabel,
+                          )}
+                          onclick={navigationAction(accountId, {
+                            label: species.comName,
+                            originId: spOriginId,
+                          })}>{species.comName}</a
                         >{#if species.obsValid === false}
                           <span class="unconfirmed">Unconfirmed</span>{/if}
                       </div>
@@ -505,7 +573,7 @@
       </p>
     {/if}
   {/if}
-</section>
+</details>
 
 <style>
   .card {
@@ -520,6 +588,27 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+  }
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::after {
+    content: "▾";
+    margin-left: auto;
+    color: var(--muted);
+  }
+  details:not([open]) summary::after {
+    content: "▸";
+  }
+  details[open] summary {
+    margin-bottom: 4px;
   }
   h2 {
     font-size: 1.05rem;

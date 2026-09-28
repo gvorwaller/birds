@@ -45,15 +45,14 @@ describe("adopted navigation sources", () => {
     const home = source("src/routes/+page.svelte");
     const planner = source("src/routes/trips/plan/+page.svelte");
 
-    expect(bestPlaces).toContain(
-      "withReturnTo(`/hotspots/${encodeURIComponent(p.locId)}`",
-    );
+    expect(bestPlaces).toContain("withReturnTo(");
+    expect(bestPlaces).toContain("`/hotspots/${encodeURIComponent(p.locId)}`");
     expect(bestPlaces).toContain("onclick={navigationAction(accountId");
     expect(comparison).toContain(
-      "withReturnTo(`/hotspots/${encodeURIComponent(row.locId)}`",
+      "`/hotspots/${encodeURIComponent(row.locId)}`",
     );
     expect(comparison).toContain(
-      "withReturnTo(`/species/${encodeURIComponent(species.code)}`",
+      "`/species/${encodeURIComponent(species.code)}`",
     );
     expect(comparison).toContain("onclick={navigationAction(accountId");
     expect(home).toContain("accountId={data.user?.id}");

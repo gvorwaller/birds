@@ -50,6 +50,105 @@ export interface ComparisonProgress {
   unqueried: number;
 }
 
+export interface PersistedHotspotComparison {
+  version: 1;
+  queryKey: string;
+  savedAt: string;
+  identity: string;
+  references: HotspotReference[];
+  rows: HotspotComparisonRow[];
+  referenceStale: boolean;
+}
+
+export function comparisonStorageKey(
+  accountId: number | null,
+  queryKey: string,
+): string {
+  return `hotspot-comparison:${accountId ?? "unknown"}:${queryKey}`;
+}
+
+function isReference(value: unknown): value is HotspotReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.locId === "string" &&
+    typeof row.locName === "string" &&
+    typeof row.lat === "number" &&
+    Number.isFinite(row.lat) &&
+    typeof row.lng === "number" &&
+    Number.isFinite(row.lng) &&
+    typeof row.distanceKm === "number" &&
+    Number.isFinite(row.distanceKm) &&
+    (row.googlePlaceId === null || typeof row.googlePlaceId === "string")
+  );
+}
+
+function isComparisonRow(value: unknown): value is HotspotComparisonRow {
+  if (!isReference(value)) return false;
+  const row = value as unknown as Record<string, unknown>;
+  return (
+    ["unqueried", "fresh", "stale", "failed"].includes(String(row.state)) &&
+    (row.count === null ||
+      (typeof row.count === "number" &&
+        Number.isInteger(row.count) &&
+        row.count >= 0)) &&
+    Array.isArray(row.species) &&
+    row.species.every((species) => {
+      if (!species || typeof species !== "object" || Array.isArray(species))
+        return false;
+      const item = species as Record<string, unknown>;
+      return (
+        typeof item.code === "string" &&
+        typeof item.comName === "string" &&
+        typeof item.sciName === "string" &&
+        typeof item.obsDt === "string" &&
+        (item.obsValid === undefined || typeof item.obsValid === "boolean")
+      );
+    }) &&
+    (row.latestObsDt === null || typeof row.latestObsDt === "string") &&
+    (row.fetchedAt === null || typeof row.fetchedAt === "string") &&
+    typeof row.stale === "boolean" &&
+    (row.error === null || typeof row.error === "string") &&
+    (row.token === null || typeof row.token === "string")
+  );
+}
+
+/** Parse only this account/filter scope's saved result; corrupt storage is ignored. */
+export function parsePersistedComparison(
+  raw: string | null,
+  expectedQueryKey: string,
+): PersistedHotspotComparison | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      value.version !== 1 ||
+      value.queryKey !== expectedQueryKey ||
+      typeof value.savedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.savedAt)) ||
+      typeof value.identity !== "string" ||
+      !value.identity ||
+      !Array.isArray(value.references) ||
+      !value.references.every(isReference) ||
+      !Array.isArray(value.rows) ||
+      !value.rows.every(isComparisonRow) ||
+      typeof value.referenceStale !== "boolean"
+    )
+      return null;
+    const refs = value.references as HotspotReference[];
+    const rows = value.rows as HotspotComparisonRow[];
+    if (
+      refs.length === 0 ||
+      rows.length !== refs.length ||
+      rows.some((row, i) => row.locId !== refs[i]?.locId)
+    )
+      return null;
+    return value as unknown as PersistedHotspotComparison;
+  } catch {
+    return null;
+  }
+}
+
 export interface ComparisonInitResponse {
   status: "ready" | "unavailable" | "restart-required";
   message?: string;
@@ -93,15 +192,21 @@ export function comparisonStopMessage(
   if (reason === "quota")
     return (
       `Stopped to save eBird's hourly request allowance for the rest of the app` +
-      (opts.quotaRemaining != null ? ` (${opts.quotaRemaining} of 500 left this hour)` : "") +
+      (opts.quotaRemaining != null
+        ? ` (${opts.quotaRemaining} of 500 left this hour)`
+        : "") +
       (left ? `. ${left}; use Retry incomplete later.` : ". Try again later.")
     );
   if (reason === "rate") {
     const secs = Math.ceil((opts.resumeAfterMs ?? 0) / 1000);
     return (
       `eBird asked us to slow down` +
-      (secs > 0 ? ` for about ${secs < 120 ? `${secs} s` : `${Math.ceil(secs / 60)} min`}` : "") +
-      (left ? `. ${left}; use Retry incomplete.` : ". The comparison will retry shortly.")
+      (secs > 0
+        ? ` for about ${secs < 120 ? `${secs} s` : `${Math.ceil(secs / 60)} min`}`
+        : "") +
+      (left
+        ? `. ${left}; use Retry incomplete.`
+        : ". The comparison will retry shortly.")
     );
   }
   return "Further hotspot checks stopped after an eBird error response.";

@@ -472,6 +472,16 @@
 						default, or anywhere you search.
 					</li>
 					<li>
+						Every Home section starts expanded. Tap its heading to collapse or reopen it
+						without losing the rest of the page.
+					</li>
+					<li>
+						<strong>Compare hotspots</strong> keeps the latest results in this browser for
+						the same signed-in account, place, radius, window, and count filters. They
+						return after navigation or reload; use <strong>Refresh</strong> to run the
+						comparison again.
+					</li>
+					<li>
 						“Needs” are species not yet on your life list. The app learns your
 						life list from your eBird account (add your API key in Settings).
 					</li>
