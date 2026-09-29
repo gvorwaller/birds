@@ -7,8 +7,14 @@
  *
  * search_tsv covers enrichment-owned text ONLY (tags/extract/field_craft/
  * sections) — names deliberately live outside the vector so taxonomy renames
- * can't leave stale lexemes (CODEX1 #4). Every writer recomputes it via the
- * same upsert→UPDATE CTE so both stages keep it correct atomically.
+ * can't leave stale lexemes (CODEX1 #4). The DATABASE derives it: a BEFORE
+ * trigger (migration 0065, td-894144) recomputes it from the row's own
+ * columns via species_search_vector(). Writers never set it, and the runtime
+ * role has no privilege to.
+ *
+ * Tags (td-894144): no runtime writer sets `tags`. AI never produces tags;
+ * the runtime role has no INSERT/UPDATE privilege on tags, legacy_tags or
+ * search_tsv.
  */
 import { createHash } from 'node:crypto';
 import { query, withTransaction } from '$lib/db';
@@ -52,20 +58,6 @@ export const ERROR_RETRY_DAYS = 7;
 export const MEDIA_ERROR_RETRY_HOURS = 24;
 /** Align the 24-hour eligibility clock with a 24-hour scan heartbeat. */
 export const MEDIA_RETRY_SCAN_SLACK_MINUTES = 15;
-
-/**
- * search_tsv is computed INSIDE each writing statement, mixing the values
- * being written with the row's other-stage columns. It cannot be a follow-up
- * CTE UPDATE: a data-modifying CTE's effects are invisible to the outer
- * statement (same snapshot) — caught by the DB contract test.
- */
-function tsvExpr(parts: { tags: string; prose: string; sections: string }): string {
-	return `
-	    setweight(to_tsvector('english', translate(${parts.tags}, ':-', '  ')), 'A')
-	 || setweight(to_tsvector('english', ${parts.prose}), 'B')
-	 || setweight(to_tsvector('english', coalesce(
-	      (SELECT string_agg(s->>'text', ' ') FROM jsonb_array_elements(${parts.sections}) s), '')), 'C')`;
-}
 
 /** IUCN label (Wikidata English) → Red List code; unknown labels pass through. */
 const IUCN_CODES: Record<string, string> = {
@@ -211,30 +203,18 @@ export async function upsertWikiOk(
 	article: WikiArticle,
 	exec: Exec = query
 ): Promise<void> {
-	// INSERT branch: fresh row has no tags/field_craft yet. UPDATE branch mixes
-	// the new prose ($5/$6) with the EXISTING row's AI-stage text so the vector
-	// always reflects the post-write row.
-	const insertTsv = tsvExpr({
-		tags: `''`,
-		prose: `coalesce($5, '')`,
-		sections: `$6::jsonb`
-	});
-	const updateTsv = tsvExpr({
-		tags: `array_to_string(species_enrichment.tags, ' ')`,
-		prose: `coalesce($5, '') || ' ' || coalesce(species_enrichment.field_craft, '')`,
-		sections: `$6::jsonb`
-	});
+	// search_tsv is derived by the database trigger from the post-write row.
 	await exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikipedia_title, wikipedia_url, wikipedia_rev_id,
 		    wikipedia_extract, wikipedia_sections, wiki_status, wiki_error,
-		    wiki_fetched_at, wiki_ok_at, search_tsv)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'ok', NULL, NOW(), NOW(), ${insertTsv})
+		    wiki_fetched_at, wiki_ok_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'ok', NULL, NOW(), NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   wikipedia_title = $2, wikipedia_url = $3, wikipedia_rev_id = $4,
 		   wikipedia_extract = $5, wikipedia_sections = $6,
 		   wiki_status = 'ok', wiki_error = NULL, wiki_fetched_at = NOW(),
-		   wiki_ok_at = NOW(), search_tsv = ${updateTsv}, updated_at = NOW()`,
+		   wiki_ok_at = NOW(), updated_at = NOW()`,
 		[
 			code,
 			article.title,
@@ -254,12 +234,11 @@ export async function upsertWikiOk(
  * contradict the persisted terminal state; CODEX1 round 3). AI-owned fields
  * survive; the search vector is recomputed over what remains.
  */
-export async function markWikiNoArticle(code: string, exec: Exec = query): Promise<void> {
-	const tsv = tsvExpr({
-		tags: `array_to_string(species_enrichment.tags, ' ')`,
-		prose: `coalesce(species_enrichment.field_craft, '')`,
-		sections: `'[]'::jsonb`
-	});
+export async function markWikiNoArticle(
+	code: string,
+	exec: Exec = query
+): Promise<void> {
+	// search_tsv is re-derived by the trigger over what remains.
 	await exec(
 		`INSERT INTO species_enrichment (species_code, wiki_status, wiki_error, wiki_fetched_at)
 		 VALUES ($1, 'no_article', NULL, NOW())
@@ -267,7 +246,7 @@ export async function markWikiNoArticle(code: string, exec: Exec = query): Promi
 		   wiki_status = 'no_article', wiki_error = NULL, wiki_fetched_at = NOW(),
 		   wikipedia_title = NULL, wikipedia_url = NULL, wikipedia_rev_id = NULL,
 		   wikipedia_extract = NULL, wikipedia_sections = '[]'::jsonb,
-		   wiki_ok_at = NULL, search_tsv = ${tsv}, updated_at = NOW()`,
+		   wiki_ok_at = NULL, updated_at = NOW()`,
 		[code]
 	);
 }
@@ -288,8 +267,9 @@ export async function markWikiError(code: string, message: string): Promise<void
 }
 
 /**
- * Phase 2 writer — field craft, tags, AND the similar-species notes, in ONE
- * transaction (td-8f0ed8, CODEX1 P1 #2).
+ * Phase 2 writer — field craft AND the similar-species notes, in ONE
+ * transaction (td-8f0ed8, CODEX1 P1 #2). No tags: AI never writes tags
+ * (td-894144); this function has no tags parameter by design.
  *
  * Atomicity is the point: a loose note write beside this UPDATE could fail
  * AFTER the substage had been stamped fresh, leaving the feature permanently
@@ -303,11 +283,10 @@ export async function markWikiError(code: string, message: string): Promise<void
  * on this table is enrichment-owned prose about the FOCAL species, and indexing
  * comparison text would make a search for one species match another's page.
  */
-export async function upsertAiData(
+export async function upsertAiProseData(
 	code: string,
 	data: {
 		fieldCraft: string;
-		tags: string[];
 		model: string;
 		sourceRevId: number;
 		/** Validated, closed-set notes. */
@@ -350,7 +329,7 @@ export async function upsertAiData(
 		 *
 		 * That is narrower than it first looks, and the wiki/media analogy is NOT
 		 * the justification (GROK): those protect FETCH FAILURES, which are not
-		 * judgements at all, while tags and field_craft are already
+		 * judgements at all, while field_craft is already
 		 * this-run-is-truth. Two paths, deliberately not split today:
 		 *
 		 *   miss/error (slash owed, empty result, retry threw) — last-good for
@@ -373,13 +352,6 @@ export async function upsertAiData(
 		offeredCodes?: readonly string[];
 	}
 ): Promise<void> {
-	// SET expressions read the OLD row for untouched columns, so mixing the
-	// new tags/field_craft params with the stored extract/sections is correct.
-	const tsv = tsvExpr({
-		tags: `array_to_string($3::text[], ' ')`,
-		prose: `coalesce(wikipedia_extract, '') || ' ' || coalesce($2, '')`,
-		sections: `wikipedia_sections`
-	});
 	const similar = data.similar ?? [];
 	const hash = data.similarCandidatesHash ?? null;
 	const candidateCount = data.candidateCount ?? 0;
@@ -395,7 +367,13 @@ export async function upsertAiData(
 	// every pass (GROK). Genus notes are optional; skipping all of them IS a
 	// complete answer.
 	const similarStatus =
-		hash == null ? null : candidateCount === 0 ? 'none' : owed.length === 0 ? 'ok' : 'error';
+		hash == null
+			? null
+			: candidateCount === 0
+				? 'none'
+				: owed.length === 0
+					? 'ok'
+					: 'error';
 	const similarError =
 		similarStatus === 'error'
 			? owed.length > 0
@@ -406,28 +384,27 @@ export async function upsertAiData(
 	await withTransaction(async (client) => {
 		await client.query(
 			`UPDATE species_enrichment SET
-			   field_craft = $2, tags = $3::text[], ai_model = $4, ai_generated_at = NOW(),
-			   ai_source_rev_id = $5, ai_status = 'ok', ai_error = NULL,
-			   ai_attempted_at = NOW(), search_tsv = ${tsv}, updated_at = NOW(),
-			   similar_status = COALESCE($6, similar_status),
-			   similar_candidates_hash = COALESCE($7, similar_candidates_hash),
-			   similar_source_rev_id = CASE WHEN $6 IS NULL THEN similar_source_rev_id ELSE $5 END,
-			   similar_model = CASE WHEN $6 IS NULL OR $9::int = 0 THEN similar_model ELSE $4 END,
-			   similar_generated_at = CASE WHEN $6 IS NULL THEN similar_generated_at ELSE NOW() END,
-			   similar_attempted_at = CASE WHEN $6 IS NULL THEN similar_attempted_at ELSE NOW() END,
-			   similar_error = CASE WHEN $6 IS NULL THEN similar_error ELSE $8 END
+			   field_craft = $2, ai_model = $3, ai_generated_at = NOW(),
+			   ai_source_rev_id = $4, ai_status = 'ok', ai_error = NULL,
+			   ai_attempted_at = NOW(), updated_at = NOW(),
+			   similar_status = COALESCE($5, similar_status),
+			   similar_candidates_hash = COALESCE($6, similar_candidates_hash),
+			   similar_source_rev_id = CASE WHEN $5 IS NULL THEN similar_source_rev_id ELSE $4 END,
+			   similar_model = CASE WHEN $5 IS NULL OR $8::int = 0 THEN similar_model ELSE $3 END,
+			   similar_generated_at = CASE WHEN $5 IS NULL THEN similar_generated_at ELSE NOW() END,
+			   similar_attempted_at = CASE WHEN $5 IS NULL THEN similar_attempted_at ELSE NOW() END,
+			   similar_error = CASE WHEN $5 IS NULL THEN similar_error ELSE $7 END
 			 WHERE species_code = $1`,
 			[
 				code,
 				data.fieldCraft,
-				data.tags,
 				data.model,
 				data.sourceRevId,
 				similarStatus,
 				hash,
 				similarError,
-				// $9 (AGY A5): similar_model advances ONLY when this run actually
-				// wrote notes — a Sonnet tags-only call on a fully-preserved set
+				// $8 (AGY A5): similar_model advances ONLY when this run actually
+				// wrote notes — a prose-only call on a fully-preserved set
 				// must not restamp the substage's provenance.
 				similar.length
 			]
@@ -442,7 +419,9 @@ export async function upsertAiData(
 		// for it. The keep-list is therefore the OFFERED set, not the set this
 		// run happened to write; conflating the two is what destroyed good notes
 		// in three successive shapes (full miss, partial miss, optional genus).
-		const keep = [...new Set([...offered, ...similar.map((x) => x.code), ...owed])];
+		const keep = [
+			...new Set([...offered, ...similar.map((x) => x.code), ...owed])
+		];
 		if (keep.length > 0) {
 			await client.query(
 				`DELETE FROM species_similar
@@ -454,7 +433,10 @@ export async function upsertAiData(
 			// c): with a real hash and nothing offered, every stored note is an
 			// orphan — invisible on the page but never cleaned by the keep-list
 			// form above, which previously skipped this case entirely.
-			await client.query(`DELETE FROM species_similar WHERE species_code = $1`, [code]);
+			await client.query(
+				`DELETE FROM species_similar WHERE species_code = $1`,
+				[code]
+			);
 		}
 		for (const s of similar) {
 			await client.query(
@@ -809,7 +791,7 @@ export async function enrichOneNow(
 }
 
 export interface GuideResult {
- matched_banding_code?: string | null;
+	matched_banding_code?: string | null;
 	/** How a non-empty Field Guide query matched this row. */
 	match_provenance: 'name_or_code' | 'description_or_field_note' | null;
 	species_code: string;
@@ -817,6 +799,12 @@ export interface GuideResult {
 	sci_name: string;
 	family: string | null;
 	tags: string[];
+	/**
+	 * td-894144: false when this species' tags were never evaluated (no legacy
+	 * baseline — e.g. enriched after the Release A cutover, or never enriched).
+	 * The UI must show "not yet available", never "no tags".
+	 */
+	tags_available: boolean;
 	iucn_status: string | null;
 	field_craft: string | null;
 	seen: boolean;
@@ -852,17 +840,17 @@ export async function searchGuide(
 	tags: readonly string[],
 	seenUserId: number,
 	locationCodes: readonly string[] | null = null,
- options: {
-  family?: string;
-  sort?: 'relevance' | 'name' | 'taxonomic';
-  page?: number;
-  interestUserId?: number;
-  /** Phase 9A list scope over the display-scope life list (`seenUserId`). Default All. */
-  list?: 'all' | 'need' | 'seen';
-  /** An explicit scope (even `all`) alone is enough to browse the whole taxonomy. */
-  listBrowse?: boolean;
- } = {}
-): Promise<{ rows: GuideResult[]; total: number }> {
+	options: {
+		family?: string;
+		sort?: 'relevance' | 'name' | 'taxonomic';
+		page?: number;
+		interestUserId?: number;
+		/** Phase 9A list scope over the display-scope life list (`seenUserId`). Default All. */
+		list?: 'all' | 'need' | 'seen';
+		/** An explicit scope (even `all`) alone is enough to browse the whole taxonomy. */
+		listBrowse?: boolean;
+	} = {}
+): Promise<{ rows: GuideResult[]; total: number; unknownCount: number }> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
 	const escaped = query_.replace(/[%_\\]/g, (m) => `\\${m}`);
@@ -872,8 +860,26 @@ export async function searchGuide(
 
 	// $8=null means anywhere; [] means selected geography has no loaded data.
 	// Intersect before LIMIT so out-of-area hits cannot displace valid matches.
-	const orderBy = options.sort === 'taxonomic' ? 'taxon_order NULLS LAST, com_name, species_code' : options.sort === 'name' ? 'com_name, species_code' : 'name_tier, rank DESC NULLS LAST, com_name, species_code';
- type Row = GuideResult & { name_tier: number; rank: number; total_matches: number; taxon_order: string | null };
+	const orderBy =
+		options.sort === 'taxonomic'
+			? 'taxon_order NULLS LAST, com_name, species_code'
+			: options.sort === 'name'
+				? 'com_name, species_code'
+				: 'name_tier, rank DESC NULLS LAST, com_name, species_code';
+	type Row = GuideResult & {
+		name_tier: number;
+		rank: number;
+		total_matches: number;
+		taxon_order: string | null;
+	};
+	// td-894144: the unknown-tags count runs IN PARALLEL on its own connection.
+	// It repeats the regional CTE (≈0.6 s for a whole-country filter on the
+	// snapshot), so running it after the main query would double wall time.
+	const unknownP =
+		tags.length > 0
+			? guideUnknownCount(query_, seenUserId, locationCodes, options)
+			: Promise.resolve(0);
+	unknownP.catch(() => {}); // awaited below; never an unhandled rejection
 	const r = await query<Row>(
 		`WITH regional_species AS MATERIALIZED (
 		   SELECT DISTINCT species_code FROM species_month_freq
@@ -892,6 +898,7 @@ export async function searchGuide(
 		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
  CASE WHEN tc.banding_codes @> ARRAY[upper($5)] THEN upper($5) ELSE NULL END AS matched_banding_code,
 		            COALESCE(se.tags, '{}') AS tags,
+		            (se.legacy_tags IS NOT NULL) AS tags_available,
 		            se.iucn_status, se.field_craft,
 		            (ss.species_code IS NOT NULL) AS seen,
 		            se.wiki_status,
@@ -915,14 +922,15 @@ export async function searchGuide(
 		        AND ($1::bool OR (($8::text[] IS NOT NULL OR $9::text IS NOT NULL OR $12::int IS NOT NULL OR $14::bool) AND $4::text[] = '{}'))
 		        AND (NOT $1::bool OR tc.species_code = $5
 		             OR tc.banding_codes @> ARRAY[upper($5)] OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
-		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
+		        AND ($4::text[] = '{}' OR (se.legacy_tags IS NOT NULL AND se.tags @> $4::text[]))
 
 		     UNION ALL
 
 		     /* Leg 2: enrichment prose/tag — FTS + tag AND semantics */
 		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
  CASE WHEN tc.banding_codes @> ARRAY[upper($5)] THEN upper($5) ELSE NULL END AS matched_banding_code,
-		            se.tags, se.iucn_status, se.field_craft,
+		            se.tags, (se.legacy_tags IS NOT NULL) AS tags_available,
+		            se.iucn_status, se.field_craft,
 		            (ss.species_code IS NOT NULL) AS seen,
 		            se.wiki_status,
 		            se.wiki_fetched_at::text AS wiki_fetched_at,
@@ -934,7 +942,7 @@ export async function searchGuide(
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = se.species_code
 		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
-		        AND ($4::text[] = '{}' OR se.tags @> $4::text[])
+		        AND ($4::text[] = '{}' OR (se.legacy_tags IS NOT NULL AND se.tags @> $4::text[]))
 		        AND (NOT $1::bool
 		             OR se.search_tsv @@ websearch_to_tsquery('english', $2))
 		   ) combined
@@ -956,9 +964,97 @@ export async function searchGuide(
 		   ORDER BY rank LIMIT 1
 		 ) photo ON true
 		 ORDER BY ${orderBy}`,
-		[hasQ, query_, seenUserId, [...tags], lowerQ, prefix, substr, locationCodes, options.family || null, options.page == null ? null : 100, options.page == null ? 0 : (options.page-1)*100, options.interestUserId ?? null, options.list ?? 'all', options.listBrowse === true]
+		[
+			hasQ,
+			query_,
+			seenUserId,
+			[...tags],
+			lowerQ,
+			prefix,
+			substr,
+			locationCodes,
+			options.family || null,
+			options.page == null ? null : 100,
+			options.page == null ? 0 : (options.page - 1) * 100,
+			options.interestUserId ?? null,
+			options.list ?? 'all',
+			options.listBrowse === true
+		]
 	);
-	return { total: r.rows[0]?.total_matches ?? 0, rows: r.rows.map(({ name_tier: _t, rank: _r, total_matches: _n, taxon_order: _o, ...row }) => row) };
+	const unknownCount = await unknownP;
+	return {
+		total: r.rows[0]?.total_matches ?? 0,
+		unknownCount,
+		rows: r.rows.map(
+			({
+				name_tier: _t,
+				rank: _r,
+				total_matches: _n,
+				taxon_order: _o,
+				...row
+			}) => row
+		)
+	};
+}
+
+/**
+ * td-894144 Release A: how many species match every NON-tag predicate of a
+ * Field Guide query (text, family, geography, interest, list scope) but whose
+ * tags were never evaluated — no legacy baseline, including taxonomy species
+ * with no enrichment row at all. Counted before the tag predicate and before
+ * pagination, so it is correct even when the matched page is empty.
+ *
+ * These predicates MIRROR searchGuide's; the contract test pins them together.
+ */
+async function guideUnknownCount(
+	q: string,
+	seenUserId: number,
+	locationCodes: readonly string[] | null,
+	options: {
+		family?: string;
+		interestUserId?: number;
+		list?: 'all' | 'need' | 'seen';
+	}
+): Promise<number> {
+	const hasQ = q.length > 0;
+	const escaped = q.replace(/[%_\\]/g, (m) => `\\${m}`);
+	const r = await query<{ n: number }>(
+		// Both membership sets are MATERIALIZED once, exactly like searchGuide's
+		// regional_species: an inline IN-subquery under "$6 IS NULL OR ..." is
+		// re-evaluated per taxonomy row and never finishes on a real region.
+		`WITH regional AS MATERIALIZED (
+		   SELECT DISTINCT species_code FROM species_month_freq
+		    WHERE loc_code = ANY($6::text[]) AND num > 0
+		 ), interest AS MATERIALIZED (
+		   SELECT species_code FROM species_special_interest WHERE user_id = $7
+		 )
+		 SELECT count(*)::int AS n
+		   FROM taxonomy_cache tc
+		   LEFT JOIN species_enrichment se USING (species_code)
+		   LEFT JOIN seen_species ss ON ss.user_id = $3 AND ss.species_code = tc.species_code
+		  WHERE tc.category = 'species'
+		    AND se.legacy_tags IS NULL
+		    AND ($5::text IS NULL OR tc.family_code = $5)
+		    AND (NOT $1::bool
+		         OR tc.species_code = lower($2) OR tc.banding_codes @> ARRAY[upper($2)]
+		         OR tc.com_name ILIKE $4 OR tc.sci_name ILIKE $4
+		         OR se.search_tsv @@ websearch_to_tsquery('english', $2))
+		    AND ($6::text[] IS NULL OR tc.species_code IN (SELECT species_code FROM regional))
+		    AND ($7::int IS NULL OR tc.species_code IN (SELECT species_code FROM interest))
+		    AND ($8::text = 'all' OR ($8::text = 'need' AND ss.species_code IS NULL)
+		         OR ($8::text = 'seen' AND ss.species_code IS NOT NULL))`,
+		[
+			hasQ,
+			q,
+			seenUserId,
+			`%${escaped}%`,
+			options.family || null,
+			locationCodes,
+			options.interestUserId ?? null,
+			options.list ?? 'all'
+		]
+	);
+	return r.rows[0]?.n ?? 0;
 }
 
 /** Complete result access for existing internal callers. UI uses searchGuide pagination. */
@@ -1013,6 +1109,8 @@ export interface EnrichmentRow {
 	wiki_ok_at: string | null;
 	field_craft: string | null;
 	tags: string[];
+	/** td-894144: false = tags never evaluated (show "not yet available"). */
+	tags_available: boolean;
 	ai_generated_at: string | null;
 	media_status: string | null;
 	media_fetched_at: string | null;
@@ -1020,12 +1118,14 @@ export interface EnrichmentRow {
 	media_error: string | null;
 }
 
-export async function getEnrichment(code: string): Promise<EnrichmentRow | null> {
+export async function getEnrichment(
+	code: string
+): Promise<EnrichmentRow | null> {
 	const r = await query<EnrichmentRow>(
 		`SELECT species_code, wikidata_qid, resolution, iucn_status, facts, cross_ids,
 		        wikipedia_title, wikipedia_url, wikipedia_rev_id::text, wikipedia_extract,
 		        wikipedia_sections, wiki_status, wiki_fetched_at::text, wiki_ok_at::text,
-		        field_craft, tags, ai_generated_at::text,
+		        field_craft, tags, (legacy_tags IS NOT NULL) AS tags_available, ai_generated_at::text,
 		        media_status, media_fetched_at::text, media_ok_at::text, media_error
 		   FROM species_enrichment WHERE species_code = $1`,
 		[code]

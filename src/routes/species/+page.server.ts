@@ -77,9 +77,10 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const countsP = guideCounts();
   let results: GuideResult[] = [];
   let total = 0;
+  let unknownCount = 0;
   if (active) {
     const found = await searchGuide(q, tags, locals.scopeId!, location?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit});
-    results = found.rows; total = found.total;
+    results = found.rows; total = found.total; unknownCount = found.unknownCount;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
   const pageHref = (n:number) => {
@@ -97,7 +98,7 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   return {
     interestOnly, interests,
     list, listExplicit,
-    family, sort, page, total, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
+    family, sort, page, total, unknownCount, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
     previous: page>1 ? pageHref(page-1) : null, next: page*100<total ? pageHref(page+1) : null,
     viewed,
     viewedUnavailable,

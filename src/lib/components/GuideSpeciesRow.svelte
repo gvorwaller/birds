@@ -112,7 +112,10 @@
             >{/if}</span
         >
       {/if}
-      {#if (row.tags ?? []).length > 0}
+      {#if row.tags_available === false}
+        <!-- td-894144: never evaluated is not "no tags". -->
+        <span class="rowtags muted notags">Tags not yet available</span>
+      {:else if (row.tags ?? []).length > 0}
         <span class="rowtags">
           {#each row.tags as t (t)}
             <span class="rowtag" class:hit={selectedTags.has(t)}>{chipText(t)}</span>

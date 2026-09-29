@@ -603,7 +603,10 @@
         <p class="err" role="alert">{form.error}</p>
       {/if}
       <p class="fieldcraft">{en?.field_craft}</p>
-      {#if tagGroups.length > 0}
+      {#if en && en.tags_available === false}
+        <!-- td-894144: never evaluated is not "no tags". -->
+        <p class="muted tags-unavailable">Tags not yet available for this species.</p>
+      {:else if tagGroups.length > 0}
         <div class="taggroups">
           {#each tagGroups as g (g.dimension)}
             <div class="taggroup">

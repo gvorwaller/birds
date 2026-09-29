@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setFixtureTags } from "./tag-fixtures.test-helper";
 import { env } from "$env/dynamic/private";
 
 function setXcKey(value: string | undefined) {
@@ -40,7 +41,7 @@ import {
   aiDueCodes,
   searchEnrichment,
   guideCounts,
-  upsertAiData,
+  upsertAiProseData,
   upsertResolution,
   upsertWikiOk,
   wikiFetchTitleFor,
@@ -389,12 +390,12 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
       extract: "A remarkable mudflat prober of quiet estuaries.",
       sections: [],
     });
-    await upsertAiData(CODE, {
+    await upsertAiProseData(CODE, {
       fieldCraft: "Check falling tides.",
-      tags: ["habitat:mudflat", "tide:falling"],
       model: "test-model",
       sourceRevId: 43,
     });
+    await setFixtureTags(CODE, ["habitat:mudflat", "tide:falling"]);
     const tagHit = await query<{ species_code: string }>(
       `SELECT species_code FROM species_enrichment
         WHERE search_tsv @@ websearch_to_tsquery('english', 'falling tide')
@@ -439,12 +440,12 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
 
     // Article later disappears: terminal state clears the obsolete prose;
     // the vector keeps AI-owned lexemes only.
-    await upsertAiData(CODE, {
+    await upsertAiProseData(CODE, {
       fieldCraft: "Scan tidal edges.",
-      tags: ["habitat:mudflat"],
       model: "m",
       sourceRevId: 50,
     });
+    await setFixtureTags(CODE, ["habitat:mudflat"]);
     await markWikiNoArticle(CODE);
     row = await getEnrichment(CODE);
     expect(row?.wiki_status).toBe("no_article");
@@ -613,12 +614,12 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
       extract: "A testfinch-like skulker of dense reedbeds.",
       sections: [],
     });
-    await upsertAiData(B, {
+    await upsertAiProseData(B, {
       fieldCraft: "Listen at dawn in reedbeds.",
-      tags: ["habitat:freshwater-marsh", "find:heard-more-than-seen"],
       model: "m",
       sourceRevId: 1,
     });
+    await setFixtureTags(B, ["habitat:freshwater-marsh", "find:heard-more-than-seen"]);
     await query(
       `INSERT INTO seen_species (user_id, species_code, source) VALUES ($1, $2, 'manual')
        ON CONFLICT DO NOTHING`,
@@ -712,12 +713,12 @@ describe.runIf(dbUp)("td-0753d0: taxonomy-first search, unenriched rows, tier or
       extract: "A sparrowtest that haunts alpine meadows.",
       sections: [],
     });
-    await upsertAiData(E, {
+    await upsertAiProseData(E, {
       fieldCraft: "Check high meadows.",
-      tags: ["habitat:alpine-meadow"],
       model: "m",
       sourceRevId: 1,
     });
+    await setFixtureTags(E, ["habitat:alpine-meadow"]);
   }
   async function unseed() {
     await query(`DELETE FROM seen_species WHERE species_code IN ($1, $2, $3)`, [E, U, S]);
@@ -1980,9 +1981,8 @@ describe.runIf(dbUp)("AI error backoff covers the similar-note substage (td-8f0e
     );
     try {
       await upsertWikiOk(CODE, { title: "T", revId: 9, extract: "prose", sections: [] });
-      await upsertAiData(CODE, {
+      await upsertAiProseData(CODE, {
         fieldCraft: "Craft.",
-        tags: [],
         model: "test-model",
         sourceRevId: 9,
         similar: [{ code: "haiwoo", note: "Larger." }],

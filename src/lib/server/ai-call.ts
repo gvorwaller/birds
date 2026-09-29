@@ -47,7 +47,7 @@ export interface MeteredAiCallOpts<T> {
 /**
  * The attempt object (CODEX1 P1-4): provenance travels WITH the result.
  * job-handlers' keep-best retry loop swaps whole attempt objects, and
- * upsertAiData stamps the kept attempt's servedModel — never "the model most
+ * upsertAiProseData stamps the kept attempt's servedModel — never "the model most
  * recently resolved", which can differ when config changes between retries or
  * a fallback serves the response.
  */

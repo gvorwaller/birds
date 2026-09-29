@@ -2198,9 +2198,7 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     family: "Scolopacidae",
   };
   const ANNOTATION = {
-    tags: ["habitat:mudflat", "tide:falling"],
     fieldCraft: "Scan exposed flats on a falling tide.",
-    droppedTags: [],
     similar: [],
     droppedSimilar: [],
     declinedSimilar: [],
@@ -2249,12 +2247,14 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
     const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
-    expect(aiWrite?.params?.slice(0, 3)).toEqual([
+    expect(aiWrite?.params?.slice(0, 2)).toEqual([
       "margod",
       "Scan exposed flats on a falling tide.",
-      ["habitat:mudflat", "tide:falling"],
     ]);
-    expect(aiWrite?.params?.[4]).toBe(77); // ai_source_rev_id = fetched revision
+    // td-894144: the AI write carries no tags and never names the column.
+    expect(aiWrite?.text).not.toMatch(/\btags\b/);
+    expect(aiWrite?.params).not.toContainEqual(["habitat:mudflat", "tide:falling"]);
+    expect(aiWrite?.params?.[3]).toBe(77); // ai_source_rev_id = fetched revision
     expect(mocks.completeJob).toHaveBeenCalledTimes(1);
     expect(mocks.completeJob.mock.calls[0][2]).toMatchObject({ ok: 1, aiOk: 1, aiFailed: [] });
   });
@@ -2331,7 +2331,7 @@ describe("runJob — enrichment AI stage (plan Phase 2, td-47d6d5)", () => {
     const oks = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_ok");
     expect((oks[0][2] as { outcome: string }).outcome).toBe("ai_only");
     const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
-    expect(aiWrite?.params?.[4]).toBe(55); // stored revision, not a refetch
+    expect(aiWrite?.params?.[3]).toBe(55); // stored revision, not a refetch
   });
 
   it("wiki-fresh unit with fresh AI but NO similar notes is due — reconciles WITHOUT a model call (td-460b1c)", async () => {
@@ -2422,9 +2422,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     family: "Scolopacidae",
   };
   const ANNOTATION = {
-    tags: ["habitat:mudflat", "tide:falling"],
     fieldCraft: "Scan exposed flats on a falling tide.",
-    droppedTags: [],
     similar: [],
     droppedSimilar: [],
     declinedSimilar: [],
@@ -2614,7 +2612,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
   });
 
-  it("iNat not ready: tags may run, but similar reconciliation stays untouched", async () => {
+  it("iNat not ready: field craft may run, but similar reconciliation stays untouched", async () => {
     freshAiDueDb();
     const base = db.handler!;
     db.handler = (text, params) =>
@@ -2623,8 +2621,8 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
     expect(db.calls.some((c) => c.text.includes("FROM species_similar_display"))).toBe(false);
-    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
-    expect(aiWrite?.params?.[5]).toBeNull();
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($5"));
+    expect(aiWrite?.params?.[4]).toBeNull();
   });
 
   it("iNat not ready: an AI failure marks only the AI stage", async () => {
@@ -2707,7 +2705,7 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(SIMILAR_EMPTY_RETRIES + 1);
     const aiWrite = db.calls.find((c) => c.text.includes("field_craft = $2"));
-    expect(aiWrite?.params?.[3]).toBe("claude-haiku-4-5"); // ai_model = $4
+    expect(aiWrite?.params?.[2]).toBe("claude-haiku-4-5"); // ai_model = $3
     // …and the ledger recorded what each attempt actually used.
     const ledger = db.calls.filter((c) => c.text.includes("INSERT INTO ai_usage"));
     expect(ledger.map((c) => c.params?.[1])).toEqual([
@@ -2768,9 +2766,9 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     freshAiDueDbWithCandidates();
     enrichMocks.generateSpeciesAnnotation.mockResolvedValue({ ...ANNOTATION, similar: [] });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($5"));
     // $6 is the similar status; a miss with candidates offered must be 'error'.
-    expect(aiWrite?.params?.[5]).toBe("error");
+    expect(aiWrite?.params?.[4]).toBe("error");
   });
 
   /**
@@ -2831,8 +2829,8 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
     });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
     expect(enrichMocks.generateSpeciesAnnotation).toHaveBeenCalledTimes(1);
-    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
-    expect(aiWrite?.params?.[5]).toBe("none"); // offered shrank to zero after the decline
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($5"));
+    expect(aiWrite?.params?.[4]).toBe("none"); // offered shrank to zero after the decline
     const stamp = db.calls.find((c) => c.text.includes("SET declined_at = NOW()"));
     expect(stamp?.params?.[1]).toEqual(["200"]);
   });
@@ -2892,8 +2890,8 @@ describe("runJob — AI truthful accounting + aiOnly route (CODEX1 Phase-2 re-re
       similar: [{ code: "other1", note }],
     });
     await runJob(jobRow({ type: "enrich_species", payload: { codes: ["margod"] } }), ctx);
-    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($6"));
-    expect(aiWrite?.params?.[5]).toBe("error");
+    const aiWrite = db.calls.find((c) => c.text.includes("similar_status = COALESCE($5"));
+    expect(aiWrite?.params?.[4]).toBe("error");
     // Targeted delete, never a blanket one (the display-set DELETE inside the
     // reconcile is a different table and does not count).
     const del = db.calls.find((c) => c.text.includes("similar_code <> ALL"));
@@ -3120,9 +3118,7 @@ describe("runJob — aiOnly route holes (CODEX1 Phase-2 round 2)", () => {
     ai_attempted_at: null,
   };
   const ANNOTATION = {
-    tags: ["habitat:mudflat"],
     fieldCraft: "Craft.",
-    droppedTags: [],
     similar: [],
     droppedSimilar: [],
     declinedSimilar: [],

@@ -87,7 +87,7 @@ import {
 	similarCandidatesHash,
 	reconcileSimilarState,
 	markSimilarDeclined,
-	upsertAiData,
+	upsertAiProseData,
 	upsertResolution,
 	upsertWikiOk,
 	wikiFetchTitleFor,
@@ -1646,9 +1646,8 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			// what protects preserved notes; candidateCount=0 must only mean a
 			// genuinely empty candidate set. Non-participating runs pass a null
 			// hash, which leaves every similar_* column untouched.
-			await upsertAiData(code, {
+			await upsertAiProseData(code, {
 				fieldCraft: kept.result.fieldCraft,
-				tags: kept.result.tags,
 				model: kept.servedModel ?? kept.requestedModel,
 				sourceRevId: prose.revId,
 				similar: usableSimilar,
@@ -1667,10 +1666,6 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				await recordEvent(job.id, 'progress', { code, similarNewlyExposed: newlyExposed });
 			}
 			counts.aiOk++;
-			if (kept.result.droppedTags.length > 0) {
-				// Vocabulary gaps surface in events, never silently (plan rule).
-				await recordEvent(job.id, 'progress', { code, droppedTags: kept.result.droppedTags });
-			}
 			if (kept.result.droppedSimilar.length > 0) {
 				// Codes outside the closed set — same "never silently" rule.
 				await recordEvent(job.id, 'progress', { code, droppedSimilar: kept.result.droppedSimilar });

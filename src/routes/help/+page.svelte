@@ -785,13 +785,23 @@
 						chip (or its ✕ in the Active filters row) to remove it.
 					</li>
 					<li>
-						<strong>Tide tags</strong> are the shorebird special:
-						AI-annotated tidal species can receive one — the stage when
-						it's most findable — and its field craft explains why. When a
+						<strong>Tide tags</strong> are the shorebird special: a tidal
+						species can carry one — the stage when it's most findable — and
+						its field craft explains why. When a
 						tide-tagged species page has a location, its
 						<strong>Finding this bird</strong> card also shows the next high and
 						low predictions at the nearest NOAA station, including the
 						station's distance from that location.
+					</li>
+					<li>
+						<strong>Where tags come from:</strong> tags are being moved to
+						checkable rules that read each species' Wikipedia text and keep the
+						sentence behind every tag. AI no longer assigns or changes tags.
+						Tags already shown were assigned earlier and stay until a tested
+						rule replaces each one. A species whose tags have not been evaluated
+						yet shows <strong>Tags not yet available</strong> — that means
+						unknown, not "none" — and a tag filter says how many species it
+						could not check.
 					</li>
 					<li>
 						Results always show your <strong>Seen/Need</strong> badge;

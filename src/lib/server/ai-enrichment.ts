@@ -1,9 +1,14 @@
 /**
  * LLM annotation stage for species enrichment (plan Phase 2, td-47d6d5):
- * reads the STORED Wikipedia prose for one species and produces (a) tags
- * from the controlled vocabulary and (b) 2–4 hedged field-craft sentences —
- * including, for tidal species, which tide stage is most productive (the
- * question no dataset ships an answer to).
+ * reads the STORED Wikipedia prose for one species and produces 2–4 hedged
+ * field-craft sentences — including, for tidal species, which tide stage is
+ * most productive (the question no dataset ships an answer to) — plus
+ * similar-species notes.
+ *
+ * NO TAGS (td-894144, owner principle 2026-09-26): AI is never used to
+ * generate, drop or change a species tag. Tags come only from approved,
+ * blind-tested rules. This module must not import the tag vocabulary; a
+ * static guard test enforces it.
  *
  * Evidence rule (Gaylon-approved plan decision): this runs ONLY when
  * Wikipedia prose exists — the model annotates sourced text plus
@@ -12,7 +17,6 @@
  * never logged.
  */
 import { env } from '$env/dynamic/private';
-import { TAG_VOCABULARY, TAG_DIMENSIONS, validateTags, MAX_TAGS } from '$lib/species-tags';
 import { parseRetryAfterMs } from '$server/wikidata';
 import type { WikiSection } from '$server/wikipedia';
 import {
@@ -31,7 +35,7 @@ import {
  */
 export const FIELD_CRAFT_MAX_CHARS = 700;
 /**
- * The ANSWER budget, thinking-exclusive: tags + field craft + MAX_SIMILAR
+ * The ANSWER budget, thinking-exclusive: field craft + MAX_SIMILAR
  * notes at full SIMILAR_NOTE_MAX_CHARS. The registry adds each model's own
  * thinking headroom on top (Opus 5: +6000 → the 8000 max_tokens that ran in
  * prod before this refactor). A ceiling, not a reservation — billing follows
@@ -127,10 +131,7 @@ export interface SimilarCandidate {
 }
 
 export interface SpeciesAnnotation {
-	tags: string[];
 	fieldCraft: string;
-	/** Vocabulary misses the model attempted — surfaced in job events. */
-	droppedTags: string[];
 	/** Distinguishing notes, keyed to candidate codes. Empty is a valid result. */
 	similar: { code: string; note: string }[];
 	/** Codes the model returned that were not in the candidate set. */
@@ -148,10 +149,6 @@ const SYSTEM =
 	'well-established natural history. Hedge behavioral claims ("often", ' +
 	'"typically", "try"). Never invent specific sightings, numbers, or facts ' +
 	'you are unsure of. Respond with ONLY the requested JSON object.';
-
-function vocabularyBlock(): string {
-	return TAG_DIMENSIONS.map((d) => `${d}: ${TAG_VOCABULARY[d].join(', ')}`).join('\n');
-}
 
 /** Sections most useful to field craft, capped for prompt size. */
 function proseBlock(extract: string, sections: readonly WikiSection[]): string {
@@ -171,8 +168,7 @@ function proseBlock(extract: string, sections: readonly WikiSection[]): string {
 
 /**
  * The candidate block. Codes are handed to the model verbatim so it SELECTS
- * from a closed set rather than naming species itself — the same containment
- * `validateTags` gives the tag vocabulary.
+ * from a closed set rather than naming species itself.
  */
 function candidateBlock(candidates: readonly SimilarCandidate[]): string {
 	return candidates
@@ -199,8 +195,6 @@ export function buildUserPrompt(input: {
 		`Species: ${input.comName} (${input.sciName})` +
 		(input.family ? ` — family ${input.family}` : '') +
 		`\n\nWikipedia article text:\n${proseBlock(input.extract, input.sections)}\n\n` +
-		`Tag vocabulary (the ONLY allowed values, format "dimension:value"):\n` +
-		`${vocabularyBlock()}\n\n` +
 		(candidates.length > 0
 			? `Species this one might be confused with (the ONLY allowed codes):\n` +
 				`${candidateBlock(candidates)}\n` +
@@ -217,16 +211,12 @@ export function buildUserPrompt(input: {
 				`not listed.\n\n`
 			: '') +
 		`Produce:\n` +
-		`1. "tags": up to ${MAX_TAGS} tags chosen ONLY from the vocabulary above, ` +
-		`prefixed "dimension:value" (e.g. "habitat:mudflat"). Include tide: values ` +
-		`ONLY for species that regularly use tidal habitats; every tidal species ` +
-		`MUST get exactly one tide: value.\n` +
-		`2. "field_craft": 2-4 hedged sentences answering when, where, and how a ` +
+		`1. "field_craft": 2-4 hedged sentences answering when, where, and how a ` +
 		`birder finds this species — habitat micro-placement, time of day, and the ` +
 		`cue to look or listen for. For tidal species, explicitly state which tide ` +
 		`stage is most productive and why. Under ${FIELD_CRAFT_MAX_CHARS} characters.\n` +
 		(candidates.length > 0
-			? `3. "similar": an object whose KEYS are candidate codes from the list ` +
+			? `2. "similar": an object whose KEYS are candidate codes from the list ` +
 				`above and whose values are the note for that species, or null.\n` +
 				// Calibration, not decoration. Under a flat "an empty list is a valid
 				// answer" this stage returned NOTHING on roughly one call in three
@@ -253,8 +243,8 @@ export function buildUserPrompt(input: {
 			: '') +
 		`\nRespond with ONLY this JSON object, nothing else:\n` +
 		(candidates.length > 0
-			? `{"tags": ["..."], "field_craft": "...", "similar": {"<code>": "<note>"}}`
-			: `{"tags": ["..."], "field_craft": "..."}`)
+			? `{"field_craft": "...", "similar": {"<code>": "<note>"}}`
+			: `{"field_craft": "..."}`)
 	);
 }
 
@@ -281,10 +271,9 @@ export function buildUserPrompt(input: {
  */
 export function buildOutputSchema(candidates: readonly SimilarCandidate[]): Record<string, unknown> {
 	const properties: Record<string, unknown> = {
-		tags: { type: 'array', items: { type: 'string' } },
 		field_craft: { type: 'string' }
 	};
-	const required = ['tags', 'field_craft'];
+	const required = ['field_craft'];
 
 	if (candidates.length > 0) {
 		// `similar` is an OBJECT keyed by species code, not an array of
@@ -595,8 +584,8 @@ export function clampNote(raw: string): string {
 }
 
 /**
- * Closed-set validation for the similar-species list — the `validateTags`
- * analogue, and the whole reason an invented SPECIES cannot reach the page.
+ * Closed-set validation for the similar-species list — the whole reason an
+ * invented SPECIES cannot reach the page.
  *
  * Deliberately total: it never throws. `similar` is an OPTIONAL output, and a
  * malformed one must not cost the species its field craft. Everything rejected
@@ -698,7 +687,9 @@ export function parseAnnotation(
 	text: string,
 	opts: { candidates?: readonly string[]; focalCode?: string } = {}
 ): SpeciesAnnotation {
-	let parsed: { tags?: unknown; field_craft?: unknown; similar?: unknown };
+	// A `tags` key, if a model ever sends one, is ignored: tags are never
+	// accepted from AI (td-894144).
+	let parsed: { field_craft?: unknown; similar?: unknown };
 	try {
 		const start = text.indexOf('{');
 		const end = text.lastIndexOf('}');
@@ -706,13 +697,6 @@ export function parseAnnotation(
 		parsed = JSON.parse(text.slice(start, end + 1));
 	} catch {
 		throw new EnrichmentAiError('AI response was not readable JSON.', 0, false);
-	}
-	const { tags, dropped } = validateTags(parsed.tags);
-	// The prompt requires EXACTLY ONE tide value for tidal species —
-	// contradictory cardinality is code-enforceable and rejected as invalid
-	// output rather than persisted (CODEX1 P2 #4).
-	if (tags.filter((t) => t.startsWith('tide:')).length > 1) {
-		throw new EnrichmentAiError('AI response had contradictory tide tags.', 0, false);
 	}
 	const fieldCraft =
 		typeof parsed.field_craft === 'string'
@@ -726,5 +710,5 @@ export function parseAnnotation(
 		dropped: droppedSimilar,
 		declined: declinedSimilar
 	} = validateSimilar(parsed.similar, opts.candidates ?? [], opts.focalCode ?? null);
-	return { tags, fieldCraft, droppedTags: dropped, similar, droppedSimilar, declinedSimilar };
+	return { fieldCraft, similar, droppedSimilar, declinedSimilar };
 }

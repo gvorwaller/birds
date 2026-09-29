@@ -404,7 +404,7 @@
       </div>
     </form>
     <p class="search-help muted">
-      Searches common and scientific names and eBird/banding codes first, then Wikipedia text, field notes and tags when available.
+      Searches common and scientific names and eBird/banding codes first, then Wikipedia text, field notes and tags when available. Some species' tags are not yet evaluated.
     </p>
 
     {#if data.active}
@@ -426,6 +426,13 @@
           {#if data.interestOnly}<span>Special interest only</span>{/if}
           {#if data.sort !== "relevance"}<span>Sort: {data.sort === "name" ? "Alphabetical" : "Taxonomic"}</span>{/if}
         </div>
+        {#if data.tags.length > 0 && data.unknownCount > 0}
+          <!-- td-894144: unknown is not "no tags" — say how many couldn't match. -->
+          <p class="coverage unknown-note" role="status">
+            {data.unknownCount} {data.unknownCount === 1 ? "species here has" : "species here have"} not
+            yet been evaluated for tags, so {data.unknownCount === 1 ? "it" : "they"} can't match a tag filter.
+          </p>
+        {/if}
         {#if data.location && coverage}<p class="coverage" role="status">{coverage.text}{#if coverage.status === "unavailable"} <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search here.{/if}</p>{/if}
         {#if data.tags.length > 0}
           <div class="active-filters">
@@ -578,9 +585,10 @@
               ? ` in the stored data for ${data.location.label}`
               : ""}.
             {data.tags.length > 0
-              ? "Try fewer tags or a broader search — tags come from AI annotation, which is still filling in."
+              ? "Try fewer tags or a broader search."
               : "Try a different name, species code, or description."}
           </p>
+
         {/if}
       </section>
     {:else}

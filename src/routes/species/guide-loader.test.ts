@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { load } from "./+page.server";
 import { isFieldGuideActive } from "$lib/field-guide-nav";
 import { query } from "$lib/db";
-import { upsertAiData, upsertWikiOk } from "$server/species-enrichment";
+import { upsertAiProseData, upsertWikiOk } from "$server/species-enrichment";
+import { setFixtureTags } from "$server/tag-fixtures.test-helper";
 
 // Route-level verification for the Field guide loader (CODEX1 Phase-3 #1).
 // Runs against the real test cluster like the other DB-gated suites.
@@ -65,12 +66,12 @@ describe.runIf(dbUp)("Field guide loader (route contract, test cluster)", () => 
       extract: "A loaderus bird of quiet marshes.",
       sections: [],
     });
-    await upsertAiData(CODE, {
+    await upsertAiProseData(CODE, {
       fieldCraft: "Look low.",
-      tags: ["habitat:freshwater-marsh"],
       model: "m",
       sourceRevId: 1,
     });
+    await setFixtureTags(CODE, ["habitat:freshwater-marsh"]);
     return uid;
   }
   async function unseed() {

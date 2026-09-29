@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { setFixtureTags } from "$server/tag-fixtures.test-helper";
 import { query } from "$lib/db";
 import {
   searchEnrichment,
-  upsertAiData,
+  upsertAiProseData,
   upsertWikiOk,
 } from "$server/species-enrichment";
 import { guideLocationCoverage } from "$server/guide-location";
@@ -55,12 +56,12 @@ describe.runIf(dbUp)("Field Guide location and thumbnail integration", () => {
         extract: "Guidelocation bird probing mudflats.",
         sections: [],
       });
-      await upsertAiData(code, {
+      await upsertAiProseData(code, {
         fieldCraft: "Probe mudflats.",
-        tags: ["forage:probing-shorebird", "habitat:mudflat"],
         model: "test",
         sourceRevId: 1,
       });
+      await setFixtureTags(code, ["forage:probing-shorebird", "habitat:mudflat"]);
     }
     for (const [loc, region] of [
       [HERE, "US-FL"],

@@ -15,37 +15,35 @@ const {
 } = await import("./ai-enrichment");
 
 describe("parseAnnotation (pure response parser)", () => {
-  it("extracts bare JSON, validates tags against the vocabulary, keeps field craft", () => {
+  it("extracts bare JSON and keeps field craft", () => {
     const out = parseAnnotation(
-      'Here you go:\n{"tags": ["habitat:mudflat", "tide:falling", "made:up"], "field_craft": "Scan exposed flats on a falling tide."}',
+      'Here you go:\n{"field_craft": "Scan exposed flats on a falling tide."}',
     );
-    expect(out.tags).toEqual(["habitat:mudflat", "tide:falling"]);
-    expect(out.droppedTags).toEqual(["made:up"]);
     expect(out.fieldCraft).toBe("Scan exposed flats on a falling tide.");
+  });
+
+  it("td-894144: NEVER returns tags — a tags key from a model is ignored, not accepted", () => {
+    const out = parseAnnotation(
+      '{"tags": ["habitat:open-ocean", "tide:low"], "field_craft": "Scan the flats."}',
+    );
+    expect(out).not.toHaveProperty("tags");
+    expect(out).not.toHaveProperty("droppedTags");
+    expect(Object.keys(out).sort()).toEqual(
+      ["declinedSimilar", "droppedSimilar", "fieldCraft", "similar"],
+    );
   });
 
   it("clamps field craft length", () => {
     const out = parseAnnotation(
-      `{"tags": [], "field_craft": "${"x".repeat(FIELD_CRAFT_MAX_CHARS + 200)}"}`,
+      `{"field_craft": "${"x".repeat(FIELD_CRAFT_MAX_CHARS + 200)}"}`,
     );
     expect(out.fieldCraft).toHaveLength(FIELD_CRAFT_MAX_CHARS);
   });
 
-  it("rejects contradictory tide cardinality — at most ONE tide tag (CODEX1 P2 #4)", () => {
-    expect(() =>
-      parseAnnotation(
-        '{"tags": ["tide:low", "tide:high-roost"], "field_craft": "Contradictory."}',
-      ),
-    ).toThrow(/contradictory tide/);
-    // Exactly one is fine.
-    const ok = parseAnnotation('{"tags": ["tide:low"], "field_craft": "Fine."}');
-    expect(ok.tags).toEqual(["tide:low"]);
-  });
-
   it("throws typed errors on junk or empty field craft", () => {
     expect(() => parseAnnotation("no json here")).toThrow(EnrichmentAiError);
-    expect(() => parseAnnotation('{"tags": ["habitat:mudflat"]}')).toThrow(/no field craft/);
-    expect(() => parseAnnotation('{"tags": [], "field_craft": "  "}')).toThrow(EnrichmentAiError);
+    expect(() => parseAnnotation('{"similar": {}}')).toThrow(/no field craft/);
+    expect(() => parseAnnotation('{"field_craft": "  "}')).toThrow(EnrichmentAiError);
   });
 });
 
@@ -61,15 +59,21 @@ describe("buildUserPrompt", () => {
     ],
   };
 
-  it("includes identity, prose, the FULL vocabulary, and the tide instruction", () => {
+  it("includes identity, prose, and the tide instruction for field craft", () => {
     const p = buildUserPrompt(input);
     expect(p).toContain("Marbled Godwit (Limosa fedoa)");
     expect(p).toContain("Coastal mudflats in winter.");
     expect(p).not.toContain("should not be included"); // non-fieldcraft section
-    expect(p).toContain("habitat: forest,"); // vocabulary listing
-    expect(p).toContain("tide:"); // dimension present
     expect(p).toMatch(/tide stage is most productive/); // td-47d6d5 payload
     expect(p).toMatch(/ONLY this JSON object/);
+  });
+
+  it("td-894144: asks for NO tags — no vocabulary, no tag instruction, no tags key", () => {
+    const p = buildUserPrompt(input);
+    expect(p).not.toMatch(/vocabulary/i);
+    expect(p).not.toContain("habitat: forest");
+    expect(p).not.toContain('"tags"');
+    expect(p).not.toMatch(/dimension:value/);
   });
 });
 
@@ -85,13 +89,13 @@ describe("parseAnnotation — similar species", () => {
   const CANDIDATES = ["haiwoo", "labwoo"];
   const ok = (similar: string) =>
     parseAnnotation(
-      `{"tags": [], "field_craft": "Check trunks.", "similar": ${similar}}`,
+      `{"field_craft": "Check trunks.", "similar": ${similar}}`,
       { candidates: CANDIDATES, focalCode: "dowwoo" },
     );
 
   it("accepts the KEYED-OBJECT form that structured outputs returns", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": {"haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
+      '{"field_craft": "x", "similar": {"haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
       { candidates: CANDIDATES, focalCode: "dowwoo" },
     );
     expect(out.similar).toEqual([{ code: "haiwoo", note: "Larger overall, with a bill roughly as long as the head is wide." }]);
@@ -99,7 +103,7 @@ describe("parseAnnotation — similar species", () => {
 
   it("still drops an out-of-set key in the object form", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": {"brnpel1": "Barred black-and-white back rather than a clean white stripe.", "haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
+      '{"field_craft": "x", "similar": {"brnpel1": "Barred black-and-white back rather than a clean white stripe.", "haiwoo": "Larger overall, with a bill roughly as long as the head is wide."}}',
       { candidates: CANDIDATES, focalCode: "dowwoo" },
     );
     expect(out.similar.map((s) => s.code)).toEqual(["haiwoo"]);
@@ -124,7 +128,7 @@ describe("parseAnnotation — similar species", () => {
 
   it("drops a self-reference even if it is somehow in the candidate list", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": [{"code": "dowwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
+      '{"field_craft": "x", "similar": [{"code": "dowwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
       { candidates: ["dowwoo", "haiwoo"], focalCode: "dowwoo" },
     );
     expect(out.similar).toEqual([]);
@@ -175,7 +179,7 @@ describe("parseAnnotation — similar species", () => {
     const many = Array.from({ length: 12 }, (_, i) => `c${i}`);
     const body = many.map((c) => `{"code": "${c}", "note": "Larger overall, with a bill roughly as long as the head is wide."}`).join(",");
     const out = parseAnnotation(
-      `{"tags": [], "field_craft": "x", "similar": [${body}]}`,
+      `{"field_craft": "x", "similar": [${body}]}`,
       { candidates: many, focalCode: "dowwoo" },
     );
     expect(out.similar).toHaveLength(12);
@@ -204,7 +208,7 @@ describe("parseAnnotation — similar species", () => {
 
   it("accepts NO candidates at all: nothing is allowed through", () => {
     const out = parseAnnotation(
-      '{"tags": [], "field_craft": "x", "similar": [{"code": "haiwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
+      '{"field_craft": "x", "similar": [{"code": "haiwoo", "note": "Larger overall, with a bill roughly as long as the head is wide."}]}',
     );
     expect(out.similar).toEqual([]);
     expect(out.droppedSimilar).toEqual(["haiwoo"]);
@@ -212,24 +216,23 @@ describe("parseAnnotation — similar species", () => {
 
   it("a MISSING similar field yields [] and does NOT throw", () => {
     const out = parseAnnotation(
-      '{"tags": ["habitat:mudflat"], "field_craft": "Scan the flats."}',
+      '{"field_craft": "Scan the flats."}',
       { candidates: CANDIDATES, focalCode: "dowwoo" },
     );
     expect(out.similar).toEqual([]);
     expect(out.fieldCraft).toBe("Scan the flats.");
   });
 
-  it("a MALFORMED similar field yields [] and preserves tags + field craft", () => {
+  it("a MALFORMED similar field yields [] and preserves field craft", () => {
     // The whole point of `similar` being optional: one bad list must not cost
     // this species its field craft for the next 7 days.
     for (const bad of ['"not an array"', "42", "null", '[1, 2, "x"]', "[{}]"]) {
       const out = parseAnnotation(
-        `{"tags": ["habitat:mudflat"], "field_craft": "Scan the flats.", "similar": ${bad}}`,
+        `{"field_craft": "Scan the flats.", "similar": ${bad}}`,
         { candidates: CANDIDATES, focalCode: "dowwoo" },
       );
       expect(out.similar).toEqual([]);
       expect(out.fieldCraft).toBe("Scan the flats.");
-      expect(out.tags).toEqual(["habitat:mudflat"]);
     }
   });
 });
@@ -246,7 +249,7 @@ describe("buildUserPrompt — candidate block", () => {
   it("omits the similar-species instruction entirely when there are no candidates", () => {
     const p = buildUserPrompt(base);
     expect(p).not.toContain('"similar"');
-    expect(p).toContain('{"tags": ["..."], "field_craft": "..."}');
+    expect(p).toContain('{"field_craft": "..."}');
   });
 
   it("tells the model to copy codes verbatim (guards the brnpel1 miss)", () => {
@@ -363,6 +366,19 @@ describe("buildOutputSchema — shape is the guarantee", () => {
     const s = buildOutputSchema([]) as never as { properties: Record<string, unknown>; required: string[] };
     expect(s.properties.similar).toBeUndefined();
     expect(s.required).not.toContain("similar");
+  });
+
+  it("td-894144: the schema has no tags property, so a tags key is unrepresentable", () => {
+    for (const cands of [[], [forward]]) {
+      const s = buildOutputSchema(cands) as never as {
+        properties: Record<string, unknown>;
+        required: string[];
+        additionalProperties: boolean;
+      };
+      expect(s.properties).not.toHaveProperty("tags");
+      expect(s.required).not.toContain("tags");
+      expect(s.additionalProperties).toBe(false);
+    }
   });
 
   it("REQUIRES an answer for EVERY candidate — forward and reverse alike", () => {
@@ -510,7 +526,7 @@ describe("parseAnnotation — malformed and over-cap handling", () => {
   // stop testing it.
   const CANDS = Array.from({ length: MAX_SIMILAR + 1 }, (_, i) => `cand${i}`);
   const p = (similar: string) =>
-    parseAnnotation(`{"tags": [], "field_craft": "x", "similar": ${similar}}`, {
+    parseAnnotation(`{"field_craft": "x", "similar": ${similar}}`, {
       candidates: CANDS,
       focalCode: "dowwoo",
     });
@@ -574,7 +590,7 @@ describe("generateSpeciesAnnotation (fetcher seam — first tests, plan step 5)"
     speciesCode: "dowwoo",
   };
   const GOOD_TEXT = JSON.stringify({
-    tags: ["habitat:mudflat"],
+
     field_craft: "Scan trunks low; listen for the soft pik call.",
     similar: [{ code: "haiwoo", note: "Hairy shows a much longer bill relative to its head." }],
   });
