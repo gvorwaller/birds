@@ -520,9 +520,9 @@
         <button type="submit" disabled={busy || draftActive}>{draftActive ? "Drafting…" : "Draft rules with AI"}</button>
         <span class="muted">
           {#if draftActive}
-            Claude Opus 5 is drafting. It usually takes 2–6 minutes; the new proposal appears below when it's done.
+            {data.draftModel} is drafting. It can take several minutes; the new proposal appears below when it's done.
           {:else}
-            Uses Claude Opus 5, about $0.25–0.60 per draft. The draft is only a proposal; a cross-check and your approval come next.
+            Uses {data.draftModel} (change it in Admin → Model choice → Tag rules). The draft is only a proposal; a cross-check and your approval come next.
           {/if}
         </span>
       </form>

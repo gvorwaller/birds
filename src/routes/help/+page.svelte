@@ -1252,9 +1252,12 @@
 				</p>
 				<ul>
 					<li>
-						<strong>Model choice is per surface</strong> — Enrichment (worker
-						batch jobs) and Guidance (live trip requests) are chosen
-						independently. Picking a different model opens a confirmation
+						<strong>Model choice is per surface</strong> — Family descriptions,
+						Enrichment (worker batch jobs), Guidance (live trip requests) and
+						Tag rules are chosen independently. <strong>Tag rules</strong> is
+						the model that writes AI drafts of tag rules from the Tags tab
+						(Claude Opus 5 unless you change it); a draft is rare and may make
+						a second call if the first fails validation. Picking a different model opens a confirmation
 						showing the current and new rates and the cost multiplier; the
 						change <strong>applies to future calls only</strong> — nothing
 						already generated is regenerated.

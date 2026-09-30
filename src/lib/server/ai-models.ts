@@ -228,7 +228,9 @@ export const FAMILY_MODEL_IDS: readonly string[] = ['claude-sonnet-5', 'claude-o
 export const DEFAULT_MODEL_IDS = {
 	enrichment: 'claude-opus-5',
 	familyEnrichment: 'claude-sonnet-5',
-	guidance: 'claude-sonnet-4-6'
+	guidance: 'claude-sonnet-4-6',
+	/** AI drafts of tag rules (td-894144): rare, owner-pressed, reasoning-heavy. */
+	tagDraft: 'claude-opus-5'
 } as const;
 
 export function modelById(id: string): ModelEntry | undefined {

@@ -32,7 +32,7 @@
   // AI & Cost tab (docs/2026-08-26-admin-ai-tab-ui-AGY.md). Tab choice is
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
-  type Surface = "enrichment" | "familyEnrichment" | "guidance";
+  type Surface = "enrichment" | "familyEnrichment" | "guidance" | "tagDraft";
   const ADMIN_TABS = ["status", "ai", "tags", "health"] as const;
   type AdminTab = (typeof ADMIN_TABS)[number];
   // ?tab=tags lets a tag page's back link land on the Tags tab.
@@ -100,6 +100,7 @@
     { key: "familyEnrichment", title: "Family descriptions", blurb: "Drafting and source checks; Sonnet 5 or Opus 5" },
     { key: "enrichment", title: "Enrichment", blurb: "worker batch jobs" },
     { key: "guidance", title: "Guidance", blurb: "live trip requests" },
+    { key: "tagDraft", title: "Tag rules", blurb: "AI drafts of tag rules (Tags tab); rare, may retry once if a draft fails validation" },
   ];
   let modelModal = $state<{ surface: Surface; model: string } | null>(null);
   let setModelBusy = $state(false);

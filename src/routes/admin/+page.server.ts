@@ -59,6 +59,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     enrichmentCfg,
     familyEnrichmentCfg,
     guidanceCfg,
+    tagDraftCfg,
     quickPickRes,
   ] = await Promise.all([
     adminLiveStatus(),
@@ -109,6 +110,10 @@ export const load: PageServerLoad = async ({ locals }) => {
     getConfig(CONFIG_KEYS.guidanceModel, {
       provider: "anthropic",
       model: DEFAULT_MODEL_IDS.guidance,
+    }),
+    getConfig(CONFIG_KEYS.tagDraftModel, {
+      provider: "anthropic",
+      model: DEFAULT_MODEL_IDS.tagDraft,
     }),
     // Quick-pick species for the Compare Lab: FROM DATA, never hardcoded in
     // the UI (AGY correction 2 — the BTC catalog-duplication defect). Species
@@ -167,6 +172,7 @@ export const load: PageServerLoad = async ({ locals }) => {
         enrichment: resolveModel(enrichmentCfg, DEFAULT_MODEL_IDS.enrichment).id,
         familyEnrichment: resolveModel(familyEnrichmentCfg, DEFAULT_MODEL_IDS.familyEnrichment).id,
         guidance: resolveModel(guidanceCfg, DEFAULT_MODEL_IDS.guidance).id,
+        tagDraft: resolveModel(tagDraftCfg, DEFAULT_MODEL_IDS.tagDraft).id,
       },
       usage,
       quickPick: quickPickRes.rows.map((r) => ({ code: r.code, comName: r.com_name })),
@@ -381,6 +387,8 @@ export const actions: Actions = {
           ? CONFIG_KEYS.familyEnrichmentModel
         : surface === "guidance"
           ? CONFIG_KEYS.guidanceModel
+        : surface === "tagDraft"
+          ? CONFIG_KEYS.tagDraftModel
           : null;
     if (!key) return fail(400, { kind: "set_model" as const, error: "Unknown surface." });
     try {
@@ -397,7 +405,7 @@ export const actions: Actions = {
       ok: true as const,
       surface,
       model,
-      message: `${surface === "enrichment" ? "Enrichment" : surface === "familyEnrichment" ? "Family descriptions" : "Guidance"} now uses ${entry?.label ?? model} — future calls only; nothing is regenerated.`,
+      message: `${surface === "enrichment" ? "Enrichment" : surface === "familyEnrichment" ? "Family descriptions" : surface === "tagDraft" ? "Tag rules" : "Guidance"} now uses ${entry?.label ?? model} — future calls only; nothing is regenerated.`,
     };
   },
 

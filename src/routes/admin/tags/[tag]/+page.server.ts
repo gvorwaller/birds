@@ -15,6 +15,8 @@ import {
   tagWhy,
 } from "$server/tag-admin";
 import { dedupKeys } from "$server/job-policy";
+import { DEFAULT_MODEL_IDS, resolveModel } from "$server/ai-models";
+import { CONFIG_KEYS, getConfig } from "$server/app-config";
 import { draftableTag } from "$server/tag-draft-job";
 import { PROPOSED_GATES } from "$server/tag-engine/eval-stats";
 import { OWNER_LABEL_BUDGET } from "$server/tag-eval-jobs";
@@ -38,9 +40,13 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ...(await activationReadiness(tag, r.id)),
     })),
   );
-  const [evalSets, designs] = await Promise.all([
+  const [evalSets, designs, draftCfg] = await Promise.all([
     evalSetsFor(tag),
     latestDesigns(tag),
+    getConfig(CONFIG_KEYS.tagDraftModel, {
+      provider: "anthropic",
+      model: DEFAULT_MODEL_IDS.tagDraft,
+    }),
   ]);
   return {
     detail,
@@ -48,6 +54,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     whyQuery: why ?? "",
     why: why ? await tagWhy(tag, why) : null,
     draftable: draftableTag(tag),
+    // Shown next to the Draft button; chosen in Admin → Model choice → Tag rules.
+    draftModel: resolveModel(draftCfg, DEFAULT_MODEL_IDS.tagDraft).label,
     evalSets,
     designs,
     proposedGates: PROPOSED_GATES,

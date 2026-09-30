@@ -17,17 +17,23 @@ import {
 const ai = vi.hoisted(() => ({
   responses: [] as unknown[],
   seen: [] as { previousError?: string | null; examples: unknown[] }[],
-  models: [] as (string | undefined)[],
+  models: [] as { configKey?: string; defaultModelId?: string; override?: string }[],
   /** When set, the next draft call hangs until its signal aborts. */
   hang: false,
   onHang: null as (() => void) | null,
 }));
 vi.mock("$server/ai-call", () => ({
   meteredAiCall: async (opts: {
+    configKey?: string;
+    defaultModelId?: string;
     modelOverride?: { id: string };
     run: (m: unknown, s: AbortSignal) => Promise<{ result: unknown }>;
   }) => {
-    ai.models.push(opts.modelOverride?.id);
+    ai.models.push({
+      configKey: opts.configKey,
+      defaultModelId: opts.defaultModelId,
+      override: opts.modelOverride?.id,
+    });
     const { result } = await opts.run(
       { id: "fake" },
       new AbortController().signal,
@@ -67,7 +73,6 @@ import { withOwnerClient } from "./tag-fixtures.test-helper";
 import {
   checkTaxonRules,
   runTagDraftJob,
-  TAG_DRAFT_MODEL_ID,
   type KnownTaxa,
   type TaxonGroup,
 } from "./tag-draft-job";
@@ -267,9 +272,14 @@ describe.runIf(migrated).sequential("tag_draft_rules job", () => {
     const row = await jobRow(job.id);
     expect(row.status).toBe("succeeded");
     expect(ai.seen).toHaveLength(2);
-    // Drafting has its own fixed model, never the enrichment dropdown.
-    expect(ai.models).toEqual([TAG_DRAFT_MODEL_ID, TAG_DRAFT_MODEL_ID]);
-    expect(TAG_DRAFT_MODEL_ID).toBe("claude-opus-5");
+    // Drafting reads its OWN Model choice setting (Tag rules), never the
+    // enrichment dropdown; Opus 5 is only the default.
+    const pick = {
+      configKey: "ai.model.tag-draft",
+      defaultModelId: "claude-opus-5",
+      override: undefined,
+    };
+    expect(ai.models).toEqual([pick, pick]);
     expect(ai.seen[0].previousError ?? null).toBeNull();
     expect(ai.seen[1].previousError).toMatch(/at least one support rule/);
     expect((ai.seen[0].examples as unknown[]).length).toBeGreaterThan(0);

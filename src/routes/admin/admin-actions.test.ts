@@ -288,6 +288,17 @@ describe("set_ai_model", () => {
     const write = dbCalls.find((c) => c.text.includes("ON CONFLICT (key) DO UPDATE"));
     expect(write?.params[0]).toBe("ai.model.guidance");
   });
+
+  it("Tag rules is its own surface with its own key, any selectable model", async () => {
+    const r = (await actions.set_ai_model({
+      ...ADMIN,
+      request: req({ surface: "tagDraft", model: "claude-sonnet-5" }),
+    } as never)) as { kind: string; ok: boolean; message: string };
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/^Tag rules now uses Claude Sonnet 5/);
+    const write = dbCalls.find((c) => c.text.includes("ON CONFLICT (key) DO UPDATE"));
+    expect(write?.params[0]).toBe("ai.model.tag-draft");
+  });
 });
 
 describe("run_compare", () => {

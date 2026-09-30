@@ -125,6 +125,15 @@ describe("setConfig", () => {
   });
 });
 
+it("tag-draft model is its own validated key", async () => {
+  queryHandler = () => ({ rows: [] });
+  await setConfig(CONFIG_KEYS.tagDraftModel, { provider: "anthropic", model: "claude-opus-5" });
+  expect(dbCalls.at(-1)?.params[0]).toBe("ai.model.tag-draft");
+  await expect(
+    setConfig(CONFIG_KEYS.tagDraftModel, { provider: "anthropic", model: "claude-nonexistent-9" }),
+  ).rejects.toThrow(/not selectable/);
+});
+
 it("family model accepts Sonnet 5 independently and rejects weaker models", async () => {
   queryHandler = () => ({ rows: [] });
   await setConfig(CONFIG_KEYS.familyEnrichmentModel, {

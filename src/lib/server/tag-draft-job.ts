@@ -12,7 +12,8 @@
 import { query } from "$lib/db";
 import { ALL_TAGS, TAG_DEFINITIONS } from "$lib/species-tags";
 import { meteredAiCall } from "$server/ai-call";
-import { SELECTABLE_MODELS, type ModelEntry } from "$server/ai-models";
+import { CONFIG_KEYS } from "$server/app-config";
+import { DEFAULT_MODEL_IDS } from "$server/ai-models";
 import {
   draftTagRules,
   TAG_DRAFT_TIMEOUT_MS,
@@ -40,21 +41,6 @@ import {
 import { segmentArticle } from "$server/tag-engine/segment";
 
 export const AUTHORING_PER_CELL = 12;
-
-/**
- * Drafting is a rare, owner-pressed, reasoning-heavy call, so it has its own
- * fixed model instead of sharing the enrichment dropdown (which is tuned for
- * cost across ~15k species). Gaylon chose Opus 5 on 2026-09-30 after a Haiku
- * draft produced taxon rules no species could satisfy.
- */
-export const TAG_DRAFT_MODEL_ID = "claude-opus-5";
-
-function tagDraftModel(): ModelEntry {
-  const m = SELECTABLE_MODELS.find((x) => x.id === TAG_DRAFT_MODEL_ID);
-  if (!m?.buildRequest)
-    throw new Error(`tag draft model ${TAG_DRAFT_MODEL_ID} is not available`);
-  return m;
-}
 
 export interface TaxonGroup {
   order: string | null;
@@ -307,7 +293,6 @@ export async function runTagDraftJob(
     }[] = [];
     let previousError: string | null = null;
     let proposalArtifact: unknown = null;
-    const model = tagDraftModel();
     const groups = await taxonGroups();
     const known = await knownTaxa();
     for (let i = 0; i < 2 && proposalArtifact == null; i++) {
@@ -322,7 +307,11 @@ export async function runTagDraftJob(
       try {
         call = await meteredAiCall({
           purpose: "tag_draft",
-          modelOverride: model,
+          // Its own Model choice setting ("Tag rules"), never the enrichment
+          // dropdown: that one is tuned for cost across ~15k species, and a
+          // Haiku draft once produced taxon rules no species could satisfy.
+          configKey: CONFIG_KEYS.tagDraftModel,
+          defaultModelId: DEFAULT_MODEL_IDS.tagDraft,
           jobId: job.id,
           timeoutMs: TAG_DRAFT_TIMEOUT_MS,
           run: async (model, signal) => {

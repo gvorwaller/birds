@@ -23,7 +23,8 @@ import { SELECTABLE_MODELS, FAMILY_MODEL_IDS } from './ai-models';
 export const CONFIG_KEYS = {
 	enrichmentModel: 'ai.model.enrichment',
 	familyEnrichmentModel: 'ai.model.family-enrichment',
-	guidanceModel: 'ai.model.guidance'
+	guidanceModel: 'ai.model.guidance',
+	tagDraftModel: 'ai.model.tag-draft'
 } as const;
 
 const READ_TIMEOUT_MS = 5_000;
@@ -43,7 +44,8 @@ const VALIDATORS: Record<string, (value: unknown) => string | null> = {
 	[CONFIG_KEYS.enrichmentModel]: validateModelValue,
 	[CONFIG_KEYS.familyEnrichmentModel]: (value) => validateModelValue(value) ??
 		(FAMILY_MODEL_IDS.includes((value as ModelConfigValue).model) ? null : 'family descriptions require Sonnet 5 or Opus 5'),
-	[CONFIG_KEYS.guidanceModel]: validateModelValue
+	[CONFIG_KEYS.guidanceModel]: validateModelValue,
+	[CONFIG_KEYS.tagDraftModel]: validateModelValue
 };
 
 function validateModelValue(value: unknown): string | null {
