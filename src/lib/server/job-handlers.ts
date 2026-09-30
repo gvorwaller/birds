@@ -38,6 +38,8 @@ import {
 	EbirdUpstreamError
 } from '$server/ebird-account';
 import { rematchPhotoLinks } from '$server/gallery';
+import { repairTagGeneration, tagRepairBacklog, tagRepairState } from '$server/tag-engine/repair';
+import { runTagConsistencyJob, runTagOpJob } from '$server/tag-jobs';
 import {
 	cancelRunningJob,
 	completeJob,
@@ -453,6 +455,63 @@ async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void
 			const delay =
 				status === 429 ? RATE_LIMIT_RETRY_DELAY_MS : retryDelayMs(attempts, 'transient');
 			await scheduleRetry(job.id, attempts, delay, message);
+			return;
+		}
+		await failJob(job.id, attempts, message);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tag repair (td-894144 plan rev 21) — one taxonomy-change generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Repair one generation in short exclusive batches. Cancel is honoured
+ * between batches and leaves the generation pending (the nightly run or the
+ * admin Tags tab re-enqueues it). A newer generation supersedes this one; a
+ * failure retries on the transient schedule — every batch is idempotent.
+ */
+export async function runTagRepairJob(job: JobRow): Promise<void> {
+	const attempts = job.attempts;
+	const raw = (job.payload as { repairGeneration?: unknown } | null)?.repairGeneration;
+	if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 1) {
+		await failJob(job.id, attempts, 'tag_repair: payload has no valid repairGeneration');
+		return;
+	}
+	await recordEvent(job.id, 'claimed', { attempt: attempts, generation: raw });
+	const state = await tagRepairState();
+	const total = state?.target ? await tagRepairBacklog(state.target) : 0;
+	const progress = (done: number) => ({
+		phase: 'fetching' as const,
+		unitsTotal: Math.max(total, done),
+		unitsDone: done,
+		unitsFailed: 0,
+		unitsSkipped: 0,
+		round: attempts
+	});
+	const initial = await updateProgress(job.id, progress(0));
+	if (initial.cancelRequested) {
+		await cancelRunningJob(job.id, attempts, {
+			generation: String(raw),
+			outcome: 'stopped',
+			repaired: 0,
+			batches: 0
+		});
+		return;
+	}
+	try {
+		const result = await repairTagGeneration(BigInt(raw), {
+			shouldStop: async ({ repaired }) => (await updateProgress(job.id, progress(repaired))).cancelRequested
+		});
+		if (result.outcome === 'stopped') {
+			await cancelRunningJob(job.id, attempts, result);
+			return;
+		}
+		await completeJob(job.id, attempts, result);
+	} catch (err) {
+		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
+		if (attempts < job.max_attempts) {
+			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
 			return;
 		}
 		await failJob(job.id, attempts, message);
@@ -2475,13 +2534,29 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				await runEnrichSpeciesInat(job, ctx);
 				return;
 			}
+			case 'tag_repair': {
+				await runTagRepairJob(job);
+				return;
+			}
+			case 'tag_consistency': {
+				await runTagConsistencyJob(job);
+				return;
+			}
+			case 'tag_stage':
+			case 'tag_benchmark':
+			case 'tag_activate':
+			case 'tag_retire':
+			case 'tag_rollback': {
+				await runTagOpJob(job);
+				return;
+			}
 			case 'sync_taxonomy': {
 				await runSyncJob(job, async () => {
 					const apiKey = await getEbirdApiKey(job.requested_by);
 					if (!apiKey) {
 						throw new EbirdLoginError('An eBird API key is required — add one in Settings.');
 					}
-					const taxa = await syncTaxonomy(apiKey);
+					const taxa = await syncTaxonomy(apiKey, job.requested_by);
 					const rematch = await rematchPhotoLinks();
 					const metadata = await taxonomySummary();
 					await ensureFamilyEnrichment(true);

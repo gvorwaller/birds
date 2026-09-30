@@ -1,4 +1,5 @@
 import { serverHealth } from "$server/process-health";
+import { ensureTagRepairJob, runTagConsistencyNow, tagsHealth, tagsOverview } from "$server/tag-admin";
 import { setFamilyPaused, retryFamilyGaps, FamilyRetrySelectionError } from '$server/family-enrichment';
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
@@ -128,8 +129,16 @@ export const load: PageServerLoad = async ({ locals }) => {
   // Server health tab (td-7739c2). A failure here must not break the admin
   // page; the tab says the data is unavailable instead.
   const health = await serverHealth().catch(() => null);
+  // Tags tab (td-894144 B3). Like server health, a failure here must not
+  // break the rest of the admin page.
+  const [tagOverview, tagHealth] = await Promise.all([
+    tagsOverview().catch(() => null),
+    tagsHealth().catch(() => null),
+  ]);
   return {
     health,
+    tagOverview,
+    tagHealth,
     families: liveStatus.families,
     now: liveStatus.now,
     worker: liveStatus.worker,
@@ -230,6 +239,35 @@ export interface CompareColumn {
 }
 
 export const actions: Actions = {
+  // Tags tab (td-894144 B3): pull the nightly consistency check forward.
+  run_tag_consistency: async ({ locals }) => {
+    if (locals.user?.role !== "admin")
+      return fail(403, { kind: "tags" as const, ok: false as const, message: "Admins only." });
+    const r = await runTagConsistencyNow();
+    return {
+      kind: "tags" as const,
+      ok: true as const,
+      message:
+        r === "running"
+          ? "A consistency check is already running."
+          : "The consistency check will start as soon as the worker is free. Refresh to see the result.",
+    };
+  },
+  // Tags tab: re-enqueue the pending taxonomy-change repair after a cancel or crash.
+  resume_tag_repair: async ({ locals }) => {
+    if (locals.user?.role !== "admin" || !locals.user)
+      return fail(403, { kind: "tags" as const, ok: false as const, message: "Admins only." });
+    const r = await ensureTagRepairJob(locals.user.id);
+    return {
+      kind: "tags" as const,
+      ok: true as const,
+      message: !r
+        ? "No repair is pending."
+        : r.deduped
+          ? `The repair for generation ${r.generation} is already queued.`
+          : `Repair queued for generation ${r.generation}.`,
+    };
+  },
   family_enrichment: async ({locals,request}) => {
     if(locals.user?.role !== 'admin') return fail(403,{kind:'family_enrichment' as const,error:'Admins only.'});
     const familyForm=await request.formData();

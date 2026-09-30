@@ -32,6 +32,8 @@ type Exec = <T extends pg.QueryResultRow = pg.QueryResultRow>(
 const clientExec = (client: pg.PoolClient): Exec =>
 	((text, params) => client.query(text, params as never[])) as Exec;
 import { sanitizeErrorText } from '$server/job-policy';
+import { withTagWriteTx, type TagWriteTx } from '$server/tag-engine/runtime';
+import { materializeSpecies } from '$server/tag-engine/materialize';
 import { MAX_SIMILAR } from '$server/ai-enrichment';
 import type { WikidataSpeciesRow } from '$server/wikidata';
 import {
@@ -197,14 +199,19 @@ async function invalidateInatMappingChange(
 	);
 }
 
-/** Store fetched article prose; stamps the wiki freshness clock. */
-export async function upsertWikiOk(
-	code: string,
-	article: WikiArticle,
-	exec: Exec = query
-): Promise<void> {
+/** Store fetched article prose; stamps the wiki freshness clock.
+ * td-894144 Release B: a tag-engine ENTRY POINT. It opens its own locked
+ * transaction (withTagWriteTx, shared) and re-derives the species' tag input
+ * and owned-tag state in it. Use upsertWikiOkTx inside an existing one. */
+export async function upsertWikiOk(code: string, article: WikiArticle): Promise<void> {
+	await withTagWriteTx('shared', code, 'upsertWikiOk', (tx) => upsertWikiOkTx(tx, code, article), {
+		speciesCode: code
+	});
+}
+
+export async function upsertWikiOkTx(tx: TagWriteTx, code: string, article: WikiArticle): Promise<void> {
 	// search_tsv is derived by the database trigger from the post-write row.
-	await exec(
+	await tx.exec(
 		`INSERT INTO species_enrichment
 		   (species_code, wikipedia_title, wikipedia_url, wikipedia_rev_id,
 		    wikipedia_extract, wikipedia_sections, wiki_status, wiki_error,
@@ -224,6 +231,7 @@ export async function upsertWikiOk(
 			JSON.stringify(article.sections)
 		]
 	);
+	await materializeSpecies(tx, code);
 }
 
 /**
@@ -234,12 +242,17 @@ export async function upsertWikiOk(
  * contradict the persisted terminal state; CODEX1 round 3). AI-owned fields
  * survive; the search vector is recomputed over what remains.
  */
-export async function markWikiNoArticle(
-	code: string,
-	exec: Exec = query
-): Promise<void> {
+export async function markWikiNoArticle(code: string): Promise<void> {
+	await withTagWriteTx('shared', code, 'markWikiNoArticle', (tx) => markWikiNoArticleTx(tx, code), {
+		speciesCode: code
+	});
+}
+
+/** td-894144: the species leaves the tag universe; its input pointer is
+ * deleted and owned tags drop out via apply_effective_tags. */
+export async function markWikiNoArticleTx(tx: TagWriteTx, code: string): Promise<void> {
 	// search_tsv is re-derived by the trigger over what remains.
-	await exec(
+	await tx.exec(
 		`INSERT INTO species_enrichment (species_code, wiki_status, wiki_error, wiki_fetched_at)
 		 VALUES ($1, 'no_article', NULL, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
@@ -249,6 +262,7 @@ export async function markWikiNoArticle(
 		   wiki_ok_at = NULL, updated_at = NOW()`,
 		[code]
 	);
+	await materializeSpecies(tx, code);
 }
 
 /**
@@ -760,18 +774,21 @@ export async function enrichOneNow(
 	// resolution + wiki outcome together (CODEX1 blocker #2): a failure of
 	// the second write rolls back the first, so the row is never half
 	// refreshed; the error THROWS (a real 500, never masked as transient).
-	return withTransaction(async (client) => {
-		const exec = clientExec(client);
+	// td-894144: the whole persistence phase is ONE tag-engine transaction —
+	// the shared engine lock is its first work statement, BEFORE
+	// upsertResolution, so lock order is engine → key → rows everywhere.
+	return withTagWriteTx('shared', code, 'enrichOneNow', async (tx) => {
+		const exec = tx.exec;
 		await upsertResolution(code, row, exec);
 		if (row == null) {
-			await markWikiNoArticle(code, exec);
+			await markWikiNoArticleTx(tx, code);
 			return { outcome: 'no_mapping' as const };
 		}
 		if (article == null) {
-			await markWikiNoArticle(code, exec);
+			await markWikiNoArticleTx(tx, code);
 			return { outcome: 'no_article' as const };
 		}
-		await upsertWikiOk(code, article, exec);
+		await upsertWikiOkTx(tx, code, article);
 		const ai = await exec<{
 			ai_status: string | null;
 			ai_source_rev_id: string | null;
@@ -787,7 +804,7 @@ export async function enrichOneNow(
 			viaFallback: target?.viaFallback === true,
 			aiDue
 		};
-	});
+	}, { speciesCode: code });
 }
 
 export interface GuideResult {

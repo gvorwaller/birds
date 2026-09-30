@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from "$app/navigation";
   import { enhance } from "$app/forms";
+  import { page } from "$app/state";
   import { onMount, untrack } from "svelte";
   import {
     isWorkerControlTransitioning,
@@ -10,6 +11,7 @@
   import { meterDollars } from "$lib/ai-meter";
   import type { AdminLiveStatus } from "$server/admin-status";
   import CollapsibleCard from "$components/CollapsibleCard.svelte";
+  import TagsPanel from "$components/admin/TagsPanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -31,8 +33,13 @@
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
   type Surface = "enrichment" | "familyEnrichment" | "guidance";
-  let activeTab = $state<"status" | "ai" | "health">("status");
-  const ADMIN_TABS = ["status", "ai", "health"] as const;
+  const ADMIN_TABS = ["status", "ai", "tags", "health"] as const;
+  type AdminTab = (typeof ADMIN_TABS)[number];
+  // ?tab=tags lets a tag page's back link land on the Tags tab.
+  const requestedTab = page.url.searchParams.get("tab");
+  let activeTab = $state<AdminTab>(
+    ADMIN_TABS.includes(requestedTab as AdminTab) ? (requestedTab as AdminTab) : "status",
+  );
   function onAdminTabKeydown(event: KeyboardEvent) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
@@ -327,6 +334,19 @@
       onkeydown={onAdminTabKeydown}
     >
       AI &amp; Cost
+    </button>
+    <button
+      type="button"
+      role="tab"
+      id="admin-tab-tags"
+      aria-controls="admin-panel-tags"
+      aria-selected={activeTab === "tags"}
+      tabindex={activeTab === "tags" ? 0 : -1}
+      class:active={activeTab === "tags"}
+      onclick={() => (activeTab = "tags")}
+      onkeydown={onAdminTabKeydown}
+    >
+      Tags
     </button>
     <button
       type="button"
@@ -906,6 +926,18 @@
     {/if}
   </CollapsibleCard>
   </div>
+  {:else if activeTab === "tags"}
+  <div id="admin-panel-tags" role="tabpanel" aria-labelledby="admin-tab-tags">
+    {#if data.tagOverview && data.tagHealth}
+      <TagsPanel
+        overview={data.tagOverview}
+        health={data.tagHealth}
+        message={form && "kind" in form && form.kind === "tags" ? { ok: form.ok, text: form.message } : null}
+      />
+    {:else}
+      <p class="error" role="alert">Tag data is unavailable right now.</p>
+    {/if}
+  </div>
   {:else}
   <div id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health">
   <section class="card health" aria-labelledby="health-heading">
@@ -950,6 +982,23 @@
           <p class="muted">Not enough samples yet (one every {h.sampleIntervalMinutes} minutes).</p>
         {/if}
       {/each}
+      <h3>Tags</h3>
+      {#if data.tagHealth}
+        {@const tr = data.tagHealth.runs[0]}
+        <p>
+          {#if tr}
+            Last consistency check {fmtWhen(tr.startedAt)}:
+            <span class="badge" data-color={tr.status === "failed" ? "error" : tr.status === "fixed" && !tr.bootstrap ? "warn" : "ok"}>{tr.status === "failed" ? "Failed" : tr.status === "fixed" ? (tr.bootstrap ? "Initial build" : "Fixed problems") : tr.status === "deferred" ? "Waited for repair" : "Clean"}</span>
+            · {Object.values(tr.fixed).reduce((a, b) => a + b, 0).toLocaleString()} fixed
+          {:else}
+            No consistency check has run yet.
+          {/if}
+          · <span class="badge" data-color={data.tagHealth.unclearedCount > 0 ? "error" : "ok"}>{data.tagHealth.unclearedCount} unresolved write failure{data.tagHealth.unclearedCount === 1 ? "" : "s"}</span>
+          {#if data.tagHealth.repair?.pending}· <span class="badge" data-color="warn">Repair pending</span>{/if}
+        </p>
+      {:else}
+        <p class="muted">Tag data is unavailable right now.</p>
+      {/if}
       <h3>Runs in the last {h.retentionDays} days</h3>
       <p class="muted">A new run means the process started again after a deploy or restart. Only a clean worker drain has a known end; crashes and forced restarts stay “Unknown” because the app cannot prove their cause.</p>
       {#if h.runs.length === 0}

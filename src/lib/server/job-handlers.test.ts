@@ -133,6 +133,31 @@ vi.mock("$lib/db", () => ({
   ),
 }));
 
+/**
+ * td-894144 Release B: the wiki entry points run inside withTagWriteTx and
+ * re-derive tag input. Here the locked path runs the callback against the
+ * SAME recorded db mock (so the wiki writes stay visible in db.calls), and
+ * materialization is a no-op — it has its own real-DB suite
+ * (tag-engine/materialize-db.test.ts).
+ */
+vi.mock("$server/tag-engine/runtime", () => ({
+  TAG_ENGINE_KEY: 894144n,
+  withTagWriteTx: vi.fn(
+    async (mode: string, _key: string, _entry: string, fn: (tx: unknown) => unknown) => {
+      const exec = async (text: string, params?: unknown[]) => {
+        db.calls.push({ text, params: params ?? [] });
+        return db.handler?.(text, params) ?? { rows: [] };
+      };
+      return fn({ mode, exec, client: { query: exec }, postAttemptNo: 1n });
+    },
+  ),
+}));
+vi.mock("$server/tag-engine/materialize", () => ({
+  materializeSpecies: vi.fn(async () => {}),
+  materializeMany: vi.fn(async () => 0),
+  lexiconFor: vi.fn(async () => ({ hash: "0".repeat(64), scannerRev: "test", lexicon: { byFirst: new Map() } })),
+}));
+
 const syncMocks = vi.hoisted(() => {
   // Real classes with the real shapes — the handler's instanceof/status
   // classification must be exercised with typed errors, not generic Error
@@ -1191,7 +1216,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
 
   it("sync_taxonomy success → taxa + photo re-match counts", async () => {
     await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
-    expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key");
+    expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key", 7); // requester owns any tag_repair job (td-894144 rev 21)
     expect(mocks.completeJob.mock.calls[0][2]).toEqual({
       taxa: 42,
       metadata: {species:40,classified:38,ordered:38,withBandingCodes:10},

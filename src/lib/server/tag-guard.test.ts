@@ -149,4 +149,22 @@ describe("td-894144 static guard", () => {
     );
     expect(offenders.map((f) => relative(ROOT, f))).toEqual([]);
   });
+
+	it('td-894144 B2: only tag-engine/runtime.ts can construct a TagWriteTx', () => {
+		const offenders = runtimeFiles.filter(
+			(f) => !f.endsWith('/tag-engine/runtime.ts') && /as\s+(?:unknown\s+as\s+)?TagWriteTx\b/.test(readFileSync(f, 'utf8'))
+		);
+		expect(offenders.map((f) => relative(ROOT, f))).toEqual([]);
+	});
+
+	it('td-894144 B2: AI modules cannot reach the tag engine or its approval/activation routines', () => {
+		const aiModules = runtimeFiles.filter((f) => /\/(ai-[\w-]+|family-enrichment-ai)\.ts$/.test(f));
+		for (const f of aiModules) {
+			const src = readFileSync(f, 'utf8');
+			expect(src, relative(ROOT, f)).not.toMatch(/tag-engine/);
+			expect(src, relative(ROOT, f)).not.toMatch(
+				/\b(approve_tag_proposal|switch_tag_ownership|rollback_tag|record_tag_state|record_tag_input|apply_effective_tags)\b/
+			);
+		}
+	});
 });

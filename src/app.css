@@ -35,6 +35,16 @@
 
 html {
 	font-size: 18px; /* giftlist pattern: 18px+ base */
+	/* Keyboard focus and in-page anchors scroll clear of the fixed top bar
+	   (WCAG 2.4.11 focus not obscured; GROK found a focused button hidden
+	   under the phone bottom nav on /admin/tags at 320px, td-894144). */
+	scroll-padding-top: calc(var(--nav-h) + 8px);
+}
+@media (max-width: 639.98px) {
+	/* …and clear of the fixed phone bottom nav (hidden from 640px up). */
+	html {
+		scroll-padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 8px);
+	}
 }
 
 body {

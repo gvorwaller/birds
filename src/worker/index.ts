@@ -19,6 +19,7 @@ import pg from 'pg';
 import { recordMemorySample, startMemorySampler } from '$server/process-health';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
 import { runJob, ensureNeedAlertScan, ensureEnrichmentScan } from '$server/job-handlers';
+import { ensureTagConsistency } from '$server/tag-jobs';
 
 declare const __GIT_SHA__: string;
 const VERSION = typeof __GIT_SHA__ === 'string' ? __GIT_SHA__ : 'dev';
@@ -91,6 +92,12 @@ async function main(): Promise<void> {
 	await ensureEnrichmentScan().catch((err) => {
 		console.error(
 			'[birds-worker] startup enrichment ensure failed:',
+			err instanceof Error ? err.message : err
+		);
+	});
+	await ensureTagConsistency().catch((err) => {
+		console.error(
+			'[birds-worker] startup tag consistency ensure failed:',
 			err instanceof Error ? err.message : err
 		);
 	});
@@ -190,6 +197,12 @@ async function main(): Promise<void> {
 			await ensureEnrichmentScan().catch((err) => {
 				console.error(
 					'[birds-worker] enrichment reconciliation failed:',
+					err instanceof Error ? err.message : err
+				);
+			});
+			await ensureTagConsistency().catch((err) => {
+				console.error(
+					'[birds-worker] tag consistency reconciliation failed:',
 					err instanceof Error ? err.message : err
 				);
 			});

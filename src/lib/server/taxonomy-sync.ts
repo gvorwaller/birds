@@ -1,5 +1,7 @@
 import type { PoolClient } from "pg";
-import { withTransaction } from "$lib/db";
+import { withTagWriteTx, type TagWriteTx } from "$server/tag-engine/runtime";
+import { lexiconFor, materializeMany } from "$server/tag-engine/materialize";
+import { beginTagRepair, closePendingRepairInline } from "$server/tag-engine/repair";
 
 export interface TaxonomyEntry {
   speciesCode: string;
@@ -85,10 +87,88 @@ export function parseTaxonomy(value: unknown): TaxonomyEntry[] {
     };
   });
 }
-export async function replaceTaxonomy(payload: unknown): Promise<number> {
+/**
+ * td-894144 Release B: a tag-engine ENTRY POINT, run under the EXCLUSIVE
+ * engine lock (withTagWriteTx) so no wiki write can commit an input derived
+ * from the old taxonomy after this commits. `requesterId` is the sync job's
+ * requester; it owns any repair job this change opens (plan rev 21).
+ */
+export async function replaceTaxonomy(payload: unknown, requesterId: number): Promise<number> {
   const taxa = parseTaxonomy(payload);
-  await withTransaction((c) => writeTaxonomy(c, taxa));
+  await withTagWriteTx("exclusive", "global:replaceTaxonomy", "replaceTaxonomy", async (tx) => {
+    const before = await beginTaxonomyChange(tx);
+    await writeTaxonomy(tx.client, taxa);
+    await finishTaxonomyChange(tx, before, requesterId);
+  });
   return taxa.length;
+}
+
+export interface TaxonomyBefore {
+  snapshot: Map<string, string>;
+  lexiconHash: string | null;
+}
+
+/** Before writing: what the tag inputs were derived from. */
+export async function beginTaxonomyChange(tx: TagWriteTx): Promise<TaxonomyBefore> {
+  const lexiconHash =
+    (
+      await tx.exec<{ lexicon_hash: string }>(
+        "SELECT lexicon_hash FROM tag_lexicon_state WHERE id = 1",
+      )
+    ).rows[0]?.lexicon_hash ?? null;
+  return { snapshot: await snapshotTaxonomy(tx), lexiconHash };
+}
+
+export type TaxonomyRederive =
+  | { mode: "changed"; changed: number }
+  | { mode: "full"; closedGeneration: string | null }
+  | { mode: "repair"; changed: number; generation: string; jobId: number | null };
+
+/**
+ * After writing, same transaction. Species whose own taxon row changed are
+ * always re-derived here (small set). A changed other-taxon LEXICON touches
+ * every input:
+ *  - no owned tag → re-derive the whole universe inline (within budget) and
+ *    close any generation an earlier change left pending;
+ *  - tags owned → open a repair generation + its job (batched, off-lock).
+ */
+export async function finishTaxonomyChange(
+  tx: TagWriteTx,
+  before: TaxonomyBefore,
+  requesterId: number,
+): Promise<TaxonomyRederive> {
+  const lex = await lexiconFor(tx, { rebuild: true });
+  const after = await snapshotTaxonomy(tx);
+  const changed = new Set<string>();
+  for (const [code, v] of before.snapshot) if (after.get(code) !== v) changed.add(code);
+  for (const [code, v] of after) if (before.snapshot.get(code) !== v) changed.add(code);
+  if (lex.hash === before.lexiconHash) {
+    if (changed.size > 0) await materializeMany(tx, [...changed]);
+    return { mode: "changed", changed: changed.size };
+  }
+  const owned = Number(
+    (await tx.exec<{ n: string }>("SELECT count(*)::text AS n FROM tag_ownership")).rows[0].n,
+  );
+  if (owned === 0) {
+    await materializeMany(tx, null);
+    const g = await closePendingRepairInline(tx, lex.hash);
+    return { mode: "full", closedGeneration: g?.toString() ?? null };
+  }
+  if (changed.size > 0) await materializeMany(tx, [...changed]);
+  const r = await beginTagRepair(tx, lex.hash, requesterId);
+  return { mode: "repair", changed: changed.size, generation: r.generation.toString(), jobId: r.jobId };
+}
+
+/** code → the taxonomy fields a tag decision depends on. */
+async function snapshotTaxonomy(tx: TagWriteTx): Promise<Map<string, string>> {
+  const rows = (
+    await tx.exec<{ species_code: string; k: string }>(
+      `SELECT species_code,
+              jsonb_build_array(category, order_name, family_sci_name, com_name, sci_name, family)::text AS k
+         FROM taxonomy_cache`,
+    )
+  ).rows;
+  return new Map(rows.map((r) => [r.species_code, r.k]));
 }
 /** Caller owns the transaction, including deferred override constraints. */
 export async function writeTaxonomy(

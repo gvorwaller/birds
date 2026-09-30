@@ -13,6 +13,7 @@
  *   winning row.
  * - Payloads/events/results NEVER contain credentials (cs.md sacred rules).
  */
+import type pg from 'pg';
 import { query, queryTimed, withTransaction } from '$lib/db';
 import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
 
@@ -29,7 +30,14 @@ export type JobType =
 	| 'scan_enrichment'
 	| 'enrich_species_media'
 	| 'enrich_species_inat'
-	| 'enrich_families';
+	| 'enrich_families'
+	| 'tag_repair'
+	| 'tag_consistency'
+	| 'tag_stage'
+	| 'tag_benchmark'
+	| 'tag_activate'
+	| 'tag_retire'
+	| 'tag_rollback';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -40,7 +48,8 @@ export type JobType =
 export const RECURRING_TYPES: ReadonlySet<string> = new Set([
 	'scan_need_alerts',
 	'scan_enrichment',
-	'enrich_families'
+	'enrich_families',
+	'tag_consistency'
 ]);
 
 export type JobEventAction =
@@ -91,6 +100,46 @@ export async function recordEvent(
 }
 
 /**
+ * The INSERT half of an enqueue, on a caller-owned client: the jobs row (with
+ * the partial-unique dedup inference) and its 'enqueued' event, in whatever
+ * transaction the caller holds. Returns null when an active row already owns
+ * the dedup key. enqueueJob wraps it; the tag engine calls it inside its own
+ * exclusive transaction so a repair generation and its job commit together
+ * (td-894144 plan rev 21 — never call enqueueJob from inside that txn).
+ */
+export async function insertJobOn(client: pg.PoolClient, p: EnqueueParams): Promise<number | null> {
+	const ins = await client.query<{ id: number }>(
+		`INSERT INTO jobs (type, payload, dedup_key, requested_by, label, max_attempts, next_retry_at)
+		 VALUES ($1, $2, $3, $4, $5, $6,
+		         CASE WHEN $7::int IS NULL THEN NULL
+		              ELSE NOW() + make_interval(secs => $7::int / 1000.0) END)
+		 ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL AND status IN ('pending','running')
+		 DO NOTHING
+		 RETURNING id`,
+		[
+			p.type,
+			JSON.stringify(p.payload ?? {}),
+			p.dedupKey,
+			p.requestedBy,
+			p.label,
+			p.maxAttempts ?? 4,
+			p.runAfterMs ?? null
+		]
+	);
+	if (!ins.rows[0]) return null;
+	await client.query(`INSERT INTO job_events (job_id, action, details) VALUES ($1, 'enqueued', $2)`, [
+		ins.rows[0].id,
+		JSON.stringify({
+			type: p.type,
+			label: p.label,
+			requestedBy: p.requestedBy,
+			...(p.runAfterMs != null ? { scheduled: true, runAfterMs: p.runAfterMs } : {})
+		})
+	]);
+	return ins.rows[0].id;
+}
+
+/**
  * Enqueue with atomic dedup. One transaction, bounded retry: INSERT with the
  * partial-unique-index inference predicate; on conflict SELECT the active
  * winner; if it finished in the gap, loop and insert again (max 3).
@@ -98,39 +147,8 @@ export async function recordEvent(
 export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; deduped: boolean }> {
 	for (let round = 0; round < 3; round++) {
 		const outcome = await withTransaction(async (client) => {
-			const ins = await client.query<{ id: number }>(
-				`INSERT INTO jobs (type, payload, dedup_key, requested_by, label, max_attempts, next_retry_at)
-				 VALUES ($1, $2, $3, $4, $5, $6,
-				         CASE WHEN $7::int IS NULL THEN NULL
-				              ELSE NOW() + make_interval(secs => $7::int / 1000.0) END)
-				 ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL AND status IN ('pending','running')
-				 DO NOTHING
-				 RETURNING id`,
-				[
-					p.type,
-					JSON.stringify(p.payload ?? {}),
-					p.dedupKey,
-					p.requestedBy,
-					p.label,
-					p.maxAttempts ?? 4,
-					p.runAfterMs ?? null
-				]
-			);
-			if (ins.rows[0]) {
-				await client.query(
-					`INSERT INTO job_events (job_id, action, details) VALUES ($1, 'enqueued', $2)`,
-					[
-						ins.rows[0].id,
-						JSON.stringify({
-							type: p.type,
-							label: p.label,
-							requestedBy: p.requestedBy,
-							...(p.runAfterMs != null ? { scheduled: true, runAfterMs: p.runAfterMs } : {})
-						})
-					]
-				);
-				return { jobId: ins.rows[0].id, deduped: false };
-			}
+			const inserted = await insertJobOn(client, p);
+			if (inserted != null) return { jobId: inserted, deduped: false };
 			const active = await client.query<{ id: number }>(
 				`SELECT id FROM jobs
 				  WHERE dedup_key = $1 AND status IN ('pending','running')

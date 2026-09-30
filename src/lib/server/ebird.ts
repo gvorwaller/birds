@@ -705,9 +705,9 @@ export async function countries(apiKey: string): Promise<CachedResult<EbirdRegio
 }
 
 /** Full taxonomy pull, validated before atomic replacement. */
-export async function syncTaxonomy(apiKey: string): Promise<number> {
+export async function syncTaxonomy(apiKey: string, requesterId: number): Promise<number> {
  const payload = await ebirdFetch<unknown>('/ref/taxonomy/ebird?fmt=json', apiKey, { deadlineMs: 180_000 });
- return replaceTaxonomy(payload);
+ return replaceTaxonomy(payload, requesterId);
 }
 
 export async function taxonomyCount(): Promise<number> {

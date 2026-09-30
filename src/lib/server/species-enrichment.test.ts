@@ -537,7 +537,11 @@ describe.runIf(dbUp)("species_enrichment DB contract (test cluster)", () => {
     }
   });
 
-  it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", { timeout: 30_000 }, async () => {
+  // 60 s: on the production-sized birds_test snapshot this test makes two
+  // enrichmentScope (~4.6 s each) and two aiDueCodes (~6 s each) calls —
+  // ~28 s alone, over 30 s under full-suite load (measured 2026-09-29; the
+  // query cost is td-follow-up, not this contract).
+  it("scope excludes attempted rows; stale honors windows and AI gating (CODEX1 #6/#9)", { timeout: 60_000 }, async () => {
     await wipe();
     // Put the synthetic code in scope: taxonomy(species) + a seen row.
     await query(

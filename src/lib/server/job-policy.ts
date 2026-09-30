@@ -176,7 +176,15 @@ export const dedupKeys = {
 	enrichMediaForceChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media_force', codes),
 	enrichMediaOne: (code: string) => `enrich_media:one:${code}`,
 	enrichInatChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_inat', codes),
-	enrichInatOne: (code: string) => `enrich_inat:one:${code}`
+	enrichInatOne: (code: string) => `enrich_inat:one:${code}`,
+	// td-894144 Release B3 tag operations. One key per (op, tag[, revision]):
+	// a second click while one is queued or running dedups onto it.
+	tagConsistency: () => 'tag_consistency:global',
+	tagStage: (tag: string, revisionId: string) => `tag_stage:${tag}:r${revisionId}`,
+	tagBenchmark: (tag: string, revisionId: string) => `tag_benchmark:${tag}:r${revisionId}`,
+	tagActivate: (tag: string) => `tag_activate:${tag}`,
+	tagRetire: (tag: string) => `tag_retire:${tag}`,
+	tagRollback: (tag: string) => `tag_rollback:${tag}`
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -357,7 +365,14 @@ const TYPE_NAMES: Record<string, string> = {
 	scan_enrichment: 'Enrichment scan (system)',
 	enrich_species_media: 'Species media',
 	enrich_species_inat: 'Species confusion data',
-	enrich_families: 'Family descriptions'
+	enrich_families: 'Family descriptions',
+	tag_repair: 'Tag repair (taxonomy change)',
+	tag_consistency: 'Tag consistency check (system)',
+	tag_stage: 'Tag stage report',
+	tag_benchmark: 'Tag switch benchmark',
+	tag_activate: 'Tag activation',
+	tag_retire: 'Tag retire to legacy',
+	tag_rollback: 'Tag rollback'
 };
 
 export function displayName(
@@ -375,7 +390,7 @@ export function displayName(
 }
 
 /** Recurring singleton types that sit 'pending' between runs by design. */
-const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts', 'enrich_families']);
+const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts', 'enrich_families', 'tag_consistency']);
 
 /**
  * A recurring singleton parked until its NEXT scheduled run (td-b7d021,

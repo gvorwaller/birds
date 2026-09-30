@@ -67,7 +67,7 @@ it("rejects malformed payloads before replacing existing rows", async () => {
       { ...fixture[0], speciesCode: "another", order: "ConflictingOrder" },
     ],
   ]) {
-    await expect(replaceTaxonomy(payload)).rejects.toThrow();
+    await expect(replaceTaxonomy(payload, 1)).rejects.toThrow();
   }
   expect(
     (await query("SELECT count(*)::int AS n FROM taxonomy_cache WHERE species_code IN ('osprey','redhea','grbher3')")).rows[0].n,
