@@ -79,7 +79,7 @@ const CLAUSE_WORDS = [
  * produces a new scanner_rev → new input_hash → full re-materialization
  * (plan rev 14, CODEX1 P2).
  */
-export const ENGINE_SOURCE_HASH = 'a8a7a089a7203d4431ef35ff06c215ed58cd67d855a5543cf17dc70b324c8df3';
+export const ENGINE_SOURCE_HASH = 'abca3e809fed490199c1505531d74203ba72874277eac25228f52a8a3af0a05f';
 
 export function scannerRev(): string {
 	const v = process.versions as Record<string, string | undefined>;

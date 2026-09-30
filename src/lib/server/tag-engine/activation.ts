@@ -23,7 +23,7 @@ import {
   withTagWriteTx,
   type TagWriteTx,
 } from "./runtime";
-import { evaluateTag } from "./scanner";
+import { evaluateTag, genusOf } from "./scanner";
 
 const sha256 = (s: string) =>
   createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
@@ -102,7 +102,11 @@ export async function completeRevisionStates(
             extract: row.wikipedia_extract,
             sections: row.wikipedia_sections ?? [],
           },
-          taxon: { order: row.order_name, family: row.family_sci_name },
+          taxon: {
+            order: row.order_name,
+            family: row.family_sci_name,
+            genus: genusOf(row.sci_name),
+          },
           lexicon: lex.lexicon,
           exempt: focalExemptions(row),
         },

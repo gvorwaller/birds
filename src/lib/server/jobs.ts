@@ -13,6 +13,7 @@
  *   winning row.
  * - Payloads/events/results NEVER contain credentials (cs.md sacred rules).
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type pg from 'pg';
 import { query, queryTimed, withTransaction } from '$lib/db';
 import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
@@ -41,7 +42,9 @@ export type JobType =
 	| 'tag_draft_rules'
 	| 'tag_design_simulation'
 	| 'tag_eval_create'
-	| 'tag_gate_report';
+	| 'tag_gate_report'
+	| 'tag_preview'
+	| 'tag_family_refs';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -72,6 +75,47 @@ export type JobEventAction =
 	| 'failed'
 	| 'cancelled';
 
+// ── claim fencing (td-894144 B5 plan §3z) ────────────────────────────────
+/**
+ * The claim a handler runs under: the job and its per-claim identity
+ * (jobs.claim_seq — incremented by every claim, never refunded, unlike
+ * `attempts`, which a drain or yield refunds). runJob runs each handler inside
+ * this context, so every async continuation of THAT execution — including a
+ * late one after a requeue and a same-process re-claim — keeps its own claim.
+ */
+export interface JobClaim {
+	jobId: number;
+	claimSeq: string;
+}
+const claimContext = new AsyncLocalStorage<JobClaim>();
+
+/** Run `fn` as the holder of this claim (the worker's runJob; tests). */
+export function runWithClaim<T>(job: { id: number; claim_seq?: string | number | null }, fn: () => Promise<T>): Promise<T> {
+	return claimContext.run({ jobId: job.id, claimSeq: String(job.claim_seq ?? '0') }, fn);
+}
+
+/** The claim this execution holds for `jobId`, if any. */
+export function currentClaim(jobId: number): JobClaim | null {
+	const c = claimContext.getStore();
+	return c && c.jobId === jobId ? c : null;
+}
+
+/**
+ * This execution no longer holds its job's claim (the job left `running`, or
+ * a newer claim owns it). Thrown by fenced queue writes; runJob catches it
+ * once at its boundary and stops without further writes.
+ */
+export class StaleClaimError extends Error {
+	constructor(jobId: number, where: string) {
+		super(`stale claim: job ${jobId} is no longer held by this execution (${where})`);
+		this.name = 'StaleClaimError';
+	}
+}
+
+export const isStaleClaim = (err: unknown): boolean =>
+	err instanceof StaleClaimError ||
+	(err instanceof Error && /^stale claim\b/.test(err.message));
+
 export interface EnqueueParams {
 	type: JobType;
 	payload: unknown;
@@ -101,6 +145,24 @@ export async function recordEvent(
 		action,
 		JSON.stringify(scrubStoredValue(details ?? {}))
 	]);
+}
+
+/**
+ * The handler's "claimed" event, fenced (td-894144 B5 §3cc): under the
+ * holder's claim it is written only while the job is running under THIS
+ * claim (one statement), else StaleClaimError — a stale execution leaves no
+ * event at all. Without a claim context it is a plain recordEvent.
+ */
+export async function recordClaimedEvent(jobId: number, details: unknown = {}): Promise<void> {
+	const claim = currentClaim(jobId);
+	if (!claim) return recordEvent(jobId, 'claimed', details);
+	const r = await query(
+		`INSERT INTO job_events (job_id, action, details)
+		 SELECT $1, 'claimed', $2
+		  WHERE EXISTS (SELECT 1 FROM jobs WHERE id = $1 AND status = 'running' AND claim_seq = $3)`,
+		[jobId, JSON.stringify(scrubStoredValue(details ?? {})), claim.claimSeq]
+	);
+	if (!r.rowCount) throw new StaleClaimError(jobId, 'claimed event');
 }
 
 /**
@@ -177,7 +239,8 @@ export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; ded
 export async function claimNextJob(): Promise<JobRow | null> {
 	const r = await query<JobRow>(
 		`UPDATE jobs
-		    SET status = 'running', started_at = NOW(), attempts = attempts + 1, heartbeat_at = NOW()
+		    SET status = 'running', started_at = NOW(), attempts = attempts + 1, heartbeat_at = NOW(),
+		        claim_seq = claim_seq + 1
 		  WHERE id = (SELECT id FROM jobs
 		               WHERE status = 'pending'
 		                 AND NOT cancel_requested
@@ -191,17 +254,26 @@ export async function claimNextJob(): Promise<JobRow | null> {
 	return r.rows[0] ?? null;
 }
 
-/** Progress write doubles as job heartbeat AND cancel check — one query per unit. */
+/**
+ * Progress write doubles as job heartbeat AND cancel check — one query per
+ * unit. Under the holder's claim it is fenced (running + claim_seq) and a
+ * miss throws StaleClaimError: a stale execution never overwrites the current
+ * claim's progress or heartbeat, and never reads its cancel flag.
+ */
 export async function updateProgress(
 	jobId: number,
 	progress: JobProgress
 ): Promise<{ cancelRequested: boolean }> {
+	const claim = currentClaim(jobId);
 	const r = await query<{ cancel_requested: boolean }>(
 		`UPDATE jobs SET progress = $2, heartbeat_at = NOW()
-		  WHERE id = $1
+		  WHERE id = $1${claim ? ` AND status = 'running' AND claim_seq = $3` : ''}
 		  RETURNING cancel_requested`,
-		[jobId, JSON.stringify(scrubStoredValue(progress))]
+		claim
+			? [jobId, JSON.stringify(scrubStoredValue(progress)), claim.claimSeq]
+			: [jobId, JSON.stringify(scrubStoredValue(progress))]
 	);
+	if (claim && r.rows.length === 0) throw new StaleClaimError(jobId, 'progress');
 	return { cancelRequested: r.rows[0]?.cancel_requested ?? false };
 }
 
@@ -214,7 +286,9 @@ export async function updateProgress(
  * the row-lock ordering of the two UPDATEs defines the boundary.
  *
  * Returns the FINAL status when this caller won the CAS (so it can emit the
- * matching single event), or null when it lost.
+ * matching single event), or null when it lost. Under the holder's claim the
+ * CAS also requires the claim_seq (plan §3z) and a loss throws
+ * StaleClaimError — attempts alone repeats after a refunding drain.
  */
 async function transition(
 	jobId: number,
@@ -222,12 +296,14 @@ async function transition(
 	desiredSet: string,
 	params: unknown[]
 ): Promise<string | null> {
+	const claim = currentClaim(jobId);
 	const r = await query<{ status: string }>(
 		`UPDATE jobs SET ${desiredSet}
-		  WHERE id = $1 AND status = 'running' AND attempts = $2
+		  WHERE id = $1 AND status = 'running' AND attempts = $2${claim ? ` AND claim_seq = $${params.length + 3}` : ''}
 		  RETURNING status`,
-		[jobId, expectedAttempts, ...params]
+		claim ? [jobId, expectedAttempts, ...params, claim.claimSeq] : [jobId, expectedAttempts, ...params]
 	);
+	if (claim && r.rows.length === 0) throw new StaleClaimError(jobId, 'transition');
 	return r.rows[0]?.status ?? null;
 }
 
@@ -390,6 +466,7 @@ export async function terminalizeAndReschedule(
 		| { kind: 'fail'; error: string; result?: unknown },
 	successor: EnqueueParams
 ): Promise<{ won: boolean; finalStatus: string | null; successorId: number | null }> {
+	const claim = currentClaim(jobId);
 	return withTransaction(async (client) => {
 		const desired = outcome.kind === 'complete' ? 'succeeded' : 'failed';
 		const term = await client.query<{ status: string }>(
@@ -397,16 +474,18 @@ export async function terminalizeAndReschedule(
 			    status = CASE WHEN cancel_requested THEN 'cancelled' ELSE '${desired}' END,
 			    error = CASE WHEN cancel_requested THEN NULL ELSE $3 END,
 			    result = $4, finished_at = NOW()
-			  WHERE id = $1 AND status = 'running' AND attempts = $2
+			  WHERE id = $1 AND status = 'running' AND attempts = $2${claim ? ' AND claim_seq = $5' : ''}
 			  RETURNING status`,
 			[
 				jobId,
 				expectedAttempts,
 				outcome.kind === 'fail' ? scrubStoredValue(outcome.error) : null,
-				JSON.stringify(scrubStoredValue(outcome.result ?? null))
+				JSON.stringify(scrubStoredValue(outcome.result ?? null)),
+				...(claim ? [claim.claimSeq] : [])
 			]
 		);
 		const final = term.rows[0]?.status ?? null;
+		if (final == null && claim) throw new StaleClaimError(jobId, 'terminalizeAndReschedule');
 		if (final == null) return { won: false, finalStatus: null, successorId: null };
 		await client.query(
 			`INSERT INTO job_events (job_id, action, details) VALUES ($1, $2, $3)`,

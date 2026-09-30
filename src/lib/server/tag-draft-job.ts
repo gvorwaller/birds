@@ -24,7 +24,7 @@ import { sanitizeErrorText, type JobRow } from "$server/job-policy";
 import {
   completeJob,
   failJob,
-  recordEvent,
+  recordClaimedEvent,
   requeueInterrupted,
 } from "$server/jobs";
 import {
@@ -33,94 +33,15 @@ import {
   tagEvalDesign,
 } from "$server/tag-engine/eval-design";
 import { cueRanges } from "$server/tag-engine/eval-text";
+import { parseRuleset, RulesetError } from "$server/tag-engine/rules";
 import {
-  parseRuleset,
-  RulesetError,
-  type TaxonRule,
-} from "$server/tag-engine/rules";
+  checkTaxonRules,
+  knownTaxaOf,
+  loadTaxonomyForCheck,
+} from "$server/tag-engine/taxon-check";
 import { segmentArticle } from "$server/tag-engine/segment";
 
 export const AUTHORING_PER_CELL = 12;
-
-export interface TaxonGroup {
-  order: string | null;
-  family: string | null;
-  n: number;
-}
-
-/**
- * Check a draft's taxon rules against the real taxonomy (the tag universe,
- * grouped by order and family). Refuses names that match no order or family
- * of that rank (a silent no-op, e.g. "Phalaropidae" — phalaropes are
- * Scolopacidae), and rule sets that admit no species at all (two
- * require_one_of rules are ANDed, so family Alcidae + order Procellariiformes
- * rejects every bird). Mirrors the scanner's taxon step; species with an
- * unknown rank value never count as admitted.
- *
- * `known` is every order/family in the whole species taxonomy, NOT just the
- * current tag universe (CODEX1): a real family with no article yet (e.g.
- * Mohoidae) is a legitimate value; only admission is measured on `groups`.
- */
-export interface KnownTaxa {
-  order: ReadonlySet<string>;
-  family: ReadonlySet<string>;
-}
-
-export function checkTaxonRules(
-  rules: readonly TaxonRule[],
-  groups: readonly TaxonGroup[],
-  known: KnownTaxa,
-): { admitted: number; problems: string[] } {
-  const problems: string[] = [];
-  for (const r of rules) {
-    const unknown = r.values.filter((v) => !known[r.rank].has(v));
-    if (unknown.length)
-      problems.push(
-        `taxon rule ${r.id} names no known ${r.rank}: ${unknown.join(", ")}`,
-      );
-  }
-  let admitted = 0;
-  for (const g of groups) {
-    const ok = rules.every((r) => {
-      const v = r.rank === "order" ? g.order : g.family;
-      if (v == null) return false;
-      return r.action === "forbid" ? !r.values.includes(v) : r.values.includes(v);
-    });
-    if (ok) admitted += g.n;
-  }
-  if (rules.length && admitted === 0)
-    problems.push(
-      "the taxon rules admit no species at all (every require_one_of rule must hold at once; list alternative taxa in ONE rule)",
-    );
-  return { admitted, problems };
-}
-
-async function taxonGroups(): Promise<TaxonGroup[]> {
-  return (
-    await query<TaxonGroup>(
-      `SELECT tc.order_name AS "order", tc.family_sci_name AS family, count(*)::int AS n
-         FROM public.tag_universe_codes() u(code)
-         JOIN taxonomy_cache tc ON tc.species_code = u.code
-        GROUP BY 1, 2`,
-    )
-  ).rows;
-}
-
-async function knownTaxa(): Promise<KnownTaxa> {
-  const rows = (
-    await query<{ rank: "order" | "family"; v: string }>(
-      `SELECT DISTINCT 'order' AS rank, order_name AS v FROM taxonomy_cache
-        WHERE category = 'species' AND order_name IS NOT NULL
-       UNION
-       SELECT DISTINCT 'family', family_sci_name FROM taxonomy_cache
-        WHERE category = 'species' AND family_sci_name IS NOT NULL`,
-    )
-  ).rows;
-  return {
-    order: new Set(rows.filter((r) => r.rank === "order").map((r) => r.v)),
-    family: new Set(rows.filter((r) => r.rank === "family").map((r) => r.v)),
-  };
-}
 
 /** How often a running draft looks for a worker drain (SIGTERM/SIGINT). */
 const DRAIN_POLL_MS = 1000;
@@ -267,7 +188,7 @@ export async function runTagDraftJob(
     );
     return;
   }
-  await recordEvent(job.id, "claimed", { attempt: attempts, tag });
+  await recordClaimedEvent(job.id, { attempt: attempts, tag });
   if (!(await isAdmin(job.requested_by))) {
     await failJob(
       job.id,
@@ -293,8 +214,8 @@ export async function runTagDraftJob(
     }[] = [];
     let previousError: string | null = null;
     let proposalArtifact: unknown = null;
-    const groups = await taxonGroups();
-    const known = await knownTaxa();
+    const taxonomy = await loadTaxonomyForCheck(query as never);
+    const known = knownTaxaOf(taxonomy);
     for (let i = 0; i < 2 && proposalArtifact == null; i++) {
       if (ctx.isDraining()) throw new DraftInterrupted("worker draining");
       if (await ctx.isPauseRequested?.())
@@ -335,7 +256,7 @@ export async function runTagDraftJob(
         const rs = parseRuleset(call.result, ALL_TAGS);
         if (rs.tag !== tag)
           throw new RulesetError(`ruleset.tag must be ${tag}`);
-        const taxonCheck = checkTaxonRules(rs.taxon, groups, known);
+        const taxonCheck = checkTaxonRules(rs, taxonomy, known);
         if (taxonCheck.problems.length)
           throw new RulesetError(taxonCheck.problems.join("; "));
         proposalArtifact = call.result;

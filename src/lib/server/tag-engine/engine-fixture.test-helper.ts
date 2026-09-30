@@ -51,6 +51,7 @@ export interface InputRow {
   lexicon_hash: string;
   focal_exempt_hash: string;
   scanner_rev: string;
+  genus: string | null;
 }
 
 /** Fixture gates: the proposed thresholds, no named cases (fixture tags have none). */
@@ -69,9 +70,12 @@ export async function censusGate(
   tag: string,
   revisionId: string,
   adminId: number,
-  track: { setIds: Set<string> },
+  track: { setIds: Set<string>; refs?: Set<string> },
 ): Promise<{ gate: string; bench: string; setId: string }> {
   if (!tagEvalDesign(tag)) __registerEvalDesignForTests(tag);
+  // Every frame species needs a family reference (td-894144 B5, plan §4).
+  for (const code of await seedFrameReferences(tag, revisionId))
+    track.refs?.add(code);
   const frame = await buildFrame(tag, revisionId);
   const n = Object.fromEntries(
     STRATA.map((h) => [h, frame.N[h]]),
@@ -120,6 +124,50 @@ export async function censusGate(
   return { gate: gate.reportId, bench, setId: set.setId };
 }
 
+/**
+ * Seed a fixture reference for every family of the revision's current frame
+ * that lacks one; returns the family codes created (the caller deletes them
+ * with cleanupFamilyReferences). Species without a family code cannot have a
+ * reference — fixtures give theirs one.
+ */
+export async function seedFrameReferences(
+  tag: string,
+  revisionId: string,
+): Promise<string[]> {
+  const need = (
+    await query<{ family_code: string; family: string }>(
+      `SELECT DISTINCT tc.family_code, coalesce(tc.family_sci_name, tc.family_code) AS family
+         FROM public.tag_universe_codes() u(code)
+         JOIN species_tag_input i ON i.species_code = u.code
+         JOIN species_tag_state s ON s.species_code = u.code AND s.tag = $1 AND s.revision_id = $2
+                                 AND s.input_hash = i.input_hash
+         JOIN species_enrichment se ON se.species_code = u.code
+         JOIN taxonomy_cache tc ON tc.species_code = u.code
+         LEFT JOIN tag_family_reference r ON r.family_code = tc.family_code AND r.status = 'ok'
+        WHERE tc.family_code IS NOT NULL AND r.family_code IS NULL
+          AND (s.status = 'assigned' OR coalesce($1 = ANY (se.legacy_tags), false))`,
+      [tag, revisionId],
+    )
+  ).rows;
+  // The unfenced writer is owner-only (0073); fixtures use the owner role.
+  for (const f of need)
+    await withOwnerClient((c) =>
+      c.query(
+        "SELECT public.record_tag_family_reference($1, $2, 'ok', $2, 1, $3, NULL)",
+        [f.family_code, f.family, `The family ${f.family} (fixture reference).`],
+      ),
+    );
+  return need.map((f) => f.family_code);
+}
+
+export async function cleanupFamilyReferences(codes: Iterable<string>): Promise<void> {
+  const list = [...codes];
+  if (!list.length) return;
+  await withOwnerClient((c) =>
+    c.query("DELETE FROM tag_family_reference WHERE family_code = ANY($1::text[])", [list]),
+  );
+}
+
 /** Remove fixture eval sets and the labels they created (birds_test owner escape). */
 export async function cleanupEvalSets(setIds: Iterable<string>): Promise<void> {
   const ids = [...setIds];
@@ -147,7 +195,9 @@ export function tagEngineFixture(prefix: string) {
   const proposals: string[] = [];
   const activationIds = new Set<number>();
   const jobIds = new Set<number>();
-  const evalSets = { setIds: new Set<string>() };
+  /** Family references this fixture created (deleted at cleanup; never others'). */
+  const createdRefs = new Set<string>();
+  const evalSets = { setIds: new Set<string>(), refs: createdRefs };
   let adminId = 0;
   let tags: string[] = [];
   let realCarriersBefore: {
@@ -229,6 +279,37 @@ export function tagEngineFixture(prefix: string) {
     );
   }
 
+  /**
+   * Blind tests need a family reference for every frame species (td-894144
+   * B5, plan §4). Seed one for each family among our species and the real
+   * carriers of our tags that lacks one — test files run one at a time
+   * (fileParallelism: false), so "create if absent, delete what I created"
+   * never removes another file's rows.
+   */
+  async function seedFamilyReferences(): Promise<void> {
+    const need = (
+      await query<{ family_code: string; family: string }>(
+        `SELECT DISTINCT tc.family_code, coalesce(tc.family_sci_name, tc.family_code) AS family
+		   FROM taxonomy_cache tc
+		   JOIN species_enrichment se ON se.species_code = tc.species_code
+		   LEFT JOIN tag_family_reference r ON r.family_code = tc.family_code AND r.status = 'ok'
+		  WHERE tc.category = 'species' AND tc.family_code IS NOT NULL AND r.family_code IS NULL
+		    AND (tc.species_code = ANY ($1::text[])
+		         OR se.tags && $2::text[] OR coalesce(se.legacy_tags, '{}') && $2::text[])`,
+        [[...codes], tags],
+      )
+    ).rows;
+    for (const f of need) {
+      await withOwnerClient((c) =>
+        c.query(
+          "SELECT public.record_tag_family_reference($1, $2, 'ok', $2, 1, $3, NULL)",
+          [f.family_code, f.family, `The family ${f.family} (fixture reference).`],
+        ),
+      );
+      createdRefs.add(f.family_code);
+    }
+  }
+
   /** Point `code` at a synthetic input: its current fields, with overrides. */
   async function repoint(
     exec: Exec,
@@ -245,12 +326,13 @@ export function tagEngineFixture(prefix: string) {
     const i = await inputOf(code);
     const current = (await tagRepairState())!.lexiconHash;
     const r = await exec(
-      "SELECT public.record_tag_input($1, $2, $3, $4, $5, $6, $7) AS h",
+      "SELECT public.record_tag_input($1, $2, $3, $4, $5, $6, $7, $8) AS h",
       [
         code,
         o.text ?? i?.text_hash ?? hex(`text-${code}`),
         o.order !== undefined ? o.order : (i?.order_name ?? null),
         o.family !== undefined ? o.family : (i?.family_sci_name ?? null),
+        i?.genus ?? null,
         o.lexicon ?? i?.lexicon_hash ?? current,
         o.focal ?? i?.focal_exempt_hash ?? hex(`focal-${code}`),
         o.scanner ?? scannerRev(),
@@ -294,14 +376,15 @@ export function tagEngineFixture(prefix: string) {
     codes.add(code);
     if (o.member ?? true)
       await query(
-        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family, order_name, family_sci_name)
-				 VALUES ($1, $2, $3, 'species', 'Fixture family', $4, $5)`,
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family, order_name, family_sci_name, family_code)
+				 VALUES ($1, $2, $3, 'species', 'Fixture family', $4, $5, $6)`,
         [
           code,
           `${prefix} ${code} Plover`,
           `${prefix[0].toUpperCase()}${prefix.slice(1)}ia ${code}`,
           o.order === undefined ? "Charadriiformes" : o.order,
           o.family === undefined ? "Fixtureidae" : o.family,
+          o.family === null ? null : `zzfx-${(o.family ?? "Fixtureidae").toLowerCase()}`,
         ],
       );
     await upsertWikiOk(code, {
@@ -310,6 +393,7 @@ export function tagEngineFixture(prefix: string) {
       extract: o.text ?? `A shorebird with a ${signal} habit.`,
       sections: [],
     });
+    await seedFamilyReferences();
     return code;
   }
 
@@ -338,6 +422,7 @@ export function tagEngineFixture(prefix: string) {
         [`tag-${prefix}-${RUN}`],
       )
     ).rows[0].id;
+    await seedFamilyReferences();
   }
 
   const ruleset = (tag: string) => ({
@@ -448,12 +533,22 @@ export function tagEngineFixture(prefix: string) {
         "DELETE FROM tag_crosscheck WHERE proposal_id = ANY($1::uuid[])",
         [proposals],
       );
+      // Previews (B5) reference proposals; crosschecks reference previews.
+      await asOwner(
+        "DELETE FROM tag_proposal_preview WHERE proposal_id = ANY($1::uuid[])",
+        [proposals],
+      );
       await asOwner(
         "DELETE FROM tag_rule_proposal WHERE id = ANY($1::uuid[])",
         [proposals],
       );
     }
     if (adminId) await query("DELETE FROM users WHERE id = $1", [adminId]);
+    if (createdRefs.size)
+      await asOwner(
+        "DELETE FROM tag_family_reference WHERE family_code = ANY($1::text[])",
+        [[...createdRefs]],
+      );
   }
 
   return {
@@ -478,6 +573,7 @@ export function tagEngineFixture(prefix: string) {
     tagsOf,
     inputOf,
     settleUniverse,
+    seedFamilyReferences,
     plant,
     repoint,
     claim,

@@ -1286,6 +1286,68 @@
 				</ul>
 			</div>
 		{/if}
+
+		<!-- Admin: Tag rules -->
+		<button
+			class="toggle"
+			class:open={open === 'tag-rules'}
+			aria-expanded={open === 'tag-rules'}
+			onclick={() => toggle('tag-rules')}
+		>
+			<span class="ico">🏷️</span>
+			<span class="title">Admin: Tag rules</span>
+			<span class="chev">{open === 'tag-rules' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'tag-rules'}
+			<div class="body">
+				<p class="lead">
+					Admins only — the <strong>Tags</strong> tab on the Admin page is where a
+					tag moves from the old AI annotations to checkable rules, one tag at a
+					time. Nothing changes for users until a rule set passes its blind test
+					and you activate it.
+				</p>
+				<ul>
+					<li>
+						<strong>Two kinds of rule.</strong> A rule set can list whole
+						families or genera ("every albatross, petrel and shearwater") and
+						can look for wording in each species' Wikipedia article ("feeds far
+						out at sea"). Wording rules can be limited to certain families, so a
+						phrase only counts where it means what the tag means. The page shows
+						a rule set in plain language under <strong>Show rules</strong>.
+					</li>
+					<li>
+						<strong>Preview before anything else.</strong> On each proposal,
+						<strong>Preview</strong> runs the rules over every species (about a
+						minute, no AI, no cost) and shows how many species they would tag,
+						how many of today's tags they keep, lose and add, and example
+						sentences. It is a description, not a verdict. A Preview goes
+						<strong>out of date</strong> when species data changes; run it again.
+					</li>
+					<li>
+						<strong>Cross-check, then approve.</strong> An independent reviewer
+						checks the rules together with their current Preview. You can only
+						approve rules the reviewer approved, reviewed against the Preview
+						that is still current — if the data changed in between, Preview again
+						and get a new cross-check.
+					</li>
+					<li>
+						<strong>The blind test.</strong> You label a random sample of birds
+						without seeing what the rules or the old tags said. Each page shows
+						the bird's article (its names hidden) and, below it, the opening of
+						its <strong>family's Wikipedia article</strong>; you answer from
+						both. <strong>Fetch family articles</strong> (in Blind tests) loads
+						any family articles still missing — a blind test cannot start until
+						every family in it has one.
+					</li>
+					<li>
+						<strong>Tag rules model.</strong> "Draft rules with AI" uses the
+						model chosen under AI &amp; Cost → Model choice → Tag rules. An AI
+						draft is only a proposal: it goes through Preview, cross-check,
+						approval and the blind test like any other.
+					</li>
+				</ul>
+			</div>
+		{/if}
 	</div>
 
 	<p class="foot">

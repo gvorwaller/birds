@@ -176,3 +176,76 @@ export async function fetchArticlePlaintext(
 		sections
 	};
 }
+
+export type FamilyLead =
+	| { status: 'ok'; title: string; revId: number; lead: string }
+	| { status: 'missing' }
+	| { status: 'ambiguous'; title: string };
+
+/**
+ * The lead (intro) of a bird family's Wikipedia article, for the blind-test
+ * family reference (td-894144 B5, plan §4 option b). `title` is the family's
+ * scientific name; redirects are followed (Oceanitidae → "Austral storm
+ * petrel"), a disambiguation page is "ambiguous", no page is "missing".
+ * Live-verified 2026-09-30: Procellariidae (direct), Oceanitidae (redirect),
+ * Mohoidae, Cardinalidae. Throws WikipediaError on transport/HTTP failures.
+ */
+export async function fetchFamilyLead(
+	title: string,
+	opts: { signal?: AbortSignal; fetcher?: typeof fetch } = {}
+): Promise<FamilyLead> {
+	const doFetch = opts.fetcher ?? fetch;
+	const signal = opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+	const params = new URLSearchParams({
+		action: 'query',
+		format: 'json',
+		formatversion: '2',
+		prop: 'extracts|revisions|pageprops',
+		exintro: '1',
+		explaintext: '1',
+		redirects: '1',
+		rvprop: 'ids',
+		ppprop: 'disambiguation',
+		titles: title
+	});
+	let res: Response;
+	try {
+		res = await doFetch(`${API_URL}?${params}`, {
+			headers: { 'User-Agent': enrichmentUserAgent() },
+			signal
+		});
+	} catch (err) {
+		throw new WikipediaError(
+			`Wikipedia unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
+			0,
+			false
+		);
+	}
+	if (!res.ok) {
+		throw new WikipediaError(
+			`Wikipedia query failed (HTTP ${res.status})`,
+			res.status,
+			res.status === 429,
+			parseRetryAfterMs(res.headers.get('retry-after'))
+		);
+	}
+	const body = (await res.json()) as {
+		query?: {
+			pages?: {
+				title?: string;
+				missing?: boolean;
+				extract?: string;
+				pageprops?: { disambiguation?: string };
+				revisions?: { revid?: number }[];
+			}[];
+		};
+	};
+	const page = body.query?.pages?.[0];
+	if (!page || page.missing) return { status: 'missing' };
+	if (page.pageprops && 'disambiguation' in page.pageprops)
+		return { status: 'ambiguous', title: page.title ?? title };
+	const lead = (page.extract ?? '').trim().slice(0, MAX_EXTRACT_CHARS);
+	const revId = page.revisions?.[0]?.revid;
+	if (!lead || !revId) return { status: 'missing' };
+	return { status: 'ok', title: page.title ?? title, revId, lead };
+}

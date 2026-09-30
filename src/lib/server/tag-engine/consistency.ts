@@ -66,6 +66,7 @@ interface Snap {
   text_hash: string | null;
   order_name: string | null;
   family_sci_name: string | null;
+  genus: string | null;
   lexicon_hash: string | null;
   focal_exempt_hash: string | null;
   scanner_rev: string | null;
@@ -76,6 +77,7 @@ const INPUT_FIELDS = [
   ["text_hash", "input_text"],
   ["order_name", "input_order"],
   ["family_sci_name", "input_family"],
+  ["genus", "input_genus"],
   ["lexicon_hash", "input_lexicon"],
   ["focal_exempt_hash", "input_focal"],
   ["scanner_rev", "input_scanner"],
@@ -86,7 +88,7 @@ async function snapshot(
   codes: readonly string[],
 ): Promise<Map<string, Snap>> {
   const r = await tx.exec<Snap & { code: string }>(
-    `SELECT se.species_code AS code, se.tags, i.input_hash, i.text_hash, i.order_name, i.family_sci_name,
+    `SELECT se.species_code AS code, se.tags, i.input_hash, i.text_hash, i.order_name, i.family_sci_name, i.genus,
 		        i.lexicon_hash, i.focal_exempt_hash, i.scanner_rev,
 		        (SELECT count(*) FROM species_tag_state s WHERE s.species_code = se.species_code)::int AS states
 		   FROM species_enrichment se
@@ -159,10 +161,11 @@ export async function runTagConsistency(opts: {
         const s = (
           await tx.exec<{
             lexicon_hash: string;
+            scanner_rev: string;
             target: string | null;
             pending: boolean;
           }>(
-            `SELECT lexicon_hash, repair_target_lexicon_hash AS target,
+            `SELECT lexicon_hash, scanner_rev, repair_target_lexicon_hash AS target,
 				        repaired_generation < repair_generation AS pending
 				   FROM tag_lexicon_state WHERE id = 1`,
           )
@@ -171,11 +174,19 @@ export async function runTagConsistency(opts: {
         const lex = await lexiconFor(tx, { rebuild: true });
         const moved = s != null && lex.hash !== s.lexicon_hash;
         const staleTarget = s != null && s.pending && s.target !== lex.hash;
-        if (!moved && !staleTarget) return null;
+        // A deploy that changes the engine (new scanner_rev) re-derives every
+        // input by design (engine-guard). That is an expected upgrade, not
+        // drift: route it through a repair generation so the pass defers and
+        // nothing is counted as a code-path fix (td-894144 B5).
+        const scannerUpgrade =
+          s != null && !moved && s.scanner_rev !== lex.scannerRev;
+        if (!moved && !staleTarget && !scannerUpgrade) return null;
         const r = await beginTagRepair(tx, lex.hash, opts.requesterId);
         return {
           moved,
           staleTarget,
+          scannerUpgrade,
+          fromScannerRev: scannerUpgrade ? s!.scanner_rev : undefined,
           generation: r.generation.toString(),
           jobId: r.jobId,
         };
@@ -184,7 +195,8 @@ export async function runTagConsistency(opts: {
     if (lexStep) {
       if (lexStep.moved) fixed.lexicon_drift = 1;
       if (lexStep.staleTarget) fixed.repair_target_stale = 1;
-      details.lexiconDrift = lexStep;
+      if (lexStep.scannerUpgrade) details.scannerUpgrade = lexStep;
+      else details.lexiconDrift = lexStep;
     }
 
     const repair = await tagRepairState();

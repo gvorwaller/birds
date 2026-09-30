@@ -28,6 +28,15 @@ import {
 
 export const SAMPLE_ALGORITHM = "sha256-rank-v1";
 
+/** The owner-facing hard stop when frame families lack a Wikipedia reference (plan §4). */
+export function missingReferencesMessage(
+  missing: readonly { familyCode: string; family: string; species: number }[],
+): string {
+  const species = missing.reduce((a, m) => a + m.species, 0);
+  const names = missing.slice(0, 12).map((m) => m.family).join(", ");
+  return `${species} species in ${missing.length} famil${missing.length === 1 ? "y have" : "ies have"} no family article yet (${names}${missing.length > 12 ? ", …" : ""}) — press "Fetch family articles" first`;
+}
+
 const sha256 = (s: string) =>
   createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -100,6 +109,8 @@ export async function createEvalSet(
       throw new Error(
         `${frame.missingStates} species have no current result for this revision — run the stage report first`,
       );
+    if (frame.missingReferences.length > 0)
+      throw new Error(missingReferencesMessage(frame.missingReferences));
     if (frame.frameHash !== input.expectedFrameHash)
       throw new Error(
         "The species set changed since the design was computed — run the design again.",
@@ -122,6 +133,7 @@ export async function createEvalSet(
       display_position: i + 1,
       eval_text_hash: r.evalTextHash,
       article: r.evalText,
+      family_reference: r.familyReference,
     }));
     const designJson = {
       ...(input.designExtra ?? {}),

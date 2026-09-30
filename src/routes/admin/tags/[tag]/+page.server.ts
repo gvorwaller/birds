@@ -6,6 +6,8 @@ import {
   activationReadiness,
   approveProposal,
   enqueueEvalJob,
+  enqueueFamilyRefs,
+  enqueuePreview,
   enqueueTagDraft,
   enqueueTagOp,
   evalSetsFor,
@@ -18,6 +20,7 @@ import { dedupKeys } from "$server/job-policy";
 import { DEFAULT_MODEL_IDS, resolveModel } from "$server/ai-models";
 import { CONFIG_KEYS, getConfig } from "$server/app-config";
 import { draftableTag } from "$server/tag-draft-job";
+import { familyReferenceStatus } from "$server/tag-family-refs";
 import { PROPOSED_GATES } from "$server/tag-engine/eval-stats";
 import { OWNER_LABEL_BUDGET } from "$server/tag-eval-jobs";
 
@@ -40,13 +43,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ...(await activationReadiness(tag, r.id)),
     })),
   );
-  const [evalSets, designs, draftCfg] = await Promise.all([
+  const [evalSets, designs, draftCfg, familyRefs] = await Promise.all([
     evalSetsFor(tag),
     latestDesigns(tag),
     getConfig(CONFIG_KEYS.tagDraftModel, {
       provider: "anthropic",
       model: DEFAULT_MODEL_IDS.tagDraft,
     }),
+    familyReferenceStatus(),
   ]);
   return {
     detail,
@@ -58,6 +62,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     draftModel: resolveModel(draftCfg, DEFAULT_MODEL_IDS.tagDraft).label,
     evalSets,
     designs,
+    familyRefs,
     proposedGates: PROPOSED_GATES,
     labelBudget: OWNER_LABEL_BUDGET,
   };
@@ -345,6 +350,31 @@ export const actions: Actions = {
       "retire to legacy",
       await enqueueTagOp("tag_retire", { tag: g.tag }, g.user.id),
     );
+  },
+
+  preview: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "proposal");
+    if ("err" in g) return g.err;
+    const proposalId = String(
+      (await request.formData()).get("proposalId") ?? "",
+    );
+    if (!isUuid(proposalId)) return bad("proposal", 400, "Unknown proposal.");
+    const owns = await query(
+      "SELECT 1 FROM tag_rule_proposal WHERE id = $1 AND tag = $2",
+      [proposalId, g.tag],
+    );
+    if (!owns.rows.length)
+      return bad("proposal", 404, "That proposal is not for this tag.");
+    return queued(
+      "preview",
+      await enqueuePreview(g.tag, proposalId, g.user.id),
+    );
+  },
+
+  familyRefs: async ({ locals, params }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    return queued("family-article fetch", await enqueueFamilyRefs(g.user.id));
   },
 
   approve: async ({ locals, params, request }) => {

@@ -8,7 +8,14 @@
   let { artifact }: { artifact: unknown } = $props();
 
   type Match = { type?: string; phrase?: string };
-  type Support = { id?: string; group?: string; match?: Match; note?: string };
+  type Scope = { rank?: string; values?: string[] };
+  type Support = {
+    id?: string;
+    group?: string;
+    match?: Match;
+    note?: string;
+    taxa?: Scope[];
+  };
   type Exclude = {
     id?: string;
     binds?: string[];
@@ -47,6 +54,18 @@
       Number.isInteger(v.after)
     );
   };
+  const RANKS = ["order", "family", "genus"];
+  const scopeList = (v: unknown) =>
+    Array.isArray(v) &&
+    v.length >= 1 &&
+    v.length <= 3 &&
+    v.every(
+      (e) =>
+        record(e) &&
+        exactKeys(e, ["rank", "values"]) &&
+        RANKS.includes(e.rank as string) &&
+        strings(e.values),
+    );
   const displayable = (v: unknown): v is Record<string, unknown> => {
     if (
       !record(v) ||
@@ -62,8 +81,9 @@
       ])
     )
       return false;
+    const v2 = v.schema === 2;
     if (
-      v.schema !== 1 ||
+      (v.schema !== 1 && !v2) ||
       typeof v.tag !== "string" ||
       typeof v.rev !== "string" ||
       !strings(v.denySections) ||
@@ -72,7 +92,7 @@
       return false;
     if (
       !Array.isArray(v.support) ||
-      v.support.length === 0 ||
+      (v.support.length === 0 && !v2) ||
       !Array.isArray(v.exclude) ||
       !Array.isArray(v.taxon)
     )
@@ -81,7 +101,10 @@
       !v.support.every(
         (item) =>
           record(item) &&
-          exactKeys(item, ["id", "group", "match", "note"]) &&
+          (exactKeys(item, ["id", "group", "match", "note"]) ||
+            (v2 &&
+              exactKeys(item, ["id", "group", "match", "note", "taxa"]) &&
+              scopeList(item.taxa))) &&
           typeof item.id === "string" &&
           typeof item.group === "string" &&
           match(item.match) &&
@@ -107,9 +130,13 @@
         record(item) &&
         exactKeys(item, ["id", "rank", "values", "action", "note"]) &&
         typeof item.id === "string" &&
-        (item.rank === "order" || item.rank === "family") &&
+        (item.rank === "order" ||
+          item.rank === "family" ||
+          (v2 && item.rank === "genus")) &&
         strings(item.values) &&
-        (item.action === "require_one_of" || item.action === "forbid") &&
+        (item.action === "require_one_of" ||
+          item.action === "forbid" ||
+          (v2 && item.action === "assign")) &&
         typeof item.note === "string",
     );
   };
@@ -119,6 +146,14 @@
   const support = $derived(list<Support>(a.support));
   const exclude = $derived(list<Exclude>(a.exclude));
   const taxon = $derived(list<Taxon>(a.taxon));
+  const assigns = $derived(taxon.filter((t) => t.action === "assign"));
+  const gates = $derived(taxon.filter((t) => t.action !== "assign"));
+  const scoped = (s: Support) =>
+    s.taxa?.length
+      ? ` — only for ${s.taxa
+          .map((e) => `${e.rank} ${(e.values ?? []).join(" or ")}`)
+          .join(" and ")}`
+      : "";
   const deny = $derived(list<string>(a.denySections));
   const markers = $derived(list<string>(a.comparisonMarkers));
   const groups = $derived([...new Set(support.map((s) => s.group ?? "—"))]);
@@ -148,13 +183,26 @@
   </p>
 {:else}
   <div class="rules">
-    <h4>Assign when the article says (any group)</h4>
+    {#if assigns.length}
+      <h4>Tag every species in these groups (no article wording needed)</h4>
+      <ul>
+        {#each assigns as t, i (t.id ?? i)}
+          <li>
+            {t.rank === "genus" ? "Genus" : t.rank === "family" ? "Family" : "Order"}:
+            {(t.values ?? []).join(", ")}
+            {#if t.note}<span class="muted">— {t.note}</span>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if support.length}
+    <h4>{assigns.length ? "Otherwise, tag" : "Assign"} when the article says (any group)</h4>
     <ul>
       {#each groups as gname (gname)}
         <li>
           <strong>{gname}</strong>:
           {#each support.filter((s) => (s.group ?? "—") === gname) as s, i (s.id ?? i)}
-            {i > 0 ? " or " : ""}{phrase(s.match)}{#if s.note}<span
+            {i > 0 ? " or " : ""}{phrase(s.match)}{scoped(s)}{#if s.note}<span
                 class="muted"
               >
                 ({s.note})</span
@@ -162,6 +210,7 @@
         </li>
       {/each}
     </ul>
+    {/if}
     {#if exclude.length}
       <h4>But not when</h4>
       <ul>
@@ -176,10 +225,10 @@
         {/each}
       </ul>
     {/if}
-    {#if taxon.length}
-      <h4>Taxonomy</h4>
+    {#if gates.length}
+      <h4>Taxonomy (checked first)</h4>
       <ul>
-        {#each taxon as t, i (t.id ?? i)}
+        {#each gates as t, i (t.id ?? i)}
           <li>
             The {t.rank ?? "?"}
             {action(t)}: {(t.values ?? []).join(", ")}

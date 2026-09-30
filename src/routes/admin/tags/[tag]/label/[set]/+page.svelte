@@ -47,8 +47,9 @@
     <section class="card question-card" aria-labelledby="question">
       <h1 id="question">{data.question}</h1>
       <p class="muted">
-        Judge only what the text says. The bird's names are hidden as “[this bird]”. Sea and ocean words are underlined
-        on every page as a reading aid; they are not an answer. <a href="#answer">Jump to the answer buttons</a>.
+        Judge only what the two texts say: the bird's own article, and below it the opening of its family's
+        Wikipedia article. The bird's names are hidden as “[this bird]”. Sea and ocean words are underlined on every
+        page as a reading aid; they are not an answer. <a href="#answer">Jump to the answer buttons</a>.
       </p>
     </section>
 
@@ -60,6 +61,16 @@
         </p>
       {/each}
     </article>
+
+    {#if item.family}
+      <article class="card text family" aria-label="The bird's family, from Wikipedia">
+        <p class="eyebrow">Its family, from Wikipedia</p>
+        <h2>{item.family.title}</h2>
+        <p>
+          {#each item.family.runs as r, j (j)}{#if r.cue}<u>{r.text}</u>{:else}{r.text}{/if}{/each}
+        </p>
+      </article>
+    {/if}
 
     <form
       id="answer"
@@ -121,6 +132,19 @@
     margin: 0.4rem 0;
     white-space: pre-line;
     overflow-wrap: anywhere;
+  }
+  .family {
+    border-style: dashed;
+  }
+  .eyebrow {
+    margin: 0;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .family h2 {
+    margin-top: 0.3rem;
   }
   .text u {
     text-decoration-thickness: 2px;

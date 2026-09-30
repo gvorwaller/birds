@@ -44,6 +44,19 @@ export class TagTxRollback extends Error {
 	}
 }
 
+/**
+ * An expected refusal inside withTagWriteTx (a stale claim, data that moved
+ * under a Preview): rolled back like TagTxRollback, so it is NOT recorded as a
+ * materialization failure, but it carries the reason to the caller.
+ */
+export class TagTxRefusal extends TagTxRollback {
+	constructor(readonly reason: string) {
+		super();
+		this.name = 'TagTxRefusal';
+		this.message = reason;
+	}
+}
+
 declare const tagWriteTxBrand: unique symbol;
 
 /** A transaction that holds the tag-engine lock. Only withTagWriteTx makes one. */

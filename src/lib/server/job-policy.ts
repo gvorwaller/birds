@@ -223,6 +223,8 @@ export const dedupKeys = {
   tagEvalCreate: (tag: string, revisionId: string) =>
     `tag_eval_create:${tag}:r${revisionId}`,
   tagGate: (setId: string) => `tag_gate:s${setId}`,
+  tagPreview: (proposalId: string) => `tag_preview:${proposalId}`,
+  tagFamilyRefs: () => "tag_family_refs",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -398,6 +400,8 @@ export interface JobRow {
   label: string;
   attempts: number;
   max_attempts: number;
+  /** Per-claim identity (bigint as text); fences the holder's writes (td-894144 B5 §3z). */
+  claim_seq?: string;
   next_retry_at: string | Date | null;
   cancel_requested: boolean;
   progress: JobProgress | Record<string, never>;
@@ -437,6 +441,8 @@ const TYPE_NAMES: Record<string, string> = {
   tag_design_simulation: "Tag blind-test design",
   tag_eval_create: "Tag blind-test sample",
   tag_gate_report: "Tag gate report",
+  tag_preview: "Tag rules preview",
+  tag_family_refs: "Family articles for blind tests",
 };
 
 export function displayName(

@@ -15,11 +15,12 @@
 import { query } from "$lib/db";
 import { ALL_TAGS } from "$lib/species-tags";
 import { sanitizeErrorText, type JobRow } from "$server/job-policy";
-import { completeJob, failJob, recordEvent } from "$server/jobs";
+import { completeJob, failJob, recordClaimedEvent } from "$server/jobs";
 import { designHash, tagEvalDesign } from "$server/tag-engine/eval-design";
 import { buildFrame } from "$server/tag-engine/eval-frame";
 import {
   createEvalSet,
+  missingReferencesMessage,
   recordGateReport,
 } from "$server/tag-engine/eval-sample";
 import {
@@ -87,6 +88,8 @@ export async function designSimulation(
     throw new Error(
       `${frame.missingStates} species have no current result for this revision — run the stage report first`,
     );
+  if (frame.missingReferences.length > 0)
+    throw new Error(missingReferencesMessage(frame.missingReferences));
   const size = sizeDesign(frame.N);
   if (!size.feasible)
     throw new Error(
@@ -251,7 +254,7 @@ export function verifySimulationBody(
 export async function runTagEvalJob(job: JobRow): Promise<void> {
   const attempts = job.attempts;
   const payload = (job.payload ?? {}) as Record<string, unknown>;
-  await recordEvent(job.id, "claimed", { attempt: attempts });
+  await recordClaimedEvent(job.id, { attempt: attempts });
   if (!(await isAdmin(job.requested_by))) {
     await failJob(
       job.id,

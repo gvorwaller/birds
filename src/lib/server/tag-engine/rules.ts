@@ -10,10 +10,18 @@
  *   1. taxon rules — `forbid` hit → not_assigned(taxon_forbid);
  *      `require_one_of` not met → not_assigned(requires_unmet), or
  *      unevaluated(taxon_unknown) when the species' rank value is unknown.
- *   2. support phrases in scanned sections, about the focal species,
+ *   2. (schema 2) `assign`: a species in a listed order/family/genus is
+ *      assigned with taxon evidence, no text needed.
+ *   3. support phrases in scanned sections, about the focal species,
  *      each possibly cancelled by an exclude phrase BOUND to its group.
- *   3. assigned iff at least one support match survives.
- * No weights, no regex (first release).
+ *      (schema 2) A support rule may be scoped to taxa: it only counts for
+ *      species in them.
+ *   4. assigned iff at least one support match survives.
+ * No weights, no regex.
+ *
+ * Schema 1 is the B1–B4 format and is parsed exactly as before; schema 2
+ * (td-894144 B5, plan docs/2026-09-30-open-ocean-rules-v2-plan.md §3a/§3b/
+ * §3l) adds `assign`, the `genus` rank and support `taxa`.
  */
 import { foldCase, normalizeDisplay } from "./normalize";
 import { tokenize, type MatcherType } from "./tokens";
@@ -23,12 +31,32 @@ export type Scope =
   | { unit: "sentence" }
   | { unit: "window"; before: number; after: number };
 
+export type TaxonRank = "order" | "family" | "genus";
+
+/** Rank order for display and evidence sorting (order, then family, then genus). */
+export const RANK_ORDER: Readonly<Record<TaxonRank, number>> = {
+  order: 0,
+  family: 1,
+  genus: 2,
+};
+
+/** One scope entry of a scoped support rule: the species' rank value must be one of `values`. */
+export interface TaxonScope {
+  rank: TaxonRank;
+  values: string[];
+}
+
 export interface SupportRule {
   id: string;
   group: string;
   match: { type: MatcherType; phrase: string };
   /** Why this phrase is evidence — shown to reviewers and the owner. */
   note: string;
+  /**
+   * Schema 2 only: eligibility scope. Entries AND (distinct ranks), values
+   * within an entry OR. Absent = counts for every species.
+   */
+  taxa?: TaxonScope[];
 }
 
 export interface ExcludeRule {
@@ -43,14 +71,16 @@ export interface ExcludeRule {
 
 export interface TaxonRule {
   id: string;
-  rank: "order" | "family";
+  /** "genus" is schema 2 only. */
+  rank: TaxonRank;
   values: string[];
-  action: "require_one_of" | "forbid";
+  /** "assign" is schema 2 only. */
+  action: "require_one_of" | "forbid" | "assign";
   note: string;
 }
 
 export interface Ruleset {
-  schema: 1;
+  schema: 1 | 2;
   tag: string;
   /** Human revision label, e.g. "r1". Identity is the file's SHA-256. */
   rev: string;
@@ -77,17 +107,22 @@ const LIMITS = {
   window: 12,
   values: 200,
   bytes: 512 * 1024,
+  /** Schema 2: at most this many scope entries per support rule (plan §3e/§3l). */
+  scopeEntries: 3,
 };
 
 function exactKeys(
   obj: unknown,
   keys: readonly string[],
   where: string,
+  optional: readonly string[] = [],
 ): Record<string, unknown> {
   if (!obj || typeof obj !== "object" || Array.isArray(obj))
     throw new RulesetError(`${where}: not an object`);
   const o = obj as Record<string, unknown>;
-  const extra = Object.keys(o).filter((k) => !keys.includes(k));
+  const extra = Object.keys(o).filter(
+    (k) => !keys.includes(k) && !optional.includes(k),
+  );
   if (extra.length)
     throw new RulesetError(`${where}: unknown field(s) ${extra.join(", ")}`);
   for (const k of keys)
@@ -115,6 +150,34 @@ function strList(v: unknown, where: string, max: number): string[] {
   if (!Array.isArray(v) || v.length > max)
     throw new RulesetError(`${where}: bad list`);
   return v.map((x, i) => str(x, `${where}[${i}]`));
+}
+
+/** Schema 2: a list of distinct, non-empty taxon names. */
+function nameList(v: unknown, where: string): string[] {
+  const values = strList(v, where, LIMITS.values);
+  if (values.length === 0) throw new RulesetError(`${where}: no values`);
+  if (new Set(values).size !== values.length)
+    throw new RulesetError(`${where}: duplicate value`);
+  return values;
+}
+
+function scopeList(v: unknown, where: string): TaxonScope[] {
+  if (!Array.isArray(v) || v.length === 0 || v.length > LIMITS.scopeEntries)
+    throw new RulesetError(
+      `${where}: must list 1–${LIMITS.scopeEntries} scope entries`,
+    );
+  const ranks = new Set<string>();
+  return v.map((e, i) => {
+    const o = exactKeys(e, ["rank", "values"], `${where}[${i}]`);
+    if (o.rank !== "order" && o.rank !== "family" && o.rank !== "genus")
+      throw new RulesetError(
+        `${where}[${i}]: rank must be order, family or genus`,
+      );
+    if (ranks.has(o.rank))
+      throw new RulesetError(`${where}[${i}]: duplicate rank ${o.rank}`);
+    ranks.add(o.rank);
+    return { rank: o.rank, values: nameList(o.values, `${where}[${i}].values`) };
+  });
 }
 
 function phrase(
@@ -189,7 +252,9 @@ export function parseRuleset(
     ],
     "ruleset",
   );
-  if (r.schema !== 1) throw new RulesetError("ruleset: unsupported schema");
+  if (r.schema !== 1 && r.schema !== 2)
+    throw new RulesetError("ruleset: unsupported schema");
+  const v2 = r.schema === 2;
   const tag = str(r.tag, "ruleset.tag");
   if (!allTags.has(tag)) throw new RulesetError(`ruleset: unknown tag ${tag}`);
   const ids = new Set<string>();
@@ -206,17 +271,37 @@ export function parseRuleset(
     throw new RulesetError("ruleset: support/exclude/taxon must be lists");
   if (r.support.length + r.exclude.length + r.taxon.length > LIMITS.rules)
     throw new RulesetError(`ruleset: more than ${LIMITS.rules} rules`);
-  if (r.support.length === 0)
-    throw new RulesetError("ruleset: needs at least one support rule");
+  // Schema 2 may decide by taxon alone (assign rules and no phrases).
+  const hasAssign =
+    v2 &&
+    r.taxon.some(
+      (t) =>
+        !!t &&
+        typeof t === "object" &&
+        (t as Record<string, unknown>).action === "assign",
+    );
+  if (r.support.length === 0 && !hasAssign)
+    throw new RulesetError(
+      v2
+        ? "ruleset: needs at least one support or assign rule"
+        : "ruleset: needs at least one support rule",
+    );
 
-  const support = r.support.map((s, i) => {
-    const o = exactKeys(s, ["id", "group", "match", "note"], `support[${i}]`);
-    return {
+  const support = r.support.map((s, i): SupportRule => {
+    const o = exactKeys(
+      s,
+      ["id", "group", "match", "note"],
+      `support[${i}]`,
+      v2 ? ["taxa"] : [],
+    );
+    const rule: SupportRule = {
       id: claim(ruleId(o.id, `support[${i}].id`), `support[${i}]`),
       group: str(o.group, `support[${i}].group`, 40),
       match: phrase(o.match, `support[${i}].match`),
       note: str(o.note, `support[${i}].note`, 400),
     };
+    if (v2 && "taxa" in o) rule.taxa = scopeList(o.taxa, `support[${i}].taxa`);
+    return rule;
   });
   const groups = new Set(support.map((s) => s.group));
   const exclude = r.exclude.map((x, i) => {
@@ -247,11 +332,25 @@ export function parseRuleset(
       ["id", "rank", "values", "action", "note"],
       `taxon[${i}]`,
     );
-    if (o.rank !== "order" && o.rank !== "family")
-      throw new RulesetError(`taxon[${i}]: rank must be order or family`);
-    if (o.action !== "require_one_of" && o.action !== "forbid")
+    if (
+      o.rank !== "order" &&
+      o.rank !== "family" &&
+      !(v2 && o.rank === "genus")
+    )
+      throw new RulesetError(
+        v2
+          ? `taxon[${i}]: rank must be order, family or genus`
+          : `taxon[${i}]: rank must be order or family`,
+      );
+    if (
+      o.action !== "require_one_of" &&
+      o.action !== "forbid" &&
+      !(v2 && o.action === "assign")
+    )
       throw new RulesetError(`taxon[${i}]: bad action`);
-    const values = strList(o.values, `taxon[${i}].values`, LIMITS.values);
+    const values = v2
+      ? nameList(o.values, `taxon[${i}].values`)
+      : strList(o.values, `taxon[${i}].values`, LIMITS.values);
     if (values.length === 0) throw new RulesetError(`taxon[${i}]: no values`);
     return {
       id: claim(ruleId(o.id, `taxon[${i}].id`), `taxon[${i}]`),
@@ -277,7 +376,7 @@ export function parseRuleset(
     return marker;
   });
   return {
-    schema: 1,
+    schema: v2 ? 2 : 1,
     tag,
     rev: str(r.rev, "ruleset.rev", 40),
     denySections,

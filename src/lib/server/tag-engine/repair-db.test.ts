@@ -39,7 +39,11 @@ import {
   tagRepairState,
 } from "./repair";
 import { TagTxRollback, withTagWriteTx } from "./runtime";
-import { censusGate, cleanupEvalSets } from "./engine-fixture.test-helper";
+import {
+  censusGate,
+  cleanupEvalSets,
+  cleanupFamilyReferences,
+} from "./engine-fixture.test-helper";
 import { scannerRev } from "./segment";
 
 const dbUp = await query("SELECT 1")
@@ -72,8 +76,9 @@ const art = (rev: number, extract: string) => ({
   extract,
   sections: [],
 });
+// The real text-evidence shape (0072 validates it at the state boundary).
 const EVIDENCE = [
-  { rule: "s-signal", section: "lead", start: 0, end: 1, text: "x" },
+  { section: "lead", sentence: "x", matchStart: 0, matchEnd: 1, ruleId: "s-signal" },
 ];
 
 const ruleset = (tag: string) => ({
@@ -100,7 +105,7 @@ const reports: Record<string, { gate: string; bench: string }> = {};
 const proposals: string[] = [];
 const activationIds = new Set<number>();
 const jobIds = new Set<number>();
-const evalSets = { setIds: new Set<string>() };
+const evalSets = { setIds: new Set<string>(), refs: new Set<string>() };
 let legacyCarrierBefore: { species_code: string; tags: string[] }[] = [];
 let realCarriersBefore: {
   species_code: string;
@@ -258,12 +263,13 @@ async function repoint(
   const i = await inputOf(code);
   const current = (await tagRepairState())!.lexiconHash;
   const r = (await exec(
-    "SELECT public.record_tag_input($1, $2, $3, $4, $5, $6, $7) AS h",
+    "SELECT public.record_tag_input($1, $2, $3, $4, $5, $6, $7, $8) AS h",
     [
       code,
       o.text ?? i?.text_hash ?? hex(`text-${code}`),
       i?.order_name ?? null,
       i?.family_sci_name ?? null,
+      (i as { genus?: string | null } | null)?.genus ?? null,
       o.lexicon ?? i?.lexicon_hash ?? current,
       i?.focal_exempt_hash ?? hex(`focal-${code}`),
       o.scanner ?? scannerRev(),
@@ -343,6 +349,7 @@ async function cleanup() {
     await query("DELETE FROM jobs WHERE id = ANY($1::bigint[])", [[...jobIds]]);
   const revs = Object.values(revisions);
   await cleanupEvalSets(evalSets.setIds);
+  await cleanupFamilyReferences(evalSets.refs);
   if (revs.length)
     await asOwner(
       "DELETE FROM species_tag_state WHERE revision_id = ANY($1::bigint[])",
@@ -411,14 +418,16 @@ describe
       ).rows[0].id;
       for (const code of MEMBERS)
         await query(
-          `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family, order_name, family_sci_name)
-				 VALUES ($1, $2, $3, 'species', 'Zzr family', $4, $5)`,
+          `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family, order_name, family_sci_name, family_code)
+				 VALUES ($1, $2, $3, 'species', 'Zzr family', $4, $5, $6)`,
           [
             code,
             `Zzr ${code} Plover`,
             `Zzria ${code}`,
             code === A ? "ZzrOrder" : "Charadriiformes",
             code === A ? null : "Zzridae",
+            // A family code (for the blind-test family reference, B5 §4).
+            code === A ? "zzr-fam-a" : "zzr-fam",
           ],
         );
       for (const code of ALL)

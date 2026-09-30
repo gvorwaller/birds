@@ -12,14 +12,14 @@
 import { createHash } from 'node:crypto';
 import { ALL_TAGS } from '$lib/species-tags';
 import { parseRuleset, type Ruleset } from './rules';
-import { buildLexicon, evaluateTag, lexiconKey, type TaxonLexicon } from './scanner';
+import { buildLexicon, evaluateTag, genusOf, lexiconKey, type TaxonLexicon } from './scanner';
 import { scannerRev, segmentArticle } from './segment';
 import type { TagWriteTx } from './runtime';
 
 const sha256 = (s: string) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
 
 // ── lexicon (other-taxon names), cached per process by its hash ────────────
-interface LexiconCtx {
+export interface LexiconCtx {
 	hash: string;
 	scannerRev: string;
 	lexicon: TaxonLexicon;
@@ -35,6 +35,15 @@ function lexiconNames(rows: readonly { com_name: string; sci_name: string; famil
 	return names;
 }
 
+/** The lexicon (and its hash) from species taxonomy rows — the one definition. */
+export function lexiconFromRows(
+	rows: readonly { com_name: string; sci_name: string; family: string | null }[]
+): LexiconCtx {
+	const names = lexiconNames(rows);
+	const keys = [...new Set(names.map(lexiconKey).filter(Boolean))].sort();
+	return { hash: sha256(JSON.stringify(keys)), scannerRev: scannerRev(), lexicon: buildLexicon(names) };
+}
+
 /** Build the lexicon from the taxonomy visible in this transaction. */
 async function buildLexiconCtx(tx: TagWriteTx): Promise<LexiconCtx> {
 	const rows = (
@@ -42,9 +51,7 @@ async function buildLexiconCtx(tx: TagWriteTx): Promise<LexiconCtx> {
 			`SELECT com_name, sci_name, family FROM taxonomy_cache WHERE category = 'species'`
 		)
 	).rows;
-	const names = lexiconNames(rows);
-	const keys = [...new Set(names.map(lexiconKey).filter(Boolean))].sort();
-	return { hash: sha256(JSON.stringify(keys)), scannerRev: scannerRev(), lexicon: buildLexicon(names) };
+	return lexiconFromRows(rows);
 }
 
 /**
@@ -126,6 +133,11 @@ export function focalExemptions(row: Pick<SpeciesRow, 'com_name' | 'sci_name' | 
 	return [row.com_name ?? '', (row.sci_name ?? '').split(' ')[0], row.family ?? ''].filter(Boolean);
 }
 
+/** The focal-exemption hash recorded in species_tag_input (Preview recomputes it, §3k). */
+export function focalExemptHash(exempt: readonly string[]): string {
+	return sha256(JSON.stringify([...new Set(exempt.map(lexiconKey).filter(Boolean))].sort()));
+}
+
 interface MemberInput {
 	row: SpeciesRow;
 	article: { extract: string | null; sections: { title: string; text: string }[] };
@@ -158,7 +170,7 @@ async function materializeRows(
 				article,
 				exempt,
 				textHash: segmentArticle(article).textHash,
-				focalHash: sha256(JSON.stringify([...new Set(exempt.map(lexiconKey).filter(Boolean))].sort()))
+				focalHash: focalExemptHash(exempt)
 			});
 		} else nonMembers.push(row.species_code);
 	}
@@ -168,9 +180,9 @@ async function materializeRows(
 	if (members.length) {
 		const r = await tx.exec<{ code: string; h: string }>(
 			`SELECT x.code, public.record_tag_input(x.code, x.text_hash, x.order_name, x.family_sci_name,
-			          $2, x.focal_hash, $3) AS h
+			          x.genus, $2, x.focal_hash, $3) AS h
 			   FROM jsonb_to_recordset($1::jsonb)
-			     AS x(code text, text_hash text, order_name text, family_sci_name text, focal_hash text)`,
+			     AS x(code text, text_hash text, order_name text, family_sci_name text, genus text, focal_hash text)`,
 			[
 				JSON.stringify(
 					members.map((m) => ({
@@ -178,6 +190,7 @@ async function materializeRows(
 						text_hash: m.textHash,
 						order_name: m.row.order_name,
 						family_sci_name: m.row.family_sci_name,
+						genus: genusOf(m.row.sci_name),
 						focal_hash: m.focalHash
 					}))
 				),
@@ -193,7 +206,7 @@ async function materializeRows(
 			const res = evaluateTag(
 				{
 					article: m.article,
-					taxon: { order: m.row.order_name, family: m.row.family_sci_name },
+					taxon: { order: m.row.order_name, family: m.row.family_sci_name, genus: genusOf(m.row.sci_name) },
 					lexicon: lex.lexicon,
 					exempt: m.exempt
 				},

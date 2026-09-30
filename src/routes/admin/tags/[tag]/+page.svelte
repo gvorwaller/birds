@@ -9,10 +9,19 @@
   import { invalidateAll } from "$app/navigation";
   import { tick } from "svelte";
   import AdminBadge from "$components/admin/AdminBadge.svelte";
+  import PreviewView from "$components/admin/PreviewView.svelte";
   import RulesView from "$components/admin/RulesView.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  /** A stored evidence item: text (sentence/section, maybe scopes) or taxon (plan §3e). */
+  type EvidenceItem = {
+    kind?: "taxon";
+    sentence?: string;
+    section?: string;
+    scopes?: { rank: string; value: string }[];
+    matchedRules?: { ruleId: string; rank: string; value: string }[];
+  };
   const d = $derived(data.detail);
 
   type Confirm = {
@@ -126,6 +135,8 @@
     tag_design_simulation: "Design blind test",
     tag_eval_create: "Start blind test",
     tag_gate_report: "Gate report",
+    tag_preview: "Preview",
+    tag_family_refs: "Family articles",
   };
   const jobTone = (s: string) =>
     s === "succeeded"
@@ -390,12 +401,24 @@
               Rules result: not computed yet for its current article (it shows
               as unknown).
             {:else if w.state.status === "assigned"}
-              Rules result: <strong>assigned</strong>, because the article says:
-              {#each w.state.evidence as e, i (i)}<blockquote>
-                  {e.sentence ?? ""}{#if e.section}<cite>
-                      — {e.section}</cite
-                    >{/if}
-                </blockquote>{/each}
+              {@const ev = w.state.evidence as EvidenceItem[]}
+              {#if ev[0]?.kind === "taxon"}
+                Rules result: <strong>assigned</strong>, because its
+                {ev[0].matchedRules
+                  ?.map((r) => `${r.rank} ${r.value}`)
+                  .join(" and ")} is listed.
+              {:else}
+                Rules result: <strong>assigned</strong>, because the article says:
+                {#each ev as e, i (i)}<blockquote>
+                    {e.sentence ?? ""}{#if e.section}<cite>
+                        — {e.section}</cite
+                      >{/if}{#if e.scopes?.length}<cite>
+                        (counted for {e.scopes
+                          .map((x) => `${x.rank} ${x.value}`)
+                          .join(", ")})</cite
+                      >{/if}
+                  </blockquote>{/each}
+              {/if}
             {:else}
               Rules result: <strong
                 >{w.state.status === "unevaluated"
@@ -431,7 +454,12 @@
         {#each d.samples.assigned as s (s.code)}
           <li>
             <a href="?why={encodeURIComponent(s.code)}">{s.name ?? s.code}</a
-            >{#if s.evidence?.sentence}<br /><span class="muted"
+            >{#if (s.evidence as EvidenceItem | null)?.kind === "taxon"}<br /><span
+                class="muted"
+                >Listed {(s.evidence as EvidenceItem).matchedRules
+                  ?.map((r) => `${r.rank} ${r.value}`)
+                  .join(", ")}</span
+              >{:else if s.evidence?.sentence}<br /><span class="muted"
                 >“{s.evidence.sentence}”</span
               >{/if}
           </li>
@@ -451,6 +479,38 @@
 
   <section class="card" aria-labelledby="blind-heading">
     <h2 id="blind-heading">Blind tests</h2>
+    <div class="familyrefs">
+      <p>
+        Family articles: <strong>{data.familyRefs.ok}</strong> of
+        {data.familyRefs.families} families have one.
+        <span class="muted"
+          >Each blind-test page shows the opening of the bird's family article
+          from Wikipedia, so you can judge from both.</span
+        >
+      </p>
+      {#if data.familyRefs.problems.length}
+        <details>
+          <summary
+            >{data.familyRefs.problems.length} famil{data.familyRefs.problems
+              .length === 1
+              ? "y has"
+              : "ies have"} none yet</summary
+          >
+          <ul class="plain">
+            {#each data.familyRefs.problems as f (f.familyCode)}
+              <li>
+                {f.family} <span class="muted">— {f.status}{f.error ? `: ${f.error}` : ""}</span>
+              </li>
+            {/each}
+          </ul>
+        </details>
+        <form method="POST" action="?/familyRefs" use:enhance={submitting}>
+          <button type="submit" class="secondary" disabled={busy}
+            >Fetch family articles</button
+          >
+        </form>
+      {/if}
+    </div>
     {#each data.evalSets as t (t.id)}
       <div class="revision">
         <h3>
@@ -532,10 +592,12 @@
       independent cross-check approved exactly this text.
     </p>
     {#each d.proposals as p (p.id)}
+      {@const open = p.status === "proposed" || p.status === "crosschecked"}
       {@const approvable =
-        (p.status === "proposed" || p.status === "crosschecked") &&
+        open &&
         p.crosscheck?.verdict === "approve" &&
-        p.crosscheck.matches}
+        p.crosscheck.matches &&
+        (p.schemaVersion === 1 || p.crosscheck.previewCurrent)}
       <div class="revision">
         <h3>
           {p.source === "ai" ? "AI draft" : "Hand-written draft"} · {fmtWhen(
@@ -549,11 +611,31 @@
                 : "neutral"}
             label={p.status}
           />
+          {#if p.schemaVersion === 2}<AdminBadge label="Family lists" />{/if}
         </h3>
         <details>
           <summary>Show rules</summary>
           <RulesView artifact={p.artifact} />
         </details>
+        {#if p.preview}
+          <PreviewView preview={p.preview} />
+        {:else if open}
+          <p class="muted">
+            No Preview yet. Preview shows what these rules would do to every
+            species before anyone reviews them{p.schemaVersion === 2
+              ? " — required before the cross-check"
+              : ""}.
+          </p>
+        {/if}
+        {#if open}
+          <form method="POST" action="?/preview" use:enhance={submitting}>
+            <input type="hidden" name="proposalId" value={p.id} />
+            <button type="submit" class="secondary" disabled={busy}
+              >{p.preview?.current ? "Preview again" : "Preview"}</button
+            >
+            <span class="muted">Takes about a minute; no AI, no cost.</span>
+          </form>
+        {/if}
         {#if p.crosscheck}
           <p>
             Cross-check by {p.crosscheck.reviewer}:
@@ -564,13 +646,23 @@
             {#if !p.crosscheck.matches}<AdminBadge
                 tone="error"
                 label="Reviewed a different version"
+              />{:else if p.schemaVersion === 2 && !p.crosscheck.previewCurrent}<AdminBadge
+                tone="warn"
+                label="Reviewed an older Preview"
               />{/if}
           </p>
           <p class="crosscheck">{p.crosscheck.text}</p>
         {:else}
           <p class="muted">Not cross-checked yet.</p>
         {/if}
-        {#if p.status === "proposed" || p.status === "crosschecked"}
+        {#if open && !approvable && p.crosscheck?.verdict === "approve" && p.schemaVersion === 2 && !p.crosscheck.previewCurrent}
+          <p class="muted">
+            The species data changed after the cross-check. Run Preview again;
+            a new cross-check of the new Preview is needed before you can
+            approve.
+          </p>
+        {/if}
+        {#if open}
           <div class="buttons">
             <button
               type="button"
@@ -643,7 +735,12 @@
               <summary>Examples that would gain it</summary>
               <ul class="plain">
                 {#each b.samples.adds as s (s.code)}<li>
-                    {s.name ?? s.code}{#if s.evidence?.sentence}<br /><span
+                    {s.name ?? s.code}{#if (s.evidence as EvidenceItem | null)?.kind === "taxon"}<br /><span
+                        class="muted"
+                        >Listed {(s.evidence as EvidenceItem).matchedRules
+                          ?.map((r) => `${r.rank} ${r.value}`)
+                          .join(", ")}</span
+                      >{:else if s.evidence?.sentence}<br /><span
                         class="muted">“{s.evidence.sentence}”</span
                       >{/if}
                   </li>{/each}
@@ -928,6 +1025,12 @@
   }
   .plain li a {
     color: var(--accent);
+  }
+  .familyrefs {
+    margin-bottom: 0.75rem;
+  }
+  .familyrefs details {
+    margin-block: 0.4rem;
   }
   .crosscheck {
     white-space: pre-wrap;

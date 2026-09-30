@@ -31,6 +31,7 @@ import {
 } from '$server/jobs';
 import { activateRevision, retireTagToLegacy, rollbackTag, stageRevision } from '$server/tag-engine/activation';
 import { msUntilQuietHour, runTagConsistency } from '$server/tag-engine/consistency';
+import { scannerRev } from '$server/tag-engine/segment';
 
 /** The switch budget the benchmark must meet (plan rev 13: ≤10 s exclusive). */
 export const TAG_SWITCH_BUDGET_MS = 10_000;
@@ -56,6 +57,16 @@ function consistencyParams(adminId: number, runAfterMs: number) {
 
 /** Chain reconciliation — worker startup + idle tick, beside the other scans. */
 export async function ensureTagConsistency(): Promise<void> {
+	// After a deploy that changed the engine (new scanner_rev), run the pass
+	// now: it opens the repair generation that re-derives every input, so the
+	// stale inputs never wait for the nightly slot (td-894144 B5).
+	const state = (
+		await query<{ scanner_rev: string }>('SELECT scanner_rev FROM tag_lexicon_state WHERE id = 1')
+	).rows[0];
+	if (state && state.scanner_rev !== scannerRev()) {
+		await runTagConsistencyNow();
+		return;
+	}
 	if (await hasActiveJob(dedupKeys.tagConsistency())) return;
 	await enqueueJob(consistencyParams(await lowestAdminId(), msUntilQuietHour()));
 }

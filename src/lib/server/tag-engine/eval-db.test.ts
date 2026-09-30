@@ -13,6 +13,7 @@ import { PROPOSED_GATES, STRATA } from "./eval-stats";
 import {
   censusGate,
   cleanupEvalSets,
+  cleanupFamilyReferences,
   FIXTURE_GATES,
   tagEngineFixture,
 } from "./engine-fixture.test-helper";
@@ -29,7 +30,7 @@ const migrated = dbUp
   : false;
 
 const fx = tagEngineFixture("zze");
-const sets = { setIds: new Set<string>() };
+const sets = { setIds: new Set<string>(), refs: new Set<string>() };
 let T = "";
 let rev = "";
 const S: Record<string, string> = {};
@@ -58,6 +59,7 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
 
   afterAll(async () => {
     await cleanupEvalSets(sets.setIds);
+    await cleanupFamilyReferences(sets.refs);
     await fx.cleanup();
   }, 240_000);
 
@@ -245,7 +247,7 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
   it("cross-checks are owner-role only; the hash is recomputed; the reviewer must be CODEX1/CODEX", async () => {
     const p = (
       await query<{ id: string }>(
-        `INSERT INTO tag_rule_proposal (tag, artifact, source) VALUES ($1, '{"x":1}'::jsonb, 'human') RETURNING id::text`,
+        `INSERT INTO tag_rule_proposal (tag, artifact, source) VALUES ($1, '{"schema":1,"x":1}'::jsonb, 'human') RETURNING id::text`,
         [T],
       )
     ).rows[0].id;
@@ -397,7 +399,7 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
       "24ae83e5f160eb506c29c14bf913cf2fd97183b52375b7331d594b1454971604",
     );
     expect(designHash("habitat:open-ocean")).toBe(
-      "ae5bcf16efc793b5ebb1f15fa11a1198c9e90f2585d8dda5d011674a2f0c6d9b",
+      "04b9c45aaceca51eb9750602f3dcf6abe52975cd07c026b2eadbed99ec602c64",
     );
     const priv = (
       await query<{ rows_ok: boolean; hash_ok: boolean }>(
@@ -423,6 +425,7 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
       display_position: i + 1,
       eval_text_hash: r.evalTextHash,
       article: r.evalText,
+      family_reference: r.familyReference,
     });
     const base = {
       algorithm: "sha256-rank-v1",

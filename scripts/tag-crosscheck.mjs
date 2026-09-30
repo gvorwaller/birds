@@ -13,6 +13,11 @@
  * the app role. The database recomputes the artifact hash itself; nothing
  * here supplies it. --env is required so the target database is always a
  * deliberate choice (.env.test locally; /opt/birds/.env on the droplet).
+ *
+ * td-894144 B5 (plan §3g): the reviewer reviews the proposal AND its current
+ * Preview. `show` prints the current Preview (a schema-2 proposal without one
+ * is refused — run Preview on the tag page first); `record` binds the verdict
+ * to that Preview inside the database (under the exclusive engine lock).
  */
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -72,17 +77,37 @@ async function main() {
   try {
     const p = (
       await client.query(
-        "SELECT id, tag, status, source, artifact, artifact_sha256, created_at FROM tag_rule_proposal WHERE id = $1",
+        "SELECT id, tag, status, source, schema_version, artifact, artifact_sha256, created_at FROM tag_rule_proposal WHERE id = $1",
         [id],
       )
     ).rows[0];
     if (!p) throw new Error(`no proposal ${id}`);
+    const preview = (
+      await client.query(
+        `SELECT pv.id::text, pv.created_at, pv.corpus_fingerprint, pv.body
+           FROM tag_proposal_preview pv WHERE pv.id = public.tag_current_preview_id($1)`,
+        [id],
+      )
+    ).rows[0];
     if (cmd === "show") {
       console.log(
-        `database: ${env.MIGRATION_PGUSER}@${env.PGHOST}:${port}/${env.PGDATABASE}  proposal ${p.id}  tag ${p.tag}  status ${p.status}  source ${p.source}`,
+        `database: ${env.MIGRATION_PGUSER}@${env.PGHOST}:${port}/${env.PGDATABASE}  proposal ${p.id}  tag ${p.tag}  status ${p.status}  source ${p.source}  schema ${p.schema_version}`,
       );
       console.log(`artifact_sha256: ${p.artifact_sha256}`);
+      if (!preview && p.schema_version === 2) {
+        console.error(
+          "REFUSED: this schema-2 proposal has no CURRENT Preview. Run Preview on the tag page, then show again.",
+        );
+        process.exitCode = 3;
+        return;
+      }
       console.log(JSON.stringify(p.artifact, null, 2));
+      if (preview) {
+        console.log(
+          `\n── current Preview ${preview.id} (${preview.created_at.toISOString()}, corpus ${preview.corpus_fingerprint.slice(0, 12)}) ──`,
+        );
+        console.log(JSON.stringify(preview.body, null, 2));
+      } else console.log("\n(no current Preview — schema 1: advisory)");
       return;
     }
     const reviewer = arg("reviewer");
@@ -96,12 +121,12 @@ async function main() {
     );
     const c = (
       await client.query(
-        "SELECT reviewed_sha256 FROM tag_crosscheck WHERE id = $1",
+        "SELECT reviewed_sha256, preview_id::text FROM tag_crosscheck WHERE id = $1",
         [r.rows[0].id],
       )
     ).rows[0];
     console.log(
-      `recorded cross-check ${r.rows[0].id}: ${reviewer} ${verdict} on sha ${c.reviewed_sha256}`,
+      `recorded cross-check ${r.rows[0].id}: ${reviewer} ${verdict} on sha ${c.reviewed_sha256}${c.preview_id ? ` with Preview ${c.preview_id}` : ""}`,
     );
   } finally {
     await client.end();

@@ -7,6 +7,12 @@
  *
  * The species' own names are masked ("[this bird]", "[genus]") so a label
  * answers what the TEXT says, not what the labeller knows about the bird.
+ *
+ * v2 (td-894144 B5, plan §4 option b): the page also shows the lead of the
+ * species' family's Wikipedia article — a fixed, independent reference
+ * (never AI-written), pinned by revision. Only the species' FULL common and
+ * scientific names are masked in it: the family's own words ("shearwaters",
+ * "petrels") are exactly the evidence the reference is there to give.
  */
 import { createHash } from "node:crypto";
 import {
@@ -22,8 +28,20 @@ export interface EvalSection {
   text: string;
 }
 
+/** The frozen family reference shown on a page (tag_eval_item.family_reference). */
+export interface FamilyReferenceSnapshot {
+  familyCode: string;
+  title: string;
+  revId: number;
+  /** Exactly as stored (its hash is the frame's reference_sha). */
+  lead: string;
+  /** What the page shows: the lead with the species' full names masked. */
+  displayLead: string;
+}
+
 export interface EvalText {
   sections: EvalSection[];
+  reference: FamilyReferenceSnapshot | null;
   /**
    * Label identity (CODEX1 rev-24 P1-2): covers EVERYTHING the labeller sees —
    * the rendering version, the fixed deny list, the underlined cue words and
@@ -68,10 +86,39 @@ export function maskNames(
   return out;
 }
 
+/** Masking inside the family reference: the species' full names only. */
+export function maskReference(
+  text: string,
+  names: { common: string | null; scientific: string | null },
+): string {
+  let out = text;
+  for (const name of [names.scientific, names.common]
+    .map((n) => (n ?? "").trim())
+    .filter((n) => n.includes(" ") || n.length >= 4)
+    .sort((a, b) => b.length - a.length)) {
+    const re = new RegExp(
+      `(?<![\\p{L}\\p{N}])${escapeRe(name)}(?:e?s|'s|’s)?(?![\\p{L}\\p{N}])`,
+      "giu",
+    );
+    out = out.replace(re, "[this bird]");
+  }
+  return out;
+}
+
 export function buildEvalText(
   article: { extract: string | null; sections: readonly EvalSection[] | null },
   names: { common: string | null; scientific: string | null },
   cueWords: readonly string[],
+  page: {
+    /** eval-design evaluatorHash(tag): question, version, deny, cues, reference source. */
+    evaluatorHash: string;
+    reference: {
+      familyCode: string;
+      title: string;
+      revId: number;
+      lead: string;
+    } | null;
+  },
 ): EvalText {
   // Built from the SAME normalized sections the input's text_hash covers
   // (segmentArticle's display text), so any change to what the labeller
@@ -88,18 +135,36 @@ export function buildEvalText(
     title: maskNames(s.title, names),
     text: maskNames(s.text, names),
   }));
+  const reference: FamilyReferenceSnapshot | null = page.reference
+    ? {
+        ...page.reference,
+        displayLead: maskReference(normalizeDisplay(page.reference.lead), names),
+      }
+    : null;
   const hash = createHash("sha256")
     .update(
       JSON.stringify({
         v: EVAL_TEXT_VERSION,
+        evaluator: page.evaluatorHash,
         deny: [...EVAL_TEXT_DENY],
         cues: [...cueWords].map((w) => w.toLowerCase()).sort(cmpCodePoints),
         sections,
+        reference: reference
+          ? {
+              familyCode: reference.familyCode,
+              title: reference.title,
+              revId: reference.revId,
+              leadSha256: createHash("sha256")
+                .update(reference.lead, "utf8")
+                .digest("hex"),
+              displayLead: reference.displayLead,
+            }
+          : null,
       }),
       "utf8",
     )
     .digest("hex");
-  return { sections, hash };
+  return { sections, reference, hash };
 }
 
 /** [start, end) ranges of the fixed cue words — a reading aid, the same for every system. */

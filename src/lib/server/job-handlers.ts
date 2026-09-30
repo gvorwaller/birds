@@ -42,11 +42,15 @@ import { repairTagGeneration, tagRepairBacklog, tagRepairState } from '$server/t
 import { runTagConsistencyJob, runTagOpJob } from '$server/tag-jobs';
 import { runTagDraftJob } from '$server/tag-draft-job';
 import { runTagEvalJob } from '$server/tag-eval-jobs';
+import { runTagFamilyRefsJob } from '$server/tag-family-refs';
+import { runTagPreviewJob } from '$server/tag-preview-job';
 import {
 	cancelRunningJob,
 	completeJob,
 	enqueueJob,
 	failJob,
+	isStaleClaim,
+	runWithClaim,
 	hasActiveJob,
 	recordEvent,
 	requeueInterrupted,
@@ -2423,8 +2427,17 @@ async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<vo
 	});
 }
 
-/** Dispatch a claimed job. Never throws — failures become failJob. */
+/**
+ * Dispatch a claimed job. Never throws — failures become failJob. The handler
+ * runs under the job's claim (jobs.ts runWithClaim), so its queue writes are
+ * fenced; a StaleClaimError anywhere means this execution lost the claim and
+ * stops here without writing anything else (td-894144 B5 §3z).
+ */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
+	return runWithClaim(job, () => dispatchJob(job, ctx));
+}
+
+async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	try {
 		switch (job.type) {
 			case 'enrich_families': await runFamilyEnrichment(job,ctx); return;
@@ -2544,6 +2557,14 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				await runTagConsistencyJob(job);
 				return;
 			}
+			case 'tag_preview': {
+				await runTagPreviewJob(job);
+				return;
+			}
+			case 'tag_family_refs': {
+				await runTagFamilyRefsJob(job);
+				return;
+			}
 			case 'tag_draft_rules': {
 				await runTagDraftJob(job, ctx);
 				return;
@@ -2581,7 +2602,16 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				return;
 		}
 	} catch (err) {
+		if (isStaleClaim(err)) {
+			console.warn(`[birds-worker] job ${job.id}: stale claim abandoned`);
+			return;
+		}
 		const message = err instanceof Error ? err.message : String(err);
-		await failJob(job.id, job.attempts, sanitizeErrorText(message).slice(0, 300));
+		try {
+			await failJob(job.id, job.attempts, sanitizeErrorText(message).slice(0, 300));
+		} catch (failErr) {
+			if (!isStaleClaim(failErr)) throw failErr;
+			console.warn(`[birds-worker] job ${job.id}: stale claim abandoned`);
+		}
 	}
 }

@@ -11,7 +11,13 @@ import { foldCase, normalizeDisplay } from "./normalize";
 import { compilePhrase, findPhrase, inflections, tokenize } from "./tokens";
 import { segmentArticle, scannerRev } from "./segment";
 import { parseRuleset, RulesetError } from "./rules";
-import { buildLexicon, evaluateTag, type TaxonInput } from "./scanner";
+import {
+  buildLexicon,
+  evaluateTag,
+  type TagResult,
+  type TaxonInput,
+  type TextEvidence,
+} from "./scanner";
 
 const FIXTURE = {
   schema: 1,
@@ -141,8 +147,13 @@ const RS = parseRuleset(FIXTURE, ALL_TAGS);
 const PETREL: TaxonInput = {
   order: "Procellariiformes",
   family: "Hydrobatidae",
+  genus: "Hydrobates",
 };
-const FALCON: TaxonInput = { order: "Falconiformes", family: "Falconidae" };
+const FALCON: TaxonInput = {
+  order: "Falconiformes",
+  family: "Falconidae",
+  genus: "Falco",
+};
 const LEX = buildLexicon([
   "Northern Gannet",
   "gannets",
@@ -158,6 +169,7 @@ const art = (
   extract: string,
   sections: { title: string; text: string }[] = [],
 ) => ({ extract, sections });
+/** Schema-1 runs only ever produce text evidence. */
 const run = (
   text: string,
   taxon = PETREL,
@@ -166,7 +178,7 @@ const run = (
   evaluateTag(
     { article: art(text, sections), taxon, lexicon: LEX, exempt: OWN },
     RS,
-  );
+  ) as TagResult & { evidence: TextEvidence[] };
 
 describe("normalize", () => {
   it("unifies dashes, quotes and spaces; keeps hyphenated words and offsets", () => {
@@ -358,7 +370,7 @@ describe("scanner: decision order and named cases", () => {
     });
   });
   it("unknown order is unevaluated(taxon_unknown), never a covered zero", () => {
-    expect(run("It is pelagic.", { order: null, family: null })).toMatchObject({
+    expect(run("It is pelagic.", { order: null, family: null, genus: null })).toMatchObject({
       status: "unevaluated",
       reason: "taxon_unknown",
     });
@@ -382,7 +394,7 @@ describe("scanner: decision order and named cases", () => {
     );
     const input = {
       article: art("It is pelagic."),
-      taxon: { order: "Falconiformes", family: null },
+      taxon: { order: "Falconiformes", family: null, genus: null },
       lexicon: LEX,
     };
     expect(evaluateTag(input, familyFirst)).toMatchObject({

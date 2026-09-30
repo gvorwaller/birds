@@ -25,6 +25,8 @@ const m = vi.hoisted(() => ({
   enqueueTagOp: vi.fn(),
   approveProposal: vi.fn(),
   rejectProposal: vi.fn(),
+  enqueuePreview: vi.fn(),
+  enqueueFamilyRefs: vi.fn(),
 }));
 vi.mock("$server/tag-admin", () => m);
 
@@ -222,5 +224,41 @@ describe("actions", () => {
       { ok: true },
     );
     expect(m.rejectProposal).toHaveBeenCalledWith(PROPOSAL, 1);
+  });
+});
+
+describe("preview and family articles (td-894144 B5)", () => {
+  it("Preview: admins only, a real proposal of THIS tag, queued with the tag", async () => {
+    m.enqueuePreview.mockResolvedValue({ jobId: 9, deduped: false });
+    expect(failure(await call("preview", VIEWER, { proposalId: PROPOSAL })).status).toBe(403);
+    expect(failure(await call("preview", ADMIN, { proposalId: "nope" })).status).toBe(400);
+    proposalRows = [];
+    expect(failure(await call("preview", ADMIN, { proposalId: PROPOSAL })).status).toBe(404);
+    expect(m.enqueuePreview).not.toHaveBeenCalled();
+    proposalRows = [{ ok: 1 }];
+    expect(await call("preview", ADMIN, { proposalId: PROPOSAL })).toMatchObject({
+      ok: true,
+      message: expect.stringMatching(/Queued the preview \(job #9\)/),
+    });
+    expect(m.enqueuePreview).toHaveBeenCalledWith(TAG, PROPOSAL, 1);
+  });
+
+  it("Fetch family articles: admins only", async () => {
+    m.enqueueFamilyRefs.mockResolvedValue({ jobId: 10, deduped: true });
+    expect(failure(await call("familyRefs", VIEWER, {})).status).toBe(403);
+    expect(await call("familyRefs", ADMIN, {})).toMatchObject({
+      ok: true,
+      message: expect.stringMatching(/already queued \(job #10\)/),
+    });
+    expect(m.enqueueFamilyRefs).toHaveBeenCalledWith(1);
+  });
+
+  it("approval surfaces the taxonomy refusal text verbatim", async () => {
+    m.approveProposal.mockRejectedValue(
+      new Error("These rules do not fit the current taxonomy: taxon rule t1 names no known family: Phalaropidae"),
+    );
+    const r = failure(await call("approve", ADMIN, { proposalId: PROPOSAL, confirm: TAG }));
+    expect(r.status).toBe(409);
+    expect(r.data.message).toMatch(/Phalaropidae/);
   });
 });

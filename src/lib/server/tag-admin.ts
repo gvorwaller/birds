@@ -16,6 +16,13 @@ import {
 import { dedupKeys } from "$server/job-policy";
 import { enqueueJob, type JobType } from "$server/jobs";
 import { ensureTagRepairJob, tagRepairState } from "$server/tag-engine/repair";
+import { TagTxRefusal, withTagWriteTx } from "$server/tag-engine/runtime";
+import { parseRuleset, RulesetError } from "$server/tag-engine/rules";
+import {
+  checkTaxonRules,
+  loadTaxonomyForCheck,
+} from "$server/tag-engine/taxon-check";
+import type { PreviewBody } from "$server/tag-engine/preview";
 import { runTagConsistencyNow } from "$server/tag-jobs";
 
 // ── overview ──────────────────────────────────────────────────────────────
@@ -257,12 +264,23 @@ export interface TagDetail {
     createdAt: string;
     artifact: unknown;
     sha: string;
+    schemaVersion: number;
     crosscheck: {
       reviewer: string;
       verdict: string;
       text: string;
       matches: boolean;
       at: string;
+      /** The Preview this cross-check reviewed, and whether it is still the current one. */
+      previewId: string | null;
+      previewCurrent: boolean;
+    } | null;
+    /** The newest completed Preview of this exact artifact, and whether it is current (plan §3d). */
+    preview: {
+      id: string;
+      at: string;
+      current: boolean;
+      body: PreviewBody;
     } | null;
   }[];
   reports: {
@@ -333,17 +351,35 @@ export async function tagDetail(tag: string): Promise<TagDetail | null> {
         created_at: string;
         artifact: unknown;
         sha: string;
+        schema_version: number;
         reviewer: string | null;
         verdict: string | null;
         text: string | null;
         reviewed_sha256: string | null;
         checked_at: string | null;
+        check_preview_id: string | null;
+        pv_id: string | null;
+        pv_at: string | null;
+        pv_current: boolean | null;
+        pv_body: PreviewBody | null;
       }>(
-        `SELECT p.id::text, p.status, p.source, p.created_at::text, p.artifact, p.artifact_sha256 AS sha,
-			        c.reviewer, c.verdict, c.text, c.reviewed_sha256, c.created_at::text AS checked_at
+        // The corpus fingerprint is computed ONCE (it covers ~11k inputs).
+        `WITH now_fp AS MATERIALIZED (SELECT public.tag_corpus_fingerprint() AS fp),
+		      d AS (SELECT design_hash FROM tag_preview_design WHERE tag = $1)
+		 SELECT p.id::text, p.status, p.source, p.created_at::text, p.artifact, p.artifact_sha256 AS sha,
+			        p.schema_version,
+			        c.reviewer, c.verdict, c.text, c.reviewed_sha256, c.created_at::text AS checked_at,
+			        c.preview_id::text AS check_preview_id,
+			        pv.id::text AS pv_id, pv.created_at::text AS pv_at, pv.body AS pv_body,
+			        (pv.corpus_fingerprint = (SELECT fp FROM now_fp)
+			         AND pv.preview_design_hash = (SELECT design_hash FROM d)) AS pv_current
 			   FROM tag_rule_proposal p
 			   LEFT JOIN LATERAL (
 			     SELECT * FROM tag_crosscheck c WHERE c.proposal_id = p.id ORDER BY c.id DESC LIMIT 1) c ON true
+			   LEFT JOIN LATERAL (
+			     SELECT * FROM tag_proposal_preview pv
+			      WHERE pv.proposal_id = p.id AND pv.artifact_sha256 = p.artifact_sha256
+			      ORDER BY pv.id DESC LIMIT 1) pv ON true
 			  WHERE p.tag = $1 ORDER BY p.created_at DESC LIMIT 20`,
         [tag],
       ),
@@ -367,9 +403,11 @@ export async function tagDetail(tag: string): Promise<TagDetail | null> {
         result: unknown;
       }>(
         `SELECT id, type, status, enqueued_at::text, error, result FROM jobs
-			  WHERE type IN ('tag_stage', 'tag_benchmark', 'tag_activate', 'tag_retire', 'tag_rollback',
-			                 'tag_draft_rules', 'tag_design_simulation', 'tag_eval_create', 'tag_gate_report')
-			    AND payload->>'tag' = $1
+			  WHERE (type IN ('tag_stage', 'tag_benchmark', 'tag_activate', 'tag_retire', 'tag_rollback',
+			                  'tag_draft_rules', 'tag_design_simulation', 'tag_eval_create', 'tag_gate_report',
+			                  'tag_preview')
+			         AND payload->>'tag' = $1)
+			     OR type = 'tag_family_refs'
 			  ORDER BY id DESC LIMIT 10`,
         [tag],
       ),
@@ -432,6 +470,7 @@ export async function tagDetail(tag: string): Promise<TagDetail | null> {
       createdAt: p.created_at,
       artifact: p.artifact,
       sha: p.sha,
+      schemaVersion: p.schema_version,
       crosscheck: p.verdict
         ? {
             reviewer: p.reviewer!,
@@ -439,8 +478,22 @@ export async function tagDetail(tag: string): Promise<TagDetail | null> {
             text: p.text!,
             matches: p.reviewed_sha256 === p.sha,
             at: p.checked_at!,
+            previewId: p.check_preview_id,
+            previewCurrent:
+              p.check_preview_id != null &&
+              p.check_preview_id === p.pv_id &&
+              p.pv_current === true,
           }
         : null,
+      preview:
+        p.pv_id && p.pv_body
+          ? {
+              id: p.pv_id,
+              at: p.pv_at!,
+              current: p.pv_current === true,
+              body: p.pv_body,
+            }
+          : null,
     })),
     reports: reports.rows.map((r) => ({
       id: r.id,
@@ -583,6 +636,37 @@ export async function enqueueTagOp(
   });
 }
 
+/** "Preview" — what a proposal would do to every species (plan §3d). */
+export async function enqueuePreview(
+  tag: string,
+  proposalId: string,
+  userId: number,
+): Promise<{ jobId: number; deduped: boolean }> {
+  return enqueueJob({
+    type: "tag_preview",
+    // tag rides along so the job shows in the tag page's Recent work.
+    payload: { proposalId, tag },
+    dedupKey: dedupKeys.tagPreview(proposalId),
+    requestedBy: userId,
+    label: `${tag} — preview proposal`,
+    maxAttempts: 2,
+  });
+}
+
+/** "Fetch family articles" — only families without a usable reference (plan §4). */
+export async function enqueueFamilyRefs(
+  userId: number,
+): Promise<{ jobId: number; deduped: boolean }> {
+  return enqueueJob({
+    type: "tag_family_refs",
+    payload: {},
+    dedupKey: dedupKeys.tagFamilyRefs(),
+    requestedBy: userId,
+    label: "family articles for blind tests",
+    maxAttempts: 2,
+  });
+}
+
 /** "Draft rules with AI" — one queued draft per tag; the job re-checks everything. */
 export async function enqueueTagDraft(
   tag: string,
@@ -601,16 +685,72 @@ export async function enqueueTagDraft(
   });
 }
 
+type Exec = <T extends Record<string, unknown>>(
+  text: string,
+  params?: unknown[],
+) => Promise<{ rows: T[] }>;
+
+/** The owner-facing reason approval must refuse, or null (plan §3a: loader + taxonomy). */
+export async function approvalRefusal(
+  proposalId: string,
+  exec: Exec = query as never,
+): Promise<string | null> {
+  const p = (
+    await exec<{ artifact_text: string }>(
+      "SELECT artifact::text AS artifact_text FROM tag_rule_proposal WHERE id = $1",
+      [proposalId],
+    )
+  ).rows[0];
+  if (!p) return "No such proposal.";
+  let rs;
+  try {
+    rs = parseRuleset(JSON.parse(p.artifact_text), ALL_TAGS);
+  } catch (e) {
+    if (e instanceof RulesetError) return `These rules do not load: ${e.message}`;
+    throw e;
+  }
+  const check = checkTaxonRules(rs, await loadTaxonomyForCheck(exec));
+  return check.problems.length
+    ? `These rules do not fit the current taxonomy: ${check.problems[0]}`
+    : null;
+}
+
+/**
+ * Approve: the loader + taxonomy check and the approving definer run in ONE
+ * transaction under the EXCLUSIVE engine lock (CODEX1 B5 review P1-1), so the
+ * taxonomy (only replaceTaxonomy changes it, under the same lock) cannot move
+ * between the check and the approval. The definer re-verifies everything it
+ * can itself (newest cross-check, current Preview, its clean taxonomy check).
+ */
 export async function approveProposal(
   proposalId: string,
   userId: number,
 ): Promise<string> {
-  return (
-    await query<{ id: string }>(
-      "SELECT public.approve_tag_proposal($1, $2)::text AS id",
-      [proposalId, userId],
-    )
-  ).rows[0].id;
+  try {
+    return await withTagWriteTx(
+      "exclusive",
+      `approve:${proposalId}`,
+      "approve",
+      async (tx) => {
+        const refusal = await approvalRefusal(proposalId, tx.exec as never);
+        if (refusal) throw new TagTxRefusal(refusal);
+        try {
+          return (
+            await tx.exec<{ id: string }>(
+              "SELECT public.approve_tag_proposal($1, $2)::text AS id",
+              [proposalId, userId],
+            )
+          ).rows[0].id;
+        } catch (e) {
+          // Every definer refusal is an owner-facing answer, not a failure to record.
+          throw new TagTxRefusal(e instanceof Error ? e.message : String(e));
+        }
+      },
+    );
+  } catch (e) {
+    if (e instanceof TagTxRefusal) throw new Error(e.reason);
+    throw e;
+  }
 }
 
 export async function rejectProposal(
@@ -758,6 +898,8 @@ export interface LabelPageItem {
   cueWords: string[];
   /** The question frozen into the set's design at creation. */
   question: string;
+  /** The frozen family reference this page shows (null for pre-B5 sets). */
+  familyReference: { title: string; displayLead: string } | null;
 }
 
 /**
@@ -792,8 +934,9 @@ export async function nextLabelItem(
       id: string;
       display_position: number;
       article: { title: string; text: string }[];
+      family_reference: { title?: string; displayLead?: string } | null;
     }>(
-      `SELECT i.id::text, i.display_position, i.article
+      `SELECT i.id::text, i.display_position, i.article, i.family_reference
          FROM tag_eval_item i
         WHERE i.set_id = $1 AND NOT EXISTS (
               SELECT 1 FROM tag_eval_label l
@@ -812,6 +955,7 @@ export async function nextLabelItem(
       sections: [],
       cueWords: [],
       question: set.question ?? "",
+      familyReference: null,
     };
   return {
     setId,
@@ -822,6 +966,13 @@ export async function nextLabelItem(
     sections: it.article,
     cueWords: set.cue ?? [],
     question: set.question ?? "",
+    familyReference:
+      it.family_reference?.title && it.family_reference.displayLead
+        ? {
+            title: it.family_reference.title,
+            displayLead: it.family_reference.displayLead,
+          }
+        : null,
   };
 }
 

@@ -24,8 +24,15 @@ export interface TagEvalDesign {
 }
 
 /** Sections dropped from the evaluator text for EVERY tag and revision (revision-independent). */
-/** Bump when masking, section filtering or cue rendering changes (single source; eval-text imports it). */
-export const EVAL_TEXT_VERSION = "evaltext-v1";
+/**
+ * Bump when masking, section filtering, cue rendering or the family reference
+ * rendering changes (single source; eval-text imports it). v2 (td-894144 B5):
+ * each page also shows the lead of the species' family's Wikipedia article.
+ */
+export const EVAL_TEXT_VERSION = "evaltext-v2";
+
+/** How the family reference is sourced and masked (plan §4 option b). */
+export const FAMILY_REFERENCE_VERSION = "famref-wikipedia-lead-v1";
 
 /** Locale-independent ordering for anything hashed (CODEX1 rev-26 #5). */
 export const cmpCodePoints = (a: string, b: string): number =>
@@ -47,7 +54,7 @@ export const EVAL_TEXT_DENY = [
 export const TAG_EVAL_DESIGNS: Readonly<Record<string, TagEvalDesign>> = {
   "habitat:open-ocean": {
     question:
-      "Does this text say the bird feeds or rests at sea, away from shore, as a regular part of its life?",
+      "From this article and its family's article, does this bird feed or rest at sea, away from shore, as a regular part of its life?",
     marineOrders: [
       "Procellariiformes",
       "Sphenisciformes",
@@ -119,6 +126,31 @@ export function designHash(tag: string): string {
     namedCases: [...d.namedCases].sort((a, b) => cmpCodePoints(a.code, b.code)),
     evalTextDeny: [...EVAL_TEXT_DENY].sort(cmpCodePoints),
     evalTextVersion: EVAL_TEXT_VERSION,
+    familyReference: FAMILY_REFERENCE_VERSION,
   });
   return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * The part of a design the LABELLER sees (question, rendering version, deny
+ * list, cue words, family-reference source) — bound into every eval_text_hash
+ * so a change to any of them makes old labels non-reusable automatically
+ * (plan §4 "Label identity"). Sampling proxies (marine orders, named cases)
+ * are deliberately not in it: they do not change the page.
+ */
+export function evaluatorHash(tag: string): string {
+  const d = tagEvalDesign(tag);
+  if (!d) throw new Error(`no evaluation design for ${tag}`);
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        question: d.question,
+        cueWords: [...d.cueWords].sort(cmpCodePoints),
+        evalTextDeny: [...EVAL_TEXT_DENY].sort(cmpCodePoints),
+        evalTextVersion: EVAL_TEXT_VERSION,
+        familyReference: FAMILY_REFERENCE_VERSION,
+      }),
+      "utf8",
+    )
+    .digest("hex");
 }

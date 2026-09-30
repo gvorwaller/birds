@@ -167,11 +167,11 @@ describe.runIf(migrated)('0066: approve_tag_proposal refusals', () => {
 
 	it('refuses: no cross-check, wrong-hash cross-check, non-approve verdict, non-admin, tag mismatch', async () => {
 		const p = await proposal(ARTIFACT);
-		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/no approving cross-check/);
+		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/latest cross-check of this exact artifact did not approve/);
 		await crosscheck(p.id, H(1));
-		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/no approving cross-check/);
+		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/latest cross-check of this exact artifact did not approve/);
 		await crosscheck(p.id, p.sha, 'changes');
-		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/no approving cross-check/);
+		await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, adminId])).rejects.toThrow(/latest cross-check of this exact artifact did not approve/);
 		await crosscheck(p.id, p.sha, 'approve');
 		if (userId > 0)
 			await expect(query(`SELECT approve_tag_proposal($1, $2)`, [p.id, userId])).rejects.toThrow(/not an admin/);
@@ -206,7 +206,7 @@ describe.runIf(migrated)('0066: inputs, states and the effective-tag merge', () 
 	afterAll(cleanup);
 
 	const input = (n: number) =>
-		query<{ h: string }>(`SELECT record_tag_input($1, $2, 'Procellariiformes', 'Hydrobatidae', $3, $4, 'engine-1|test') AS h`, [
+		query<{ h: string }>(`SELECT record_tag_input($1, $2, 'Procellariiformes', 'Hydrobatidae', 'Hydrobates', $3, $4, 'engine-1|test') AS h`, [
 			CODE,
 			H(n),
 			H(100),

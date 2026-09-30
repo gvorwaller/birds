@@ -86,6 +86,11 @@ vi.mock("$server/jobs", () => ({
   enqueueJob: mocks.enqueueJob,
   hasActiveJob: mocks.hasActiveJob,
   terminalizeAndReschedule: mocks.terminalizeAndReschedule,
+  // Claim fencing (td-894144 B5 §3z) is exercised against the real queue in
+  // jobs-db.test.ts; here the handlers run as if they hold their claim.
+  runWithClaim: (_job: unknown, fn: () => Promise<unknown>) => fn(),
+  isStaleClaim: (err: unknown) =>
+    err instanceof Error && /^stale claim\b/.test(err.message),
 }));
 
 const db = vi.hoisted(() => {

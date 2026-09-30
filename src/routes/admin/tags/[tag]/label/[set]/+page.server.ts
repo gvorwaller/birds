@@ -33,18 +33,26 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       question: "",
     };
   }
-  // Split each section into plain / underlined runs server-side (the cue list is fixed per design).
-  const sections = item.sections.map((s) => {
+  // Split text into plain / underlined runs server-side (the cue list is fixed per design).
+  const toRuns = (text: string) => {
     const runs: { text: string; cue: boolean }[] = [];
     let at = 0;
-    for (const [a, b] of cueRanges(s.text, item.cueWords)) {
-      if (a > at) runs.push({ text: s.text.slice(at, a), cue: false });
-      runs.push({ text: s.text.slice(a, b), cue: true });
+    for (const [a, b] of cueRanges(text, item.cueWords)) {
+      if (a > at) runs.push({ text: text.slice(at, a), cue: false });
+      runs.push({ text: text.slice(a, b), cue: true });
       at = b;
     }
-    if (at < s.text.length) runs.push({ text: s.text.slice(at), cue: false });
-    return { title: s.title, runs };
-  });
+    if (at < text.length) runs.push({ text: text.slice(at), cue: false });
+    return runs;
+  };
+  const sections = item.sections.map((s) => ({
+    title: s.title,
+    runs: toRuns(s.text),
+  }));
+  // The frozen family reference (td-894144 B5, plan §4 option b).
+  const family = item.familyReference
+    ? { title: item.familyReference.title, runs: toRuns(item.familyReference.displayLead) }
+    : null;
   return {
     tag: params.tag,
     setId: params.set,
@@ -55,6 +63,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       total: item.total,
       labelled: item.labelled,
       sections,
+      family,
       done: item.itemId === "",
     },
   };

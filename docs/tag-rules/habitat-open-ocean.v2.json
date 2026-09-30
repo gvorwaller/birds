@@ -1,0 +1,426 @@
+{
+  "schema": 2,
+  "tag": "habitat:open-ocean",
+  "rev": "cc-v2-draft-2",
+  "denySections": [
+    "taxonomy",
+    "systematics",
+    "etymology",
+    "name",
+    "subspecies",
+    "in culture",
+    "references"
+  ],
+  "comparisonMarkers": [
+    "unlike",
+    "like other",
+    "like most",
+    "like many",
+    "in contrast",
+    "compared with",
+    "compared to",
+    "similar to",
+    "whereas",
+    "by contrast"
+  ],
+  "taxon": [
+    {
+      "id": "a_tubenoses",
+      "rank": "family",
+      "action": "assign",
+      "values": [
+        "Diomedeidae",
+        "Procellariidae",
+        "Hydrobatidae",
+        "Oceanitidae"
+      ],
+      "note": "Albatrosses, petrels, shearwaters, prions, fulmars, diving-petrels and storm-petrels feed at sea far from land outside the breeding season."
+    },
+    {
+      "id": "a_seabird_families",
+      "rank": "family",
+      "action": "assign",
+      "values": [
+        "Spheniscidae",
+        "Alcidae",
+        "Phaethontidae",
+        "Fregatidae",
+        "Sulidae",
+        "Stercorariidae"
+      ],
+      "note": "Penguins, auks, tropicbirds, frigatebirds, boobies and gannets, skuas and jaegers: feed at sea, most well offshore."
+    },
+    {
+      "id": "a_sea_ducks",
+      "rank": "genus",
+      "action": "assign",
+      "values": [
+        "Melanitta",
+        "Somateria",
+        "Polysticta",
+        "Clangula"
+      ],
+      "note": "Scoters, eiders and Long-tailed Duck winter and rest on the sea."
+    },
+    {
+      "id": "a_pelagic_larids",
+      "rank": "genus",
+      "action": "assign",
+      "values": [
+        "Rissa",
+        "Xema",
+        "Creagrus",
+        "Onychoprion",
+        "Anous",
+        "Gygis"
+      ],
+      "note": "Kittiwakes, Sabine's and Swallow-tailed Gulls, sooty-type terns, noddies and white-terns feed far out at sea."
+    }
+  ],
+  "support": [
+    {
+      "id": "s_pelagic",
+      "group": "open-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "pelagic"
+      },
+      "note": "Pelagic = of the open sea.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_open_ocean",
+      "group": "open-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "open ocean"
+      },
+      "note": "Explicitly the open ocean.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_open_sea",
+      "group": "open-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "open sea"
+      },
+      "note": "Explicitly the open sea.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_far_at_sea",
+      "group": "open-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "far out at sea"
+      },
+      "note": "Far from shore.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_far_from_land",
+      "group": "open-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "far from land"
+      },
+      "note": "Far from shore.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_winter_at_sea",
+      "group": "open-sea",
+      "match": {
+        "type": "stem",
+        "phrase": "winter at sea"
+      },
+      "note": "Spends the non-breeding season on the sea.",
+      "taxa": [
+        {
+          "rank": "family",
+          "values": [
+            "Laridae",
+            "Gaviidae",
+            "Anatidae"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_phalarope_at_sea",
+      "group": "phalarope-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "at sea"
+      },
+      "note": "Red and Red-necked Phalaropes winter at sea; Wilson's does not (so no genus-wide listing).",
+      "taxa": [
+        {
+          "rank": "genus",
+          "values": [
+            "Phalaropus"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s_phalarope_pelagic",
+      "group": "phalarope-sea",
+      "match": {
+        "type": "literal",
+        "phrase": "pelagic"
+      },
+      "note": "Pelagic in winter.",
+      "taxa": [
+        {
+          "rank": "genus",
+          "values": [
+            "Phalaropus"
+          ]
+        }
+      ]
+    }
+  ],
+  "exclude": [
+    {
+      "id": "x_migration",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "stem",
+        "phrase": "migrate"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Crossing the sea on migration is not living at sea."
+    },
+    {
+      "id": "x_migration_n",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "migration"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Crossing the sea on migration is not living at sea."
+    },
+    {
+      "id": "x_not",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "not"
+      },
+      "scope": {
+        "unit": "window",
+        "before": 5,
+        "after": 1
+      },
+      "note": "Negation."
+    },
+    {
+      "id": "x_never",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "never"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Negation."
+    },
+    {
+      "id": "x_rarely",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "rarely"
+      },
+      "scope": {
+        "unit": "window",
+        "before": 4,
+        "after": 0
+      },
+      "note": "Negation."
+    },
+    {
+      "id": "x_avoid",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "stem",
+        "phrase": "avoid"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Avoids the open sea."
+    },
+    {
+      "id": "x_sight",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "within sight"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Within sight of the coast is not away from shore."
+    },
+    {
+      "id": "x_prey_fish",
+      "binds": [
+        "open-sea",
+        "phalarope-sea"
+      ],
+      "match": {
+        "type": "stem",
+        "phrase": "fish"
+      },
+      "scope": {
+        "unit": "window",
+        "before": 0,
+        "after": 2
+      },
+      "note": "'pelagic fish' describes prey, not the bird."
+    },
+    {
+      "id": "x_prey_squid",
+      "binds": [
+        "open-sea",
+        "phalarope-sea"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "squid"
+      },
+      "scope": {
+        "unit": "window",
+        "before": 0,
+        "after": 2
+      },
+      "note": "Prey, not habitat."
+    },
+    {
+      "id": "x_vagrant",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "stem",
+        "phrase": "vagrant"
+      },
+      "scope": {
+        "unit": "sentence"
+      },
+      "note": "A vagrant record is not a habit."
+    },
+    {
+      "id": "x_formerly",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "formerly"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Historical."
+    },
+    {
+      "id": "x_occasionally",
+      "binds": [
+        "*"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "occasionally"
+      },
+      "scope": {
+        "unit": "window",
+        "before": 4,
+        "after": 0
+      },
+      "note": "An occasional visit is not a habit."
+    },
+    {
+      "id": "x_coastal",
+      "binds": [
+        "open-sea"
+      ],
+      "match": {
+        "type": "literal",
+        "phrase": "coastal"
+      },
+      "scope": {
+        "unit": "clause"
+      },
+      "note": "Coastal waters are not away from shore."
+    }
+  ]
+}
