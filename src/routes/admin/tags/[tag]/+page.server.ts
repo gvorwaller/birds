@@ -91,7 +91,7 @@ const queued = (what: string, r: { jobId: number; deduped: boolean }) => ({
   ok: true as const,
   message: r.deduped
     ? `The ${what} is already queued (job #${r.jobId}).`
-    : `Queued the ${what} (job #${r.jobId}). Refresh to see the result.`,
+    : `Queued the ${what} (job #${r.jobId}). Its progress shows under Recent work; this page updates itself.`,
 });
 
 const setOf = async (tag: string, raw: FormDataEntryValue | null) => {
@@ -201,7 +201,8 @@ export const actions: Actions = {
       "gate report",
       await enqueueEvalJob(
         "tag_gate_report",
-        { setId: set.id },
+        // tag rides along only so the job shows in the page's Recent work.
+        { setId: set.id, tag: g.tag },
         dedupKeys.tagGate(set.id),
         `${g.tag} — gate report`,
         g.user.id,
@@ -219,7 +220,8 @@ export const actions: Actions = {
       "gate report",
       await enqueueEvalJob(
         "tag_gate_report",
-        { setId: set.id },
+        // tag rides along only so the job shows in the page's Recent work.
+        { setId: set.id, tag: g.tag },
         dedupKeys.tagGate(set.id),
         `${g.tag} — gate report`,
         g.user.id,

@@ -12,8 +12,7 @@
 import { query } from "$lib/db";
 import { ALL_TAGS, TAG_DEFINITIONS } from "$lib/species-tags";
 import { meteredAiCall } from "$server/ai-call";
-import { CONFIG_KEYS } from "$server/app-config";
-import { DEFAULT_MODEL_IDS } from "$server/ai-models";
+import { SELECTABLE_MODELS, type ModelEntry } from "$server/ai-models";
 import {
   draftTagRules,
   TAG_DRAFT_TIMEOUT_MS,
@@ -21,17 +20,130 @@ import {
   type AuthoringExample,
 } from "$server/ai-tag-draft";
 import { sanitizeErrorText, type JobRow } from "$server/job-policy";
-import { completeJob, failJob, recordEvent } from "$server/jobs";
+import {
+  completeJob,
+  failJob,
+  recordEvent,
+  requeueInterrupted,
+} from "$server/jobs";
 import {
   designHash,
   EVAL_TEXT_DENY,
   tagEvalDesign,
 } from "$server/tag-engine/eval-design";
 import { cueRanges } from "$server/tag-engine/eval-text";
-import { parseRuleset, RulesetError } from "$server/tag-engine/rules";
+import {
+  parseRuleset,
+  RulesetError,
+  type TaxonRule,
+} from "$server/tag-engine/rules";
 import { segmentArticle } from "$server/tag-engine/segment";
 
 export const AUTHORING_PER_CELL = 12;
+
+/**
+ * Drafting is a rare, owner-pressed, reasoning-heavy call, so it has its own
+ * fixed model instead of sharing the enrichment dropdown (which is tuned for
+ * cost across ~15k species). Gaylon chose Opus 5 on 2026-09-30 after a Haiku
+ * draft produced taxon rules no species could satisfy.
+ */
+export const TAG_DRAFT_MODEL_ID = "claude-opus-5";
+
+function tagDraftModel(): ModelEntry {
+  const m = SELECTABLE_MODELS.find((x) => x.id === TAG_DRAFT_MODEL_ID);
+  if (!m?.buildRequest)
+    throw new Error(`tag draft model ${TAG_DRAFT_MODEL_ID} is not available`);
+  return m;
+}
+
+export interface TaxonGroup {
+  order: string | null;
+  family: string | null;
+  n: number;
+}
+
+/**
+ * Check a draft's taxon rules against the real taxonomy (the tag universe,
+ * grouped by order and family). Refuses names that match no order or family
+ * of that rank (a silent no-op, e.g. "Phalaropidae" — phalaropes are
+ * Scolopacidae), and rule sets that admit no species at all (two
+ * require_one_of rules are ANDed, so family Alcidae + order Procellariiformes
+ * rejects every bird). Mirrors the scanner's taxon step; species with an
+ * unknown rank value never count as admitted.
+ *
+ * `known` is every order/family in the whole species taxonomy, NOT just the
+ * current tag universe (CODEX1): a real family with no article yet (e.g.
+ * Mohoidae) is a legitimate value; only admission is measured on `groups`.
+ */
+export interface KnownTaxa {
+  order: ReadonlySet<string>;
+  family: ReadonlySet<string>;
+}
+
+export function checkTaxonRules(
+  rules: readonly TaxonRule[],
+  groups: readonly TaxonGroup[],
+  known: KnownTaxa,
+): { admitted: number; problems: string[] } {
+  const problems: string[] = [];
+  for (const r of rules) {
+    const unknown = r.values.filter((v) => !known[r.rank].has(v));
+    if (unknown.length)
+      problems.push(
+        `taxon rule ${r.id} names no known ${r.rank}: ${unknown.join(", ")}`,
+      );
+  }
+  let admitted = 0;
+  for (const g of groups) {
+    const ok = rules.every((r) => {
+      const v = r.rank === "order" ? g.order : g.family;
+      if (v == null) return false;
+      return r.action === "forbid" ? !r.values.includes(v) : r.values.includes(v);
+    });
+    if (ok) admitted += g.n;
+  }
+  if (rules.length && admitted === 0)
+    problems.push(
+      "the taxon rules admit no species at all (every require_one_of rule must hold at once; list alternative taxa in ONE rule)",
+    );
+  return { admitted, problems };
+}
+
+async function taxonGroups(): Promise<TaxonGroup[]> {
+  return (
+    await query<TaxonGroup>(
+      `SELECT tc.order_name AS "order", tc.family_sci_name AS family, count(*)::int AS n
+         FROM public.tag_universe_codes() u(code)
+         JOIN taxonomy_cache tc ON tc.species_code = u.code
+        GROUP BY 1, 2`,
+    )
+  ).rows;
+}
+
+async function knownTaxa(): Promise<KnownTaxa> {
+  const rows = (
+    await query<{ rank: "order" | "family"; v: string }>(
+      `SELECT DISTINCT 'order' AS rank, order_name AS v FROM taxonomy_cache
+        WHERE category = 'species' AND order_name IS NOT NULL
+       UNION
+       SELECT DISTINCT 'family', family_sci_name FROM taxonomy_cache
+        WHERE category = 'species' AND family_sci_name IS NOT NULL`,
+    )
+  ).rows;
+  return {
+    order: new Set(rows.filter((r) => r.rank === "order").map((r) => r.v)),
+    family: new Set(rows.filter((r) => r.rank === "family").map((r) => r.v)),
+  };
+}
+
+/** How often a running draft looks for a worker drain (SIGTERM/SIGINT). */
+const DRAIN_POLL_MS = 1000;
+
+class DraftInterrupted extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
 const MAX_CUE_SENTENCES = 6;
 
 /** The four authoring cells (rev 23 §B4a); the last is the false-positive trap cell. */
@@ -140,7 +252,25 @@ async function isAdmin(userId: number): Promise<boolean> {
   );
 }
 
-export async function runTagDraftJob(job: JobRow): Promise<void> {
+/** The worker's drain/pause view (job-handlers' WorkerContext, structurally). */
+export interface DraftWorkerContext {
+  isDraining: () => boolean;
+  isPauseRequested?: () => Promise<boolean>;
+}
+
+/**
+ * Restart safety (CODEX1): one Opus draft call can run minutes, far past the
+ * worker's 45 s PM2 kill window. So the job watches for a drain while the call
+ * is in flight, aborts it, and requeues with the attempt refunded
+ * (requeueInterrupted) — a deploy or restart never burns the job. A pause is
+ * honoured only between calls (never abort a paid call for a pause). A hard
+ * crash with no drain is covered by the enqueue's maxAttempts 2: startup
+ * reclaim puts the job back to pending once.
+ */
+export async function runTagDraftJob(
+  job: JobRow,
+  ctx: DraftWorkerContext = { isDraining: () => false },
+): Promise<void> {
   const attempts = job.attempts;
   const tag = (job.payload as { tag?: unknown } | null)?.tag;
   if (typeof tag !== "string" || !draftableTag(tag)) {
@@ -177,26 +307,48 @@ export async function runTagDraftJob(job: JobRow): Promise<void> {
     }[] = [];
     let previousError: string | null = null;
     let proposalArtifact: unknown = null;
+    const model = tagDraftModel();
+    const groups = await taxonGroups();
+    const known = await knownTaxa();
     for (let i = 0; i < 2 && proposalArtifact == null; i++) {
-      const call = await meteredAiCall({
-        purpose: "tag_draft",
-        configKey: CONFIG_KEYS.enrichmentModel,
-        defaultModelId: DEFAULT_MODEL_IDS.enrichment,
-        jobId: job.id,
-        timeoutMs: TAG_DRAFT_TIMEOUT_MS,
-        run: async (model, signal) => {
-          const { raw, envelope } = await draftTagRules(
-            { tag, definition: TAG_DEFINITIONS[tag]!, examples, previousError },
-            model,
-            { signal },
-          );
-          return { result: raw, envelope };
-        },
-      });
+      if (ctx.isDraining()) throw new DraftInterrupted("worker draining");
+      if (await ctx.isPauseRequested?.())
+        throw new DraftInterrupted("worker paused");
+      const drain = new AbortController();
+      const watch = setInterval(() => {
+        if (ctx.isDraining()) drain.abort();
+      }, DRAIN_POLL_MS);
+      let call: Awaited<ReturnType<typeof meteredAiCall<unknown>>>;
+      try {
+        call = await meteredAiCall({
+          purpose: "tag_draft",
+          modelOverride: model,
+          jobId: job.id,
+          timeoutMs: TAG_DRAFT_TIMEOUT_MS,
+          run: async (model, signal) => {
+            const { raw, envelope } = await draftTagRules(
+              { tag, definition: TAG_DEFINITIONS[tag]!, examples, previousError },
+              model,
+              { signal: AbortSignal.any([signal, drain.signal]) },
+            );
+            return { result: raw, envelope };
+          },
+        });
+      } catch (e) {
+        // Only a call the drain actually cut short is an interruption; a
+        // result that arrived before the drain is kept and stored.
+        if (drain.signal.aborted) throw new DraftInterrupted("worker draining");
+        throw e;
+      } finally {
+        clearInterval(watch);
+      }
       try {
         const rs = parseRuleset(call.result, ALL_TAGS);
         if (rs.tag !== tag)
           throw new RulesetError(`ruleset.tag must be ${tag}`);
+        const taxonCheck = checkTaxonRules(rs.taxon, groups, known);
+        if (taxonCheck.problems.length)
+          throw new RulesetError(taxonCheck.problems.join("; "));
         proposalArtifact = call.result;
         attemptsLog.push({
           loaderOk: true,
@@ -262,6 +414,10 @@ export async function runTagDraftJob(job: JobRow): Promise<void> {
     ).rows[0].id;
     await completeJob(job.id, attempts, { ...result, proposalId });
   } catch (err) {
+    if (err instanceof DraftInterrupted) {
+      await requeueInterrupted(job.id, attempts, err.reason);
+      return;
+    }
     const message =
       err instanceof TagDraftAiError
         ? err.message

@@ -2,9 +2,11 @@
   /**
    * Admin → Tags → one tag (td-894144 Release B3; plan "Admin Tags tab"
    * §2–§6). Rules, history, proposals, reports and the owner actions. Long
-   * or lock-holding work runs as a worker job; refresh to see its result.
+   * or lock-holding work runs as a worker job; while one is pending or
+   * running the page reloads its data every few seconds.
    */
   import { enhance } from "$app/forms";
+  import { invalidateAll } from "$app/navigation";
   import { tick } from "svelte";
   import AdminBadge from "$components/admin/AdminBadge.svelte";
   import RulesView from "$components/admin/RulesView.svelte";
@@ -93,6 +95,21 @@
   const jobActive = $derived(
     d.jobs.some((j) => j.status === "pending" || j.status === "running"),
   );
+  const draftActive = $derived(
+    d.jobs.some(
+      (j) =>
+        j.type === "tag_draft_rules" &&
+        (j.status === "pending" || j.status === "running"),
+    ),
+  );
+  // Poll while work is in flight so the owner never has to refresh (the
+  // buttons that start jobs sit far below the job list on a phone).
+  $effect(() => {
+    if (!jobActive || confirming) return;
+    const t = setInterval(() => void invalidateAll(), 5000);
+    return () => clearInterval(t);
+  });
+  let notice = $state<HTMLParagraphElement | null>(null);
 
   const ACTION_LABEL: Record<string, string> = {
     activate: "Activated",
@@ -105,6 +122,10 @@
     tag_activate: "Activate",
     tag_retire: "Retire to legacy",
     tag_rollback: "Roll back",
+    tag_draft_rules: "AI draft",
+    tag_design_simulation: "Design blind test",
+    tag_eval_create: "Start blind test",
+    tag_gate_report: "Gate report",
   };
   const jobTone = (s: string) =>
     s === "succeeded"
@@ -121,6 +142,13 @@
       await update();
       busy = false;
       await closeConfirm();
+      // The result notice sits at the top of the page; bring it into view so
+      // an action pressed far down the page visibly did something.
+      await tick();
+      if (notice) {
+        notice.scrollIntoView({ behavior: "smooth", block: "start" });
+        notice.focus({ preventScroll: true });
+      }
     };
   };
 </script>
@@ -138,7 +166,12 @@
   </h1>
 
   {#if form?.message}
-    <p class={form.ok ? "notice" : "error"} role={form.ok ? "status" : "alert"}>
+    <p
+      bind:this={notice}
+      tabindex="-1"
+      class={form.ok ? "notice" : "error"}
+      role={form.ok ? "status" : "alert"}
+    >
       {form.message}
     </p>
   {/if}
@@ -310,7 +343,7 @@
           </li>
         {/each}
       </ul>
-      {#if jobActive}<p class="muted">Refresh the page to see progress.</p>{/if}
+      {#if jobActive}<p class="muted">This page updates itself every few seconds while work is running.</p>{/if}
     {/if}
   </section>
 
@@ -484,8 +517,14 @@
     <h2 id="proposals-heading">Proposals</h2>
     {#if data.draftable}
       <form method="POST" action="?/draft" use:enhance={submitting}>
-        <button type="submit" disabled={busy}>Draft rules with AI</button>
-        <span class="muted">About $0.05–0.15 per draft. The draft is only a proposal; a cross-check and your approval come next.</span>
+        <button type="submit" disabled={busy || draftActive}>{draftActive ? "Drafting…" : "Draft rules with AI"}</button>
+        <span class="muted">
+          {#if draftActive}
+            Claude Opus 5 is drafting. It usually takes 2–6 minutes; the new proposal appears below when it's done.
+          {:else}
+            Uses Claude Opus 5, about $0.25–0.60 per draft. The draft is only a proposal; a cross-check and your approval come next.
+          {/if}
+        </span>
       </form>
     {/if}
     <p class="muted">

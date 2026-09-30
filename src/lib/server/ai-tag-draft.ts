@@ -18,7 +18,9 @@ import {
   type ModelEntry,
 } from "./ai-models";
 
-export const TAG_DRAFT_TIMEOUT_MS = 180_000;
+/** Opus with adaptive thinking at high effort on a 12k-token answer can run
+ * several minutes; drafting is a rare, owner-pressed job, so be generous. */
+export const TAG_DRAFT_TIMEOUT_MS = 420_000;
 const TAG_DRAFT_ANSWER_TOKENS = 12_000;
 
 export interface AuthoringExample {
@@ -55,7 +57,7 @@ const SYSTEM = `You write EVIDENCE RULES that decide one bird tag from a species
 Your rules are a proposal. A second reviewer checks them and the owner approves them before they ever run, then a blind test measures them. Aim for HIGH PRECISION: a species gets the tag only when its own article plainly says so. A missed species is an accepted cost; a wrong tag is not.
 
 How the engine applies a rule set to one species:
-1. Taxon rules run first. "require_one_of" is a NECESSARY condition only (the species' order or family must be one of the values); "forbid" rejects matching orders/families. Use them only where the definition makes a taxon impossible, never as a shortcut for "probably".
+1. Taxon rules run first. "require_one_of" is a NECESSARY condition only (the species' order or family must be one of the values); "forbid" rejects matching orders/families. Use them only where the definition makes a taxon impossible, never as a shortcut for "probably". EVERY taxon rule must hold at once: two "require_one_of" rules are ANDed, so a family rule and an order rule that no species satisfies together (e.g. family Alcidae AND order Procellariiformes) reject every species. To allow several taxa, list them all in the "values" of ONE rule of one rank. Usually prefer "forbid" for taxa that can never qualify and leave the rest to the support phrases. A rule set whose taxon rules no species can satisfy is refused.
 2. Support phrases are matched in the article's sections (except denied sections), and only in sentences about the species itself (sentences about named other species are skipped automatically).
 3. An exclude phrase cancels a support match when it appears in the given scope around it: the same clause, the same sentence, or a word window (before/after, 0–12 words). "binds" lists the support groups it cancels, or ["*"] for all.
 4. The tag is assigned when at least one support match survives. There are no weights.

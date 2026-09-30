@@ -158,7 +158,7 @@ describe("blind-test actions", () => {
     expect(sqlCalls.some((q) => q.includes("freeze_tag_eval_set"))).toBe(true);
     expect(m.enqueueEvalJob).toHaveBeenCalledWith(
       "tag_gate_report",
-      { setId: "5" },
+      { setId: "5", tag: TAG },
       "tag_gate:s5",
       expect.any(String),
       1,

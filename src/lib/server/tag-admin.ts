@@ -367,7 +367,8 @@ export async function tagDetail(tag: string): Promise<TagDetail | null> {
         result: unknown;
       }>(
         `SELECT id, type, status, enqueued_at::text, error, result FROM jobs
-			  WHERE type IN ('tag_stage', 'tag_benchmark', 'tag_activate', 'tag_retire', 'tag_rollback')
+			  WHERE type IN ('tag_stage', 'tag_benchmark', 'tag_activate', 'tag_retire', 'tag_rollback',
+			                 'tag_draft_rules', 'tag_design_simulation', 'tag_eval_create', 'tag_gate_report')
 			    AND payload->>'tag' = $1
 			  ORDER BY id DESC LIMIT 10`,
         [tag],
@@ -593,7 +594,10 @@ export async function enqueueTagDraft(
     dedupKey: dedupKeys.tagDraftRules(tag),
     requestedBy: userId,
     label: `${tag} — draft rules (AI)`,
-    maxAttempts: 1,
+    // 2, not 1: failJob is terminal either way, so the only effect is that a
+    // hard worker crash mid-call is reclaimed to pending once instead of
+    // failing (a drain requeues and refunds on its own; tag-draft-job.ts).
+    maxAttempts: 2,
   });
 }
 

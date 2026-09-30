@@ -2545,7 +2545,7 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				return;
 			}
 			case 'tag_draft_rules': {
-				await runTagDraftJob(job);
+				await runTagDraftJob(job, ctx);
 				return;
 			}
 			case 'tag_design_simulation':
