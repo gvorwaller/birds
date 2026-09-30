@@ -90,6 +90,17 @@ export const ALL_TAGS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Owner-facing definitions (td-894144 B4). A tag's evidence rules are drafted
+ * and reviewed against its definition, so a tag gets one here before its
+ * pilot. Only defined tags can have rules drafted.
+ */
+export const TAG_DEFINITIONS: Readonly<Partial<Record<string, string>>> = {
+  "habitat:open-ocean":
+    "Feeds or rests at sea, away from shore, as a regular part of its life (pelagic seabirds, sea ducks and loons on open water, alcids, phalaropes at sea). " +
+    "Not a bird that merely crosses the sea on migration, not a land bird that lives on an oceanic island, not a vagrant recorded at sea, and not a shore or coastal bird that feeds at the water's edge.",
+};
+
+/**
  * Enforce vocabulary membership in code — anything unknown is dropped and
  * reported so vocabulary gaps surface in job events instead of bad chips.
  */

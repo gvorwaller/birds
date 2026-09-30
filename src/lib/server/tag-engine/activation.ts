@@ -158,10 +158,13 @@ export async function stageRevision(
 }
 
 /**
- * Activation (exclusive lock). `dryRun` rolls everything back (benchmarks,
- * tests). `benchmark` implies dryRun and records PROVISIONAL passing gate and
- * benchmark reports inside the doomed transaction, so the switch benchmark can
- * run the real switch before those reports exist; they roll back with it.
+ * Activation (exclusive lock). `dryRun` (and `benchmark`, which implies it)
+ * runs the REAL switch with p_dry_run: the definer skips the gate/benchmark
+ * report checks, does all the work, then always raises TAG_DRY_RUN at its
+ * end — so a dry run can never commit and no fake reports exist (plan rev 25
+ * §B4i). It runs inside a savepoint so the WAL it wrote can still be read.
+ * A real activation passes report ids; the definer verifies the gate →
+ * frozen blind-test set → gates hash → frame hash recomputed right then.
  */
 export async function activateRevision(opts: {
   tag: string;
@@ -174,7 +177,7 @@ export async function activateRevision(opts: {
   onTiming?: (t: Record<string, number>) => void;
 }): Promise<string | null> {
   if (opts.benchmark) opts = { ...opts, dryRun: true };
-  else if (!opts.gateReportId || !opts.benchmarkReportId)
+  if (!opts.dryRun && (!opts.gateReportId || !opts.benchmarkReportId))
     throw new Error(
       "activateRevision: gate and benchmark report ids are required",
     );
@@ -211,32 +214,33 @@ export async function activateRevision(opts: {
           ruleset,
         );
         const t2 = performance.now();
-        let gateReportId = opts.gateReportId;
-        let benchmarkReportId = opts.benchmarkReportId;
-        if (opts.benchmark) {
-          const provisional = async (kind: string) =>
-            (
-              await tx.exec<{ id: string }>(
-                `SELECT public.record_tag_report($1, $2, $3, '{"passed":true,"provisional":true}'::jsonb)::text AS id`,
-                [kind, opts.tag, opts.revisionId],
-              )
-            ).rows[0].id;
-          gateReportId = await provisional("gate");
-          benchmarkReportId = await provisional("benchmark");
-        }
-        const act = (
-          await tx.exec<{ id: string }>(
-            "SELECT public.switch_tag_ownership($1, $2, $3, $4, $5, $6) AS id",
+        const callSwitch = (dry: boolean) =>
+          tx.exec<{ id: string }>(
+            "SELECT public.switch_tag_ownership($1, $2, $3, $4, $5, $6, $7) AS id",
             [
               opts.tag,
               opts.revisionId,
-              gateReportId,
-              benchmarkReportId,
+              opts.gateReportId ?? null,
+              opts.benchmarkReportId ?? null,
               opts.userId,
               TAG_ENGINE_KEY.toString(),
+              dry,
             ],
-          )
-        ).rows[0].id;
+          );
+        let act: string | null = null;
+        if (opts.dryRun) {
+          await tx.exec("SAVEPOINT tag_dry_run");
+          try {
+            await callSwitch(true);
+            throw new Error("switch dry run returned instead of raising");
+          } catch (e) {
+            if (!(e instanceof Error) || !/TAG_DRY_RUN/.test(e.message))
+              throw e;
+          }
+          await tx.exec("ROLLBACK TO SAVEPOINT tag_dry_run");
+        } else {
+          act = (await callSwitch(false)).rows[0].id;
+        }
         const t3 = performance.now();
         const walBytes = Number(
           (

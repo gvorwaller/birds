@@ -167,4 +167,12 @@ describe("td-894144 static guard", () => {
 			);
 		}
 	});
+
+	it('td-894144 B4: no app or worker source can mint a cross-check (record_tag_crosscheck is owner-role only)', () => {
+		// The only caller is the agent's owner-credential script, scripts/tag-crosscheck.mjs.
+		const offenders = runtimeFiles.filter(
+			(f) => !f.endsWith('/scripts/tag-crosscheck.mjs') && /record_tag_crosscheck/.test(readFileSync(f, 'utf8'))
+		);
+		expect(offenders.map((f) => relative(ROOT, f))).toEqual([]);
+	});
 });

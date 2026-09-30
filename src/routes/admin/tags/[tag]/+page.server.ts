@@ -5,11 +5,19 @@ import { query } from "$lib/db";
 import {
   activationReadiness,
   approveProposal,
+  enqueueEvalJob,
+  enqueueTagDraft,
   enqueueTagOp,
+  evalSetsFor,
+  latestDesigns,
   rejectProposal,
   tagDetail,
   tagWhy,
 } from "$server/tag-admin";
+import { dedupKeys } from "$server/job-policy";
+import { draftableTag } from "$server/tag-draft-job";
+import { PROPOSED_GATES } from "$server/tag-engine/eval-stats";
+import { OWNER_LABEL_BUDGET } from "$server/tag-eval-jobs";
 
 /**
  * One tag in the admin Tags tab (td-894144 Release B3; plan "Admin Tags tab"
@@ -30,11 +38,20 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       ...(await activationReadiness(tag, r.id)),
     })),
   );
+  const [evalSets, designs] = await Promise.all([
+    evalSetsFor(tag),
+    latestDesigns(tag),
+  ]);
   return {
     detail,
     readiness,
     whyQuery: why ?? "",
     why: why ? await tagWhy(tag, why) : null,
+    draftable: draftableTag(tag),
+    evalSets,
+    designs,
+    proposedGates: PROPOSED_GATES,
+    labelBudget: OWNER_LABEL_BUDGET,
   };
 };
 
@@ -77,7 +94,162 @@ const queued = (what: string, r: { jobId: number; deduped: boolean }) => ({
     : `Queued the ${what} (job #${r.jobId}). Refresh to see the result.`,
 });
 
+const setOf = async (tag: string, raw: FormDataEntryValue | null) => {
+  const id = String(raw ?? "");
+  if (!/^[1-9][0-9]{0,18}$/.test(id)) return null;
+  const r = await query<{ status: string; revision_id: string }>(
+    "SELECT status, revision_id::text FROM tag_eval_set WHERE id = $1 AND tag = $2",
+    [id, tag],
+  );
+  return r.rows[0] ? { id, ...r.rows[0] } : null;
+};
+
 export const actions: Actions = {
+  draft: async ({ locals, params }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    if (!draftableTag(g.tag))
+      return bad(
+        "op",
+        409,
+        "This tag has no definition or evaluation design yet.",
+      );
+    return queued("AI draft", await enqueueTagDraft(g.tag, g.user.id));
+  },
+
+  design: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const revisionId = await revisionOf(
+      g.tag,
+      (await request.formData()).get("revisionId"),
+    );
+    if (!revisionId)
+      return bad("op", 400, "Choose an approved revision of this tag.");
+    return queued(
+      "blind-test design",
+      await enqueueEvalJob(
+        "tag_design_simulation",
+        { tag: g.tag, revisionId },
+        dedupKeys.tagDesign(g.tag, revisionId),
+        `${g.tag} — blind-test design`,
+        g.user.id,
+      ),
+    );
+  },
+
+  evalCreate: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const form = await request.formData();
+    const revisionId = await revisionOf(g.tag, form.get("revisionId"));
+    if (!revisionId)
+      return bad("op", 400, "Choose an approved revision of this tag.");
+    if (!confirmed(form, g.tag))
+      return bad("op", 400, `Type ${g.tag} to confirm.`);
+    const design = (await latestDesigns(g.tag))[revisionId];
+    if (!design) return bad("op", 409, "Run the blind-test design first.");
+    const over = design.body.needsOwnerDecision === true;
+    if (over && form.get("acceptOverBudget") !== "yes")
+      return bad(
+        "op",
+        400,
+        `This design needs ${design.body.total} labels. Tick the box to accept.`,
+      );
+    return queued(
+      "blind-test sample",
+      await enqueueEvalJob(
+        "tag_eval_create",
+        {
+          tag: g.tag,
+          revisionId,
+          simulationReportId: design.reportId,
+          // The owner confirms exactly the proposed gates shown on the page.
+          gates: PROPOSED_GATES,
+          acceptOverBudget: over,
+        },
+        dedupKeys.tagEvalCreate(g.tag, revisionId),
+        `${g.tag} — blind-test sample`,
+        g.user.id,
+      ),
+    );
+  },
+
+  freeze: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const form = await request.formData();
+    const set = await setOf(g.tag, form.get("setId"));
+    if (!set) return bad("op", 404, "Unknown blind-test set.");
+    if (!confirmed(form, g.tag))
+      return bad("op", 400, `Type ${g.tag} to confirm.`);
+    try {
+      await query("SELECT public.freeze_tag_eval_set($1, $2)", [
+        set.id,
+        g.user.id,
+      ]);
+    } catch (e) {
+      return bad(
+        "op",
+        409,
+        e instanceof Error
+          ? e.message.replace(/^freeze: /, "Not frozen: ")
+          : "Not frozen.",
+      );
+    }
+    return queued(
+      "gate report",
+      await enqueueEvalJob(
+        "tag_gate_report",
+        { setId: set.id },
+        dedupKeys.tagGate(set.id),
+        `${g.tag} — gate report`,
+        g.user.id,
+      ),
+    );
+  },
+
+  gate: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const set = await setOf(g.tag, (await request.formData()).get("setId"));
+    if (!set || set.status !== "frozen")
+      return bad("op", 409, "Only a frozen blind test has a gate report.");
+    return queued(
+      "gate report",
+      await enqueueEvalJob(
+        "tag_gate_report",
+        { setId: set.id },
+        dedupKeys.tagGate(set.id),
+        `${g.tag} — gate report`,
+        g.user.id,
+      ),
+    );
+  },
+
+  abandon: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const form = await request.formData();
+    const set = await setOf(g.tag, form.get("setId"));
+    if (!set) return bad("op", 404, "Unknown blind-test set.");
+    if (!confirmed(form, g.tag))
+      return bad("op", 400, `Type ${g.tag} to confirm.`);
+    try {
+      await query("SELECT public.abandon_tag_eval_set($1, $2)", [
+        set.id,
+        g.user.id,
+      ]);
+    } catch (e) {
+      return bad("op", 409, e instanceof Error ? e.message : "Not abandoned.");
+    }
+    return {
+      kind: "op" as const,
+      ok: true as const,
+      message: "Blind test abandoned.",
+    };
+  },
+
   stage: async ({ locals, params, request }) => {
     const g = await guard(locals, params, "op");
     if ("err" in g) return g.err;

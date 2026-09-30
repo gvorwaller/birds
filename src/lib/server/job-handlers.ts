@@ -40,6 +40,8 @@ import {
 import { rematchPhotoLinks } from '$server/gallery';
 import { repairTagGeneration, tagRepairBacklog, tagRepairState } from '$server/tag-engine/repair';
 import { runTagConsistencyJob, runTagOpJob } from '$server/tag-jobs';
+import { runTagDraftJob } from '$server/tag-draft-job';
+import { runTagEvalJob } from '$server/tag-eval-jobs';
 import {
 	cancelRunningJob,
 	completeJob,
@@ -2540,6 +2542,16 @@ export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'tag_consistency': {
 				await runTagConsistencyJob(job);
+				return;
+			}
+			case 'tag_draft_rules': {
+				await runTagDraftJob(job);
+				return;
+			}
+			case 'tag_design_simulation':
+			case 'tag_eval_create':
+			case 'tag_gate_report': {
+				await runTagEvalJob(job);
 				return;
 			}
 			case 'tag_stage':

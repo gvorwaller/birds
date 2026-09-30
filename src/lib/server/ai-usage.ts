@@ -14,7 +14,7 @@ import { query, queryTimed } from '$lib/db';
 import { sanitizeErrorText } from './job-policy';
 import { dollarsForRow, type CallEnvelope } from './ai-models';
 
-export type AiPurpose = 'enrichment' | 'guidance' | 'compare';
+export type AiPurpose = 'enrichment' | 'guidance' | 'compare' | 'tag_draft';
 
 // Metering is best-effort and must never hold a completed provider call
 // hostage to pool exhaustion or a stuck INSERT. queryTimed bounds both client

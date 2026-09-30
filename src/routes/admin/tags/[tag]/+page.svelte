@@ -14,12 +14,25 @@
   const d = $derived(data.detail);
 
   type Confirm = {
-    action: "activate" | "rollback" | "retire" | "approve";
+    action: "activate" | "rollback" | "retire" | "approve" | "evalCreate" | "freeze" | "abandon";
     title: string;
     body: string;
     revisionId?: string;
     proposalId?: string;
+    setId?: string;
+    /** Plain-language gate lines the owner confirms (blind test start). */
+    gates?: string[];
+    /** Set when the design is over the owner's label budget: an explicit tick is required. */
+    overBudget?: number;
   };
+  let acceptOver = $state(false);
+  const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
+  const gateLines = (g: { precision: { point_min: number; lower_min: number }; retention: { lower_min: number }; named_cases_must_not: string[] }) => [
+    `Of the birds the rules tag, at least ${Math.round(g.precision.point_min * 100)}% must be right, and even at the pessimistic end of the margin of error at least ${Math.round(g.precision.lower_min * 100)}%.`,
+    `Of the birds the old AI tagged correctly, the rules must keep at least ${Math.round(g.retention.lower_min * 100)}% (pessimistic end of the margin of error).`,
+    ...(g.named_cases_must_not.length ? [`These birds must NOT be tagged: ${g.named_cases_must_not.join(", ")}.`] : []),
+    "“Unsure” answers count against the rules.",
+  ];
   let confirming = $state<Confirm | null>(null);
   let typed = $state("");
   let busy = $state(false);
@@ -31,6 +44,7 @@
     returnFocus = trigger;
     confirming = c;
     typed = "";
+    acceptOver = false;
     await tick();
     confirmInput?.focus();
   }
@@ -156,6 +170,9 @@
     {/if}
     {#each d.revisions as r (r.id)}
       {@const ready = readiness(r.id)}
+      {@const design = data.designs[r.id]}
+        {@const db = design?.body as { total: number; needsOwnerDecision: boolean; N: Record<string, number>; n: Record<string, number> } | undefined}
+        {@const liveSet = data.evalSets.find((s) => s.revisionId === r.id && s.status === "labelling")}
       <div class="revision">
         <h3>
           Revision {r.id}
@@ -203,6 +220,36 @@
             >
           {/if}
         </div>
+        <div class="buttons">
+          <form method="POST" action="?/design" use:enhance={submitting}>
+            <input type="hidden" name="revisionId" value={r.id} />
+            <button type="submit" class="secondary" disabled={busy}>Design blind test</button>
+          </form>
+          {#if db && !liveSet}
+            <button
+              type="button"
+              disabled={busy}
+              onclick={(event) =>
+                openConfirm(
+                  {
+                    action: "evalCreate",
+                    revisionId: r.id,
+                    title: `Start a blind test of ${db.total} birds?`,
+                    body: "A random sample is drawn and frozen. You will answer one question per bird from its article text, with the names hidden. These pass/fail rules are fixed for this test:",
+                    gates: gateLines(data.proposedGates),
+                    overBudget: db.needsOwnerDecision ? db.total : undefined,
+                  },
+                  event.currentTarget,
+                )}>Start blind test…</button
+            >
+          {/if}
+        </div>
+        {#if db}
+          <p class="muted">
+            Latest design: {db.total} birds to label{db.needsOwnerDecision ? ` — more than your ${data.labelBudget}-label budget` : ""}.
+            {#if liveSet}A blind test for this revision is already open below.{/if}
+          </p>
+        {/if}
         {#if d.owned?.revisionId !== r.id && (!ready?.gateReportId || !ready?.benchmarkReportId)}
           <p class="muted">
             Activate needs {[
@@ -369,8 +416,78 @@
     </section>
   {/if}
 
+  <section class="card" aria-labelledby="blind-heading">
+    <h2 id="blind-heading">Blind tests</h2>
+    {#each data.evalSets as t (t.id)}
+      <div class="revision">
+        <h3>
+          Blind test {t.id} · revision {t.revisionId}
+          <AdminBadge
+            tone={t.status === "frozen" ? "ok" : t.status === "abandoned" ? "neutral" : "warn"}
+            label={t.status === "labelling" ? "Labelling" : t.status === "frozen" ? "Frozen" : "Abandoned"}
+          />
+          {#if t.lastGate}<AdminBadge tone={t.lastGate.passed ? "ok" : "error"} label={t.lastGate.passed ? "Gate passed" : "Gate failed"} />{/if}
+        </h3>
+        <p>{t.labelled} of {t.total} answered ({pctOf(t.labelled, t.total)}%).</p>
+        <p class="muted">
+          By group: {Object.entries(t.perStratum).map(([h, v]) => `${h} ${v.labelled}/${v.n}`).join(" · ")}
+        </p>
+        <div class="buttons">
+          {#if t.status === "labelling"}
+            {#if t.labelled < t.total}
+              <a class="button-link" href="/admin/tags/{encodeURIComponent(d.tag)}/label/{t.id}">Label ({t.total - t.labelled} left)</a>
+            {:else}
+              <button
+                type="button"
+                disabled={busy}
+                onclick={(event) =>
+                  openConfirm(
+                    {
+                      action: "freeze",
+                      setId: t.id,
+                      title: "Freeze this blind test?",
+                      body: "Answers are locked and the gate report is computed. You can't add or change answers afterwards.",
+                    },
+                    event.currentTarget,
+                  )}>Freeze and compute gate…</button
+              >
+            {/if}
+            <button
+              type="button"
+              class="secondary"
+              disabled={busy}
+              onclick={(event) =>
+                openConfirm(
+                  {
+                    action: "abandon",
+                    setId: t.id,
+                    title: "Abandon this blind test?",
+                    body: "It stays in the history but can never gate an activation. Your answers are kept and reused by a later blind test.",
+                  },
+                  event.currentTarget,
+                )}>Abandon…</button
+            >
+          {:else if t.status === "frozen"}
+            <form method="POST" action="?/gate" use:enhance={submitting}>
+              <input type="hidden" name="setId" value={t.id} />
+              <button type="submit" class="secondary" disabled={busy}>Recompute gate report</button>
+            </form>
+          {/if}
+        </div>
+      </div>
+    {:else}
+      <p class="muted">No blind tests yet. Approve a revision, run its stage report, then "Design blind test".</p>
+    {/each}
+  </section>
+
   <section class="card" aria-labelledby="proposals-heading">
     <h2 id="proposals-heading">Proposals</h2>
+    {#if data.draftable}
+      <form method="POST" action="?/draft" use:enhance={submitting}>
+        <button type="submit" disabled={busy}>Draft rules with AI</button>
+        <span class="muted">About $0.05–0.15 per draft. The draft is only a proposal; a cross-check and your approval come next.</span>
+      </form>
+    {/if}
     <p class="muted">
       Drafts of rules, from AI or by hand. A draft can only be approved after an
       independent cross-check approved exactly this text.
@@ -504,6 +621,35 @@
               </ul>
             </details>
           {/if}
+        {:else if r.kind === "simulation"}
+          <p>
+            {b.total} birds to label{b.needsOwnerDecision ? ` (over the ${data.labelBudget}-label budget — needs your confirmation)` : ""},
+            from {Object.values((b.N ?? {}) as Record<string, number>).reduce((a, x) => a + x, 0)} birds the rules or the old AI tag.
+          </p>
+          <p class="muted">
+            By group (sampled / total): {Object.keys((b.N ?? {}) as object).map((h) => `${h} ${(b.n as Record<string, number>)[h]}/${(b.N as Record<string, number>)[h]}`).join(" · ")}
+          </p>
+        {:else if r.kind === "gate"}
+          {@const pr = b.precision as { point: number | null; lower: number | null }}
+          {@const rt = b.retention as { point: number | null; lower: number | null; note: string | null }}
+          <p>
+            Precision {pr.point != null ? `${(pr.point * 100).toFixed(1)}%` : "—"} (at least {pr.lower != null ? `${(pr.lower * 100).toFixed(1)}%` : "—"}).
+            {#if rt.lower != null}
+              Keeps {rt.point != null ? `${(rt.point * 100).toFixed(1)}%` : "all"} of the old AI's correct tags (at least {(rt.lower * 100).toFixed(1)}%).
+            {:else}
+              The old AI had no correct tags among these birds, so there is nothing to keep.
+            {/if}
+          </p>
+          {#if (b.namedCases as unknown[])?.length}
+            <ul class="plain">
+              {#each b.namedCases as { code: string; name: string; expect: string; assigned: boolean; gating: boolean }[] as c (c.code)}
+                <li>
+                  {c.name}: rules {c.assigned ? "tag it" : "don't tag it"}
+                  {#if c.gating}<AdminBadge tone={c.assigned ? "error" : "ok"} label={c.assigned ? "Must not — fails" : "Must not — ok"} />{:else}<span class="muted">(expected {c.expect})</span>{/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
         {:else if r.kind === "benchmark"}
           <p>
             Switch took {b.totalMs != null
@@ -569,6 +715,18 @@
             name="proposalId"
             value={confirming.proposalId}
           />{/if}
+        {#if confirming.setId}<input type="hidden" name="setId" value={confirming.setId} />{/if}
+        {#if confirming.gates}
+          <ul class="gates">
+            {#each confirming.gates as line, i (i)}<li>{line}</li>{/each}
+          </ul>
+        {/if}
+        {#if confirming.overBudget}
+          <label class="accept">
+            <input type="checkbox" name="acceptOverBudget" value="yes" bind:checked={acceptOver} />
+            I accept labelling {confirming.overBudget} birds (more than {data.labelBudget}).
+          </label>
+        {/if}
         <label for="confirm-input"
           >Type <strong>{d.tag}</strong> to confirm</label
         >
@@ -585,7 +743,7 @@
           <button type="button" class="secondary" onclick={closeConfirm}
             >Cancel</button
           >
-          <button type="submit" disabled={busy || typed.trim() !== d.tag}
+          <button type="submit" disabled={busy || typed.trim() !== d.tag || (!!confirming.overBudget && !acceptOver)}
             >{busy ? "Working…" : "Confirm"}</button
           >
         </div>
@@ -595,6 +753,36 @@
 {/if}
 
 <style>
+  .button-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 10px 16px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    text-decoration: none;
+  }
+  .gates {
+    margin: 0.5rem 0;
+    padding-left: 1.2rem;
+    line-height: 1.5;
+  }
+  .accept {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-height: 48px;
+    margin: 0.4rem 0;
+  }
+  .accept input {
+    width: 24px;
+    height: 24px;
+    min-height: 0;
+    flex: none;
+  }
   .page {
     max-width: 960px;
     margin: 0 auto;

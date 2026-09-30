@@ -6,31 +6,36 @@
  * error is still in hand (CODEX1 #2) — this module only consumes structured
  * kinds; it never parses messages.
  */
-import { createHash } from 'node:crypto';
-import { HOTSPOT_FAILURE_COOLDOWN_MS } from '$server/barchart';
+import { createHash } from "node:crypto";
+import { HOTSPOT_FAILURE_COOLDOWN_MS } from "$server/barchart";
 
-export type FailureKind = 'credential' | 'rate_limited' | 'transient' | 'unit' | 'cooldown';
+export type FailureKind =
+  | "credential"
+  | "rate_limited"
+  | "transient"
+  | "unit"
+  | "cooldown";
 
 export interface UnitFailure {
-	code: string;
-	error: string;
-	kind: FailureKind;
+  code: string;
+  error: string;
+  kind: FailureKind;
 }
 
 /** The subset of EnsureResult the outcome policy needs. */
 export interface EnsureSummary {
-	ready: string[];
-	refreshed: string[];
-	failed: UnitFailure[];
-	notAttempted: string[];
-	credentialProblem: string | null;
-	rateLimited: boolean;
+  ready: string[];
+  refreshed: string[];
+  failed: UnitFailure[];
+  notAttempted: string[];
+  credentialProblem: string | null;
+  rateLimited: boolean;
 }
 
 export type JobOutcome =
-	| { kind: 'complete'; result: EnsureSummary }
-	| { kind: 'retry'; delayMs: number; reason: string; result: EnsureSummary }
-	| { kind: 'fail'; error: string; result: EnsureSummary };
+  | { kind: "complete"; result: EnsureSummary }
+  | { kind: "retry"; delayMs: number; reason: string; result: EnsureSummary }
+  | { kind: "fail"; error: string; result: EnsureSummary };
 
 /**
  * Transient retry schedule — every delay is deliberately ≥ the 15-minute
@@ -42,14 +47,24 @@ export type JobOutcome =
  * without importing the worker (GROK td-b7d021 nit). */
 export const AI_STAGE_ENABLED = true;
 
-export const TRANSIENT_RETRY_DELAYS_MS = [16 * 60_000, 45 * 60_000, 120 * 60_000] as const;
+export const TRANSIENT_RETRY_DELAYS_MS = [
+  16 * 60_000,
+  45 * 60_000,
+  120 * 60_000,
+] as const;
 export const RATE_LIMIT_RETRY_DELAY_MS = 30 * 60_000;
 export const DEFAULT_MAX_ATTEMPTS = 4; // initial + 3 retries
 
-export function retryDelayMs(attempt: number, kind: 'transient' | 'rate_limited'): number {
-	if (kind === 'rate_limited') return RATE_LIMIT_RETRY_DELAY_MS;
-	const idx = Math.min(Math.max(attempt - 1, 0), TRANSIENT_RETRY_DELAYS_MS.length - 1);
-	return TRANSIENT_RETRY_DELAYS_MS[idx];
+export function retryDelayMs(
+  attempt: number,
+  kind: "transient" | "rate_limited",
+): number {
+  if (kind === "rate_limited") return RATE_LIMIT_RETRY_DELAY_MS;
+  const idx = Math.min(
+    Math.max(attempt - 1, 0),
+    TRANSIENT_RETRY_DELAYS_MS.length - 1,
+  );
+  return TRANSIENT_RETRY_DELAYS_MS[idx];
 }
 
 /**
@@ -72,119 +87,142 @@ export function retryDelayMs(attempt: number, kind: 'transient' | 'rate_limited'
  *   table carries the detail).
  */
 export function jobOutcome(
-	summary: EnsureSummary,
-	attempt: number,
-	maxAttempts: number
+  summary: EnsureSummary,
+  attempt: number,
+  maxAttempts: number,
 ): JobOutcome {
-	if (summary.credentialProblem) {
-		return { kind: 'fail', error: summary.credentialProblem, result: summary };
-	}
+  if (summary.credentialProblem) {
+    return { kind: "fail", error: summary.credentialProblem, result: summary };
+  }
 
-	const attemptsLeft = attempt < maxAttempts;
-	const cooldownFailures = summary.failed.filter((f) => f.kind === 'cooldown');
-	const transientFailures = summary.failed.filter((f) => f.kind === 'transient');
+  const attemptsLeft = attempt < maxAttempts;
+  const cooldownFailures = summary.failed.filter((f) => f.kind === "cooldown");
+  const transientFailures = summary.failed.filter(
+    (f) => f.kind === "transient",
+  );
 
-	if (summary.rateLimited) {
-		if (attemptsLeft) {
-			return {
-				kind: 'retry',
-				delayMs: retryDelayMs(attempt, 'rate_limited'),
-				reason: 'eBird rate limit — backing off',
-				result: summary
-			};
-		}
-		return { kind: 'fail', error: 'eBird rate limit persisted across retries.', result: summary };
-	}
+  if (summary.rateLimited) {
+    if (attemptsLeft) {
+      return {
+        kind: "retry",
+        delayMs: retryDelayMs(attempt, "rate_limited"),
+        reason: "eBird rate limit — backing off",
+        result: summary,
+      };
+    }
+    return {
+      kind: "fail",
+      error: "eBird rate limit persisted across retries.",
+      result: summary,
+    };
+  }
 
-	if (summary.notAttempted.length > 0) {
-		if (attemptsLeft) {
-			return {
-				kind: 'retry',
-				delayMs: retryDelayMs(attempt, 'transient'),
-				reason: `${summary.notAttempted.length} location(s) not yet attempted`,
-				result: summary
-			};
-		}
-		return {
-			kind: 'fail',
-			error: `${summary.notAttempted.length} location(s) could not be attempted after ${maxAttempts} tries.`,
-			result: summary
-		};
-	}
+  if (summary.notAttempted.length > 0) {
+    if (attemptsLeft) {
+      return {
+        kind: "retry",
+        delayMs: retryDelayMs(attempt, "transient"),
+        reason: `${summary.notAttempted.length} location(s) not yet attempted`,
+        result: summary,
+      };
+    }
+    return {
+      kind: "fail",
+      error: `${summary.notAttempted.length} location(s) could not be attempted after ${maxAttempts} tries.`,
+      result: summary,
+    };
+  }
 
-	if (transientFailures.length > 0) {
-		if (attemptsLeft) {
-			return {
-				kind: 'retry',
-				delayMs: retryDelayMs(attempt, 'transient'),
-				reason: `${transientFailures.length} location(s) hit transient eBird errors`,
-				result: summary
-			};
-		}
-		// Exhausted transient failures are a TERMINAL failure, never a quiet
-		// success — a location that 500s through every round must surface as
-		// failed in the UI (CODEX1 re-review #1). The summary still carries
-		// whatever did load.
-		return {
-			kind: 'fail',
-			error: `${transientFailures.length} location(s) still failing with transient eBird errors after ${maxAttempts} attempts.`,
-			result: summary
-		};
-	}
+  if (transientFailures.length > 0) {
+    if (attemptsLeft) {
+      return {
+        kind: "retry",
+        delayMs: retryDelayMs(attempt, "transient"),
+        reason: `${transientFailures.length} location(s) hit transient eBird errors`,
+        result: summary,
+      };
+    }
+    // Exhausted transient failures are a TERMINAL failure, never a quiet
+    // success — a location that 500s through every round must surface as
+    // failed in the UI (CODEX1 re-review #1). The summary still carries
+    // whatever did load.
+    return {
+      kind: "fail",
+      error: `${transientFailures.length} location(s) still failing with transient eBird errors after ${maxAttempts} attempts.`,
+      result: summary,
+    };
+  }
 
-	if (cooldownFailures.length > 0 && attemptsLeft) {
-		return {
-			kind: 'retry',
-			delayMs: HOTSPOT_FAILURE_COOLDOWN_MS + 60_000,
-			reason: `${cooldownFailures.length} location(s) waiting out a failure cooldown`,
-			result: summary
-		};
-	}
+  if (cooldownFailures.length > 0 && attemptsLeft) {
+    return {
+      kind: "retry",
+      delayMs: HOTSPOT_FAILURE_COOLDOWN_MS + 60_000,
+      reason: `${cooldownFailures.length} location(s) waiting out a failure cooldown`,
+      result: summary,
+    };
+  }
 
-	return { kind: 'complete', result: summary };
+  return { kind: "complete", result: summary };
 }
 
 // ---------------------------------------------------------------------------
 // Dedup keys
 // ---------------------------------------------------------------------------
 
-export function dedupKeyForLocs(prefix: string, locCodes: readonly string[]): string {
-	const h = createHash('sha256')
-		.update([...locCodes].sort().join(','))
-		.digest('hex')
-		.slice(0, 16);
-	return `${prefix}:${h}`;
+export function dedupKeyForLocs(
+  prefix: string,
+  locCodes: readonly string[],
+): string {
+  const h = createHash("sha256")
+    .update([...locCodes].sort().join(","))
+    .digest("hex")
+    .slice(0, 16);
+  return `${prefix}:${h}`;
 }
 
 export const dedupKeys = {
-	loadHotspots: (locCodes: readonly string[]) => dedupKeyForLocs('load_hotspots', locCodes),
-	loadRegion: (regionCode: string) => `load_region:${regionCode}`,
-	analyzeCounties: (regionCode: string) => `analyze_counties:${regionCode}`,
-	refreshLoc: (locCode: string) => `refresh_loc:${locCode}`,
-	retryLoc: (locCode: string) => `retry_loc:${locCode}`,
-	syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
-	syncTaxonomy: () => 'sync_taxonomy:global',
-	scanNeedAlerts: () => 'scan_need_alerts:global',
-	// Content-hashed per chunk (CODEX1 plan #2): identical chunk dedups,
-	// different codes are distinct jobs — a constant key would silently drop
-	// newly-scoped codes because enqueueJob dedup never merges payloads.
-	enrichChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species', codes),
-	enrichAiChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_species_ai', codes),
-	enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
-	scanEnrichment: () => 'scan_enrichment:global',
-	enrichMediaChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media', codes),
-	enrichMediaForceChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_media_force', codes),
-	enrichMediaOne: (code: string) => `enrich_media:one:${code}`,
-	enrichInatChunk: (codes: readonly string[]) => dedupKeyForLocs('enrich_inat', codes),
-	enrichInatOne: (code: string) => `enrich_inat:one:${code}`,
-	// td-894144 Release B3 tag operations. One key per (op, tag[, revision]):
-	// a second click while one is queued or running dedups onto it.
-	tagConsistency: () => 'tag_consistency:global',
-	tagStage: (tag: string, revisionId: string) => `tag_stage:${tag}:r${revisionId}`,
-	tagBenchmark: (tag: string, revisionId: string) => `tag_benchmark:${tag}:r${revisionId}`,
-	tagActivate: (tag: string) => `tag_activate:${tag}`,
-	tagRetire: (tag: string) => `tag_retire:${tag}`,
-	tagRollback: (tag: string) => `tag_rollback:${tag}`
+  loadHotspots: (locCodes: readonly string[]) =>
+    dedupKeyForLocs("load_hotspots", locCodes),
+  loadRegion: (regionCode: string) => `load_region:${regionCode}`,
+  analyzeCounties: (regionCode: string) => `analyze_counties:${regionCode}`,
+  refreshLoc: (locCode: string) => `refresh_loc:${locCode}`,
+  retryLoc: (locCode: string) => `retry_loc:${locCode}`,
+  syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
+  syncTaxonomy: () => "sync_taxonomy:global",
+  scanNeedAlerts: () => "scan_need_alerts:global",
+  // Content-hashed per chunk (CODEX1 plan #2): identical chunk dedups,
+  // different codes are distinct jobs — a constant key would silently drop
+  // newly-scoped codes because enqueueJob dedup never merges payloads.
+  enrichChunk: (codes: readonly string[]) =>
+    dedupKeyForLocs("enrich_species", codes),
+  enrichAiChunk: (codes: readonly string[]) =>
+    dedupKeyForLocs("enrich_species_ai", codes),
+  enrichSpeciesOne: (code: string) => `enrich_species:one:${code}`,
+  scanEnrichment: () => "scan_enrichment:global",
+  enrichMediaChunk: (codes: readonly string[]) =>
+    dedupKeyForLocs("enrich_media", codes),
+  enrichMediaForceChunk: (codes: readonly string[]) =>
+    dedupKeyForLocs("enrich_media_force", codes),
+  enrichMediaOne: (code: string) => `enrich_media:one:${code}`,
+  enrichInatChunk: (codes: readonly string[]) =>
+    dedupKeyForLocs("enrich_inat", codes),
+  enrichInatOne: (code: string) => `enrich_inat:one:${code}`,
+  // td-894144 Release B3 tag operations. One key per (op, tag[, revision]):
+  // a second click while one is queued or running dedups onto it.
+  tagConsistency: () => "tag_consistency:global",
+  tagStage: (tag: string, revisionId: string) =>
+    `tag_stage:${tag}:r${revisionId}`,
+  tagBenchmark: (tag: string, revisionId: string) =>
+    `tag_benchmark:${tag}:r${revisionId}`,
+  tagActivate: (tag: string) => `tag_activate:${tag}`,
+  tagRetire: (tag: string) => `tag_retire:${tag}`,
+  tagRollback: (tag: string) => `tag_rollback:${tag}`,
+  tagDraftRules: (tag: string) => `tag_draft_rules:${tag}`,
+  tagDesign: (tag: string, revisionId: string) =>
+    `tag_design:${tag}:r${revisionId}`,
+  tagEvalCreate: (tag: string, revisionId: string) =>
+    `tag_eval_create:${tag}:r${revisionId}`,
+  tagGate: (setId: string) => `tag_gate:s${setId}`,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -200,28 +238,34 @@ export const dedupKeys = {
  * place names ("Token Creek", "Login Rd") never match.
  */
 const REDACT_PATTERNS: [RegExp, string][] = [
-	[/(password|passwd|pwd)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
-	// Header values redact through end-of-line (CR/LF): a Cookie header can
-	// carry MULTIPLE `name=value; name=value` pairs and every one is
-	// potentially a credential (CODEX1 Phase-2 re-review #1).
-	[/(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi, '$1: [redacted]'],
-	[/(api[_-]?key|apikey|access[_-]?token|secret)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
-	[/(username|user|login|email)\s*[=:]\s*[^\s&]+/gi, '$1=[redacted]'],
-	[/bearer\s+[a-z0-9._~+/-]+=*/gi, 'bearer [redacted]'],
-	// JSON-form: an upstream error echoing a request body as JSON carries
-	// `"password":"…"` — quoted key, quoted value (GROK Phase-2 nit).
-	[
-		/"(password|passwd|pwd|api[_-]?key|apikey|access[_-]?token|secret|authorization|cookie|username|user|login|email)"\s*:\s*"[^"]*"/gi,
-		'"$1":"[redacted]"'
-	]
+  [/(password|passwd|pwd)\s*[=:]\s*[^\s&]+/gi, "$1=[redacted]"],
+  // Header values redact through end-of-line (CR/LF): a Cookie header can
+  // carry MULTIPLE `name=value; name=value` pairs and every one is
+  // potentially a credential (CODEX1 Phase-2 re-review #1).
+  [
+    /(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi,
+    "$1: [redacted]",
+  ],
+  [
+    /(api[_-]?key|apikey|access[_-]?token|secret)\s*[=:]\s*[^\s&]+/gi,
+    "$1=[redacted]",
+  ],
+  [/(username|user|login|email)\s*[=:]\s*[^\s&]+/gi, "$1=[redacted]"],
+  [/bearer\s+[a-z0-9._~+/-]+=*/gi, "bearer [redacted]"],
+  // JSON-form: an upstream error echoing a request body as JSON carries
+  // `"password":"…"` — quoted key, quoted value (GROK Phase-2 nit).
+  [
+    /"(password|passwd|pwd|api[_-]?key|apikey|access[_-]?token|secret|authorization|cookie|username|user|login|email)"\s*:\s*"[^"]*"/gi,
+    '"$1":"[redacted]"',
+  ],
 ];
 
 export function sanitizeErrorText(text: string): string {
-	let out = text;
-	for (const [re, replacement] of REDACT_PATTERNS) {
-		out = out.replace(re, replacement);
-	}
-	return out;
+  let out = text;
+  for (const [re, replacement] of REDACT_PATTERNS) {
+    out = out.replace(re, replacement);
+  }
+  return out;
 }
 
 /**
@@ -229,14 +273,19 @@ export function sanitizeErrorText(text: string): string {
  * durable boundary (events/progress/results/errors) so no caller can forget.
  */
 export function scrubStoredValue<T>(value: T): T {
-	if (typeof value === 'string') return sanitizeErrorText(value) as unknown as T;
-	if (Array.isArray(value)) return value.map((v) => scrubStoredValue(v)) as unknown as T;
-	if (value && typeof value === 'object') {
-		return Object.fromEntries(
-			Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, scrubStoredValue(v)])
-		) as unknown as T;
-	}
-	return value;
+  if (typeof value === "string")
+    return sanitizeErrorText(value) as unknown as T;
+  if (Array.isArray(value))
+    return value.map((v) => scrubStoredValue(v)) as unknown as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        scrubStoredValue(v),
+      ]),
+    ) as unknown as T;
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,28 +299,30 @@ export function scrubStoredValue<T>(value: T): T {
  * have no single identity and answer null.
  */
 export function jobTarget(type: string, payload: unknown): string | null {
-	const p = payload as {
-		regionCode?: unknown;
-		areaCode?: unknown;
-		locs?: { code?: unknown }[];
-	} | null;
-	if (type === 'analyze_counties' && typeof p?.regionCode === 'string') {
-		return p.regionCode;
-	}
-	// A county sweep (td-372d2a) answers with the county it covers so the row
-	// that launched it can show progress; piecemeal hotspot loads still answer
-	// null — many locs, no single identity.
-	if (type === 'load_hotspots' && typeof p?.areaCode === 'string') {
-		return p.areaCode;
-	}
-	if (
-		(type === 'load_region' || type === 'refresh_loc' || type === 'retry_loc') &&
-		Array.isArray(p?.locs) &&
-		typeof p.locs[0]?.code === 'string'
-	) {
-		return p.locs[0].code;
-	}
-	return null;
+  const p = payload as {
+    regionCode?: unknown;
+    areaCode?: unknown;
+    locs?: { code?: unknown }[];
+  } | null;
+  if (type === "analyze_counties" && typeof p?.regionCode === "string") {
+    return p.regionCode;
+  }
+  // A county sweep (td-372d2a) answers with the county it covers so the row
+  // that launched it can show progress; piecemeal hotspot loads still answer
+  // null — many locs, no single identity.
+  if (type === "load_hotspots" && typeof p?.areaCode === "string") {
+    return p.areaCode;
+  }
+  if (
+    (type === "load_region" ||
+      type === "refresh_loc" ||
+      type === "retry_loc") &&
+    Array.isArray(p?.locs) &&
+    typeof p.locs[0]?.code === "string"
+  ) {
+    return p.locs[0].code;
+  }
+  return null;
 }
 
 /**
@@ -284,34 +335,43 @@ export function jobTarget(type: string, payload: unknown): string | null {
  * Every OTHER job type's events may reference individual users (alert scans,
  * syncs, enrichment) — admin-only (CODEX1 P1 on e3ac335). */
 export const FREQUENCY_JOB_TYPES: ReadonlySet<string> = new Set([
-	'load_hotspots',
-	'load_region',
-	'analyze_counties',
-	'refresh_loc',
-	'retry_loc'
+  "load_hotspots",
+  "load_region",
+  "analyze_counties",
+  "refresh_loc",
+  "retry_loc",
 ]);
 
-export function canViewJobEvents(jobType: string, role: string | undefined): boolean {
-	return role === 'admin' || FREQUENCY_JOB_TYPES.has(jobType);
+export function canViewJobEvents(
+  jobType: string,
+  role: string | undefined,
+): boolean {
+  return role === "admin" || FREQUENCY_JOB_TYPES.has(jobType);
 }
 
 export function jobLocCodes(payload: unknown): string[] {
-	const p = payload as {
-		locs?: { code?: unknown }[];
-		counties?: { code?: unknown }[];
-		allCodes?: unknown[];
-	} | null;
-	const arr = Array.isArray(p?.locs) ? p.locs : Array.isArray(p?.counties) ? p.counties : [];
-	const current = arr.map((x) => x?.code).filter((c): c is string => typeof c === 'string');
-	// A budget yield narrows payload.locs to the remaining work set; allCodes
-	// preserves the ORIGINAL coverage so the UI's covered/queued flags don't
-	// flap mid-job — a banked loc flipping back to "unloaded" between yield
-	// and the next data refresh let Load-all re-enqueue it (GROK P1 #2 on
-	// afb305d). Union, never replace: a job without allCodes behaves as before.
-	const all = Array.isArray(p?.allCodes)
-		? p.allCodes.filter((c): c is string => typeof c === 'string')
-		: [];
-	return all.length > 0 ? [...new Set([...all, ...current])] : current;
+  const p = payload as {
+    locs?: { code?: unknown }[];
+    counties?: { code?: unknown }[];
+    allCodes?: unknown[];
+  } | null;
+  const arr = Array.isArray(p?.locs)
+    ? p.locs
+    : Array.isArray(p?.counties)
+      ? p.counties
+      : [];
+  const current = arr
+    .map((x) => x?.code)
+    .filter((c): c is string => typeof c === "string");
+  // A budget yield narrows payload.locs to the remaining work set; allCodes
+  // preserves the ORIGINAL coverage so the UI's covered/queued flags don't
+  // flap mid-job — a banked loc flipping back to "unloaded" between yield
+  // and the next data refresh let Load-all re-enqueue it (GROK P1 #2 on
+  // afb305d). Union, never replace: a job without allCodes behaves as before.
+  const all = Array.isArray(p?.allCodes)
+    ? p.allCodes.filter((c): c is string => typeof c === "string")
+    : [];
+  return all.length > 0 ? [...new Set([...all, ...current])] : current;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,78 +379,91 @@ export function jobLocCodes(payload: unknown): string[] {
 // ---------------------------------------------------------------------------
 
 export interface JobProgress {
-	phase: 'starting' | 'fetching' | 'waiting_retry';
-	unitsTotal: number;
-	unitsDone: number;
-	unitsFailed: number;
-	unitsSkipped: number;
-	currentUnit?: { code: string; name: string };
-	lastError?: string;
-	round: number;
+  phase: "starting" | "fetching" | "waiting_retry";
+  unitsTotal: number;
+  unitsDone: number;
+  unitsFailed: number;
+  unitsSkipped: number;
+  currentUnit?: { code: string; name: string };
+  lastError?: string;
+  round: number;
 }
 
 export interface JobRow {
-	id: number;
-	type: string;
-	status: string;
-	/** Job inputs, resolved and validated at enqueue time. NEVER credentials. */
-	payload: unknown;
-	label: string;
-	attempts: number;
-	max_attempts: number;
-	next_retry_at: string | Date | null;
-	cancel_requested: boolean;
-	progress: JobProgress | Record<string, never>;
-	result: unknown;
-	error: string | null;
-	requested_by: number;
-	/** Joined in listJobs only (users.display_name) — absent on bare SELECTs. */
-	requested_by_name?: string;
-	enqueued_at: string | Date;
-	started_at: string | Date | null;
-	finished_at: string | Date | null;
-	heartbeat_at: string | Date | null;
+  id: number;
+  type: string;
+  status: string;
+  /** Job inputs, resolved and validated at enqueue time. NEVER credentials. */
+  payload: unknown;
+  label: string;
+  attempts: number;
+  max_attempts: number;
+  next_retry_at: string | Date | null;
+  cancel_requested: boolean;
+  progress: JobProgress | Record<string, never>;
+  result: unknown;
+  error: string | null;
+  requested_by: number;
+  /** Joined in listJobs only (users.display_name) — absent on bare SELECTs. */
+  requested_by_name?: string;
+  enqueued_at: string | Date;
+  started_at: string | Date | null;
+  finished_at: string | Date | null;
+  heartbeat_at: string | Date | null;
 }
 
 const TYPE_NAMES: Record<string, string> = {
-	load_hotspots: 'Load hotspots',
-	load_region: 'Load state data',
-	analyze_counties: 'Analyze counties',
-	refresh_loc: 'Refresh data',
-	retry_loc: 'Retry load',
-	sync_lifelist: 'Sync life list',
-	sync_taxonomy: 'Sync taxonomy',
-	scan_need_alerts: 'Need-alert scan (system)',
-	enrich_species: 'Species data',
-	scan_enrichment: 'Enrichment scan (system)',
-	enrich_species_media: 'Species media',
-	enrich_species_inat: 'Species confusion data',
-	enrich_families: 'Family descriptions',
-	tag_repair: 'Tag repair (taxonomy change)',
-	tag_consistency: 'Tag consistency check (system)',
-	tag_stage: 'Tag stage report',
-	tag_benchmark: 'Tag switch benchmark',
-	tag_activate: 'Tag activation',
-	tag_retire: 'Tag retire to legacy',
-	tag_rollback: 'Tag rollback'
+  load_hotspots: "Load hotspots",
+  load_region: "Load state data",
+  analyze_counties: "Analyze counties",
+  refresh_loc: "Refresh data",
+  retry_loc: "Retry load",
+  sync_lifelist: "Sync life list",
+  sync_taxonomy: "Sync taxonomy",
+  scan_need_alerts: "Need-alert scan (system)",
+  enrich_species: "Species data",
+  scan_enrichment: "Enrichment scan (system)",
+  enrich_species_media: "Species media",
+  enrich_species_inat: "Species confusion data",
+  enrich_families: "Family descriptions",
+  tag_repair: "Tag repair (taxonomy change)",
+  tag_consistency: "Tag consistency check (system)",
+  tag_stage: "Tag stage report",
+  tag_benchmark: "Tag switch benchmark",
+  tag_activate: "Tag activation",
+  tag_retire: "Tag retire to legacy",
+  tag_rollback: "Tag rollback",
+  tag_draft_rules: "Draft tag rules (AI)",
+  tag_design_simulation: "Tag blind-test design",
+  tag_eval_create: "Tag blind-test sample",
+  tag_gate_report: "Tag gate report",
 };
 
 export function displayName(
-	job: Pick<JobRow, 'type' | 'label'> & { payload?: unknown }
+  job: Pick<JobRow, "type" | "label"> & { payload?: unknown },
 ): string {
-	// aiOnly chunks share the enrich_species TYPE but do no wiki work — showing
-	// them as "Species data" made the annotation wave look like a mass re-fetch
-	// (Gaylon 2026-08-29). The payload is the truth; label text is not.
-	const aiOnly =
-		job.type === 'enrich_species' &&
-		(job.payload as { aiOnly?: boolean } | null | undefined)?.aiOnly === true;
-	const base = aiOnly ? 'Species notes (AI)' : (TYPE_NAMES[job.type] ?? job.type);
-	const label = job.label.trim();
-	return !label || label.toLocaleLowerCase() === base.toLocaleLowerCase() ? base : `${base} — ${label}`;
+  // aiOnly chunks share the enrich_species TYPE but do no wiki work — showing
+  // them as "Species data" made the annotation wave look like a mass re-fetch
+  // (Gaylon 2026-08-29). The payload is the truth; label text is not.
+  const aiOnly =
+    job.type === "enrich_species" &&
+    (job.payload as { aiOnly?: boolean } | null | undefined)?.aiOnly === true;
+  const base = aiOnly
+    ? "Species notes (AI)"
+    : (TYPE_NAMES[job.type] ?? job.type);
+  const label = job.label.trim();
+  return !label || label.toLocaleLowerCase() === base.toLocaleLowerCase()
+    ? base
+    : `${base} — ${label}`;
 }
 
 /** Recurring singleton types that sit 'pending' between runs by design. */
-const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts', 'enrich_families', 'tag_consistency']);
+const RECURRING_SINGLETONS = new Set([
+  "scan_enrichment",
+  "scan_need_alerts",
+  "enrich_families",
+  "tag_consistency",
+]);
 
 /**
  * A recurring singleton parked until its NEXT scheduled run (td-b7d021,
@@ -399,53 +472,57 @@ const RECURRING_SINGLETONS = new Set(['scan_enrichment', 'scan_need_alerts', 'en
  * idles, and the hub shows a dedicated "next scan" line instead.
  */
 export function isScheduledSingleton(
-	job: Pick<JobRow, 'type' | 'status' | 'next_retry_at' | 'progress'>,
-	now: Date = new Date()
+  job: Pick<JobRow, "type" | "status" | "next_retry_at" | "progress">,
+  now: Date = new Date(),
 ): boolean {
-	if (!RECURRING_SINGLETONS.has(job.type)) return false;
-	if (job.status !== 'pending') return false;
-	if (!job.next_retry_at || new Date(job.next_retry_at).getTime() <= now.getTime()) return false;
-	const phase = (job.progress as { phase?: string } | null)?.phase;
-	return phase !== 'waiting_retry';
+  if (!RECURRING_SINGLETONS.has(job.type)) return false;
+  if (job.status !== "pending") return false;
+  if (
+    !job.next_retry_at ||
+    new Date(job.next_retry_at).getTime() <= now.getTime()
+  )
+    return false;
+  const phase = (job.progress as { phase?: string } | null)?.phase;
+  return phase !== "waiting_retry";
 }
 
 export type JobPresentationState =
-	| 'complete'
-	| 'failed'
-	| 'cancelled'
-	| 'running'
-	| 'cancelling'
-	| 'paused'
-	| 'retry-scheduled'
-	| 'scheduled'
-	| 'waiting'
-	| 'queued'
-	| 'waiting-worker';
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "running"
+  | "cancelling"
+  | "paused"
+  | "retry-scheduled"
+  | "scheduled"
+  | "waiting"
+  | "queued"
+  | "waiting-worker";
 
 export interface JobPresentation {
-	state: JobPresentationState;
-	label: string;
-	explanation?: string;
-	nextAction?: string;
-	nextEligibleAt?: string;
+  state: JobPresentationState;
+  label: string;
+  explanation?: string;
+  nextAction?: string;
+  nextEligibleAt?: string;
 }
 
 export interface JobPresentationInput {
-	job: Pick<
-		JobRow,
-		| 'type'
-		| 'status'
-		| 'label'
-		| 'payload'
-		| 'cancel_requested'
-		| 'next_retry_at'
-		| 'progress'
-	>;
-	workerAlive: boolean;
-	workerPauseRequested: boolean;
-	familyPaused: boolean;
-	familyBlockedUntil: string | Date | null;
-	now?: Date;
+  job: Pick<
+    JobRow,
+    | "type"
+    | "status"
+    | "label"
+    | "payload"
+    | "cancel_requested"
+    | "next_retry_at"
+    | "progress"
+  >;
+  workerAlive: boolean;
+  workerPauseRequested: boolean;
+  familyPaused: boolean;
+  familyBlockedUntil: string | Date | null;
+  now?: Date;
 }
 
 /**
@@ -454,71 +531,149 @@ export interface JobPresentationInput {
  * the reason a person should wait, retry, or open the hub.
  */
 export function presentJob(input: JobPresentationInput): JobPresentation {
-	const { job, workerAlive, workerPauseRequested, familyPaused, familyBlockedUntil } = input;
-	const now = input.now ?? new Date();
-	const label = displayName(job);
-	if (job.status === 'succeeded') return { state: 'complete', label };
-	if (job.status === 'failed') return { state: 'failed', label, nextAction: 'Retry from the load details' };
-	if (job.status === 'cancelled') return { state: 'cancelled', label };
-	if (job.status === 'running') {
-		if (job.cancel_requested) return { state: 'cancelling', label, explanation: 'Stopping after the current work.' };
-		if (!workerAlive) {
-			return { state: 'running', label, explanation: 'Worker availability is unconfirmed; progress will catch up.' };
-		}
-		if (workerPauseRequested) {
-			return { state: 'running', label, explanation: 'Pause requested; this job will stop after the current work.' };
-		}
-		if (job.type === 'enrich_families' && familyPaused) {
-			return { state: 'running', label, explanation: 'Family descriptions are paused; current work will stop after this item.' };
-		}
-		return { state: 'running', label };
-	}
-	if (job.cancel_requested) return { state: 'cancelling', label, explanation: 'This queued job will not start.' };
+  const {
+    job,
+    workerAlive,
+    workerPauseRequested,
+    familyPaused,
+    familyBlockedUntil,
+  } = input;
+  const now = input.now ?? new Date();
+  const label = displayName(job);
+  if (job.status === "succeeded") return { state: "complete", label };
+  if (job.status === "failed")
+    return {
+      state: "failed",
+      label,
+      nextAction: "Retry from the load details",
+    };
+  if (job.status === "cancelled") return { state: "cancelled", label };
+  if (job.status === "running") {
+    if (job.cancel_requested)
+      return {
+        state: "cancelling",
+        label,
+        explanation: "Stopping after the current work.",
+      };
+    if (!workerAlive) {
+      return {
+        state: "running",
+        label,
+        explanation:
+          "Worker availability is unconfirmed; progress will catch up.",
+      };
+    }
+    if (workerPauseRequested) {
+      return {
+        state: "running",
+        label,
+        explanation:
+          "Pause requested; this job will stop after the current work.",
+      };
+    }
+    if (job.type === "enrich_families" && familyPaused) {
+      return {
+        state: "running",
+        label,
+        explanation:
+          "Family descriptions are paused; current work will stop after this item.",
+      };
+    }
+    return { state: "running", label };
+  }
+  if (job.cancel_requested)
+    return {
+      state: "cancelling",
+      label,
+      explanation: "This queued job will not start.",
+    };
 
-	const retryAt = job.next_retry_at ? new Date(job.next_retry_at) : null;
-	const retryInFuture = retryAt != null && retryAt.getTime() > now.getTime();
-	if (workerPauseRequested) {
-		return { state: 'paused', label, explanation: 'The background worker is paused; queued work will resume when it is resumed.' };
-	}
-	if (job.type === 'enrich_families' && familyPaused) {
-		return { state: 'paused', label, explanation: 'Family descriptions are paused; other loads continue normally.' };
-	}
-	const blockedUntil = familyBlockedUntil ? new Date(familyBlockedUntil) : null;
-	if (job.type === 'enrich_families' && blockedUntil && blockedUntil.getTime() > now.getTime()) {
-		return { state: 'waiting', label, explanation: 'Family descriptions are waiting for their next eligible attempt.', nextEligibleAt: blockedUntil.toISOString() };
-	}
-	if (retryInFuture && (job.progress as { phase?: string } | null)?.phase === 'waiting_retry') {
-		return { state: 'retry-scheduled', label, explanation: 'Waiting before retrying this load.', nextEligibleAt: retryAt.toISOString() };
-	}
-	if (retryInFuture) {
-		return { state: 'scheduled', label, explanation: 'Scheduled for its next eligible run.', nextEligibleAt: retryAt.toISOString() };
-	}
-	if (!workerAlive) return { state: 'waiting-worker', label, explanation: 'Waiting for the background worker to return.' };
-	return { state: 'queued', label };
+  const retryAt = job.next_retry_at ? new Date(job.next_retry_at) : null;
+  const retryInFuture = retryAt != null && retryAt.getTime() > now.getTime();
+  if (workerPauseRequested) {
+    return {
+      state: "paused",
+      label,
+      explanation:
+        "The background worker is paused; queued work will resume when it is resumed.",
+    };
+  }
+  if (job.type === "enrich_families" && familyPaused) {
+    return {
+      state: "paused",
+      label,
+      explanation:
+        "Family descriptions are paused; other loads continue normally.",
+    };
+  }
+  const blockedUntil = familyBlockedUntil ? new Date(familyBlockedUntil) : null;
+  if (
+    job.type === "enrich_families" &&
+    blockedUntil &&
+    blockedUntil.getTime() > now.getTime()
+  ) {
+    return {
+      state: "waiting",
+      label,
+      explanation:
+        "Family descriptions are waiting for their next eligible attempt.",
+      nextEligibleAt: blockedUntil.toISOString(),
+    };
+  }
+  if (
+    retryInFuture &&
+    (job.progress as { phase?: string } | null)?.phase === "waiting_retry"
+  ) {
+    return {
+      state: "retry-scheduled",
+      label,
+      explanation: "Waiting before retrying this load.",
+      nextEligibleAt: retryAt.toISOString(),
+    };
+  }
+  if (retryInFuture) {
+    return {
+      state: "scheduled",
+      label,
+      explanation: "Scheduled for its next eligible run.",
+      nextEligibleAt: retryAt.toISOString(),
+    };
+  }
+  if (!workerAlive)
+    return {
+      state: "waiting-worker",
+      label,
+      explanation: "Waiting for the background worker to return.",
+    };
+  return { state: "queued", label };
 }
 
 export function durationMs(
-	job: Pick<JobRow, 'started_at' | 'finished_at'>,
-	now: Date = new Date()
+  job: Pick<JobRow, "started_at" | "finished_at">,
+  now: Date = new Date(),
 ): number | null {
-	if (!job.started_at) return null;
-	const start = new Date(job.started_at).getTime();
-	const end = job.finished_at ? new Date(job.finished_at).getTime() : now.getTime();
-	return Math.max(0, end - start);
+  if (!job.started_at) return null;
+  const start = new Date(job.started_at).getTime();
+  const end = job.finished_at
+    ? new Date(job.finished_at).getTime()
+    : now.getTime();
+  return Math.max(0, end - start);
 }
 
 /** Status → semantic color CLASS name (color + text label per cs.md, never color alone). */
-export function statusColor(status: string): 'ok' | 'busy' | 'warn' | 'error' | 'muted' {
-	switch (status) {
-		case 'succeeded':
-			return 'ok';
-		case 'running':
-			return 'busy';
-		case 'pending':
-			return 'warn';
-		case 'failed':
-			return 'error';
-		default:
-			return 'muted';
-	}
+export function statusColor(
+  status: string,
+): "ok" | "busy" | "warn" | "error" | "muted" {
+  switch (status) {
+    case "succeeded":
+      return "ok";
+    case "running":
+      return "busy";
+    case "pending":
+      return "warn";
+    case "failed":
+      return "error";
+    default:
+      return "muted";
+  }
 }

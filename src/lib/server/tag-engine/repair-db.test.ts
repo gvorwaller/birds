@@ -39,6 +39,7 @@ import {
   tagRepairState,
 } from "./repair";
 import { TagTxRollback, withTagWriteTx } from "./runtime";
+import { censusGate, cleanupEvalSets } from "./engine-fixture.test-helper";
 import { scannerRev } from "./segment";
 
 const dbUp = await query("SELECT 1")
@@ -99,6 +100,7 @@ const reports: Record<string, { gate: string; bench: string }> = {};
 const proposals: string[] = [];
 const activationIds = new Set<number>();
 const jobIds = new Set<number>();
+const evalSets = { setIds: new Set<string>() };
 let legacyCarrierBefore: { species_code: string; tags: string[] }[] = [];
 let realCarriersBefore: {
   species_code: string;
@@ -299,16 +301,11 @@ async function approveAndActivate(tag: string) {
         [p.id, adminId],
       )
     ).rows[0].id;
-    const rep = async (kind: string) =>
-      (
-        await query<{ id: string }>(
-          `SELECT record_tag_report($1, $2, $3, '{"passed":true}'::jsonb)::text AS id`,
-          [kind, tag, revisions[tag]],
-        )
-      ).rows[0].id;
-    reports[tag] = { gate: await rep("gate"), bench: await rep("benchmark") };
   }
   await stageRevision(tag, revisions[tag]);
+  // A real frozen census blind-test set + gate (plan rev 25: activation
+  // verifies gate → frozen set → frame hash inside the switch).
+  reports[tag] = await censusGate(tag, revisions[tag], adminId, evalSets);
   const activationId = await activateRevision({
     tag,
     revisionId: revisions[tag],
@@ -345,6 +342,7 @@ async function cleanup() {
   if (jobIds.size)
     await query("DELETE FROM jobs WHERE id = ANY($1::bigint[])", [[...jobIds]]);
   const revs = Object.values(revisions);
+  await cleanupEvalSets(evalSets.setIds);
   if (revs.length)
     await asOwner(
       "DELETE FROM species_tag_state WHERE revision_id = ANY($1::bigint[])",

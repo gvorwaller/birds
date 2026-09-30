@@ -16,68 +16,76 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
 .src{color:var(--muted);font-size:0.8rem;margin-top:24px}
 </style></head><body><main><article>
 <h1>Species tags from evidence rules — td-894144 (plan)</h1>
-<p><strong>Status:</strong> PLAN rev 21 (2026-09-29, CC). <strong>Release A is DEPLOYED</strong> (6f14163). <strong>B1 and B2 are BUILT</strong> (uncommitted on <code>feat/td-894144-release-b</code>; 2,196 tests pass). The B2d benchmark shows the owned-tag taxonomy re-materialization exceeds the lock budget, so rev 21 specifies its <strong>generation-keyed batched repair</strong> branch for review (per rev 13's rule). CODEX1 reviewed B2 as built: 2 P1 and 2 P2 findings, all fixed in place (2,198 tests pass). Activation, wiki writes and the pilot are within budget.</p>
+<p><strong>Status:</strong> PLAN rev 27 (2026-09-29, CC). <strong>Release A is DEPLOYED</strong> (6f14163). <strong>B1–B3 are DEPLOYED</strong> (fa45832, 2026-09-30 00:51 UTC; no tag owned yet). <strong>B4 (the open-ocean pilot): rev 27 spec below (owner decisions: pragmatic gate, labels = what the article says) for CODEX1 review.</strong></p>
 <p><strong>Governing principle (owner, 2026-09-26):</strong> <em>AI is never used to generate, drop or change a tag. Only the rule set does,</em> and later a blind-tested classifier. The AI's only tag-related job is to <strong>propose rules</strong>, which become loadable only through a separate owner-run approval step. Everything else AI does in the app is unchanged: field craft, similar-species notes, family descriptions, guidance.</p>
-<p><strong>Revision history:</strong>
-- Rev 1–5: from a paid AI re-tag to evidence rules; owner decisions; Phase 2.
-- Rev 6: per-tag ownership.
-- Rev 7: CODEX1's rev-6 fixes.
-- <strong>Rev 21:</strong> the repair workset is the union of all four drift classes and the CAS is "workset empty" (self-healing loop); a distinct cancellable <code>tag_repair</code> job type; the atomic job + event insert with the parent requester; retire-with-a-second-tag tests (CODEX1 rev-20: 2 P1, 1 P2).
-- <strong>Rev 20:</strong> the repair branch becomes a generation/compare-and-swap contract, with a generation-qualified job key inserted atomically with the bump (fixing CODEX1's P1 finalization-window race). Retire-to-legacy stays available while a repair is pending (CODEX1 P2).
-- <strong>Rev 19:</strong> the B2d benchmark results, plus the batched-repair design for a taxonomy name change while tags are owned.
-- <strong>Rev 18:</strong> a mechanical token rule (the post token only once it exists); consistency batches call the single path (CODEX1 rev-17 P1s).
-- <strong>Rev 17:</strong> a per-failure-key lock before the post-lock token; <code>preAttemptNo</code>/<code>postAttemptNo</code> named in every path (CODEX1 rev-16 P1s).
-- <strong>Rev 16:</strong> two-token failure ordering, pre-lock and post-lock (CODEX1 rev-15 P1).
-- <strong>Rev 15:</strong> CODEX1's rev-14 P1s closed.
-  - One executable transaction preamble (timeouts, then the advisory lock).
-  - The attempt number is allocated before the locked transaction.
-  - Consistency repair batches run under the exclusive lock.
-- <strong>Rev 14:</strong> CODEX1's rev-13 findings closed.
-  - The obsolete rev-8 Release B design is deleted; its still-valid parts are kept as "Release B: dependencies, availability and approval".
-  - The artifact hash is maintained by a trigger.
-  - Failure-log ordering uses a DB attempt sequence, with success tombstones.
-  - A scanner-revision guard.
-  - The consistency job recomputes inputs first.
-  - Coverage "extras" are defined.
-  - A <code>transaction_timeout</code> hard cap.
-  - UUID ids for directly inserted tables.
-- <strong>Rev 13:</strong> CODEX1's rev-12 findings closed.
-  - The focal-exemption hash is part of the input.
-  - <code>replaceTaxonomy</code> takes the <strong>exclusive</strong> lock.
-  - An explicit trust boundary (owner: Option A).
-  - Idempotent state recording.
-  - The consistency job keys on <code>input_hash</code>.
-  - An exact hash-byte contract.
-  - The end-to-end benchmark decides the transaction shape.
-  - Monotone failure log.
-  - Grant-matrix completion.
-- <strong>Rev 12:</strong> B2 respecified after CODEX1's rev-11 review.
-  - A per-species <strong>input context</strong> (text + taxon + lexicon + scanner) with an authoritative current-input pointer.
-  - Universe = stored article, not wiki status.
-  - A global lexicon change re-materializes everything.
-  - New tables revoke inherited privileges first.
-  - The DB recomputes the canonical artifact hash.
-  - One executable activation protocol.
-  - A failure-log table.
-  - A type-level lock guarantee.
-- <strong>Rev 11:</strong> the Release B implementation spec.
-  - B1 as built: engine decisions and measurements.
-  - B2: a simpler universe (members = species with a stored article), and the lock entry points listed by function name.
-  - The migration 0066 outline, B3 (Tags tab and consistency job) and B4 (pilot flow) wiring.
-- <strong>Rev 10:</strong> owner requests.
-  - The <strong>admin Tags tab</strong> covers status, reports, labelling, approval, activation and rollback.
-  - The <strong>nightly tag consistency job</strong> is an independent safety net.
-  - <strong>No owner command line:</strong> every owner action is an admin page or a worker job. Rule proposals and revisions live in the database, not repo files. Phase 2's Mac training becomes a small local worker app with buttons.
-- <strong>Rev 9:</strong> folds CODEX1's rev-8 review.
-  - The legacy provenance invariant becomes a cutover snapshot.
-  - The truthful Release A goal and the full availability contract (Guide, detail page, help copy).
-  - An explicit writer and ACL test matrix; the static scan's scope.
-  - The write-cycle invariant and corpus-hash encoding.
-  - Release B and Phase 2 pre-review notes.
-- <strong>Rev 8:</strong> folds CODEX1's rev-7 high review.
-  - <strong>Release A is cut to the lean safety release</strong> (CODEX1 P3): remove AI tags, protected legacy copy, DB-derived search index, <strong>correct grants</strong>, per-tag "not evaluated", and byte-identity proofs. No engine machinery.
-  - <strong>Release B</strong> carries the engine, with the rev-7 P1 fixes: grants and the definer routine, an immutable state key, the complete universe and lock protocol with lock-at-BEGIN, and the corrected switch candidate set.
-  - <strong>Phase 2</strong> gets the model-drift and re-score queue design.</p>
+<p><strong>Revision history:</strong></p>
+<ul>
+<li>Rev 1–5: from a paid AI re-tag to evidence rules; owner decisions; Phase 2.</li>
+<li>Rev 6: per-tag ownership.</li>
+<li>Rev 7: CODEX1's rev-6 fixes.</li>
+<li><strong>Rev 27:</strong> CODEX1 rev-26 fixes: a recorded design is recomputed, never trusted; an explicit revoke on tag_eval_frame_rows; the exact gate JSON with a pinned DB hash; pi and selectedCodes stored and verified; a single-source evaluator version with code-point sorting and a pinned design hash.</li>
+<li><strong>Rev 26:</strong> CODEX1 rev-25 fixes. The frame bytes carry the masked names and the page is built from input-covered normalized text (rename drift is bound); the exact trailing-<code>|</code> byte form; the gates hash is recomputed in the switch; the label table schema and reuse and freeze semantics are written out; the savepoint dry-run evidence path; missing-state and infeasible-design hard stops; the algorithm is named sha256-rank-v1; ASCII codes asserted.</li>
+<li><strong>Rev 25:</strong> CODEX1 rev-24 fixes: the stored gate JSON is the only pass authority (named cases included); label identity covers version, deny list and cue words; the frame-hash definition is unified (TS mirrors SQL bytes); status and the marine proxy are carried so C1/C2/U swaps are rejected; the definer recomputes the ranked sample; lost-none retention; sizing worded as a gap target; the test matrix is updated.</li>
+<li><strong>Rev 24:</strong> B4 per CODEX1's rev-23/23a reviews. Retention is of legacy's real positives (K_A over legacy positives); exact hypergeometric bounds with a Bonferroni split replace the heuristics; worst-case unsure per claim; undefined denominators fail; strict sample validation; sizing on the same bounds; the HMAC-rank sampling contract in one transaction; a DB-canonical frame hash verified inside the activation switch; dry-run switch replaces provisional reports; one authoritative gate JSON; stale sections reconciled.</li>
+<li><strong>Rev 23:</strong> B4 rewritten per CODEX1's rev-22 review and two owner decisions: pragmatic two-claim gate; labels measure the article, not truth. Fixes estimators from flags, a strict frame hash, owner-only cross-check recording, definer-only label writes with lock ordering, revision-independent masked evaluator text with label reuse, exact Rao–Wu weights, and must-not named cases as gate conditions. <strong>Rev 23a:</strong> a coverage simulation showed the Rao–Wu percentile bootstrap errs optimistic at the lower bounds the gate uses, so precision uses Wilson at the Kish n_eff and retention uses a log-ratio with Agresti–Coull-smoothed variances.</li>
+<li><strong>Rev 22:</strong> the B4 implementation spec: authoring set, AI drafting, cross-check recording, eval schema, strata, design simulation, sampling, labelling, adjudication, freeze and gate report.</li>
+<li><strong>Rev 21:</strong> the repair workset is the union of all four drift classes and the CAS is "workset empty" (self-healing loop); a distinct cancellable <code>tag_repair</code> job type; the atomic job + event insert with the parent requester; retire-with-a-second-tag tests (CODEX1 rev-20: 2 P1, 1 P2).</li>
+<li><strong>Rev 20:</strong> the repair branch becomes a generation/compare-and-swap contract, with a generation-qualified job key inserted atomically with the bump (fixing CODEX1's P1 finalization-window race). Retire-to-legacy stays available while a repair is pending (CODEX1 P2).</li>
+<li><strong>Rev 19:</strong> the B2d benchmark results, plus the batched-repair design for a taxonomy name change while tags are owned.</li>
+<li><strong>Rev 18:</strong> a mechanical token rule (the post token only once it exists); consistency batches call the single path (CODEX1 rev-17 P1s).</li>
+<li><strong>Rev 17:</strong> a per-failure-key lock before the post-lock token; <code>preAttemptNo</code>/<code>postAttemptNo</code> named in every path (CODEX1 rev-16 P1s).</li>
+<li><strong>Rev 16:</strong> two-token failure ordering, pre-lock and post-lock (CODEX1 rev-15 P1).</li>
+<li><strong>Rev 15:</strong> CODEX1's rev-14 P1s closed.</li>
+<li>One executable transaction preamble (timeouts, then the advisory lock).</li>
+<li>The attempt number is allocated before the locked transaction.</li>
+<li>Consistency repair batches run under the exclusive lock.</li>
+<li><strong>Rev 14:</strong> CODEX1's rev-13 findings closed.</li>
+<li>The obsolete rev-8 Release B design is deleted; its still-valid parts are kept as "Release B: dependencies, availability and approval".</li>
+<li>The artifact hash is maintained by a trigger.</li>
+<li>Failure-log ordering uses a DB attempt sequence, with success tombstones.</li>
+<li>A scanner-revision guard.</li>
+<li>The consistency job recomputes inputs first.</li>
+<li>Coverage "extras" are defined.</li>
+<li>A <code>transaction_timeout</code> hard cap.</li>
+<li>UUID ids for directly inserted tables.</li>
+<li><strong>Rev 13:</strong> CODEX1's rev-12 findings closed.</li>
+<li>The focal-exemption hash is part of the input.</li>
+<li><code>replaceTaxonomy</code> takes the <strong>exclusive</strong> lock.</li>
+<li>An explicit trust boundary (owner: Option A).</li>
+<li>Idempotent state recording.</li>
+<li>The consistency job keys on <code>input_hash</code>.</li>
+<li>An exact hash-byte contract.</li>
+<li>The end-to-end benchmark decides the transaction shape.</li>
+<li>Monotone failure log.</li>
+<li>Grant-matrix completion.</li>
+<li><strong>Rev 12:</strong> B2 respecified after CODEX1's rev-11 review.</li>
+<li>A per-species <strong>input context</strong> (text + taxon + lexicon + scanner) with an authoritative current-input pointer.</li>
+<li>Universe = stored article, not wiki status.</li>
+<li>A global lexicon change re-materializes everything.</li>
+<li>New tables revoke inherited privileges first.</li>
+<li>The DB recomputes the canonical artifact hash.</li>
+<li>One executable activation protocol.</li>
+<li>A failure-log table.</li>
+<li>A type-level lock guarantee.</li>
+<li><strong>Rev 11:</strong> the Release B implementation spec.</li>
+<li>B1 as built: engine decisions and measurements.</li>
+<li>B2: a simpler universe (members = species with a stored article), and the lock entry points listed by function name.</li>
+<li>The migration 0066 outline, B3 (Tags tab and consistency job) and B4 (pilot flow) wiring.</li>
+<li><strong>Rev 10:</strong> owner requests.</li>
+<li>The <strong>admin Tags tab</strong> covers status, reports, labelling, approval, activation and rollback.</li>
+<li>The <strong>nightly tag consistency job</strong> is an independent safety net.</li>
+<li><strong>No owner command line:</strong> every owner action is an admin page or a worker job. Rule proposals and revisions live in the database, not repo files. Phase 2's Mac training becomes a small local worker app with buttons.</li>
+<li><strong>Rev 9:</strong> folds CODEX1's rev-8 review.</li>
+<li>The legacy provenance invariant becomes a cutover snapshot.</li>
+<li>The truthful Release A goal and the full availability contract (Guide, detail page, help copy).</li>
+<li>An explicit writer and ACL test matrix; the static scan's scope.</li>
+<li>The write-cycle invariant and corpus-hash encoding.</li>
+<li>Release B and Phase 2 pre-review notes.</li>
+<li><strong>Rev 8:</strong> folds CODEX1's rev-7 high review.</li>
+<li><strong>Release A is cut to the lean safety release</strong> (CODEX1 P3): remove AI tags, protected legacy copy, DB-derived search index, <strong>correct grants</strong>, per-tag "not evaluated", and byte-identity proofs. No engine machinery.</li>
+<li><strong>Release B</strong> carries the engine, with the rev-7 P1 fixes: grants and the definer routine, an immutable state key, the complete universe and lock protocol with lock-at-BEGIN, and the corrected switch candidate set.</li>
+<li><strong>Phase 2</strong> gets the model-drift and re-score queue design.</li>
+</ul>
 <h2>Owner decisions (2026-09-26 to 28)</h2>
 <ol>
 <li>AI never produces tags; everything else AI does is unchanged.</li>
@@ -90,126 +98,154 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
 <li><strong>No command line for the owner (2026-09-28).</strong> Every validation, review, approval, activation, rollback and report the owner needs is in the main app (admin) or a small worker app. Agents may still use scripts for their own work (tests, cross-check recording, deploys), but no plan step may require the owner to type a command.</li>
 </ol>
 <h2>Context</h2>
-<p>The Field Guide's <strong>Habitat: open ocean</strong> filter returns American Kestrel (Gaylon, 2026-09-24).
-- <strong>How tags are made today:</strong> one AI call per species reads the stored Wikipedia prose and picks ≤12 tags. It draws on the article <em>and</em> its training knowledge, which can't be separated. The kestrel's article never mentions sea or ocean.
-- <strong>Production measurements (2026-09-26):</strong>
-  - open ocean: 348 tagged, 45 in land-bird orders;
-  - tide-independent: 174 of 424 on birds with no coastal-habitat tag;
-  - odd-order tags are often true;
-  - a naive keyword check confirms 256 of 303 marine-order open-ocean tags and 6 of 45 land-order ones, but as a generator it would add 224 land birds.
-- <strong>Runtime:</strong> production runs Node 22.22.0 with ICU 77.1 / Unicode 16.0; the Mac runs Node 24.3 with ICU 77.1.</p>
-<p><strong>Code facts:</strong>
-- <strong>AI callers:</strong> <code>generateSpeciesAnnotation</code> is called by the worker (<code>job-handlers.ts:1528-1554</code>) and by admin Compare (non-persisting). The only persisted AI-tag handoff is <code>upsertAiData</code> (<code>species-enrichment.ts:306</code>, called at <code>job-handlers.ts:1649-1659</code>). CODEX1 confirmed there's no other AI path.
-- <strong>Grants:</strong> <code>0002_grants.sql</code> gives <code>birds_app</code> <strong>table-level</strong> <code>SELECT, INSERT, UPDATE, DELETE</code> on all tables, plus <code>ALTER DEFAULT PRIVILEGES</code> for future tables. A column-level REVOKE doesn't override a table-level grant. Migrations run as <code>birds_owner</code>; the app and worker run as <code>birds_app</code> (<code>migrate_pg.sh:83-107</code>, <code>db.ts:11-16</code>).
-- <strong><code>species_enrichment</code> writers:</strong>
-  - <code>upsertResolution</code> (:118);
-  - <code>upsertWikiOk</code> (:209);
-  - <code>markWikiNoArticle</code> (:257);
-  - <code>markWikiError</code> (:279);
-  - <code>upsertAiData</code> (:306) and <code>markAiError</code> (:486);
-  - similar-hash resets (:198, :1809, :2141) and similar reconcile (:1742, :1835);
-  - <code>upsertMediaOk</code> (:1167) and <code>markMediaError</code> (:1228);
-  - iNat ok, no-mapping and error (:2223, :2270, :2305, plus :2242, :2283);
-  - <code>job-handlers.ts:1662</code>;
-  - <code>replaceTaxonomy</code> (<code>taxonomy-sync.ts:88-126</code>), which replaces <code>taxonomy_cache</code> membership.
-- <strong>Search index:</strong> <code>search_tsv</code> = tags (A) + extract and field craft (B) + section text (C), built today by <code>tsvExpr</code> inside each statement. <strong>CODEX1 verified a DB-derived version on all 10,898 <code>birds_test</code> rows: zero mismatches.</strong></p>
+<p>The Field Guide's <strong>Habitat: open ocean</strong> filter returns American Kestrel (Gaylon, 2026-09-24).</p>
+<ul>
+<li><strong>How tags are made today:</strong> one AI call per species reads the stored Wikipedia prose and picks ≤12 tags. It draws on the article <em>and</em> its training knowledge, which can't be separated. The kestrel's article never mentions sea or ocean.</li>
+<li><strong>Production measurements (2026-09-26):</strong></li>
+<li>open ocean: 348 tagged, 45 in land-bird orders;</li>
+<li>tide-independent: 174 of 424 on birds with no coastal-habitat tag;</li>
+<li>odd-order tags are often true;</li>
+<li>a naive keyword check confirms 256 of 303 marine-order open-ocean tags and 6 of 45 land-order ones, but as a generator it would add 224 land birds.</li>
+<li><strong>Runtime:</strong> production runs Node 22.22.0 with ICU 77.1 / Unicode 16.0; the Mac runs Node 24.3 with ICU 77.1.</li>
+</ul>
+<p><strong>Code facts:</strong></p>
+<ul>
+<li><strong>AI callers:</strong> <code>generateSpeciesAnnotation</code> is called by the worker (<code>job-handlers.ts:1528-1554</code>) and by admin Compare (non-persisting). The only persisted AI-tag handoff is <code>upsertAiData</code> (<code>species-enrichment.ts:306</code>, called at <code>job-handlers.ts:1649-1659</code>). CODEX1 confirmed there's no other AI path.</li>
+<li><strong>Grants:</strong> <code>0002_grants.sql</code> gives <code>birds_app</code> <strong>table-level</strong> <code>SELECT, INSERT, UPDATE, DELETE</code> on all tables, plus <code>ALTER DEFAULT PRIVILEGES</code> for future tables. A column-level REVOKE doesn't override a table-level grant. Migrations run as <code>birds_owner</code>; the app and worker run as <code>birds_app</code> (<code>migrate_pg.sh:83-107</code>, <code>db.ts:11-16</code>).</li>
+<li><strong><code>species_enrichment</code> writers:</strong></li>
+<li><code>upsertResolution</code> (:118);</li>
+<li><code>upsertWikiOk</code> (:209);</li>
+<li><code>markWikiNoArticle</code> (:257);</li>
+<li><code>markWikiError</code> (:279);</li>
+<li><code>upsertAiData</code> (:306) and <code>markAiError</code> (:486);</li>
+<li>similar-hash resets (:198, :1809, :2141) and similar reconcile (:1742, :1835);</li>
+<li><code>upsertMediaOk</code> (:1167) and <code>markMediaError</code> (:1228);</li>
+<li>iNat ok, no-mapping and error (:2223, :2270, :2305, plus :2242, :2283);</li>
+<li><code>job-handlers.ts:1662</code>;</li>
+<li><code>replaceTaxonomy</code> (<code>taxonomy-sync.ts:88-126</code>), which replaces <code>taxonomy_cache</code> membership.</li>
+<li><strong>Search index:</strong> <code>search_tsv</code> = tags (A) + extract and field craft (B) + section text (C), built today by <code>tsvExpr</code> inside each statement. <strong>CODEX1 verified a DB-derived version on all 10,898 <code>birds_test</code> rows: zero mismatches.</strong></li>
+</ul>
 <h2>Release A: safety only. Implement next.</h2>
 <p><strong>Goal (truthful, per CODEX1):</strong> close the AI-to-tags path <em>now</em>, with <strong>no change to any existing tag bytes, legacy chips, tag-filter matches or tide-gate decisions.</strong></p>
-<p>Some things users <em>can</em> see do change:
-- species enriched after the cutover gain no tags, and show "Tags not yet available";
-- the Guide shows an unknown count when a tag filter is active;
-- admin Compare no longer shows tags;
-- the help copy is updated.</p>
-<p><strong>A1. Remove tags from every AI path.</strong>
-- Prompt: the vocabulary block and tag instructions go.
-- <code>buildOutputSchema</code>, the <code>SpeciesAnnotation</code> type and <code>parseAnnotation</code> no longer handle tags; the worker call no longer passes them.
-- <code>upsertAiData</code> becomes <code>upsertAiProseData</code>, with no tags parameter and no tags in its SQL.
-- Admin Compare's response type can't carry tags.
-- <code>markAiError</code> stays as is (it never wrote tags).</p>
-<p><strong>A2. Protected legacy copy (migration 0065).</strong>
-- <code>ALTER TABLE species_enrichment ADD COLUMN legacy_tags TEXT[]</code>.
-- Populate it <strong>only where <code>ai_generated_at IS NOT NULL</code> at cutover</strong> with <code>legacy_tags := tags</code>, byte-for-byte. Otherwise NULL, meaning unknown and never "evaluated empty".
-- <strong>This is a cutover snapshot, not a lasting predicate:</strong> after Release A, <code>upsertAiProseData</code> keeps stamping <code>ai_generated_at</code> for new prose while <code>legacy_tags</code> stays NULL. The migration records the pre/post counts and hash of the populated set in td-894144.
-- <em>Then</em> install trigger <code>species_enrichment_legacy_guard</code> (BEFORE INSERT OR UPDATE): reject an INSERT with non-NULL <code>legacy_tags</code>, and an UPDATE where <code>NEW.legacy_tags IS DISTINCT FROM OLD.legacy_tags</code>.</p>
-<p><strong>A3. The search index is derived by the database.</strong>
-- One function, <code>species_search_vector(tags, extract, field_craft, sections) RETURNS tsvector</code>: IMMUTABLE and schema-qualified, with exactly today's weighting and the <code>'english'</code> config.
-- Trigger <code>species_enrichment_search_tsv</code> (BEFORE INSERT OR UPDATE <strong>OF</strong> <code>tags, wikipedia_extract, field_craft, wikipedia_sections, search_tsv</code>) sets <code>NEW.search_tsv</code> from that function. Any value a caller supplies is overwritten. Unrelated media, iNat or status updates don't recompute the index.
-- The migration aborts if any row has <code>search_tsv IS DISTINCT FROM species_search_vector(…)</code>. It also logs an ordered corpus hash.
-- <strong>All writers stop computing <code>search_tsv</code>,</strong> and <code>tsvExpr</code> is deleted.
-- Trigger names are chosen for deterministic firing order: the legacy guard runs first; neither trigger changes the other's inputs.</p>
-<p><strong>A4. Correct grants.</strong> This is the DB side of the AI barrier.
-- <code>REVOKE INSERT, UPDATE ON species_enrichment FROM birds_app</code> (table level).
-- Then <code>GRANT INSERT (…)</code> and <code>GRANT UPDATE (…)</code> on <strong>every column except <code>tags</code>, <code>legacy_tags</code>, <code>search_tsv</code></strong>. The list is generated in the migration from <code>information_schema.columns</code>, and logged.
-- <code>SELECT</code> and <code>DELETE</code> are unchanged. A DELETE cascades normally.
-- <strong>Rule for future migrations:</strong> a column added to <code>species_enrichment</code> is <strong>denied to <code>birds_app</code> until a migration explicitly grants it.</strong> That's documented in the migration header, not a universal "every column gets both" policy.
-- <strong>Grant assertions</strong> (a test against the catalog):
-  - no table-level INSERT or UPDATE for <code>birds_app</code>;
-  - <code>tags</code>, <code>legacy_tags</code> and <code>search_tsv</code> have no column INSERT or UPDATE;
-  - every other <em>current</em> column has both;
-  - SELECT and DELETE remain;
-  - related table and sequence privileges are unchanged (<code>species_enrichment</code> has no sequence; <code>species_media</code>'s sequence grant is untouched).
-- With nothing writing <code>tags</code> in Release A, new rows get the default <code>'{}'</code> and existing rows keep their values.</p>
-<p><strong>A5. Per-tag "not evaluated": the full contract.</strong>
-- In Release A, a species with <code>legacy_tags IS NULL</code> has <strong>all</strong> tags unknown. That includes rows created or annotated after the cutover.
-- <strong>The Guide</strong> (<code>searchGuide</code>, <code>species-enrichment.ts:1000-1033</code>, and <code>GuideSpeciesRow.svelte</code>):
-  - <strong>per row:</strong> <code>tags_available: boolean</code>, and unavailable rows show "Tags not yet available" instead of chips;
-  - <strong>per query:</strong> <code>unknown_count</code>, the number of species matching every <strong>non-tag</strong> predicate (name/prose search, family, geography, interest, list scope), counted <strong>before</strong> the tag predicate and <strong>before</strong> pagination. It's returned even when the matched page is empty.
-  - When a tag filter is active and <code>unknown_count &gt; 0</code>, the page shows "N species not yet evaluated for these tags".
-  - Unknown species never match a tag filter and are never counted as "none".
-- <strong>The species detail page</strong> (<code>getEnrichment</code> / <code>EnrichmentRow</code> and the "Finding this bird" card): <code>tags_available</code>, with the same unavailable copy. The tide gate (<code>isTideTagged</code>) reads effective tags as before; an unavailable species has none, which is its current behaviour.
-- <strong>Copy:</strong> update the Field Guide empty state and filter help (today it says tags come from AI and are "still filling in"), and review Help and About per the repository rules. They should say tags are being moved to evidence rules, and newly added species show "not yet available".
-- Release B generalizes this per tag.</p>
-<p><strong>A6. Static guard test</strong> (regression defense; <strong>the grants are the security control</strong>):
-- the AI modules import nothing from the tag vocabulary or validation;
-- a scan of non-test runtime SQL in <code>src/</code> and <code>scripts/</code>, excluding the guard test itself, fails on <code>tags</code> or <code>search_tsv</code> in an INSERT column list or an UPDATE SET target. It handles aliases, multiline and any case, and parses the SQL template literals rather than raw substrings.
-- In Release B, <code>apply_effective_tags</code> is the one allow-listed writer.</p>
-<p><strong>Release A tests and invariants:</strong>
-- <strong>Migration byte identity:</strong> every row's <code>tags</code> and <code>search_tsv</code> is exactly identical before and after the migration (row-by-row <code>IS NOT DISTINCT FROM</code>).
-- <strong>Corpus hash:</strong> SHA-256 over rows ordered by <code>species_code</code>. Each row is encoded as JSON <code>[species_code, tags, search_tsv::text]</code>, with NULL as JSON null, newline-separated. It's recorded pre and post.
-- <strong>Write-cycle invariant:</strong> after a wiki, no-article or prose write, <code>tags</code> is byte-identical to before, and <code>search_tsv</code> equals <code>species_search_vector(...)</code> of the post-write row (the same as the pre-A formula would give for that row). <code>search_tsv</code> legitimately changes when its inputs change.
-- <strong>Legacy provenance (cutover snapshot):</strong> at cutover, <code>legacy_tags</code> is non-NULL exactly where <code>ai_generated_at</code> was non-NULL, and equal to <code>tags</code>. <strong>After cutover,</strong> a new prose write (<code>ai_generated_at</code> set, <code>legacy_tags</code> NULL) shows "not yet available".
-- <strong>Under <code>SET ROLE birds_app</code></strong> (real-DB tests, owned fixtures only):
-  - direct <code>UPDATE … SET tags</code>, <code>SET search_tsv</code> and <code>SET legacy_tags</code> all fail;
-  - <code>INSERT … (tags)</code> fails;
-  - the normal writers succeed, <strong>each exercised on both the INSERT and the ON CONFLICT branch</strong> where it has one:
-    - <code>upsertResolution</code> (including invalidation);
-    - <code>upsertWikiOk</code>, <code>markWikiNoArticle</code>, <code>markWikiError</code>;
-    - <code>upsertAiProseData</code>, <code>markAiError</code>;
-    - <code>upsertMediaOk</code>, <code>markMediaError</code>;
-    - <code>similarCandidatesFor</code>, <code>markSimilarDeclined</code>, <code>reconcileSimilarState</code>;
-    - <code>upsertInatSimilar</code>, <code>markInatNoMapping</code>, <code>markInatError</code> (including the partner-stale updates);
-    - the direct update at <code>job-handlers.ts:1662</code>.
-- <strong>Trigger behaviour:</strong> an unchanged-input write doesn't recompute; an input write does; a denied direct write fails; the trigger output equals the function. The legacy guard is tested on both the insert and the conflict path, and correctness doesn't depend on trigger order.
-- <strong>Search:</strong> after a wiki update, a no-article update and a prose update, <code>search_tsv</code> equals <code>species_search_vector</code> of the new row, including a species found by field-craft text.
-- <strong>Behaviour unchanged:</strong>
-  - Field Guide filters (<code>tags @&gt;</code> AND, single and multi-tag) return the same results as before;
-  - chips and the tide gate are unchanged;
-  - "Tags not yet available" shows for a NULL-legacy fixture;
-  - Compare persists nothing.
-- <strong>Static guard;</strong> idempotent re-run of the migration's checks.
-- <strong>Deploy:</strong> the migration runs as <code>birds_owner</code>. Before/after hashes and the grant listing are recorded in td-894144.</p>
+<p>Some things users <em>can</em> see do change:</p>
+<ul>
+<li>species enriched after the cutover gain no tags, and show "Tags not yet available";</li>
+<li>the Guide shows an unknown count when a tag filter is active;</li>
+<li>admin Compare no longer shows tags;</li>
+<li>the help copy is updated.</li>
+</ul>
+<p><strong>A1. Remove tags from every AI path.</strong></p>
+<ul>
+<li>Prompt: the vocabulary block and tag instructions go.</li>
+<li><code>buildOutputSchema</code>, the <code>SpeciesAnnotation</code> type and <code>parseAnnotation</code> no longer handle tags; the worker call no longer passes them.</li>
+<li><code>upsertAiData</code> becomes <code>upsertAiProseData</code>, with no tags parameter and no tags in its SQL.</li>
+<li>Admin Compare's response type can't carry tags.</li>
+<li><code>markAiError</code> stays as is (it never wrote tags).</li>
+</ul>
+<p><strong>A2. Protected legacy copy (migration 0065).</strong></p>
+<ul>
+<li><code>ALTER TABLE species_enrichment ADD COLUMN legacy_tags TEXT[]</code>.</li>
+<li>Populate it <strong>only where <code>ai_generated_at IS NOT NULL</code> at cutover</strong> with <code>legacy_tags := tags</code>, byte-for-byte. Otherwise NULL, meaning unknown and never "evaluated empty".</li>
+<li><strong>This is a cutover snapshot, not a lasting predicate:</strong> after Release A, <code>upsertAiProseData</code> keeps stamping <code>ai_generated_at</code> for new prose while <code>legacy_tags</code> stays NULL. The migration records the pre/post counts and hash of the populated set in td-894144.</li>
+<li><em>Then</em> install trigger <code>species_enrichment_legacy_guard</code> (BEFORE INSERT OR UPDATE): reject an INSERT with non-NULL <code>legacy_tags</code>, and an UPDATE where <code>NEW.legacy_tags IS DISTINCT FROM OLD.legacy_tags</code>.</li>
+</ul>
+<p><strong>A3. The search index is derived by the database.</strong></p>
+<ul>
+<li>One function, <code>species_search_vector(tags, extract, field_craft, sections) RETURNS tsvector</code>: IMMUTABLE and schema-qualified, with exactly today's weighting and the <code>'english'</code> config.</li>
+<li>Trigger <code>species_enrichment_search_tsv</code> (BEFORE INSERT OR UPDATE <strong>OF</strong> <code>tags, wikipedia_extract, field_craft, wikipedia_sections, search_tsv</code>) sets <code>NEW.search_tsv</code> from that function. Any value a caller supplies is overwritten. Unrelated media, iNat or status updates don't recompute the index.</li>
+<li>The migration aborts if any row has <code>search_tsv IS DISTINCT FROM species_search_vector(…)</code>. It also logs an ordered corpus hash.</li>
+<li><strong>All writers stop computing <code>search_tsv</code>,</strong> and <code>tsvExpr</code> is deleted.</li>
+<li>Trigger names are chosen for deterministic firing order: the legacy guard runs first; neither trigger changes the other's inputs.</li>
+</ul>
+<p><strong>A4. Correct grants.</strong> This is the DB side of the AI barrier.</p>
+<ul>
+<li><code>REVOKE INSERT, UPDATE ON species_enrichment FROM birds_app</code> (table level).</li>
+<li>Then <code>GRANT INSERT (…)</code> and <code>GRANT UPDATE (…)</code> on <strong>every column except <code>tags</code>, <code>legacy_tags</code>, <code>search_tsv</code></strong>. The list is generated in the migration from <code>information_schema.columns</code>, and logged.</li>
+<li><code>SELECT</code> and <code>DELETE</code> are unchanged. A DELETE cascades normally.</li>
+<li><strong>Rule for future migrations:</strong> a column added to <code>species_enrichment</code> is <strong>denied to <code>birds_app</code> until a migration explicitly grants it.</strong> That's documented in the migration header, not a universal "every column gets both" policy.</li>
+<li><strong>Grant assertions</strong> (a test against the catalog):</li>
+<li>no table-level INSERT or UPDATE for <code>birds_app</code>;</li>
+<li><code>tags</code>, <code>legacy_tags</code> and <code>search_tsv</code> have no column INSERT or UPDATE;</li>
+<li>every other <em>current</em> column has both;</li>
+<li>SELECT and DELETE remain;</li>
+<li>related table and sequence privileges are unchanged (<code>species_enrichment</code> has no sequence; <code>species_media</code>'s sequence grant is untouched).</li>
+<li>With nothing writing <code>tags</code> in Release A, new rows get the default <code>'{}'</code> and existing rows keep their values.</li>
+</ul>
+<p><strong>A5. Per-tag "not evaluated": the full contract.</strong></p>
+<ul>
+<li>In Release A, a species with <code>legacy_tags IS NULL</code> has <strong>all</strong> tags unknown. That includes rows created or annotated after the cutover.</li>
+<li><strong>The Guide</strong> (<code>searchGuide</code>, <code>species-enrichment.ts:1000-1033</code>, and <code>GuideSpeciesRow.svelte</code>):</li>
+<li><strong>per row:</strong> <code>tags_available: boolean</code>, and unavailable rows show "Tags not yet available" instead of chips;</li>
+<li><strong>per query:</strong> <code>unknown_count</code>, the number of species matching every <strong>non-tag</strong> predicate (name/prose search, family, geography, interest, list scope), counted <strong>before</strong> the tag predicate and <strong>before</strong> pagination. It's returned even when the matched page is empty.</li>
+<li>When a tag filter is active and <code>unknown_count &gt; 0</code>, the page shows "N species not yet evaluated for these tags".</li>
+<li>Unknown species never match a tag filter and are never counted as "none".</li>
+<li><strong>The species detail page</strong> (<code>getEnrichment</code> / <code>EnrichmentRow</code> and the "Finding this bird" card): <code>tags_available</code>, with the same unavailable copy. The tide gate (<code>isTideTagged</code>) reads effective tags as before; an unavailable species has none, which is its current behaviour.</li>
+<li><strong>Copy:</strong> update the Field Guide empty state and filter help (today it says tags come from AI and are "still filling in"), and review Help and About per the repository rules. They should say tags are being moved to evidence rules, and newly added species show "not yet available".</li>
+<li>Release B generalizes this per tag.</li>
+</ul>
+<p><strong>A6. Static guard test</strong> (regression defense; <strong>the grants are the security control</strong>):</p>
+<ul>
+<li>the AI modules import nothing from the tag vocabulary or validation;</li>
+<li>a scan of non-test runtime SQL in <code>src/</code> and <code>scripts/</code>, excluding the guard test itself, fails on <code>tags</code> or <code>search_tsv</code> in an INSERT column list or an UPDATE SET target. It handles aliases, multiline and any case, and parses the SQL template literals rather than raw substrings.</li>
+<li>In Release B, <code>apply_effective_tags</code> is the one allow-listed writer.</li>
+</ul>
+<p><strong>Release A tests and invariants:</strong></p>
+<ul>
+<li><strong>Migration byte identity:</strong> every row's <code>tags</code> and <code>search_tsv</code> is exactly identical before and after the migration (row-by-row <code>IS NOT DISTINCT FROM</code>).</li>
+<li><strong>Corpus hash:</strong> SHA-256 over rows ordered by <code>species_code</code>. Each row is encoded as JSON <code>[species_code, tags, search_tsv::text]</code>, with NULL as JSON null, newline-separated. It's recorded pre and post.</li>
+<li><strong>Write-cycle invariant:</strong> after a wiki, no-article or prose write, <code>tags</code> is byte-identical to before, and <code>search_tsv</code> equals <code>species_search_vector(...)</code> of the post-write row (the same as the pre-A formula would give for that row). <code>search_tsv</code> legitimately changes when its inputs change.</li>
+<li><strong>Legacy provenance (cutover snapshot):</strong> at cutover, <code>legacy_tags</code> is non-NULL exactly where <code>ai_generated_at</code> was non-NULL, and equal to <code>tags</code>. <strong>After cutover,</strong> a new prose write (<code>ai_generated_at</code> set, <code>legacy_tags</code> NULL) shows "not yet available".</li>
+<li><strong>Under <code>SET ROLE birds_app</code></strong> (real-DB tests, owned fixtures only):</li>
+<li>direct <code>UPDATE … SET tags</code>, <code>SET search_tsv</code> and <code>SET legacy_tags</code> all fail;</li>
+<li><code>INSERT … (tags)</code> fails;</li>
+<li>the normal writers succeed, <strong>each exercised on both the INSERT and the ON CONFLICT branch</strong> where it has one:<ul>
+<li><code>upsertResolution</code> (including invalidation);</li>
+<li><code>upsertWikiOk</code>, <code>markWikiNoArticle</code>, <code>markWikiError</code>;</li>
+<li><code>upsertAiProseData</code>, <code>markAiError</code>;</li>
+<li><code>upsertMediaOk</code>, <code>markMediaError</code>;</li>
+<li><code>similarCandidatesFor</code>, <code>markSimilarDeclined</code>, <code>reconcileSimilarState</code>;</li>
+<li><code>upsertInatSimilar</code>, <code>markInatNoMapping</code>, <code>markInatError</code> (including the partner-stale updates);</li>
+<li>the direct update at <code>job-handlers.ts:1662</code>.</li>
+</ul>
+</li>
+<li><strong>Trigger behaviour:</strong> an unchanged-input write doesn't recompute; an input write does; a denied direct write fails; the trigger output equals the function. The legacy guard is tested on both the insert and the conflict path, and correctness doesn't depend on trigger order.</li>
+<li><strong>Search:</strong> after a wiki update, a no-article update and a prose update, <code>search_tsv</code> equals <code>species_search_vector</code> of the new row, including a species found by field-craft text.</li>
+<li><strong>Behaviour unchanged:</strong></li>
+<li>Field Guide filters (<code>tags @&gt;</code> AND, single and multi-tag) return the same results as before;</li>
+<li>chips and the tide gate are unchanged;</li>
+<li>"Tags not yet available" shows for a NULL-legacy fixture;</li>
+<li>Compare persists nothing.</li>
+<li><strong>Static guard;</strong> idempotent re-run of the migration's checks.</li>
+<li><strong>Deploy:</strong> the migration runs as <code>birds_owner</code>. Before/after hashes and the grant listing are recorded in td-894144.</li>
+</ul>
 <h2>Release B: dependencies, availability and approval (normative; complements the implementation spec below)</h2>
 <p>The rev-8 Release B design (history and state tables, universe and lock protocol, activation, scanner) is <strong>superseded and deleted</strong>. The <strong>"Release B implementation spec"</strong> section is the single normative source for schema, identity, universe, locking, activation, grants and the engine. These three pieces remain valid and complement it:</p>
-<p><strong>Dependencies</strong> (for later tide rules):
-- <code>requires: [activation_id…]</code>, checked under the exclusive lock.
-- A dependency switch is refused while any active dependent references the old activation.
-- Tide therefore waits for the coastal habitats.</p>
-<p><strong>Per-tag availability</strong> (generalizing A5): a tag is <strong>known</strong> when it's unowned with non-NULL legacy, or owned with a current state (joined through <code>species_tag_input.input_hash</code>) of <code>assigned</code> or <code>not_assigned</code>; otherwise it's <strong>unknown</strong>.
-- The Guide returns <code>{matched, unknown_count}</code> per selected tag, and a per-row <code>partial</code> flag.
-- Cards show only known chips, plus "Some tags not yet available".</p>
-<p><strong>Approval workflow, entirely in the app</strong> (owner decision 8):
-- <strong>Proposals live in the database, not repo files.</strong> Table <code>tag_rule_proposal</code> (schema in the implementation spec, B2). The engine <strong>never loads</strong> proposals; it loads only <code>tag_revision</code> rows.
-- <strong>Drafting:</strong> the Tags tab's "Draft rules with AI" button enqueues a worker job. The job makes the metered Sonnet 5 call with the tag definition and the frozen authoring examples, and inserts a <code>proposed</code> row. AI output can only ever become a proposal.
-- <strong>Cross-check:</strong> CODEX1 (or another model) reviews the proposal. The agent session records the result as a <code>tag_crosscheck</code> row (schema in B2), via a script. That's agent work, not the owner's.
-- <strong>Approval (owner, in admin):</strong>
-  - the proposal page shows the rules readably, the cross-check text and verdict, and the stage report;
-  - <strong>Approve</strong> is enabled only when a cross-check exists with <code>reviewed_sha256 = artifact_sha256</code> and verdict <code>approve</code>;
-  - it requires an owner session plus a typed confirmation (the tag name), and calls the definer routine <code>approve_tag_proposal(proposal_id, user_id)</code>, which recomputes the hash in the database (B2) and inserts the immutable <code>tag_revision</code>.
-- <strong>Checks:</strong>
-  - the loader and definer routines reject hash mismatches, unknown fields, duplicate ids, oversize rule sets and dependency mismatches;
-  - activation derives state only from an approved <code>tag_revision</code>;
-  - the static guard ensures the AI job modules can't call the approval or activation routines;
-  - tests prove the cross-check and hash rules can't be bypassed.</p>
+<p><strong>Dependencies</strong> (for later tide rules):</p>
+<ul>
+<li><code>requires: [activation_id…]</code>, checked under the exclusive lock.</li>
+<li>A dependency switch is refused while any active dependent references the old activation.</li>
+<li>Tide therefore waits for the coastal habitats.</li>
+</ul>
+<p><strong>Per-tag availability</strong> (generalizing A5): a tag is <strong>known</strong> when it's unowned with non-NULL legacy, or owned with a current state (joined through <code>species_tag_input.input_hash</code>) of <code>assigned</code> or <code>not_assigned</code>; otherwise it's <strong>unknown</strong>.</p>
+<ul>
+<li>The Guide returns <code>{matched, unknown_count}</code> per selected tag, and a per-row <code>partial</code> flag.</li>
+<li>Cards show only known chips, plus "Some tags not yet available".</li>
+</ul>
+<p><strong>Approval workflow, entirely in the app</strong> (owner decision 8):</p>
+<ul>
+<li><strong>Proposals live in the database, not repo files.</strong> Table <code>tag_rule_proposal</code> (schema in the implementation spec, B2). The engine <strong>never loads</strong> proposals; it loads only <code>tag_revision</code> rows.</li>
+<li><strong>Drafting:</strong> the Tags tab's "Draft rules with AI" button enqueues a worker job. The job makes the metered Sonnet 5 call with the tag definition and the frozen authoring examples, and inserts a <code>proposed</code> row. AI output can only ever become a proposal.</li>
+<li><strong>Cross-check:</strong> CODEX1 (or another model) reviews the proposal. The agent session records the result as a <code>tag_crosscheck</code> row (schema in B2), via a script. That's agent work, not the owner's.</li>
+<li><strong>Approval (owner, in admin):</strong></li>
+<li>the proposal page shows the rules readably, the cross-check text and verdict, and the stage report;</li>
+<li><strong>Approve</strong> is enabled only when a cross-check exists with <code>reviewed_sha256 = artifact_sha256</code> and verdict <code>approve</code>;</li>
+<li>it requires an owner session plus a typed confirmation (the tag name), and calls the definer routine <code>approve_tag_proposal(proposal_id, user_id)</code>, which recomputes the hash in the database (B2) and inserts the immutable <code>tag_revision</code>.</li>
+<li><strong>Checks:</strong></li>
+<li>the loader and definer routines reject hash mismatches, unknown fields, duplicate ids, oversize rule sets and dependency mismatches;</li>
+<li>activation derives state only from an approved <code>tag_revision</code>;</li>
+<li>the static guard ensures the AI job modules can't call the approval or activation routines;</li>
+<li>tests prove the cross-check and hash rules can't be bypassed.</li>
+</ul>
 <h2>Release B implementation spec (rev 18; B1 built, B2–B4 for re-review)</h2>
 <h3>B1: the pure text engine (built; 43 tests; CODEX1-approved; not yet committed)</h3>
 <p><code>src/lib/server/tag-engine/</code>: <code>normalize.ts</code>, <code>tokens.ts</code>, <code>segment.ts</code>, <code>rules.ts</code>, <code>scanner.ts</code>. No DB, no AI, no network.</p>
@@ -247,36 +283,47 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
 <li><strong>Measured</strong> (read-only, all 10,898 snapshot species, <strong>test-fixture ruleset</strong>): 2.5 s total, <strong>0.23 ms per species</strong>, lexicon build 28 ms. The fixture already surfaced a real false positive ("colony size is related to the abundance of <strong>pelagic fish</strong> prey", Great Crested Tern), which is why the rules need AI-drafted and reviewed exclusions.</li>
 </ul>
 <h3>B2: database, locking, materialization (rev 18; for CODEX1 re-review)</h3>
-<p><strong>Trust boundary (owner decision, 2026-09-29, Option A).</strong>
-- The web app and the worker share one database role, <code>birds_app</code>, and <strong>the app's own code is trusted</strong>.
-- The definer routines, CHECKs, immutability triggers, grants and the branded <code>TagWriteTx</code> are <strong>integrity guardrails against bugs, malformed data, and AI output ever reaching tags</strong>. They are <strong>not</strong> protection against a compromised server or deliberately hostile code running as <code>birds_app</code>: such code could call the switch, report or state routines directly. That risk is accepted for this three-user app.
-- The owner's principle is still enforced structurally where it matters: AI modules can't import the engine or the routines (static guard), AI output has no path to any tag writer, and every activation needs an approved, cross-checked revision plus passing reports produced by the engine's own jobs.
-- A separate tag-worker role (Option B) was considered and declined.</p>
-<p><strong>What a decision depends on (P1-1).</strong> A tag result is a pure function of the <strong>input context</strong>:
-- the normalized article text (<code>text_hash</code>);
-- the species' order and family;
-- the other-taxon lexicon (<code>lexicon_hash</code>: SHA-256 of the sorted lexicon keys built from <code>taxonomy_cache</code>);
-- the <strong>focal exemptions</strong>, hashed explicitly as <code>focal_exempt_hash</code> over the sorted normalized exemption keys (rev 13, CODEX1 P1-1: a taxonomy update can swap names between codes while the global key set stays the same);
-- <code>scanner_rev</code> (engine version, Node, ICU, Unicode).</p>
+<p><strong>Trust boundary (owner decision, 2026-09-29, Option A).</strong></p>
+<ul>
+<li>The web app and the worker share one database role, <code>birds_app</code>, and <strong>the app's own code is trusted</strong>.</li>
+<li>The definer routines, CHECKs, immutability triggers, grants and the branded <code>TagWriteTx</code> are <strong>integrity guardrails against bugs, malformed data, and AI output ever reaching tags</strong>. They are <strong>not</strong> protection against a compromised server or deliberately hostile code running as <code>birds_app</code>: such code could call the switch, report or state routines directly. That risk is accepted for this three-user app.</li>
+<li>The owner's principle is still enforced structurally where it matters: AI modules can't import the engine or the routines (static guard), AI output has no path to any tag writer, and every activation needs an approved, cross-checked revision plus passing reports produced by the engine's own jobs.</li>
+<li>A separate tag-worker role (Option B) was considered and declined.</li>
+</ul>
+<p><strong>What a decision depends on (P1-1).</strong> A tag result is a pure function of the <strong>input context</strong>:</p>
+<ul>
+<li>the normalized article text (<code>text_hash</code>);</li>
+<li>the species' order and family;</li>
+<li>the other-taxon lexicon (<code>lexicon_hash</code>: SHA-256 of the sorted lexicon keys built from <code>taxonomy_cache</code>);</li>
+<li>the <strong>focal exemptions</strong>, hashed explicitly as <code>focal_exempt_hash</code> over the sorted normalized exemption keys (rev 13, CODEX1 P1-1: a taxonomy update can swap names between codes while the global key set stays the same);</li>
+<li><code>scanner_rev</code> (engine version, Node, ICU, Unicode).</li>
+</ul>
 <p><code>input_hash</code> = SHA-256 of the canonical JSON of all of these.</p>
-<p><strong>Authoritative current input:</strong> <code>species_tag_input (species_code PK → species_enrichment ON DELETE CASCADE, input_hash, text_hash, order_name, family_sci_name, lexicon_hash, focal_exempt_hash, scanner_rev, updated_at)</code>.
-- Maintained <strong>only</strong> by the three entry points, inside their locked transaction.
-- A row exists <strong>iff</strong> the species is a universe member.
-- <code>species_tag_state</code> is keyed <code>UNIQUE (species_code, tag, revision_id, input_hash)</code>. The <em>current</em> state for an owned tag is the row whose <code>input_hash</code> equals <code>species_tag_input.input_hash</code>, and <strong><code>apply_effective_tags</code> and every coverage check join through that pointer</strong>. A taxonomy, lexicon or runtime change with identical prose therefore produces a new <code>input_hash</code> and a new immutable row, never a collision.
-- Composite FKs keep the tags coherent: <code>species_tag_state (revision_id, tag) → tag_revision (id, tag)</code>, and the same for <code>tag_activation</code>.</p>
-<p><strong>Universe (P1-2):</strong>
-- <strong>Members</strong> are species with a <strong>stored article</strong> (<code>wikipedia_extract IS NOT NULL</code>) and a current <code>category='species'</code> taxonomy row. This is <strong>not</strong> <code>wiki_status</code>: <code>markWikiError</code> sets <code>wiki_status='error'</code> but keeps the last-good article, so the species stays a member and its tags don't flicker.
-- Non-members have no <code>species_tag_input</code> row and are unknown for every owned tag.</p>
-<p><strong>The only entry points that change membership or input:</strong>
-1. <strong><code>upsertWikiOk</code></strong>: writes the article, recomputes the input, upserts <code>species_tag_input</code>, evaluates owned tags, inserts the states, and calls <code>apply_effective_tags</code>.
-2. <strong><code>markWikiNoArticle</code></strong>: clears the article, <strong>deletes</strong> <code>species_tag_input</code> (the species leaves the universe; no state row, since <code>text_hash</code> is NOT NULL), and calls <code>apply_effective_tags</code>, which drops the owned tags.
-3. <strong><code>replaceTaxonomy</code></strong>: takes the <strong>exclusive</strong> <code>tag_engine</code> lock as its first transactional statement (rev 13, CODEX1 P1-2), while the two wiki entry points take it <strong>shared</strong>. So no wiki transaction can read the old taxonomy or lexicon and commit an old <code>input_hash</code> after the replacement. It then recomputes the lexicon.
+<p><strong>Authoritative current input:</strong> <code>species_tag_input (species_code PK → species_enrichment ON DELETE CASCADE, input_hash, text_hash, order_name, family_sci_name, lexicon_hash, focal_exempt_hash, scanner_rev, updated_at)</code>.</p>
+<ul>
+<li>Maintained <strong>only</strong> by the three entry points, inside their locked transaction.</li>
+<li>A row exists <strong>iff</strong> the species is a universe member.</li>
+<li><code>species_tag_state</code> is keyed <code>UNIQUE (species_code, tag, revision_id, input_hash)</code>. The <em>current</em> state for an owned tag is the row whose <code>input_hash</code> equals <code>species_tag_input.input_hash</code>, and <strong><code>apply_effective_tags</code> and every coverage check join through that pointer</strong>. A taxonomy, lexicon or runtime change with identical prose therefore produces a new <code>input_hash</code> and a new immutable row, never a collision.</li>
+<li>Composite FKs keep the tags coherent: <code>species_tag_state (revision_id, tag) → tag_revision (id, tag)</code>, and the same for <code>tag_activation</code>.</li>
+</ul>
+<p><strong>Universe (P1-2):</strong></p>
+<ul>
+<li><strong>Members</strong> are species with a <strong>stored article</strong> (<code>wikipedia_extract IS NOT NULL</code>) and a current <code>category='species'</code> taxonomy row. This is <strong>not</strong> <code>wiki_status</code>: <code>markWikiError</code> sets <code>wiki_status='error'</code> but keeps the last-good article, so the species stays a member and its tags don't flicker.</li>
+<li>Non-members have no <code>species_tag_input</code> row and are unknown for every owned tag.</li>
+</ul>
+<p><strong>The only entry points that change membership or input:</strong></p>
+<ol>
+<li><strong><code>upsertWikiOk</code></strong>: writes the article, recomputes the input, upserts <code>species_tag_input</code>, evaluates owned tags, inserts the states, and calls <code>apply_effective_tags</code>.</li>
+<li><strong><code>markWikiNoArticle</code></strong>: clears the article, <strong>deletes</strong> <code>species_tag_input</code> (the species leaves the universe; no state row, since <code>text_hash</code> is NOT NULL), and calls <code>apply_effective_tags</code>, which drops the owned tags.</li>
+<li><strong><code>replaceTaxonomy</code></strong>: takes the <strong>exclusive</strong> <code>tag_engine</code> lock as its first transactional statement (rev 13, CODEX1 P1-2), while the two wiki entry points take it <strong>shared</strong>. So no wiki transaction can read the old taxonomy or lexicon and commit an old <code>input_hash</code> after the replacement. It then recomputes the lexicon.
    - If <code>lexicon_hash</code> changed, it <strong>re-materializes every member</strong>. That's measured at ≈2.5 s for 10.9k species, in the same transaction.
-   - Otherwise it re-materializes only members whose order, family or category changed, and deletes <code>species_tag_input</code> for species leaving <code>category='species'</code>.</p>
+   - Otherwise it re-materializes only members whose order, family or category changed, and deletes <code>species_tag_input</code> for species leaving <code>category='species'</code>.</li>
+</ol>
 <p><code>markWikiError</code> and the other ~15 writers (listed in rev 11) change neither membership nor input and take no lock. That's re-verified here against <code>species-enrichment.ts:254–264</code>: error keeps the stored article.</p>
-<p><strong>Lock guarantee (P2):</strong> instead of a dev-only assertion, lock-taking is <strong>unrepresentable to skip</strong>.
-- The three entry points accept only a branded <code>TagWriteTx</code> executor, which can be obtained only from <code>withTagWriteTx(fn)</code>.
-- <strong>The one executable path (rev 17)</strong>, used by <code>withTagWriteTx(mode, failureKey, fn)</code> for <strong>every</strong> tag-affecting transaction (both wiki entry points, <code>replaceTaxonomy</code>, activation, rollback, consistency repair batches):
+<p><strong>Lock guarantee (P2):</strong> instead of a dev-only assertion, lock-taking is <strong>unrepresentable to skip</strong>.</p>
+<ul>
+<li>The three entry points accept only a branded <code>TagWriteTx</code> executor, which can be obtained only from <code>withTagWriteTx(fn)</code>.</li>
+<li><strong>The one executable path (rev 17)</strong>, used by <code>withTagWriteTx(mode, failureKey, fn)</code> for <strong>every</strong> tag-affecting transaction (both wiki entry points, <code>replaceTaxonomy</code>, activation, rollback, consistency repair batches):
   <code>preAttemptNo := begin_tag_attempt();              -- autocommit, BEFORE the transaction
   BEGIN;
   SET LOCAL lock_timeout = '10s';
@@ -293,95 +340,116 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
     -- i.e. any failure before postAttemptNo exists (BEGIN, SET LOCAL, the engine lock,
     -- OR the failure-key lock timing out) stamps with preAttemptNo; only failures after
     -- both locks were acquired and postAttemptNo exists stamp with postAttemptNo.
-    follow-up: record_materialization_failure(failureKey, entry, err, token)</code>
-  - <strong>failureKey:</strong> the species code for the wiki entry points; <code>global:replaceTaxonomy</code>, <code>global:activate:&lt;tag&gt;</code>, <code>global:rollback:&lt;tag&gt;</code> or <code>global:consistency</code> otherwise.
-  - <strong>Lock order is fixed:</strong> <code>TAG_ENGINE_KEY</code> first, then exactly <strong>one</strong> failure-key lock, then row locks. Every transaction takes at most one failure-key lock and always after the engine lock, so no deadlock cycle is possible.
-  - <strong>Why the key lock:</strong> the wiki entry points hold the engine lock <em>shared</em>, so two transactions for the same species could otherwise both pass it and draw post-lock tokens in an order unrelated to their commits. The key lock serializes same-key transactions <strong>before</strong> the post-lock token is drawn, so token order equals commit order for that key. Exclusive transactions are already serialized; they take the key lock anyway for one uniform path.
-  - The SET LOCALs are configuration, not work.
-  - <strong>Integration tests:</strong>
-    - the order of settings and locks, and a <code>lock_timeout</code> rather than a hang;
-    - <strong>two-session same-key shared writers, in both commit orders:</strong> (a) A succeeds then B fails → B's failure uncleared; (b) A fails then B succeeds → cleared;
-    - <strong>engine lock acquired but the same-key failure-key lock times out</strong> (another session holds the key lock): the follow-up records through <code>preAttemptNo</code>, with no secondary error from an undefined post token;
-    - different species run concurrently under the shared lock without blocking each other.
-  - Every tag-affecting transaction takes the advisory lock before any row lock, so there's no tag-lock/row-lock cycle.
-- <strong>Test:</strong> a deterministic two-session test pauses <code>replaceTaxonomy</code> after writing the candidate taxonomy and proves no wiki transaction commits an old <code>input_hash</code> afterwards.
-- The worker's autocommit wiki writes and <code>enrichOneNow</code> (lock before <code>upsertResolution</code>) are rewritten to use it, and <code>replaceTaxonomy</code> runs inside it.
-- The static guard fails if any other code constructs a <code>TagWriteTx</code>.</p>
-<p><strong>Grants (P1-4).</strong> Migration 0066 first runs <code>REVOKE ALL</code> on every new table and sequence from <code>birds_app</code> and <code>PUBLIC</code> (undoing the 0002 default privileges), then grants exactly:
-- <code>species_tag_input</code>, <code>species_tag_state</code>: SELECT only. Writes go through <strong>definer routines</strong>.
-- <code>tag_rule_proposal</code>: SELECT, plus column INSERT (<code>tag, artifact, source, ai_usage_call_id</code>). <code>status</code> defaults to <code>proposed</code> and changes only via definers.
-- <code>tag_crosscheck</code>, <code>tag_revision</code>, <code>tag_activation</code>, <code>tag_ownership</code>: SELECT only (definers or owner-role scripts write them).
-- <code>tag_report</code>: SELECT only. <code>record_tag_report</code> (definer) inserts with a server-computed body hash; rows are immutable.
-- <code>tag_eval_set</code>, <code>tag_eval_item</code>: SELECT only (definer). <code>tag_eval_label</code>: column INSERT and UPDATE on <code>label, truth_label, adjudicated</code> only, while the set isn't frozen (trigger).
-- <code>tag_materialization_failure</code>: SELECT only (definer).
-- <code>tag_consistency_run</code>: SELECT only; <code>record_tag_consistency_run</code> (definer) inserts; immutable.
-- <strong>IDs (rev 14):</strong> tables that <code>birds_app</code> inserts into directly (<code>tag_rule_proposal</code>, <code>tag_eval_label</code>) use <code>uuid DEFAULT gen_random_uuid()</code> primary keys, so there's no sequence access. Definer-inserted tables may use identity columns.
-- <strong>Every sequence</strong> backing the new tables, including <code>tag_attempt_seq</code>, is <code>REVOKE ALL</code> then not granted: it's used only inside definers. Catalog assertions cover sequences, and a test performs a real <code>birds_app</code> insert into each directly writable table.
-- Catalog assertions in tests cover every table: no inherited table-level DML.</p>
-<p><strong>Definer routines</strong> (all <code>SECURITY DEFINER</code>, <code>SET search_path = pg_catalog, public</code>, schema-qualified, <code>REVOKE ALL FROM PUBLIC</code>, <code>GRANT EXECUTE TO birds_app</code>):
-- <code>record_tag_input(code, input jsonb)</code>: validates the shapes, computes <code>input_hash</code> <strong>in SQL</strong> from the canonical jsonb text, and upserts.
-- <code>record_tag_state(code, revision_id, input_hash, status, reason, evidence)</code> (under Option A, an integrity check, not an authority check):
-  - checks <code>input_hash</code> equals the current <code>species_tag_input.input_hash</code> for the code;
-  - the revision exists and its tag matches;
-  - the status/reason/evidence shape (CHECK constraints: <code>assigned</code> ⇒ reason NULL and 1–3 evidence items; <code>not_assigned</code>/<code>unevaluated</code> ⇒ reason in the bounded vocabulary and evidence empty).
-  - A caller <strong>can't</strong> write state for a stale input or the wrong tag.
-  - It's <strong>idempotent</strong>: on conflict, the existing row must be byte-identical in status, reason and evidence, otherwise it raises an integrity error. Two evaluations of the same input can never silently disagree.
-- <code>apply_effective_tags(code)</code>: the ordered merge (rev 8 B2), reading owned-tag state <strong>only</strong> through <code>species_tag_input</code>.
-- <code>approve_tag_proposal(proposal_id, user_id)</code> (P1-5):
-  - computes the artifact hash <strong>in the database</strong> as <code>encode(sha256(convert_to(artifact::text,'UTF8')),'hex')</code>.
-  - <strong>Hash-byte contract (rev 13):</strong> this is the <em>PostgreSQL-normalized storage identity</em> of the jsonb value, not a general canonical JSON. The TS side must <code>SELECT artifact::text AS artifact_text</code> and hash <code>Buffer.from(artifact_text,'utf8')</code> exactly, never re-serializing. It's pinned to the Postgres major version (17) and re-verified on any upgrade. Tests cover nested keys, Unicode, escapes, and numeric scale/exponent (<code>1</code> vs <code>1.0</code> differ by design).
-  - <code>tag_rule_proposal.artifact_sha256</code> is <strong>maintained by a BEFORE INSERT trigger</strong> that sets it from the same expression, and an UPDATE of <code>artifact</code> or <code>artifact_sha256</code> is rejected. It <strong>can't be a generated column</strong>: <code>convert_to()</code> is STABLE in PG17 (catalog-verified by CODEX1), and generated columns need IMMUTABLE functions. The migration test creates the real column and trigger and checks it.
-  - requires an immutable <code>tag_crosscheck</code> for that proposal with <code>reviewed_sha256</code> equal to it and verdict <code>approve</code>;
-  - requires <code>proposal.tag = artifact-&gt;&gt;'tag'</code>;
-  - inserts <code>tag_revision</code> with the recomputed hash.
-  - <strong><code>user_id</code> is audit data, not authentication.</strong> The auth boundary is the admin route plus the worker's execution-time role recheck, and the tests say so explicitly.
-  - The TypeScript loader hashes the same <code>artifact::text</code> fetched from the database, never its own serialization.
-- <code>switch_tag_ownership(tag, revision_id, gate_report_id, benchmark_report_id, user_id)</code>: see the activation protocol.
-- <code>rollback_tag(tag, user_id)</code>.
-- <code>begin_tag_attempt() RETURNS bigint</code>: definer, <code>nextval('tag_attempt_seq')</code>. birds_app has no sequence privilege; this is the only way to get a number.
-- <code>record_materialization_failure(key, entry_point, error, attempt_no)</code> and <code>clear_materialization_failure(key, attempt_no)</code>: signatures as in the failure contract below.</p>
-<p><strong>Activation protocol (P1-6), one executable path.</strong> The worker job <code>tag_activate</code>:
-1. Run <strong>the rev-17 executable path</strong> in exclusive mode with <code>failureKey = global:activate:&lt;tag&gt;</code>: <code>preAttemptNo</code> (autocommit), BEGIN with the SET LOCALs (<code>transaction_timeout</code> 30 s), the exclusive engine lock, the failure-key lock, then <code>postAttemptNo</code>.
-2. Load the revision artifact from the database and re-hash it; abort on mismatch.
-3. For every member, read <code>species_tag_input</code>. Where no state exists for <code>(revision, input_hash)</code>, meaning drift since staging or new members, <strong>compute it in TypeScript</strong> and insert it via <code>record_tag_state</code>. The rest came from the staging job.
-4. Call <code>switch_tag_ownership</code>, which checks:
+    follow-up: record_materialization_failure(failureKey, entry, err, token)</code></li>
+<li><strong>failureKey:</strong> the species code for the wiki entry points; <code>global:replaceTaxonomy</code>, <code>global:activate:&lt;tag&gt;</code>, <code>global:rollback:&lt;tag&gt;</code> or <code>global:consistency</code> otherwise.</li>
+<li><strong>Lock order is fixed:</strong> <code>TAG_ENGINE_KEY</code> first, then exactly <strong>one</strong> failure-key lock, then row locks. Every transaction takes at most one failure-key lock and always after the engine lock, so no deadlock cycle is possible.</li>
+<li><strong>Why the key lock:</strong> the wiki entry points hold the engine lock <em>shared</em>, so two transactions for the same species could otherwise both pass it and draw post-lock tokens in an order unrelated to their commits. The key lock serializes same-key transactions <strong>before</strong> the post-lock token is drawn, so token order equals commit order for that key. Exclusive transactions are already serialized; they take the key lock anyway for one uniform path.</li>
+<li>The SET LOCALs are configuration, not work.</li>
+<li><strong>Integration tests:</strong><ul>
+<li>the order of settings and locks, and a <code>lock_timeout</code> rather than a hang;</li>
+<li><strong>two-session same-key shared writers, in both commit orders:</strong> (a) A succeeds then B fails → B's failure uncleared; (b) A fails then B succeeds → cleared;</li>
+<li><strong>engine lock acquired but the same-key failure-key lock times out</strong> (another session holds the key lock): the follow-up records through <code>preAttemptNo</code>, with no secondary error from an undefined post token;</li>
+<li>different species run concurrently under the shared lock without blocking each other.</li>
+</ul>
+</li>
+<li>Every tag-affecting transaction takes the advisory lock before any row lock, so there's no tag-lock/row-lock cycle.</li>
+<li><strong>Test:</strong> a deterministic two-session test pauses <code>replaceTaxonomy</code> after writing the candidate taxonomy and proves no wiki transaction commits an old <code>input_hash</code> afterwards.</li>
+<li>The worker's autocommit wiki writes and <code>enrichOneNow</code> (lock before <code>upsertResolution</code>) are rewritten to use it, and <code>replaceTaxonomy</code> runs inside it.</li>
+<li>The static guard fails if any other code constructs a <code>TagWriteTx</code>.</li>
+</ul>
+<p><strong>Grants (P1-4).</strong> Migration 0066 first runs <code>REVOKE ALL</code> on every new table and sequence from <code>birds_app</code> and <code>PUBLIC</code> (undoing the 0002 default privileges), then grants exactly:</p>
+<ul>
+<li><code>species_tag_input</code>, <code>species_tag_state</code>: SELECT only. Writes go through <strong>definer routines</strong>.</li>
+<li><code>tag_rule_proposal</code>: SELECT, plus column INSERT (<code>tag, artifact, source, ai_usage_call_id</code>). <code>status</code> defaults to <code>proposed</code> and changes only via definers.</li>
+<li><code>tag_crosscheck</code>, <code>tag_revision</code>, <code>tag_activation</code>, <code>tag_ownership</code>: SELECT only (definers or owner-role scripts write them).</li>
+<li><code>tag_report</code>: SELECT only. <code>record_tag_report</code> (definer) inserts with a server-computed body hash; rows are immutable.</li>
+<li><strong>B4 tables</strong> (superseded by B4h, rev 24): <code>tag_authoring_example</code>, <code>tag_eval_set</code>, <code>tag_eval_item</code>, <code>tag_eval_label</code> and their identity sequences get REVOKE ALL from birds_app and PUBLIC, then <strong>SELECT only</strong>; every write goes through a definer (see B4h).</li>
+<li><code>tag_materialization_failure</code>: SELECT only (definer).</li>
+<li><code>tag_consistency_run</code>: SELECT only; <code>record_tag_consistency_run</code> (definer) inserts; immutable.</li>
+<li><strong>IDs (rev 14):</strong> the one table <code>birds_app</code> inserts into directly (<code>tag_rule_proposal</code>) uses a <code>uuid DEFAULT gen_random_uuid()</code> primary key, so there's no sequence access. Definer-inserted tables may use identity columns.</li>
+<li><strong>Every sequence</strong> backing the new tables, including <code>tag_attempt_seq</code>, is <code>REVOKE ALL</code> then not granted: it's used only inside definers. Catalog assertions cover sequences, and a test performs a real <code>birds_app</code> insert into each directly writable table.</li>
+<li>Catalog assertions in tests cover every table: no inherited table-level DML.</li>
+</ul>
+<p><strong>Definer routines</strong> (all <code>SECURITY DEFINER</code>, <code>SET search_path = pg_catalog, public</code>, schema-qualified, <code>REVOKE ALL FROM PUBLIC</code>, <code>GRANT EXECUTE TO birds_app</code>):</p>
+<ul>
+<li><code>record_tag_input(code, input jsonb)</code>: validates the shapes, computes <code>input_hash</code> <strong>in SQL</strong> from the canonical jsonb text, and upserts.</li>
+<li><code>record_tag_state(code, revision_id, input_hash, status, reason, evidence)</code> (under Option A, an integrity check, not an authority check):</li>
+<li>checks <code>input_hash</code> equals the current <code>species_tag_input.input_hash</code> for the code;</li>
+<li>the revision exists and its tag matches;</li>
+<li>the status/reason/evidence shape (CHECK constraints: <code>assigned</code> ⇒ reason NULL and 1–3 evidence items; <code>not_assigned</code>/<code>unevaluated</code> ⇒ reason in the bounded vocabulary and evidence empty).</li>
+<li>A caller <strong>can't</strong> write state for a stale input or the wrong tag.</li>
+<li>It's <strong>idempotent</strong>: on conflict, the existing row must be byte-identical in status, reason and evidence, otherwise it raises an integrity error. Two evaluations of the same input can never silently disagree.</li>
+<li><code>apply_effective_tags(code)</code>: the ordered merge (rev 8 B2), reading owned-tag state <strong>only</strong> through <code>species_tag_input</code>.</li>
+<li><code>approve_tag_proposal(proposal_id, user_id)</code> (P1-5):</li>
+<li>computes the artifact hash <strong>in the database</strong> as <code>encode(sha256(convert_to(artifact::text,'UTF8')),'hex')</code>.</li>
+<li><strong>Hash-byte contract (rev 13):</strong> this is the <em>PostgreSQL-normalized storage identity</em> of the jsonb value, not a general canonical JSON. The TS side must <code>SELECT artifact::text AS artifact_text</code> and hash <code>Buffer.from(artifact_text,'utf8')</code> exactly, never re-serializing. It's pinned to the Postgres major version (17) and re-verified on any upgrade. Tests cover nested keys, Unicode, escapes, and numeric scale/exponent (<code>1</code> vs <code>1.0</code> differ by design).</li>
+<li><code>tag_rule_proposal.artifact_sha256</code> is <strong>maintained by a BEFORE INSERT trigger</strong> that sets it from the same expression, and an UPDATE of <code>artifact</code> or <code>artifact_sha256</code> is rejected. It <strong>can't be a generated column</strong>: <code>convert_to()</code> is STABLE in PG17 (catalog-verified by CODEX1), and generated columns need IMMUTABLE functions. The migration test creates the real column and trigger and checks it.</li>
+<li>requires an immutable <code>tag_crosscheck</code> for that proposal with <code>reviewed_sha256</code> equal to it and verdict <code>approve</code>;</li>
+<li>requires <code>proposal.tag = artifact-&gt;&gt;'tag'</code>;</li>
+<li>inserts <code>tag_revision</code> with the recomputed hash.</li>
+<li><strong><code>user_id</code> is audit data, not authentication.</strong> The auth boundary is the admin route plus the worker's execution-time role recheck, and the tests say so explicitly.</li>
+<li>The TypeScript loader hashes the same <code>artifact::text</code> fetched from the database, never its own serialization.</li>
+<li><code>switch_tag_ownership(tag, revision_id, gate_report_id, benchmark_report_id, user_id)</code>: see the activation protocol.</li>
+<li><code>rollback_tag(tag, user_id)</code>.</li>
+<li><code>begin_tag_attempt() RETURNS bigint</code>: definer, <code>nextval('tag_attempt_seq')</code>. birds_app has no sequence privilege; this is the only way to get a number.</li>
+<li><code>record_materialization_failure(key, entry_point, error, attempt_no)</code> and <code>clear_materialization_failure(key, attempt_no)</code>: signatures as in the failure contract below.</li>
+</ul>
+<p><strong>Activation protocol (P1-6), one executable path.</strong> The worker job <code>tag_activate</code>:</p>
+<ol>
+<li>Run <strong>the rev-17 executable path</strong> in exclusive mode with <code>failureKey = global:activate:&lt;tag&gt;</code>: <code>preAttemptNo</code> (autocommit), BEGIN with the SET LOCALs (<code>transaction_timeout</code> 30 s), the exclusive engine lock, the failure-key lock, then <code>postAttemptNo</code>.</li>
+<li>Load the revision artifact from the database and re-hash it; abort on mismatch.</li>
+<li>For every member, read <code>species_tag_input</code>. Where no state exists for <code>(revision, input_hash)</code>, meaning drift since staging or new members, <strong>compute it in TypeScript</strong> and insert it via <code>record_tag_state</code>. The rest came from the staging job.</li>
+<li>Call <code>switch_tag_ownership</code>, which checks:
    - the revision is approved;
    - <code>gate_report_id</code> and <code>benchmark_report_id</code> are immutable reports <strong>of kinds gate and benchmark, for the same tag and revision, with <code>body-&gt;&gt;'passed' = 'true'</code></strong>;
    - dependency activations are active;
-   - <strong>coverage</strong>: exactly one state row per member for <code>(revision, current input_hash)</code>. "Extras" means only a second current candidate for a member, or a state for a current input that doesn't belong to a universe member. Old <code>input_hash</code> history is immutable and ignored.</p>
-<p>It then inserts <code>tag_activation</code>, moves <code>tag_ownership</code>, and calls <code>apply_effective_tags</code> for the candidate set (species whose current <code>tags</code> contain the tag ∪ those whose new state is assigned), writing only where the result differs.
-5. COMMIT.</p>
+   - <strong>coverage</strong>: exactly one state row per member for <code>(revision, current input_hash)</code>. "Extras" means only a second current candidate for a member, or a state for a current input that doesn't belong to a universe member. Old <code>input_hash</code> history is immutable and ignored.</li>
+</ol>
+<p>It then inserts <code>tag_activation</code>, moves <code>tag_ownership</code>, and calls <code>apply_effective_tags</code> for the candidate set (species whose current <code>tags</code> contain the tag ∪ those whose new state is assigned), writing only where the result differs.</p>
+<ol start="5">
+<li>COMMIT.</li>
+</ol>
 <p>The job's cancel flag is honoured only <strong>before step 1</strong>. After the lock is taken, the transaction runs to commit or rollback. Rollback uses the same shape with <code>rollback_tag</code>.</p>
-<p><strong>Failure contract (P1-7; hardened in rev 13 and 14).</strong> <code>tag_materialization_failure (key PK, species_code NULL, entry_point, error, first_failed_at, last_failed_at, last_attempt_no bigint, attempts, cleared_at, cleared_by_attempt_no bigint)</code>:
-- <code>key</code> = the species code, or <code>global:&lt;entry_point&gt;</code> for failures with no species (<code>replaceTaxonomy</code>, lock or setup failures).
-- Error text is sanitized (<code>sanitizeErrorText</code>) and truncated to 500 characters.
-- <strong>Ordering is monotone by a database-issued attempt number (rev 14):</strong>
-  - <strong>Two tokens (rev 16; executable form in rev 17's path above):</strong>
-    - <strong>Pre-lock token:</strong> the caller runs <code>begin_tag_attempt()</code> as its own autocommit call <strong>before</strong> the locked transaction. It's used <strong>only</strong> if the attempt never acquires the advisory lock (<code>lock_timeout</code>, connection or setup failure), so such a failure still has an ordered number.
-    - <strong>Post-lock token:</strong> drawn only after <strong>both</strong> the engine lock and the failure-key lock (rev 17). It's used for the successful <code>clear_…</code> inside the transaction, and carried out to the follow-up for any in-lock failure stamp.
-    - Operations are serialized by the lock, so a post-lock token reflects the real serialized order. Rolled-back transactions still keep their numbers (<code>nextval</code> isn't transactional), so the follow-up stamp can use it.
-  - <code>record_materialization_failure(key, entry_point, error, attempt_no)</code> writes only if <code>attempt_no &gt;</code> the row's <code>last_attempt_no</code> <strong>and</strong> <code>&gt;</code> its <code>cleared_by_attempt_no</code>.
-  - <code>clear_materialization_failure(key, attempt_no)</code> <strong>upserts a tombstone</strong> (sets <code>cleared_at</code>, and <code>cleared_by_attempt_no = greatest(existing, attempt_no)</code>) even when no failure row exists.
-  - A failed attempt A whose follow-up stamp lands after a successful later attempt B is therefore ignored, including when no row existed before.
-  - The table columns are <code>last_attempt_no bigint</code> and <code>cleared_by_attempt_no bigint</code> (replacing the UUID and timestamp fields).
-  - <strong>Tests:</strong>
-    - A fails, B succeeds, then A's stamp (with a pre-existing row, and with none) leaves the key cleared.
-    - A fails at lock acquisition, then B succeeds, then A's delayed pre-lock stamp leaves the key cleared.
-    - <strong>The inverse:</strong> A takes its pre-lock token and stalls before the lock; B acquires, succeeds and clears (post-lock token); <strong>A then acquires, fails inside the lock and stamps with its post-lock token</strong>, and A's failure <strong>stays uncleared</strong>.
-- <strong>The worker:</strong> the locked transaction rolls back, then a <strong>follow-up</strong> transaction calls <code>record_materialization_failure</code>, which upserts, increments <code>attempts</code> and sets <code>last_failed_at</code>. The wiki stage's normal retry and backoff apply.
-- <strong><code>enrichOneNow</code>:</strong> the error propagates as today and is also recorded.
-- <strong>Clearing:</strong> a later successful entry-point transaction for the code calls <code>clear_materialization_failure</code>, setting <code>cleared_at</code>.
-- <strong>Health:</strong> the Server health tab and Tags tab count rows where <code>cleared_at IS NULL</code>.</p>
-<p><strong>CHECKs and immutability (P2):</strong>
-- enums for status, action, source and verdict;
-- 64-hex shape for every hash;
-- evidence/reason combinations as above;
-- the report's <code>(tag, revision_id)</code> must match its referenced revision;
-- <code>tag_activation.previous_activation_id</code> must be the tag's current activation at insert (checked in the definer);
-- <code>UPDATE</code>/<code>DELETE</code> blocked by trigger on proposals (except <code>status</code> via definer), crosschecks, revisions, activations, reports, states, and eval sets once frozen.</p>
-<p><strong>Transaction shape is decided by measurement (rev 13, CODEX1 P2).</strong> The 2.5 s figure is a pure-scan measurement, not a transaction budget. Before choosing the simple in-transaction path for activation and full re-materialization, a birds_test benchmark measures the complete transaction: input upserts, one state row per member per owned tag, <code>apply_effective_tags</code> writes with the search-vector trigger, indexes, WAL and commit. It covers the pilot (1 tag) and a projected 10-tag case, recording wall time, CPU, WAL, rows, dead tuples and lock-hold time.
-- The <strong>lock budget</strong> is ≤ 10 s for the exclusive hold on the shared droplet. That's a benchmark gate, backed at runtime by PG17 <strong><code>SET LOCAL transaction_timeout = '30s'</code></strong> on every exclusive-lock transaction, a hard whole-transaction cap (lock_timeout 10 s only bounds acquisition).
-- <strong>If the 10-tag case exceeds the budget:</strong> stop, write the generation/compare-and-swap staging schema and its race tests into this plan, and have them reviewed before implementing that branch. The pilot (1 tag) may proceed in-transaction if it's within budget.</p>
+<p><strong>Failure contract (P1-7; hardened in rev 13 and 14).</strong> <code>tag_materialization_failure (key PK, species_code NULL, entry_point, error, first_failed_at, last_failed_at, last_attempt_no bigint, attempts, cleared_at, cleared_by_attempt_no bigint)</code>:</p>
+<ul>
+<li><code>key</code> = the species code, or <code>global:&lt;entry_point&gt;</code> for failures with no species (<code>replaceTaxonomy</code>, lock or setup failures).</li>
+<li>Error text is sanitized (<code>sanitizeErrorText</code>) and truncated to 500 characters.</li>
+<li><strong>Ordering is monotone by a database-issued attempt number (rev 14):</strong></li>
+<li><strong>Two tokens (rev 16; executable form in rev 17's path above):</strong><ul>
+<li><strong>Pre-lock token:</strong> the caller runs <code>begin_tag_attempt()</code> as its own autocommit call <strong>before</strong> the locked transaction. It's used <strong>only</strong> if the attempt never acquires the advisory lock (<code>lock_timeout</code>, connection or setup failure), so such a failure still has an ordered number.</li>
+<li><strong>Post-lock token:</strong> drawn only after <strong>both</strong> the engine lock and the failure-key lock (rev 17). It's used for the successful <code>clear_…</code> inside the transaction, and carried out to the follow-up for any in-lock failure stamp.</li>
+<li>Operations are serialized by the lock, so a post-lock token reflects the real serialized order. Rolled-back transactions still keep their numbers (<code>nextval</code> isn't transactional), so the follow-up stamp can use it.</li>
+</ul>
+</li>
+<li><code>record_materialization_failure(key, entry_point, error, attempt_no)</code> writes only if <code>attempt_no &gt;</code> the row's <code>last_attempt_no</code> <strong>and</strong> <code>&gt;</code> its <code>cleared_by_attempt_no</code>.</li>
+<li><code>clear_materialization_failure(key, attempt_no)</code> <strong>upserts a tombstone</strong> (sets <code>cleared_at</code>, and <code>cleared_by_attempt_no = greatest(existing, attempt_no)</code>) even when no failure row exists.</li>
+<li>A failed attempt A whose follow-up stamp lands after a successful later attempt B is therefore ignored, including when no row existed before.</li>
+<li>The table columns are <code>last_attempt_no bigint</code> and <code>cleared_by_attempt_no bigint</code> (replacing the UUID and timestamp fields).</li>
+<li><strong>Tests:</strong><ul>
+<li>A fails, B succeeds, then A's stamp (with a pre-existing row, and with none) leaves the key cleared.</li>
+<li>A fails at lock acquisition, then B succeeds, then A's delayed pre-lock stamp leaves the key cleared.</li>
+<li><strong>The inverse:</strong> A takes its pre-lock token and stalls before the lock; B acquires, succeeds and clears (post-lock token); <strong>A then acquires, fails inside the lock and stamps with its post-lock token</strong>, and A's failure <strong>stays uncleared</strong>.</li>
+</ul>
+</li>
+<li><strong>The worker:</strong> the locked transaction rolls back, then a <strong>follow-up</strong> transaction calls <code>record_materialization_failure</code>, which upserts, increments <code>attempts</code> and sets <code>last_failed_at</code>. The wiki stage's normal retry and backoff apply.</li>
+<li><strong><code>enrichOneNow</code>:</strong> the error propagates as today and is also recorded.</li>
+<li><strong>Clearing:</strong> a later successful entry-point transaction for the code calls <code>clear_materialization_failure</code>, setting <code>cleared_at</code>.</li>
+<li><strong>Health:</strong> the Server health tab and Tags tab count rows where <code>cleared_at IS NULL</code>.</li>
+</ul>
+<p><strong>CHECKs and immutability (P2):</strong></p>
+<ul>
+<li>enums for status, action, source and verdict;</li>
+<li>64-hex shape for every hash;</li>
+<li>evidence/reason combinations as above;</li>
+<li>the report's <code>(tag, revision_id)</code> must match its referenced revision;</li>
+<li><code>tag_activation.previous_activation_id</code> must be the tag's current activation at insert (checked in the definer);</li>
+<li><code>UPDATE</code>/<code>DELETE</code> blocked by trigger on proposals (except <code>status</code> via definer), crosschecks, revisions, activations, reports, states, and eval sets once frozen.</li>
+</ul>
+<p><strong>Transaction shape is decided by measurement (rev 13, CODEX1 P2).</strong> The 2.5 s figure is a pure-scan measurement, not a transaction budget. Before choosing the simple in-transaction path for activation and full re-materialization, a birds_test benchmark measures the complete transaction: input upserts, one state row per member per owned tag, <code>apply_effective_tags</code> writes with the search-vector trigger, indexes, WAL and commit. It covers the pilot (1 tag) and a projected 10-tag case, recording wall time, CPU, WAL, rows, dead tuples and lock-hold time.</p>
+<ul>
+<li>The <strong>lock budget</strong> is ≤ 10 s for the exclusive hold on the shared droplet. That's a benchmark gate, backed at runtime by PG17 <strong><code>SET LOCAL transaction_timeout = '30s'</code></strong> on every exclusive-lock transaction, a hard whole-transaction cap (lock_timeout 10 s only bounds acquisition).</li>
+<li><strong>If the 10-tag case exceeds the budget:</strong> stop, write the generation/compare-and-swap staging schema and its race tests into this plan, and have them reviewed before implementing that branch. The pilot (1 tag) may proceed in-transaction if it's within budget.</li>
+</ul>
 <p><strong>B2d benchmark (2026-09-29, birds_test on the M4; test-fixture ruleset; batched writes):</strong></p>
 <table>
 <thead>
@@ -419,144 +487,321 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
 <li><strong>Over budget:</strong> <code>replaceTaxonomy</code> when the <strong>lexicon changes while tags are owned</strong>: all inputs plus every owned tag's states under the exclusive lock, projected at about 10 s per owned tag on the M4 and more on the droplet. Per rev 13's rule, that branch is specified below and reviewed before it's built.</li>
 </ul>
 <p><strong>Taxonomy name change while tags are owned: generation-keyed batched repair (rev 21, for review; revs 19–20 revised per CODEX1).</strong></p>
-<p><strong>State.</strong> <code>tag_lexicon_state</code> gains:
-- <code>repair_generation bigint NOT NULL DEFAULT 0</code>;
-- <code>repaired_generation bigint NOT NULL DEFAULT 0</code>;
-- <code>repair_target_lexicon_hash text NULL</code>.</p>
-<p><strong>Pending ⇔ <code>repaired_generation &lt; repair_generation</code>.</strong> The flag is never a bare boolean. It is written only through definers:
-- <code>begin_tag_repair(target_hash) → generation</code> requires the exclusive engine lock. It increments <code>repair_generation</code> and sets the target.
-- <code>complete_tag_repair(generation) → boolean</code> requires the exclusive engine lock. It is a compare-and-swap:
+<p><strong>State.</strong> <code>tag_lexicon_state</code> gains:</p>
+<ul>
+<li><code>repair_generation bigint NOT NULL DEFAULT 0</code>;</li>
+<li><code>repaired_generation bigint NOT NULL DEFAULT 0</code>;</li>
+<li><code>repair_target_lexicon_hash text NULL</code>.</li>
+</ul>
+<p><strong>Pending ⇔ <code>repaired_generation &lt; repair_generation</code>.</strong> The flag is never a bare boolean. It is written only through definers:</p>
+<ul>
+<li><code>begin_tag_repair(target_hash) → generation</code> requires the exclusive engine lock. It increments <code>repair_generation</code> and sets the target.</li>
+<li><code>complete_tag_repair(generation) → boolean</code> requires the exclusive engine lock. It is a compare-and-swap:
   1. Return false if <code>repair_generation &lt;&gt; generation</code> or <code>lexicon_hash &lt;&gt; repair_target_lexicon_hash</code>.
-  2. Otherwise verify <strong>in SQL</strong> that the repair workset (below) is <strong>empty</strong>; if not, raise. Emptiness means:
-     - membership holds in both directions (every universe member has an input pointer; no non-member has one);
-     - every pointer has exactly the target <code>lexicon_hash</code> and the current <code>scanner_rev</code>;
-     - every current owned activation has a state for each member's current <code>input_hash</code>.
-  3. Otherwise set <code>repaired_generation = generation</code> and return true.</p>
-<p><strong>Repair workset (rev 21, CODEX1 P1).</strong> One SQL view-like query, <code>tag_repair_workset(target, scanner_rev)</code>, lists the codes needing work as the union of:
-- (a) universe members with <strong>no input pointer</strong>;
-- (b) members whose pointer has <code>lexicon_hash &lt;&gt; target</code> <strong>or</strong> <code>scanner_rev &lt;&gt; current</code>;
-- (c) members whose pointer is current but that <strong>lack a current state for any owned tag</strong>;
-- (d) <strong>non-member pointers</strong> (row iff member: the same invariant switch_tag_ownership already enforces as "extras").</p>
+  2. Otherwise verify <strong>in SQL</strong> that the repair workset (below) is <strong>empty</strong>; if not, raise. Emptiness means:<ul>
+<li>membership holds in both directions (every universe member has an input pointer; no non-member has one);</li>
+<li>every pointer has exactly the target <code>lexicon_hash</code> and the current <code>scanner_rev</code>;</li>
+<li>every current owned activation has a state for each member's current <code>input_hash</code>.
+  3. Otherwise set <code>repaired_generation = generation</code> and return true.</li>
+</ul>
+</li>
+</ul>
+<p><strong>Repair workset (rev 21, CODEX1 P1).</strong> One SQL view-like query, <code>tag_repair_workset(target, scanner_rev)</code>, lists the codes needing work as the union of:</p>
+<ul>
+<li>(a) universe members with <strong>no input pointer</strong>;</li>
+<li>(b) members whose pointer has <code>lexicon_hash &lt;&gt; target</code> <strong>or</strong> <code>scanner_rev &lt;&gt; current</code>;</li>
+<li>(c) members whose pointer is current but that <strong>lack a current state for any owned tag</strong>;</li>
+<li>(d) <strong>non-member pointers</strong> (row iff member: the same invariant switch_tag_ownership already enforces as "extras").</li>
+</ul>
 <p>The repair batch materializes (a)–(c) and deletes (d) through <code>materializeMany</code>, which already does both per row. The CAS predicate is exactly "this workset is empty", so the loop is self-healing: whatever the CAS would reject, the next batch selects.</p>
-<p><strong>Trigger.</strong> <code>replaceTaxonomy</code> runs in exclusive mode, as built. <strong>When the lexicon hash changed and at least one tag is owned</strong>, it:
-1. writes the taxonomy and lexicon state;
-2. re-materializes only species whose own taxon row changed;
-3. calls <code>begin_tag_repair(new_hash)</code> → generation G;
-4. <strong>inserts the repair job in the same transaction</strong> (rev 21, CODEX1 P2), on <code>tx.client</code>, never by calling <code>enqueueJob</code> inside the tag transaction:
+<p><strong>Trigger.</strong> <code>replaceTaxonomy</code> runs in exclusive mode, as built. <strong>When the lexicon hash changed and at least one tag is owned</strong>, it:</p>
+<ol>
+<li>writes the taxonomy and lexicon state;</li>
+<li>re-materializes only species whose own taxon row changed;</li>
+<li>calls <code>begin_tag_repair(new_hash)</code> → generation G;</li>
+<li><strong>inserts the repair job in the same transaction</strong> (rev 21, CODEX1 P2), on <code>tx.client</code>, never by calling <code>enqueueJob</code> inside the tag transaction:
    - a <code>jobs</code> row: <strong>type <code>tag_repair</code></strong> (a distinct, non-recurring, cancellable type), payload <code>{repairGeneration: G}</code>, dedup key <strong><code>tag_repair:g&lt;G&gt;</code></strong>, label "Tag repair (taxonomy change, generation G)", max_attempts 4, with the same ON CONFLICT … DO NOTHING as <code>enqueueJob</code>;
-   - <strong>and</strong> its <code>'enqueued'</code> <code>job_events</code> row.</p>
+   - <strong>and</strong> its <code>'enqueued'</code> <code>job_events</code> row.</li>
+</ol>
 <p><code>requested_by</code> is the parent <code>sync_taxonomy</code> job's <code>requested_by</code>. It's the only caller (job-handlers → <code>syncTaxonomy</code> → <code>replaceTaxonomy</code>), and <code>replaceTaxonomy</code> gains a <code>requesterId</code> parameter. The shared insert is factored as <code>insertJobOn(client, params)</code>, used by both <code>enqueueJob</code> and this path.</p>
 <p>The bump and its job therefore commit atomically. A generation-qualified key can never dedupe onto a job for an older generation. That closes CODEX1's finalization-window race: an old job that already finished its CAS, but hasn't yet terminalized its row, has key <code>g&lt;G-1&gt;</code>, so G gets its own job.</p>
-<p><strong>Repair job</strong> (type <code>tag_repair</code>; rev 21 split from <code>tag_consistency</code> because <code>requestCancel</code> refuses every RECURRING type, CODEX1 P1). The job type is wired like the others: jobs_type_check (a new migration), JobType, handler, TYPE_NAMES, <strong>not</strong> in RECURRING_TYPES, and cancel honoured between batches. The nightly <code>tag_consistency</code> stays a non-cancellable recurring singleton.
-1. Read the state. If <code>repaired_generation ≥ G</code> or <code>repair_generation &gt; G</code>, it is a no-op success: a newer generation owns its own job, created atomically by its own bump.
-2. Otherwise loop: under <code>withTagWriteTx('exclusive', 'global:repair')</code>, take the next 100 codes of <code>tag_repair_workset(target, current scanner_rev)</code> and pass them to <code>materializeMany</code> (materialize members, delete non-member pointers). Hostile review reduced the production batch from 200 after repeated 1.18 s / 1.25 s lock-budget failures; 100-code reruns held the measured gap to 220–227 ms.
-   - Each batch re-checks <code>repair_generation = G</code> under the lock. If it's newer, the job stops (no-op success).
-3. When a batch finds the workset empty, the <strong>same exclusive transaction</strong> calls <code>complete_tag_repair(G)</code>.
-4. The job is cancellable between batches. A cancel leaves the generation pending: this is visible in the admin Tags tab, which offers <strong>Resume repair</strong>; that re-enqueues <code>tag_repair:g&lt;G&gt;</code> if none is active.
-5. The nightly <code>tag_consistency</code> run also re-enqueues (via <code>enqueueJob</code>, outside any tag transaction) <code>tag_repair:g&lt;current&gt;</code> when the state is pending and no active job holds that key. That is the belt-and-braces recovery after a crash, cancel or dead job.</p>
-<p><strong>Semantics while pending</strong> (unchanged from rev 19):
-- Each species row derives wholly from the old or the new lexicon.
-- Wiki saves use the new lexicon.
-- Exclusive batches never overwrite a newer wiki-derived input.</p>
-<p><strong>What is refused while pending:</strong>
-- <code>switch_tag_ownership</code> (activation) and <strong>revision</strong> rollback (<code>rollback_tag</code> whose target is a previous revision) are refused until the generation converges.
-- <strong>Retire to legacy stays available</strong> as the emergency escape (CODEX1 P2):
-  - <code>rollback_tag</code> whose target is <code>to_legacy</code> is allowed;
-  - a new explicit <code>retire_tag_to_legacy(tag, user_id)</code> definer (exclusive lock; admin; activation row <code>to_legacy</code>) is allowed whatever the chain;
-  - both are surfaced in the admin Tags tab as <strong>Retire tag to legacy</strong>, with an owner-visible confirm.
-- Retiring is lexicon-independent. It removes ownership <strong>and re-applies the affected candidate set in the same exclusive transaction</strong>, so retirement and repair batches serialize, and <code>apply_effective_tags</code> then restores the legacy baseline for that tag (including NULL-baseline rows, per the CODEX1 fix). Other owned tags' rows keep their internally consistent states.</p>
-<p><strong>Tests</strong> (real DB, owned fixtures, exclusive batches forced small):
-1. A lexicon change with an owned tag bumps the generation and creates the <code>tag_repair:g&lt;G&gt;</code> job <strong>plus its <code>enqueued</code> event</strong> in the same transaction. A forced rollback of replaceTaxonomy leaves no state bump, job or event. The job's <code>requested_by</code> is the parent sync job's requester.
-2. <strong>The finalization-window race:</strong>
+<p><strong>Repair job</strong> (type <code>tag_repair</code>; rev 21 split from <code>tag_consistency</code> because <code>requestCancel</code> refuses every RECURRING type, CODEX1 P1). The job type is wired like the others: jobs_type_check (a new migration), JobType, handler, TYPE_NAMES, <strong>not</strong> in RECURRING_TYPES, and cancel honoured between batches. The nightly <code>tag_consistency</code> stays a non-cancellable recurring singleton.</p>
+<ol>
+<li>Read the state. If <code>repaired_generation ≥ G</code> or <code>repair_generation &gt; G</code>, it is a no-op success: a newer generation owns its own job, created atomically by its own bump.</li>
+<li>Otherwise loop: under <code>withTagWriteTx('exclusive', 'global:repair')</code>, take the next 100 codes of <code>tag_repair_workset(target, current scanner_rev)</code> and pass them to <code>materializeMany</code> (materialize members, delete non-member pointers). Hostile review reduced the production batch from 200 after repeated 1.18 s / 1.25 s lock-budget failures; 100-code reruns held the measured gap to 220–227 ms.
+   - Each batch re-checks <code>repair_generation = G</code> under the lock. If it's newer, the job stops (no-op success).</li>
+<li>When a batch finds the workset empty, the <strong>same exclusive transaction</strong> calls <code>complete_tag_repair(G)</code>.</li>
+<li>The job is cancellable between batches. A cancel leaves the generation pending: this is visible in the admin Tags tab, which offers <strong>Resume repair</strong>; that re-enqueues <code>tag_repair:g&lt;G&gt;</code> if none is active.</li>
+<li>The nightly <code>tag_consistency</code> run also re-enqueues (via <code>enqueueJob</code>, outside any tag transaction) <code>tag_repair:g&lt;current&gt;</code> when the state is pending and no active job holds that key. That is the belt-and-braces recovery after a crash, cancel or dead job.</li>
+</ol>
+<p><strong>Semantics while pending</strong> (unchanged from rev 19):</p>
+<ul>
+<li>Each species row derives wholly from the old or the new lexicon.</li>
+<li>Wiki saves use the new lexicon.</li>
+<li>Exclusive batches never overwrite a newer wiki-derived input.</li>
+</ul>
+<p><strong>What is refused while pending:</strong></p>
+<ul>
+<li><code>switch_tag_ownership</code> (activation) and <strong>revision</strong> rollback (<code>rollback_tag</code> whose target is a previous revision) are refused until the generation converges.</li>
+<li><strong>Retire to legacy stays available</strong> as the emergency escape (CODEX1 P2):</li>
+<li><code>rollback_tag</code> whose target is <code>to_legacy</code> is allowed;</li>
+<li>a new explicit <code>retire_tag_to_legacy(tag, user_id)</code> definer (exclusive lock; admin; activation row <code>to_legacy</code>) is allowed whatever the chain;</li>
+<li>both are surfaced in the admin Tags tab as <strong>Retire tag to legacy</strong>, with an owner-visible confirm.</li>
+<li>Retiring is lexicon-independent. It removes ownership <strong>and re-applies the affected candidate set in the same exclusive transaction</strong>, so retirement and repair batches serialize, and <code>apply_effective_tags</code> then restores the legacy baseline for that tag (including NULL-baseline rows, per the CODEX1 fix). Other owned tags' rows keep their internally consistent states.</li>
+</ul>
+<p><strong>Tests</strong> (real DB, owned fixtures, exclusive batches forced small):</p>
+<ol>
+<li>A lexicon change with an owned tag bumps the generation and creates the <code>tag_repair:g&lt;G&gt;</code> job <strong>plus its <code>enqueued</code> event</strong> in the same transaction. A forced rollback of replaceTaxonomy leaves no state bump, job or event. The job's <code>requested_by</code> is the parent sync job's requester.</li>
+<li><strong>The finalization-window race:</strong>
    - job G completes its CAS, and before its row terminalizes, a second replaceTaxonomy bumps to G+1;
    - job <code>g&lt;G+1&gt;</code> is created, not deduped;
-   - it converges, and <code>repaired_generation = G+1</code>.
-3. An older job that sees a newer generation stops as a no-op success.
-4. <strong>Workset self-healing:</strong> plant each class (a) missing input, (b) stale lexicon, (b′) stale scanner_rev, (c) current input missing one owned state, and (d) a non-member pointer. For each:
+   - it converges, and <code>repaired_generation = G+1</code>.</li>
+<li>An older job that sees a newer generation stops as a no-op success.</li>
+<li><strong>Workset self-healing:</strong> plant each class (a) missing input, (b) stale lexicon, (b′) stale scanner_rev, (c) current input missing one owned state, and (d) a non-member pointer. For each:
    - <code>complete_tag_repair</code> raises while it's present;
    - the repair job <strong>actually repairs</strong> it;
-   - the CAS then succeeds.</p>
-<p>Also: a wrong generation returns false.
-5. Activation and revision rollback are refused while pending. Retire-to-legacy succeeds while pending and restores legacy tags, including a NULL-baseline row.
-6. <strong>Retire with a second owned tag:</strong> retire tag X both <strong>before</strong> and <strong>after</strong> a repair batch, while tag Y stays owned. Y's effective tags and states stay consistent with each row's single current input, and X is back to its legacy value everywhere.
-7. A wiki save during the repair derives from the new lexicon, and a later batch does not overwrite it.
-8. <strong>Cancel:</strong>
+   - the CAS then succeeds.</li>
+</ol>
+<p>Also: a wrong generation returns false.</p>
+<ol start="5">
+<li>Activation and revision rollback are refused while pending. Retire-to-legacy succeeds while pending and restores legacy tags, including a NULL-baseline row.</li>
+<li><strong>Retire with a second owned tag:</strong> retire tag X both <strong>before</strong> and <strong>after</strong> a repair batch, while tag Y stays owned. Y's effective tags and states stay consistent with each row's single current input, and X is back to its legacy value everywhere.</li>
+<li>A wiki save during the repair derives from the new lexicon, and a later batch does not overwrite it.</li>
+<li><strong>Cancel:</strong>
    - the server <code>requestCancel</code> on a running <code>tag_repair</code> job flags it; the job stops between batches, and the state stays pending;
    - the nightly run re-enqueues it, and it converges; a second pass fixes 0;
    - <code>requestCancel</code> on the <code>tag_consistency</code> singleton is still a no-op;
-   - the Tags-tab Cancel and Resume controls are exercised in the GROK UI pass.
-9. Each batch's exclusive hold is under 1 s on the benchmark fixture.</p>
+   - the Tags-tab Cancel and Resume controls are exercised in the GROK UI pass.</li>
+<li>Each batch's exclusive hold is under 1 s on the benchmark fixture.</li>
+</ol>
 <p><strong>Lock order</strong> (CODEX1-checked): <code>claimNextJob</code> is one autocommit UPDATE, released before the handler enters the tag transaction, and terminalization happens after it. The in-transaction job INSERT touches only the new generation's row. That separation is normative.</p>
 <p><strong>Scanner revision guard (rev 14, CODEX1 P2).</strong> <code>scanner_rev</code> also carries <code>ENGINE_SOURCE_HASH</code>, a constant in <code>segment.ts</code>. A test recomputes SHA-256 over the semantic engine sources (<code>normalize.ts</code>, <code>tokens.ts</code>, <code>segment.ts</code>, <code>rules.ts</code>, <code>scanner.ts</code>, excluding comments and whitespace) and <strong>fails if it differs from the constant</strong>. A semantic engine change can't ship without a new <code>scanner_rev</code>, which changes every <code>input_hash</code>, so the consistency job re-materializes everything.</p>
-<p><strong>Tests</strong> (additions):
-- every definer's refusal cases;
-- <code>record_tag_state</code> with a stale <code>input_hash</code>;
-- a lexicon change re-materializing everything;
-- <code>markWikiError</code> keeping a species in the universe;
-- the name-swap regression (focal exemptions change while the global lexicon key set doesn't; <code>input_hash</code> must change);
-- the two-session <code>replaceTaxonomy</code> vs wiki race;
-- idempotent <code>record_tag_state</code> (identical OK, differing raises);
-- <code>markWikiNoArticle</code> removing it and its owned tags;
-- activation with drift between staging and switch;
-- gate or benchmark report mismatch (wrong tag, revision or kind, or not passed);
-- a cancel after the lock is ignored;
-- <code>TagWriteTx</code> can't be constructed outside <code>withTagWriteTx</code> (the static guard and a type test);
-- catalog grant assertions for every new table;
-- the failure-log lifecycle.</p>
+<p><strong>Tests</strong> (additions):</p>
+<ul>
+<li>every definer's refusal cases;</li>
+<li><code>record_tag_state</code> with a stale <code>input_hash</code>;</li>
+<li>a lexicon change re-materializing everything;</li>
+<li><code>markWikiError</code> keeping a species in the universe;</li>
+<li>the name-swap regression (focal exemptions change while the global lexicon key set doesn't; <code>input_hash</code> must change);</li>
+<li>the two-session <code>replaceTaxonomy</code> vs wiki race;</li>
+<li>idempotent <code>record_tag_state</code> (identical OK, differing raises);</li>
+<li><code>markWikiNoArticle</code> removing it and its owned tags;</li>
+<li>activation with drift between staging and switch;</li>
+<li>gate or benchmark report mismatch (wrong tag, revision or kind, or not passed);</li>
+<li>a cancel after the lock is ignored;</li>
+<li><code>TagWriteTx</code> can't be constructed outside <code>withTagWriteTx</code> (the static guard and a type test);</li>
+<li>catalog grant assertions for every new table;</li>
+<li>the failure-log lifecycle.</li>
+</ul>
 <h3>B3: admin Tags tab and consistency job</h3>
 <p>As rev 10, built on the tables above. <strong>Job wiring checklist (P2):</strong> migration <code>jobs_type_check</code>, the <code>JobType</code> union, the handler switch, payload validation, dedup keys, <code>TYPE_NAMES</code>, <code>RECURRING_TYPES</code> and scheduler reconciliation for <code>tag_consistency</code>, an execution-time admin recheck, and explicit cancel semantics (activation: only before the lock).</p>
-<p>All owner actions are buttons; long work runs as worker jobs:
-- <code>tag_draft_rules</code>: the AI proposal, metered;
-- <code>tag_stage_report</code>;
-- <code>tag_design_simulation</code>;
-- <code>tag_gate_report</code>;
-- <code>tag_benchmark</code>: EXPLAIN (ANALYZE, BUFFERS, WAL) of the switch in a rolled-back transaction;
-- <code>tag_activate</code> / <code>tag_rollback</code>;
-- <code>tag_consistency</code>: nightly.</p>
-<h3>B4: the open-ocean pilot flow</h3>
-<p>Every step is visible in the Tags tab:
-1. Draft rules with AI.
-2. The CODEX1 cross-check is recorded.
-3. The owner approves.
-4. Stage report.
-5. Design simulation: n per stratum; more than 250 → owner decision.
-6. Blind labelling on the phone.
-7. Gate report.
-8. Benchmark.
-9. The owner activates.
-10. The nightly consistency job watches.</p>
-<p>Kestrel check: after activation, American Kestrel no longer shows open ocean, and the tag carries <code>requires_unmet:t-marine</code> as its reason.</p>
-<h2>Evaluation (Release B gate)</h2>
+<p>All owner actions are buttons; long work runs as worker jobs:</p>
 <ul>
-<li><strong>Estimand:</strong> over the universe, the precision and recall of rules as the source of <code>habitat:open-ocean</code>, with legacy measured the same way as the baseline.</li>
-<li><strong>Labels:</strong> A, whether the article supports it (primary), and B, whether it's true from owner knowledge (optional).</li>
-<li>The page shows the full allowed text, with no highlights and no system output.</li>
-<li>Unsure answers are adjudicated; any remaining are reported under both all-yes and all-no sensitivity bounds.</li>
-<li><strong>Strata:</strong></li>
-<li>S1: both systems say yes;</li>
-<li>S2: rules only;</li>
-<li>S3a/S3b: legacy only, split marine vs land order;</li>
-<li>S4a: neither, marine order;</li>
-<li>S4b: neither, land order, with a <strong>frozen</strong> sea/ocean lexical candidate;</li>
-<li>S4c: neither, land order, no candidate (a small probability sample);</li>
-<li>S4u: taxon unknown.</li>
+<li><code>tag_draft_rules</code>: the AI proposal, metered;</li>
+<li><code>tag_stage_report</code>;</li>
+<li><code>tag_design_simulation</code>;</li>
+<li><code>tag_gate_report</code>;</li>
+<li><code>tag_benchmark</code>: EXPLAIN (ANALYZE, BUFFERS, WAL) of the switch in a rolled-back transaction;</li>
+<li><code>tag_activate</code> / <code>tag_rollback</code>;</li>
+<li><code>tag_consistency</code>: nightly.</li>
 </ul>
-<p>Every unit has a known nonzero inclusion probability. If S4b's lexicon changes after labels are seen, that sample is retired into tuning.
-- <strong>Design simulation before any labelling:</strong>
-  - use the actual stratum sizes and a grid of conservative within-stratum positive rates (S4c especially);
-  - <strong>criteria:</strong> a 95% interval half-width of at most 0.05 for rules precision, and a lower bound of the paired weighted recall difference decidable against −0.10 with at least 80% probability under the assumed rates;
-  - choose per-stratum n to meet them;
-  - expected total ≈150–250, but <strong>not promised</strong>. More than 250 goes to the owner first.
-- <strong>Estimation:</strong>
-  - Horvitz–Thompson estimates of the population confusion-cell totals; precision and recall as ratio estimators;
-  - 95% intervals by a <strong>rescaled stratified bootstrap without replacement</strong> with finite-population correction;
-  - the recall difference is <strong>paired</strong>, so each replicate resamples species and computes both recalls.
-- <strong>Gates (proposed; the owner confirms before sampling):</strong>
-  - precision lower bound ≥ 0.85, with point ≥ 0.95;
-  - recall difference (rules − legacy) lower bound &gt; −0.10;
-  - ties prefer rules.
-  - The named cases (kestrel, a petrel, a scoter, an auk, Egyptian Goose, Osprey) are product checks only.
-- <strong>Set hygiene:</strong> frozen authoring, tuning and test sets, disjoint by species and genus. A test set that influences anything is retired.</p>
+<h3>B4: the open-ocean pilot flow (rev 27 implementation spec, for CODEX1 review)</h3>
+<p><strong>Owner decisions (2026-09-29), answering CODEX1's rev-22 review:</strong></p>
+<ol>
+<li><strong>The gate is pragmatic, not survey-grade.</strong> It measures two claims about the rules, precision and retention of the legacy tag's real positives, from a frozen, fingerprinted stratified sample. There is no Monte Carlo design, no genus-reserved acceptance frame, and no estimate over the "neither system tags it" population.</li>
+<li><strong>Labels measure what the article says.</strong> Gaylon is not an ornithologist, so there is no "is it true" question at all.</li>
+</ol>
+<p>Every rev-22 correctness finding that survives these decisions is fixed below. Every step is an admin button or a worker job. <strong>Migration 0071 is amended</strong> before any deploy (it's applied only to birds_test).</p>
+<p><strong>B4a. Authoring set.</strong></p>
+<ul>
+<li><code>tag_authoring_example (tag, species_code, genus, frozen_at)</code> is frozen by the first draft, through the definer <code>freeze_tag_authoring_set</code> (an idempotent first-writer).</li>
+<li><strong>Four cells of 12</strong>, each ordered by <code>md5(code‖tag)</code>, taking what exists if a cell is short (the shortfall is recorded):</li>
+<li>legacy-yes marine;</li>
+<li>legacy-yes non-marine;</li>
+<li>legacy-no marine;</li>
+<li><strong>legacy-no non-marine with a cue word</strong> (the trap cell: sea crossings, islands, name-only mentions).</li>
+<li>The model sees each species' order, family and ≤ 6 cue sentences. It never sees legacy values or labels.</li>
+<li><strong>No eval exclusions.</strong> The gate's estimand is this rule set's decisions over the finite universe, and each eval set is a fresh independent random draw. So species that shaped the draft are ordinary members, sampled with their true inclusion probability. Overfitting only affects generalising beyond this population, and the gate doesn't claim that.</li>
+</ul>
+<p><strong>B4b. AI drafting</strong> (<code>tag_draft_rules</code>), as rev 22 with these changes:</p>
+<ul>
+<li>The <strong>definition must exist in <code>TAG_DEFINITIONS</code></strong>.</li>
+<li>The loader validates in the handler, with one retry.</li>
+<li>The job result lists <strong>every</strong> attempt's ai_usage call id, model and loader error. The proposal stores the successful call's id.</li>
+<li>The dedup key is <code>tag_draft_rules:&lt;tag&gt;</code>, concurrency-safe via the jobs partial unique index.</li>
+<li>The cue lexicon and marine list are <strong>design artifacts with a SHA-256</strong> recorded in the draft result, the simulation report and the set design.</li>
+</ul>
+<p><strong>B4c. Cross-check recording (CODEX1 P1-8).</strong></p>
+<ul>
+<li><code>record_tag_crosscheck(proposal_id, reviewer, verdict, text)</code>:</li>
+<li>locks the proposal;</li>
+<li><strong>recomputes</strong> <code>artifact_sha256</code> from <code>artifact</code> and records that value, with no caller-supplied hash;</li>
+<li>requires status <code>proposed</code>/<code>crosschecked</code>;</li>
+<li>requires <code>reviewer</code> from the fixed set {CODEX1, CODEX};</li>
+<li>sets <code>crosschecked</code>.</li>
+<li><strong>EXECUTE is granted to no app role.</strong> It's executable only by <code>birds_owner</code>, so no route or worker path can synthesize an approving row. The agent script <code>scripts/tag-crosscheck.mjs</code> (<code>show</code>, then <code>record</code> after the reviewer's verdict) runs with the owner credentials over SSH on the droplet (or <code>.env.test</code> locally). A static guard fails if any <code>src/</code> file names <code>record_tag_crosscheck</code>.</li>
+</ul>
+<p><strong>B4d. The frame and strata</strong> for revision r:</p>
+<ul>
+<li><strong>Frame</strong> = universe members that have a current state for r <strong>and</strong> (<code>rules_yes</code> ∨ <code>legacy_yes</code>).</li>
+<li><code>rules_yes</code> = state <code>assigned</code>.</li>
+<li><code>legacy_yes</code> = the <strong>displayed legacy value</strong> (<code>legacy_tags ∋ tag</code>). A NULL legacy baseline displays no tag today, so it counts as no; the report states how many frame species have no baseline.</li>
+<li>Species neither system tags are <strong>outside every gate claim</strong>, and the report says so.</li>
+<li><strong>Strata:</strong></li>
+<li><strong>A</strong> = rules ∧ legacy;</li>
+<li><strong>B</strong> = rules ∧ ¬legacy;</li>
+<li><strong>C1</strong> = ¬rules ∧ legacy ∧ marine (rules state <code>not_assigned</code>);</li>
+<li><strong>C2</strong> = ¬rules ∧ legacy ∧ ¬marine (rules state <code>not_assigned</code>);</li>
+<li><strong>U</strong> = legacy ∧ rules state <code>unevaluated</code>.</li>
+<li>They're exhaustive and disjoint over the frame by construction; each item also stores its own flags.</li>
+<li><strong>Frame hash</strong> (CODEX1 P1-2; exact byte contract in §B4i) covers every member's (species_code, stratum, input_hash, rules_yes, legacy_yes) plus the design hash. The design hash covers the marine list, cue words, named cases, the fixed evaluator deny list and the evaluator-text version. It's recorded on the simulation report and the set. Any difference refuses sampling or readiness; there's no tolerance.</li>
+</ul>
+<p><strong>B4e. The two claims and their bounds (rev 24; supersedes the rev-23 estimators and intervals).</strong></p>
+<ul>
+<li>K_h is the number of real positives (label "yes") in stratum h. The claims are:</li>
+<li><strong>precision</strong> = (K_A + K_B)/(N_A + N_B);</li>
+<li><strong>retention of legacy's real positives</strong> = K_A/(K_A + K_C1 + K_C2 + K_U). This is the owner's claim: of the birds the old AI tagged correctly, how many the rules keep. New rules positives (B) <strong>cannot</strong> compensate (CODEX1 rev-23a P1-1).</li>
+<li><strong>Unsure answers take their worst value per claim</strong> (CODEX1 rev-23 P1-1): for precision, unsure → no; for retention, A-unsure → no and C/U-unsure → yes. This is the exact worst case, because retention is increasing in K_A and decreasing in the lost total.</li>
+<li><strong>Exact finite-population bounds:</strong></li>
+<li>each stratum's K_h gets an exact <strong>hypergeometric</strong> one-sided bound (the inverted tail; a census stratum is exact);</li>
+<li>the claim's one-sided α = 0.025 is split equally (<strong>Bonferroni</strong>) across the non-census strata the claim uses;</li>
+<li>precision_lower = Σ K_lo(A, B)/N_R; retention_lower = K_lo(A)/(K_lo(A) + Σ K_hi(C1, C2, U)).</li>
+<li>Coverage is ≥ 97.5% one-sided <strong>by construction</strong>. All-yes, all-no and small cells are handled exactly; there are no pseudo sample sizes and no log singularities (CODEX1 rev-23a P2-1).</li>
+<li><strong>Undefined denominators</strong> (CODEX1 rev-23 P1-5, rev-23a P1-2):</li>
+<li>N_A + N_B = 0 means "the rules assign no species": undefined, <strong>gate fails</strong>;</li>
+<li>a used stratum with n = 0 is undefined, and the gate fails;</li>
+<li>when <strong>no legacy positive can have been lost</strong> (every C/U stratum is empty or censused at zero), retention's lower bound is 1. It's vacuous only if A is also censused at zero;</li>
+<li>a non-census C/U sample that sees no positives still has K_hi &gt; 0, so the lower bound comes from the data and zero observed positives never passes by default.</li>
+<li><strong>Sample validation</strong> (CODEX1 rev-23a P1-4, rev-24 P1-3): every stratum's N and n are integers with 0 ≤ n ≤ N; the observation count per stratum equals n exactly; species are unique. Each item carries rules_yes, legacy_yes, <strong>rules status</strong> and the <strong>marine</strong> proxy, and <code>stratumOf(status, legacy, marine)</code> must reproduce its stratum, so a C1/C2/U swap is rejected. Anything else throws before any estimate.</li>
+</ul>
+<p><strong>B4f. Gates: one authoritative JSON, confirmed and frozen at set creation (CODEX1 rev-23 P1-3).</strong>
+The exact bytes are <code>PROPOSED_GATES</code> in eval-stats.ts. As stored (jsonb canonical text) they are:
+<code>{"unsure": "worst case per claim", "version": 1, "precision": {"lower_min": 0.85, "point_min": 0.95}, "retention": {"lower_min": 0.9}, "undefined": "fails, except retention when no legacy positive can be lost", "confidence": "one-sided 97.5% exact, Bonferroni across non-census strata", "named_cases_must_not": ["amekes", "egygoo", "osprey"]}</code></p>
+<ul>
+<li>The <strong>pinned DB hash</strong> is <code>24ae83e5f160eb506c29c14bf913cf2fd97183b52375b7331d594b1454971604</code>, asserted by a test (CODEX1 rev-26 #3).</li>
+<li>
+<p>The pinned open-ocean design hash is <code>ae5bcf16efc793b5ebb1f15fa11a1198c9e90f2585d8dda5d011674a2f0c6d9b</code>. The evaluator-text version has a single source, and lists are sorted by code point (#5).</p>
+</li>
+<li>
+<p><code>passed</code> is computed by <strong>one function</strong> (<code>evaluateGate</code>) from the <strong>stored</strong> JSON only (parsed strictly: version, keys, thresholds in [0,1], code grammar): precision.point ≥ point_min ∧ precision.lower ≥ lower_min ∧ (retention.lower ≥ lower_min ∨ vacuous) ∧ no <code>named_cases_must_not</code> code assigned in the staged states (CODEX1 rev-24 P1-1).</p>
+</li>
+<li>The owner's confirmation is stored with the set: user, time, and the exact JSON with its SHA-256.</li>
+</ul>
+<p><strong>B4g. Sizing, on the same exact bounds (CODEX1 rev-23a P2-2).</strong></p>
+<ul>
+<li>For each candidate allocation and each grid scenario, plug in the expected counts x_h = round(p_h·n_h) and compute the <strong>same</strong> exact point and lower bound.</li>
+<li><strong>Criteria (worst over the 72-scenario grid):</strong></li>
+<li>precision point − lower ≤ <strong>0.10</strong> (an expected-count gap target, <strong>not</strong> a power guarantee, per CODEX1 rev-24 P2-1);</li>
+<li>retention point − lower ≤ <strong>0.07</strong>.</li>
+<li><strong>Allocation:</strong> n_h = min(N_h, 5); then greedily add the unit with the largest excess reduction. If no single unit helps (integer-step plateaus), add to the stratum with the most unsampled units; ties go in the order A, B, C1, C2, U. The cap is 1,000.</li>
+<li>Reports: <code>needsOwnerDecision = total &gt; 250</code>. <strong>Measured:</strong> for frames of about 400–870 species, the total is about 230–530. The exact method costs labels, so <strong>expect the owner's &gt; 250 decision</strong>.</li>
+<li><strong>The coverage unit test is a guard, not the justification:</strong></li>
+<li>12 predeclared finite populations (3 shapes × 4 rate profiles, including all-positive strata, tiny U and zero-rate U), 400 draws each at the sizeDesign n;</li>
+<li>the truth may fall below either lower bound in at most 3.5% of draws;</li>
+<li>a failure is a <strong>hard stop</strong> that needs a plan revision, with no automatic fallback (CODEX1 rev-23 P2-2).</li>
+</ul>
+<p><strong>B4g2. The sampling contract (CODEX1 rev-23 P1-2).</strong></p>
+<ul>
+<li>The <code>tag_eval_create</code> job runs <strong>one REPEATABLE READ transaction</strong>:
+  1. recompute the frame and its DB-canonical hash (B4i);
+  2. refuse unless it equals the simulation report's frame hash;
+  3. select by <strong>SHA-256 rank</strong> ("sha256-rank-v1"; the seed is secret until the set exists, so a keyed hash is equivalent to HMAC here and core <code>sha256()</code> is available in SQL): for each stratum, sort frame members by <code>sha256(seed_hex ‖ "|v1|" ‖ tag ‖ "|" ‖ revision ‖ "|" ‖ stratum ‖ "|" ‖ species_code)</code>, then by <code>species_code COLLATE "C"</code> as a tiebreaker, and take the first n_h;
+  4. call <code>create_tag_eval_set</code>. It re-checks the frame hash inside the same transaction, inserts the items (UNIQUE set+species) and stores in the design:<ul>
+<li>algorithm "sha256-rank-v1";</li>
+<li>the 32-byte crypto seed (hex);</li>
+<li>N_h, n_h and π_h = n_h/N_h;</li>
+<li>the selected codes;</li>
+<li>the frame and design hashes.</li>
+</ul>
+</li>
+<li><strong>A recorded design is never trusted (CODEX1 rev-26 #1).</strong> <code>tag_eval_create</code> recomputes <code>sizeDesign(body.N)</code> (N is verified against the live frame by the definer) and demands exact agreement of n, total, feasible and <code>needsOwnerDecision</code>, plus the current design hash and the sizing targets and grid (compared by canonical JSON). The over-budget decision uses the <strong>recomputed</strong> total. Tests cover four forgery shapes.</li>
+<li><strong>The design records <code>pi</code> and <code>selectedCodes</code></strong>, and <code>create_tag_eval_set</code> refuses unless both equal its own recomputation (#4). The items table remains the full record.</li>
+<li><strong>Grants (#2):</strong> <code>tag_eval_frame_rows</code> is internal: an explicit <code>REVOKE ALL … FROM PUBLIC, birds_app</code>. <code>tag_eval_frame_hash</code> stays app-executable. Both are asserted with <code>has_function_privilege</code>.</li>
+<li><strong>Hard stops (CODEX1 rev-25 P2-6):</strong> the design job and set creation refuse when <code>buildFrame.missingStates ≠ 0</code> (run the stage report first) or when <code>sizeDesign.feasible</code> is false.</li>
+<li><strong>No operator substitution</strong> (CODEX1 rev-24 P1-4): <code>create_tag_eval_set</code> <strong>recomputes</strong> the frame in SQL, verifies its hash, <strong>recomputes the ranked selection from the stored seed and n_h</strong>, and refuses unless the supplied item codes, strata and flags equal it exactly. Only the masked text snapshots come from the job (the app's own code, Option A). A test tampers with one code and is refused.</li>
+</ul>
+<p><strong>B4h. Evaluator text and blind labelling (CODEX1 P1-6, P1-7).</strong></p>
+<ul>
+<li><strong>The evaluator text is revision-independent.</strong> It's the stored article minus a <strong>fixed global</strong> section list: headings containing taxonomy, systematic, etymolog, subspecies, in culture, references, further reading, external links, gallery or notes (exactly <code>EVAL_TEXT_DENY</code>), with the species' <strong>common name, genus and species epithet masked</strong> as "[this bird]" / "[genus]". The frozen cue words are <strong>underlined as a fixed reading aid</strong>: the same on every page and for every system, never rules output. <code>eval_text_hash</code> is the label identity (CODEX1 rev-24 P1-2). It's the SHA-256 of the evaluator-text version, the deny list, the underlined cue words and the masked sections, so a label is reused only for an identical page.</li>
+<li><strong>Labels belong to (tag, species_code, eval_text_hash)</strong> and are reused by later sets whenever the text is unchanged. So a re-draft only asks about new or changed text.</li>
+<li>The table is <code>tag_eval_label (id uuid, tag, species_code, eval_text_hash, label, labeled_by, first_set_id, created_at, UNIQUE (tag, species_code, eval_text_hash))</code>, <strong>immutable</strong> (write-once).</li>
+<li>A later set's item resolves its label by joining <code>(set.tag, item.species_code, item.eval_text_hash)</code>.</li>
+<li><code>freeze_tag_eval_set</code> counts an item as labelled if that join finds a row, whichever set created it.</li>
+<li><code>record_tag_eval_label</code> refuses an already-labelled page, so no later item can overwrite a prior answer.</li>
+<li>A test covers a second set whose only unlabelled page is a new species, and its freeze.</li>
+<li><strong>Flow on <code>/admin/tags/[tag]/label/[set]</code>:</strong></li>
+<li>a random item token (no name) and the masked text;</li>
+<li>the owner answers <strong>"Does this text say the bird uses the open ocean as habitat?"</strong> yes / no / unsure;</li>
+<li>after <strong>Save</strong>, the page reveals which bird it was (context only, no question), then goes to the next item.</li>
+<li><strong>An answer is write-once.</strong> There's no revision after the reveal, and no adjudication pass; unsure answers take their worst value per claim (§B4e).</li>
+<li>Progress shows the overall count only.</li>
+<li><strong>Writes go only through definers.</strong></li>
+<li><code>record_tag_eval_label(set_id, item_id, user_id, label)</code>:<ul>
+<li>locks the set row <code>FOR SHARE</code> and requires <code>labelling</code>;</li>
+<li>checks the item belongs to the set;</li>
+<li>is write-once;</li>
+<li>takes the timestamp server-side;</li>
+<li>does an admin audit check.</li>
+</ul>
+</li>
+<li><code>freeze_tag_eval_set</code> locks the set <code>FOR UPDATE</code>, so a label and a freeze can't interleave.</li>
+<li><strong>birds_app gets SELECT only on every B4 table</strong>, after an explicit <code>REVOKE ALL … FROM birds_app, PUBLIC</code> for the tables and their sequences. The route does an admin check at execution time.</li>
+</ul>
+<p><strong>B4i. Sets, the frame hash, and gate-checked activation (CODEX1 rev-23 P1-4, P2-1, P2-3).</strong></p>
+<ul>
+<li><code>tag_eval_set (…, status labelling|frozen|abandoned, design, frame_hash, gates, gates_sha256, gates_confirmed_by, gates_confirmed_at, …)</code> is created only by <code>create_tag_eval_set</code>.</li>
+<li>A trigger guards the lifecycle: labelling → frozen or labelling → abandoned only. Frozen and abandoned sets are immutable.</li>
+<li>Approving a new revision retires nothing.</li>
+<li><strong>A DB-canonical frame hash:</strong> <code>tag_eval_frame_hash(tag, revision_id, marine_orders text[], design_sha256)</code> is SQL, and it's the single source of truth for both the job and the switch.</li>
+<li>It covers universe members with a current state for the revision that are rules-yes or legacy-yes, ordered by <code>species_code COLLATE "C"</code>.</li>
+<li><strong>Exact bytes (rev 26):</strong> per row, in <code>species_code COLLATE "C"</code> order, <code>len:code|len:stratum|len:input_hash|len:com_name|len:sci_name|r|l|</code>, with a <strong>trailing <code>|</code></strong>. Lengths are UTF-8 octets, r and l are 0 or 1, and missing names are the empty string. The rows are concatenated, prefixed with <code>"tagframe-v1|" + design_sha256 + "|"</code>, then SHA-256.</li>
+<li><code>eval-frame.ts canonicalFrameHash</code> is the byte-identical TypeScript mirror. <strong>Species codes are asserted ASCII</strong>, so JS ordering equals C collation; names may be any UTF-8.</li>
+<li><strong>Binding of the page (CODEX1 rev-25 P1-1).</strong> The evaluator page is built from segmentArticle's normalized sections, exactly what <code>input_hash</code>'s text_hash covers. It's masked with the common and scientific names, which the frame bytes now carry, and rendered per the design, which the design hash covers (version, deny list, cue words). So anything that changes <code>eval_text_hash</code> changes the frame hash. A regression test changes only a scientific epithet.</li>
+<li>Cross-check tests: SQL = TS on planted fixtures, row reordering, and the rename regression.</li>
+<li><strong>Activation verifies the gate inside the exclusive transaction, after materialization</strong> (CODEX1 rev-23 P1-4). <code>switch_tag_ownership</code> is amended (CREATE OR REPLACE):</li>
+<li>for the gate report it requires body.setId → a <strong>frozen</strong> set of the same tag and revision → <code>gates_sha256</code> = the SHA-256 of the report's gates → <strong><code>set.frame_hash = tag_eval_frame_hash(…)</code> computed right there</strong>, after the activation's drift completion, under the exclusive lock;</li>
+<li>the caller can't supply the hash;</li>
+<li>drift at any point before the switch refuses it with "frame changed: run a new blind test". Labels are reused by text, so only changed text needs new labels.</li>
+<li><strong>The benchmark no longer uses provisional reports.</strong> <code>switch_tag_ownership(…, p_dry_run boolean)</code> skips the gate and benchmark report checks only when <code>p_dry_run</code>, and then <strong>always raises</strong> <code>TAG_DRY_RUN</code> at its very end, so a dry run can never commit. The provisional-report path and the "provisional" exemption in the report trigger are removed.</li>
+<li><strong>Evidence survives (CODEX1 rev-25 P1-4):</strong> the caller runs the dry switch inside <code>SAVEPOINT tag_dry_run</code>, catches <code>TAG_DRY_RUN</code>, runs <code>ROLLBACK TO SAVEPOINT</code> (the transaction is usable again), reads the WAL delta and the timings, then rolls the whole transaction back via TagTxRollback.</li>
+<li>The benchmark report is recorded afterwards, in its own statement. The tests prove the report carries timing and WAL &gt; 0 and that no activation, ownership or tag change persists.</li>
+<li><strong>Gates hash (CODEX1 rev-25 P1-2):</strong> <code>gates_sha256 = sha256(convert_to(gates::text, 'UTF8'))</code> (jsonb's canonical text), computed by <code>create_tag_eval_set</code>. Both the report trigger and the switch require <code>report.body.gatesSha256 = set.gates_sha256</code>, and the switch <strong>recomputes</strong> it from <code>set.gates</code>. The pass decision is computed from <code>set.gates</code> only. There's a test where a lax-gates hash is refused.</li>
+<li><strong>Exact grants:</strong></li>
+<li><code>birds_app</code> gets SELECT on <code>tag_authoring_example</code>, <code>tag_eval_set</code>, <code>tag_eval_item</code> and <code>tag_eval_label</code>, and nothing else on them or their sequences. It gets EXECUTE on <code>freeze_tag_authoring_set</code>, <code>create_tag_eval_set</code>, <code>record_tag_eval_label</code>, <code>freeze_tag_eval_set</code>, <code>abandon_tag_eval_set</code> and <code>tag_eval_frame_hash</code>.</li>
+<li><code>record_tag_crosscheck</code> gets <strong>no</strong> EXECUTE for birds_app; it's owner-role only.</li>
+<li><code>tag_rule_proposal</code> keeps its column INSERT (0066).</li>
+<li><strong>Rollback to a previous revision</strong> needs no gate. It's the documented emergency path, and retire-to-legacy is always available.</li>
+</ul>
+<p><strong>Tests (rev 25):</strong></p>
+<ul>
+<li><strong>Unit, eval-stats (34 pass):</strong></li>
+<li>exact hypergeometric bounds: census, all-yes, all-no, and a brute-force inversion;</li>
+<li>the two claims, with B unable to compensate retention;</li>
+<li>worst-case unsure, including the mixed assignment;</li>
+<li>zero, undefined and lost-none denominators;</li>
+<li>strict validation, including a C1/C2/U swap;</li>
+<li>the stored-gate authority (stored thresholds decide; an assigned must-not case fails; a malformed or unversioned JSON is refused);</li>
+<li>sizing: the criteria hold, and greedy is within 3 of the brute-force minimum;</li>
+<li>12-population lower-bound coverage, where a null bound is an assertion failure;</li>
+<li>single-stratum two-tail coverage.</li>
+<li><strong>Unit, eval-text:</strong> masking, the fixed deny list, cue underlining, and the label identity changing with the cue words.</li>
+<li><strong>Real DB:</strong></li>
+<li>authoring freeze;</li>
+<li>owner-only cross-check (hash recomputed, reviewer set, no app EXECUTE, and the static guard);</li>
+<li>label definer (write-once, status, item-in-set, and the freeze race);</li>
+<li>SQL frame hash = TS <code>canonicalFrameHash</code> on planted fixtures (reordering, delimiters);</li>
+<li>frame-drift refusal;</li>
+<li><code>create_tag_eval_set</code> refusing a tampered selection and reproducing it from the stored seed;</li>
+<li>label reuse by eval_text_hash;</li>
+<li>the gate trigger;</li>
+<li>the switch refusing a gate whose frame drifted after materialization;</li>
+<li>the dry-run switch never committing.</li>
+<li><strong>Mocked routes:</strong> every action.</li>
+<li><strong>UI:</strong> the label page at 320/390 on Chromium, WebKit and the iOS Simulator (AGY3 until the GROK reset).</li>
+</ul>
+<h2>Evaluation (Release B gate)</h2>
+<p><strong>Superseded by B4 rev 24</strong> (owner decisions 2026-09-29: a pragmatic two-claim gate; labels measure what the article says). The normative evaluation is §B4d–B4i: the frame (rules ∨ legacy), strata A/B/C1/C2/U, masked revision-independent text, exact hypergeometric bounds with a Bonferroni split, the authoritative gate JSON (§B4f) and must-not named cases.</p>
+<p>The earlier truth label B, the neither-system strata, the recall-difference gate, adjudication and the genus-disjoint sets are <strong>withdrawn</strong>.</p>
 <h2>Rollout and end state</h2>
 <ul>
 <li><strong>Order:</strong> open ocean → the other coastal habitats → tide → the forage outliers → the rest of habitat and forage → movement → time and finding. Each has its own approval, simulation-sized blind test and gate.</li>
@@ -573,30 +818,31 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
    - the last activation and its date;
    - a health badge from the nightly check.</li>
 </ol>
-<p>Release A can show a minimal version (legacy coverage and not-evaluated counts); the full tab arrives with Release B.
-2. <strong>Tag detail:</strong>
+<p>Release A can show a minimal version (legacy coverage and not-evaluated counts); the full tab arrives with Release B.</p>
+<ol start="2">
+<li><strong>Tag detail:</strong>
    - activation and rollback history (from <code>tag_activation</code>), with who, when and the linked reports;
    - the current revision's rules, shown readably, not as raw JSON;
    - sample assigned and rejected species with their evidence sentences;
-   - a search box: "why does species X have or lack this tag?", showing its state row, evidence or reason, and the article revision.
-3. <strong>Proposals:</strong> "Draft rules with AI", the proposal list, the cross-check text and verdict, and the <strong>Approve</strong> / <strong>Reject</strong> actions (B8).
-4. <strong>Reports:</strong> buttons that enqueue worker jobs, with results rendered in the app:
+   - a search box: "why does species X have or lack this tag?", showing its state row, evidence or reason, and the article revision.</li>
+<li><strong>Proposals:</strong> "Draft rules with AI", the proposal list, the cross-check text and verdict, and the <strong>Approve</strong> / <strong>Reject</strong> actions (B8).</li>
+<li><strong>Reports:</strong> buttons that enqueue worker jobs, with results rendered in the app:
    - <strong>stage report:</strong> what the revision would assign or remove, with samples;
    - <strong>design simulation:</strong> the per-stratum n and the expected interval widths, plus the "&gt;250" warning;
    - <strong>gate report:</strong> confusion counts, estimates and intervals vs the confirmed gates;
-   - <strong>switch benchmark:</strong> duration, WAL and dead tuples on the live table, dry-run in a rolled-back transaction.
-5. <strong>Blind labelling:</strong> the labelling page from the Evaluation section (no system output shown), with progress (n done out of the target per stratum).
-6. <strong>Activate / Roll back:</strong>
+   - <strong>switch benchmark:</strong> duration, WAL and dead tuples on the live table, dry-run in a rolled-back transaction.</li>
+<li><strong>Blind labelling:</strong> the labelling page of §B4h (masked text, no system output), with <strong>overall</strong> progress only (rev 24).</li>
+<li><strong>Activate / Roll back:</strong>
    - <strong>Activate</strong> is enabled only when the revision is approved, the gate report passed the owner-confirmed gates, and the benchmark is recorded.
-   - Both buttons need a typed confirmation, run as a worker job calling the definer routines under the exclusive lock, and show progress and the result.
-7. <strong>Consistency:</strong> the nightly job's run history and any fixes or failures, with a "Run now" button.</p>
+   - Both buttons need a typed confirmation, run as a worker job calling the definer routines under the exclusive lock, and show progress and the result.</li>
+<li><strong>Consistency:</strong> the nightly job's run history and any fixes or failures, with a "Run now" button.</li>
+</ol>
 <p><strong>Server health tab:</strong> add a "Tags" line showing the last consistency run, the fixes it made, and the count of uncleared <code>tag_materialization_failure</code> rows.</p>
 <h2>Nightly tag consistency job (new in rev 10; built with Release B)</h2>
 <p>An independent safety net that doesn't trust the writers to have done their part.</p>
 <ul>
 <li><strong>Worker job type <code>tag_consistency</code>:</strong> a recurring singleton, daily at a quiet hour (the same pattern as <code>scan_need_alerts</code>). It can also be run from the Tags tab.</li>
-<li><strong>For every owned tag, over the universe, in bounded batches of 200 species. Each batch is one call to <code>withTagWriteTx('exclusive', 'global:consistency', fn)</code></strong>, the single rev-17/18 executable path (pre token, SET LOCALs with a 30 s cap, the exclusive engine lock, the failure-key lock, post token, the batch, clear; the mechanical token rule on error). A repair can't read an old article or taxonomy while a wiki write commits a newer input, because wiki writes hold the shared lock, which excludes it. Each batch is short (≈200 × 0.25 ms of scanning plus writes), so wiki saves wait at most one batch.
-  0. <strong>recompute the expected input</strong> (rev 14, CODEX1 P1-4/P2) for every species from the authoritative sources (<code>species_enrichment</code> article, <code>taxonomy_cache</code> order and family, the current lexicon and focal-exemption hashes, the current <code>scanner_rev</code>). Compare it with <code>species_tag_input</code>, and <strong>repair the pointer</strong> (upsert, or delete for non-members) where it differs, counting each repair as a fix. Only then:
+<li><strong>For every owned tag, over the universe, in bounded batches of 200 species. Each batch is one call to <code>withTagWriteTx('exclusive', 'global:consistency', fn)</code></strong>, the single rev-17/18 executable path (pre token, SET LOCALs with a 30 s cap, the exclusive engine lock, the failure-key lock, post token, the batch, clear; the mechanical token rule on error). A repair can't read an old article or taxonomy while a wiki write commits a newer input, because wiki writes hold the shared lock, which excludes it. Each batch is short (≈200 × 0.25 ms of scanning plus writes), so wiki saves wait at most one batch. 0. <strong>recompute the expected input</strong> (rev 14, CODEX1 P1-4/P2) for every species from the authoritative sources (<code>species_enrichment</code> article, <code>taxonomy_cache</code> order and family, the current lexicon and focal-exemption hashes, the current <code>scanner_rev</code>). Compare it with <code>species_tag_input</code>, and <strong>repair the pointer</strong> (upsert, or delete for non-members) where it differs, counting each repair as a fix. Only then:
   1. <strong>missing or stale state:</strong> no <code>species_tag_state</code> row for the active revision whose <code>input_hash</code> equals the species' current <code>species_tag_input.input_hash</code> (rev 13: every staleness check joins through the input pointer, so taxonomy, lexicon, focal-exemption and scanner drift are all caught, not just text). Rules-owned tags are re-materialized; model-owned tags get <code>unevaluated(awaiting_model_score)</code> and are enqueued in <code>model_rescore_queue</code>.
   2. <strong>effective drift:</strong> stored <code>tags</code> differs from what <code>apply_effective_tags</code> would produce. The routine is re-applied.
   3. <strong>universe drift:</strong> new or retired taxonomy members since the last activation are handled as in 1.
@@ -607,24 +853,28 @@ td,th{border:1px solid var(--border);padding:6px 9px;vertical-align:top} th{back
 <li><strong>Tests (real DB, owned fixtures):</strong> each of the four checks detects and fixes a planted inconsistency, <strong>including one planted drift per non-text input</strong> (order, family, focal exemptions, lexicon, scanner revision). A clean database gives <code>fixed = 0</code>. The job is idempotent and respects the lock order. <strong>An opposing-interleaving test</strong> (a wiki write committing a new article between the batch's read and its repair) proves the repair never overwrites a newer input: the wiki write either finishes before the batch acquires the lock, or waits until the batch commits and then writes its newer input.</li>
 </ul>
 <h2>Phase 2: learned challenger models (after Release B)</h2>
-<p><strong>What's unchanged from rev 7:</strong>
-- Local classifiers, never generators: rules; a per-tag logistic regression over masked word and stem features at the sentence level; and a local sentence encoder plus a per-tag classifier.
-- A text model <em>can</em> learn shortcuts, so a tag needs a qualifying sentence above a frozen, calibrated threshold that <strong>also</strong> passes the Release B evidence rules, with species and genus names masked.
-- Weak labels are noisy and abstaining.
-- Four owner-labelled or weak sets, disjoint by genus: train/weak, tuning and calibration, model selection, and a fresh acceptance set.
-- Artifacts, embeddings and weights stay on the Mac, with an immutable manifest. Production stores only revision metadata, state and evidence.
-- <strong>No command line (rev 10):</strong> Mac-side training and scoring run in a <strong>small local worker app</strong>, <code>~/birds-tag-models</code>. It's a local web UI served by a macOS LaunchAgent at a fixed <code>localhost</code> port, with <strong>Train</strong>, <strong>Evaluate</strong>, <strong>Score queued species</strong> and <strong>Export bundle</strong> buttons. It reads the rescore queue and articles from a production export file downloaded from the Tags tab, not from a direct production connection. It writes a signed-by-hash result bundle. The owner uploads that bundle in the Tags tab ("Import model results"). The import is validated as specified, then activated with the same buttons.</p>
-<p><strong>New in rev 8 (the P1-5 fix):</strong>
-- <strong>Activation drift:</strong> production can't recompute model state. So under the exclusive lock, a model switch <strong>re-checks the imported compare-and-swap</strong> (<code>wikipedia_rev_id</code>, <code>text_hash</code>) for every universe member. Any drifted member gets a fresh <code>unevaluated(awaiting_model_score)</code> state, is enqueued, and is removed from effective tags. It's never scored with stale state.
-- <strong><code>model_rescore_queue</code>:</strong>
-  - <strong>Key:</strong> <code>(species_code, tag, revision_id, text_hash)</code>, unique.
-  - <strong>Producer:</strong> the wiki transaction, under the shared lock, whenever the article text of a model-owned tag changes. It's atomic with the unevaluated state row.
-  - <strong>Lifecycle:</strong> pending → exported (with an export watermark and batch id) → imported, or failed with retry count and backoff. Plus a terminal <strong>superseded</strong> state, for exported work whose <code>text_hash</code> changed before import. Stale exports never live forever.
-  - <strong>Activation-time drift</strong> enqueues in the same transaction as the switch.
-  - <strong>Import idempotency key:</strong> SHA-256 of <code>(manifest hash, batch id, sorted (species, tag, text_hash, status, evidence hash) tuples)</code>.
-  - <strong>Import rejects:</strong> a stale <code>text_hash</code>, an unknown batch, missing or extra rows, or a mismatched manifest hash. The import hash is idempotent.
-  - <strong>Cleanup:</strong> entries completed for more than 30 days are purged.
-- <strong>Model reasons:</strong> <code>below_threshold</code>, <code>evidence_gate_failed</code> (not_assigned); <code>awaiting_model_score</code> (unevaluated).</p>
+<p><strong>What's unchanged from rev 7:</strong></p>
+<ul>
+<li>Local classifiers, never generators: rules; a per-tag logistic regression over masked word and stem features at the sentence level; and a local sentence encoder plus a per-tag classifier.</li>
+<li>A text model <em>can</em> learn shortcuts, so a tag needs a qualifying sentence above a frozen, calibrated threshold that <strong>also</strong> passes the Release B evidence rules, with species and genus names masked.</li>
+<li>Weak labels are noisy and abstaining.</li>
+<li>Four owner-labelled or weak sets, disjoint by genus: train/weak, tuning and calibration, model selection, and a fresh acceptance set.</li>
+<li>Artifacts, embeddings and weights stay on the Mac, with an immutable manifest. Production stores only revision metadata, state and evidence.</li>
+<li><strong>No command line (rev 10):</strong> Mac-side training and scoring run in a <strong>small local worker app</strong>, <code>~/birds-tag-models</code>. It's a local web UI served by a macOS LaunchAgent at a fixed <code>localhost</code> port, with <strong>Train</strong>, <strong>Evaluate</strong>, <strong>Score queued species</strong> and <strong>Export bundle</strong> buttons. It reads the rescore queue and articles from a production export file downloaded from the Tags tab, not from a direct production connection. It writes a signed-by-hash result bundle. The owner uploads that bundle in the Tags tab ("Import model results"). The import is validated as specified, then activated with the same buttons.</li>
+</ul>
+<p><strong>New in rev 8 (the P1-5 fix):</strong></p>
+<ul>
+<li><strong>Activation drift:</strong> production can't recompute model state. So under the exclusive lock, a model switch <strong>re-checks the imported compare-and-swap</strong> (<code>wikipedia_rev_id</code>, <code>text_hash</code>) for every universe member. Any drifted member gets a fresh <code>unevaluated(awaiting_model_score)</code> state, is enqueued, and is removed from effective tags. It's never scored with stale state.</li>
+<li><strong><code>model_rescore_queue</code>:</strong></li>
+<li><strong>Key:</strong> <code>(species_code, tag, revision_id, text_hash)</code>, unique.</li>
+<li><strong>Producer:</strong> the wiki transaction, under the shared lock, whenever the article text of a model-owned tag changes. It's atomic with the unevaluated state row.</li>
+<li><strong>Lifecycle:</strong> pending → exported (with an export watermark and batch id) → imported, or failed with retry count and backoff. Plus a terminal <strong>superseded</strong> state, for exported work whose <code>text_hash</code> changed before import. Stale exports never live forever.</li>
+<li><strong>Activation-time drift</strong> enqueues in the same transaction as the switch.</li>
+<li><strong>Import idempotency key:</strong> SHA-256 of <code>(manifest hash, batch id, sorted (species, tag, text_hash, status, evidence hash) tuples)</code>.</li>
+<li><strong>Import rejects:</strong> a stale <code>text_hash</code>, an unknown batch, missing or extra rows, or a mismatched manifest hash. The import hash is idempotent.</li>
+<li><strong>Cleanup:</strong> entries completed for more than 30 days are purged.</li>
+<li><strong>Model reasons:</strong> <code>below_threshold</code>, <code>evidence_gate_failed</code> (not_assigned); <code>awaiting_model_score</code> (unevaluated).</li>
+</ul>
 <p><strong>Education deliverables:</strong> a doc per model with worked examples, and an admin "explain this tag" view. See also the separate LLM-lab plan (<code>~/birds-llm-lab/docs/plan.md</code>), a local teaching app.</p>
 <h2>Critical files</h2>
 <ul>

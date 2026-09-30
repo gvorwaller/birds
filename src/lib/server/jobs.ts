@@ -37,7 +37,11 @@ export type JobType =
 	| 'tag_benchmark'
 	| 'tag_activate'
 	| 'tag_retire'
-	| 'tag_rollback';
+	| 'tag_rollback'
+	| 'tag_draft_rules'
+	| 'tag_design_simulation'
+	| 'tag_eval_create'
+	| 'tag_gate_report';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
