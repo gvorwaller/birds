@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "tag": "habitat:open-ocean",
-  "rev": "cc-v2-draft-3",
+  "rev": "cc-v2-draft-4",
   "denySections": [
     "taxonomy",
     "systematics",
@@ -49,15 +49,6 @@
         "Stercorariidae"
       ],
       "note": "Penguins, auks, tropicbirds, frigatebirds, boobies and gannets, skuas and jaegers: feed at sea, most well offshore."
-    },
-    {
-      "id": "a_sea_ducks",
-      "rank": "genus",
-      "action": "assign",
-      "values": [
-        "Clangula"
-      ],
-      "note": "Long-tailed Duck winters well offshore on open sea. Scoters and eiders are mostly coastal, so they count only when their own article says open sea (CODEX1 cross-check, 2026-09-30)."
     },
     {
       "id": "a_pelagic_larids",
