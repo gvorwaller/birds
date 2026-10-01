@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "tag": "habitat:open-ocean",
-  "rev": "cc-v2-draft-2",
+  "rev": "cc-v2-draft-3",
   "denySections": [
     "taxonomy",
     "systematics",
@@ -55,12 +55,9 @@
       "rank": "genus",
       "action": "assign",
       "values": [
-        "Melanitta",
-        "Somateria",
-        "Polysticta",
         "Clangula"
       ],
-      "note": "Scoters, eiders and Long-tailed Duck winter and rest on the sea."
+      "note": "Long-tailed Duck winters well offshore on open sea. Scoters and eiders are mostly coastal, so they count only when their own article says open sea (CODEX1 cross-check, 2026-09-30)."
     },
     {
       "id": "a_pelagic_larids",
