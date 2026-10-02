@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "tag": "habitat:open-ocean",
-  "rev": "cc-v2-draft-4",
+  "rev": "cc-v2-draft-5",
   "denySections": [
     "taxonomy",
     "systematics",
@@ -219,7 +219,7 @@
     {
       "id": "x_migration",
       "binds": [
-        "*"
+        "open-sea"
       ],
       "match": {
         "type": "stem",
@@ -228,7 +228,7 @@
       "scope": {
         "unit": "clause"
       },
-      "note": "Crossing the sea on migration is not living at sea."
+      "note": "Crossing the sea on migration is not living at sea. Not bound to the phalarope phrases: Red Phalarope's article says it 'migrates mainly on oceanic routes, wintering at sea', and the wintering at sea is the point."
     },
     {
       "id": "x_migration_n",

@@ -86,7 +86,8 @@ export const TAG_EVAL_DESIGNS: Readonly<Record<string, TagEvalDesign>> = {
         expect: "yes",
         gating: false,
       },
-      { code: "sursco", name: "Surf Scoter", expect: "yes", gating: false },
+      // Owner 2026-10-01: sea ducks winter on coasts and large lakes — not open ocean.
+      { code: "sursco", name: "Surf Scoter", expect: "no", gating: false },
       { code: "atlpuf", name: "Atlantic Puffin", expect: "yes", gating: false },
     ],
   },

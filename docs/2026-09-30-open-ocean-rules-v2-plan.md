@@ -590,3 +590,13 @@ No. The drafts missed both claims by a wide margin, for the structural reason in
 - **P2-1:** a claim-fenced `recordClaimedEvent` is used by the Preview, family-refs, draft and eval jobs, so a stale claim leaves no event.
 - **P2-2:** `record_tag_family_reference_for_job` is fenced to the running claim and the requester's admin role, and the unfenced writer is owner-only. The job also re-checks the admin role.
 - **P2-3:** `PREVIEW_SOURCE_HASH` covers taxon-check.ts; open ocean is re-pinned in 0073.
+
+## 10. Owner decisions during the pilot (2026-09-30 – 10-01)
+
+"Open ocean" means pelagic in the albatross/petrel sense.
+- **Sea ducks are out.** Scoters and eiders were dropped after CODEX1's draft-2 cross-check. Long-tailed Duck was dropped next ("just as likely to be in inland waters"; its article puts it on coasts, Hudson Bay and the Great Lakes). There is no Anatidae genus listing; ducks count only through the Anatidae-scoped phrases.
+  - In code: the tag definition (read only by the AI draft job) no longer lists sea ducks as positives and names them as not open ocean.
+  - The reported, non-gating named case Surf Scoter now expects "no". Named cases are in the Preview design, so 0074 re-pins `tag_preview_design`.
+- **Red Phalarope counts.** Its article says it "migrates mainly on oceanic routes, wintering at sea on tropical oceans", and Audubon says "for most of year found only out at sea". In drafts 2–4, `x_migration` (stem "migrate", clause scope, binds `*`) cancelled that sentence. Draft 5 binds `x_migration` to the `open-sea` group only.
+  - birds_test dry run against draft 4: exactly one bird changes (redpha1 becomes assigned). Assigned goes 235 → 236; legacy positives kept go 230 → 231.
+  - A broader fix, a ±4-word window, also admitted Black Tern on "…some to the open ocean", so it was not used.

@@ -96,8 +96,8 @@ export const ALL_TAGS: ReadonlySet<string> = new Set(
  */
 export const TAG_DEFINITIONS: Readonly<Partial<Record<string, string>>> = {
   "habitat:open-ocean":
-    "Feeds or rests at sea, away from shore, as a regular part of its life (pelagic seabirds, sea ducks and loons on open water, alcids, phalaropes at sea). " +
-    "Not a bird that merely crosses the sea on migration, not a land bird that lives on an oceanic island, not a vagrant recorded at sea, and not a shore or coastal bird that feeds at the water's edge.",
+    "Feeds or rests at sea, away from shore, as a regular part of its life (pelagic seabirds, loons on open water, alcids, phalaropes at sea). " +
+    "Not a bird that merely crosses the sea on migration, not a land bird that lives on an oceanic island, not a vagrant recorded at sea, not a sea duck of coastal waters or large lakes (scoters, eiders, Long-tailed Duck), and not a shore or coastal bird that feeds at the water's edge.",
 };
 
 /**

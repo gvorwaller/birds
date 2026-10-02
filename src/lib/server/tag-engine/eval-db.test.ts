@@ -399,7 +399,7 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
       "24ae83e5f160eb506c29c14bf913cf2fd97183b52375b7331d594b1454971604",
     );
     expect(designHash("habitat:open-ocean")).toBe(
-      "04b9c45aaceca51eb9750602f3dcf6abe52975cd07c026b2eadbed99ec602c64",
+      "52566103b720bf581f6325fd1f8b80f888296d8eb91dd682f53c71399c21e362",
     );
     const priv = (
       await query<{ rows_ok: boolean; hash_ok: boolean }>(
