@@ -21,6 +21,8 @@
    * "Saved" line off-screen (GROK, 2026-10-02). The href is the no-JS fallback.
    */
   function jumpToAnswers(event: MouseEvent) {
+    // Modified or non-primary clicks keep normal link behaviour (new tab etc.).
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     const answers = document.getElementById("answer");
     answers?.scrollIntoView({ block: "start" });
