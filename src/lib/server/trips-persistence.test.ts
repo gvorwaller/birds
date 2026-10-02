@@ -14,6 +14,9 @@ const client = {
     return text.includes("INSERT INTO trips") ? { rows: [{ id: 77 }] } : { rows: [] };
   },
   release: state.release,
+  // db.ts guards every checkout with an 'error' listener (connection loss).
+  on: vi.fn(),
+  removeListener: vi.fn(),
 };
 state.connect.mockResolvedValue(client);
 
