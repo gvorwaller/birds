@@ -13,6 +13,19 @@
   const pct = $derived(
     data.item && data.item.total > 0 ? Math.round((data.item.labelled / data.item.total) * 100) : 0,
   );
+
+  /**
+   * Jump to the answers WITHOUT putting #answer in the URL. Every bird is the
+   * same URL re-rendered after an answer, and with the hash set the next bird
+   * opened scrolled down at its answer form instead of at the top, with the
+   * "Saved" line off-screen (GROK, 2026-10-02). The href is the no-JS fallback.
+   */
+  function jumpToAnswers(event: MouseEvent) {
+    event.preventDefault();
+    const answers = document.getElementById("answer");
+    answers?.scrollIntoView({ block: "start" });
+    answers?.querySelector("button")?.focus({ preventScroll: true });
+  }
 </script>
 
 <svelte:head><title>Blind test · {data.tag} · Admin</title></svelte:head>
@@ -49,7 +62,9 @@
       <p class="muted">
         Judge only what the two texts say: the bird's own article, and below it the opening of its family's
         Wikipedia article. The bird's names are hidden as “[this bird]”. Sea and ocean words are underlined on every
-        page as a reading aid; they are not an answer. <a href="#answer">Jump to the answer buttons</a>.
+        page as a reading aid; they are not an answer. <a href="#answer" onclick={jumpToAnswers}
+          >Jump to the answer buttons</a
+        >.
       </p>
     </section>
 
@@ -82,7 +97,11 @@
         return async ({ update }) => {
           await update({ reset: true });
           busy = false;
-          window.scrollTo({ top: 0 });
+          // With a fragment in the URL (#answer from a bookmark or a no-JS
+          // jump), SvelteKit's post-action focus reset re-applies it in a
+          // setTimeout and restores the old scroll position. Scroll to the top
+          // in a timer queued after it, so the next bird starts at the top.
+          setTimeout(() => window.scrollTo({ top: 0 }));
         };
       }}
     >
@@ -93,7 +112,10 @@
         <button type="submit" name="label" value="no" disabled={busy}>No</button>
         <button type="submit" name="label" value="unsure" class="secondary" disabled={busy}>Unsure</button>
       </div>
-      <p class="muted">Answers can't be changed once saved. “Unsure” is fine; it counts against the rules.</p>
+      <p class="muted">
+        Answers can't be changed once saved. If the two texts don't settle it, choose “Unsure”: the score never
+        counts Unsure in favour of the rules being tested.
+      </p>
     </form>
   {/if}
 </div>
@@ -159,6 +181,10 @@
   .progress progress {
     flex: 1 1 160px;
     height: 12px;
+  }
+  .answers {
+    /* Clear the fixed header when jumped to. */
+    scroll-margin-top: calc(var(--nav-h) + 16px);
   }
   .q {
     font-weight: 600;
