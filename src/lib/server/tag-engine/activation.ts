@@ -59,10 +59,19 @@ interface PendingRow {
   family: string | null;
 }
 
+/** Universe members whose current input has no state for ($1 tag, $2 revision). */
+const PENDING_STATES = `
+			   FROM public.tag_universe_codes() u(code)
+			   JOIN species_tag_input i ON i.species_code = u.code
+			   LEFT JOIN species_tag_state s
+			     ON s.species_code = u.code AND s.tag = $1 AND s.revision_id = $2 AND s.input_hash = i.input_hash
+			  WHERE s.state_id IS NULL`;
+
 /**
- * Evaluate + record the revision for members lacking a current state.
- * The pending list is read ONCE (one universe scan), then articles are loaded
- * and states written in batches — one round trip per batch.
+ * Evaluate + record the revision for members lacking a current state (at
+ * most `limit` of them, in code order; null = all). The pending list is read
+ * ONCE (one universe scan), then articles are loaded and states written in
+ * batches — one round trip per batch.
  */
 export async function completeRevisionStates(
   tx: TagWriteTx,
@@ -70,18 +79,15 @@ export async function completeRevisionStates(
   revisionId: string,
   ruleset: Ruleset,
   batch = 500,
+  limit: number | null = null,
 ): Promise<number> {
   const lex = await lexiconFor(tx);
   const pending = (
     await tx.exec<{ code: string; input_hash: string }>(
-      `SELECT u.code, i.input_hash
-			   FROM public.tag_universe_codes() u(code)
-			   JOIN species_tag_input i ON i.species_code = u.code
-			   LEFT JOIN species_tag_state s
-			     ON s.species_code = u.code AND s.tag = $1 AND s.revision_id = $2 AND s.input_hash = i.input_hash
-			  WHERE s.state_id IS NULL
-			  ORDER BY u.code`,
-      [tag, revisionId],
+      `SELECT u.code, i.input_hash ${PENDING_STATES}
+			  ORDER BY u.code
+			  LIMIT $3::int`,
+      [tag, revisionId, limit],
     )
   ).rows;
   const inputOf = new Map(pending.map((p) => [p.code, p.input_hash]));
@@ -142,23 +148,72 @@ async function membersWithoutInput(tx: TagWriteTx): Promise<string[]> {
   ).rows.map((r) => r.code);
 }
 
-/** Staging (shared lock): make sure every member has an input and a state for the revision. */
+/**
+ * Members one staging transaction handles. Every tag write transaction is
+ * capped (runtime.ts TX_CAP: 20 s shared), and a single pass over the whole
+ * universe (~10,900 species) does not fit on prod: job 6985 hit the cap.
+ */
+export const STAGE_TX_MEMBERS = 500;
+/** A stage that needs more transactions than this is not converging. */
+const STAGE_MAX_TX = 1000;
+
+/**
+ * Staging (shared lock): make sure every member has an input and a state for
+ * the revision, in short transactions of at most `perTx` members each. A state
+ * is keyed by its input_hash, so a partial stage is simply continued by the
+ * next transaction (or the next run), and activation completes any drift under
+ * its exclusive lock.
+ */
 export async function stageRevision(
   tag: string,
   revisionId: string,
-): Promise<{ inputs: number; states: number }> {
-  return withTagWriteTx(
-    "shared",
-    `global:stage:${tag}`,
-    "stage",
-    async (tx) => {
-      const ruleset = await loadRevision(tx, tag, revisionId);
-      const missing = await membersWithoutInput(tx);
+  opts: {
+    perTx?: number;
+    /** After each states transaction: members staged so far, of those pending at the start. */
+    onProgress?: (done: number, total: number) => Promise<void> | void;
+  } = {},
+): Promise<{ inputs: number; states: number; transactions: number }> {
+  const perTx = opts.perTx ?? STAGE_TX_MEMBERS;
+  let transactions = 0;
+  const step = (fn: (tx: TagWriteTx) => Promise<number>) => {
+    if (++transactions > STAGE_MAX_TX)
+      throw new Error(
+        `stage: not converging after ${STAGE_MAX_TX} transactions (inputs are changing faster than staging)`,
+      );
+    return withTagWriteTx("shared", `global:stage:${tag}`, "stage", fn);
+  };
+  let inputs = 0;
+  for (;;) {
+    const n = await step(async (tx) => {
+      await loadRevision(tx, tag, revisionId);
+      const missing = (await membersWithoutInput(tx)).slice(0, perTx);
       if (missing.length) await materializeMany(tx, missing);
-      const states = await completeRevisionStates(tx, tag, revisionId, ruleset);
-      return { inputs: missing.length, states };
-    },
+      return missing.length;
+    });
+    inputs += n;
+    if (n < perTx) break;
+  }
+  const total = await step(async (tx) =>
+    Number(
+      (
+        await tx.exec<{ n: string }>(
+          `SELECT count(*)::text AS n ${PENDING_STATES}`,
+          [tag, revisionId],
+        )
+      ).rows[0].n,
+    ),
   );
+  let states = 0;
+  for (;;) {
+    const n = await step(async (tx) => {
+      const ruleset = await loadRevision(tx, tag, revisionId);
+      return completeRevisionStates(tx, tag, revisionId, ruleset, 500, perTx);
+    });
+    states += n;
+    await opts.onProgress?.(states, Math.max(total, states));
+    if (n < perTx) break;
+  }
+  return { inputs, states, transactions };
 }
 
 /**

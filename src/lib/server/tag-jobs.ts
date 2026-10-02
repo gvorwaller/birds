@@ -269,7 +269,20 @@ export async function runTagOpJob(job: JobRow): Promise<void> {
 		let result: Record<string, unknown>;
 		switch (job.type) {
 			case 'tag_stage': {
-				const staged = await stageRevision(p.tag, p.revisionId!);
+				// Staging runs in short transactions (activation.ts STAGE_TX_MEMBERS);
+				// each one reports progress, which is also the job's heartbeat.
+				const staged = await stageRevision(p.tag, p.revisionId!, {
+					onProgress: async (done, total) => {
+						await updateProgress(job.id, {
+							phase: 'fetching',
+							unitsTotal: total,
+							unitsDone: done,
+							unitsFailed: 0,
+							unitsSkipped: 0,
+							round: attempts
+						});
+					}
+				});
 				const body = { ...staged, ...(await stageReportBody(p.tag, p.revisionId!)) };
 				result = { reportId: await recordReport('stage', p.tag, p.revisionId!, body), ...staged };
 				break;

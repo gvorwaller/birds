@@ -443,7 +443,8 @@ export function tagEngineFixture(prefix: string) {
     taxon: [],
   });
 
-  async function approveAndActivate(tag: string) {
+  /** Approve the fixture ruleset for `tag` once (no staging, no activation). */
+  async function approve(tag: string): Promise<string> {
     if (!revisions[tag]) {
       const p = (
         await query<{ id: string; artifact_sha256: string }>(
@@ -463,6 +464,11 @@ export function tagEngineFixture(prefix: string) {
         )
       ).rows[0].id;
     }
+    return revisions[tag];
+  }
+
+  async function approveAndActivate(tag: string) {
+    await approve(tag);
     await stageRevision(tag, revisions[tag]);
     reports[tag] = await censusGate(tag, revisions[tag], adminId, evalSets);
     const id = await activateRevision({
@@ -580,6 +586,7 @@ export function tagEngineFixture(prefix: string) {
     jobRow,
     addSpecies,
     setup,
+    approve,
     approveAndActivate,
     retire,
     cleanup,

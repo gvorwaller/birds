@@ -25,6 +25,20 @@ function getPool(): pg.Pool {
 	return pool;
 }
 
+/**
+ * pg-pool removes its own 'error' listener while a client is checked out (only
+ * pool.query adds one back), so a server-side end of the session — a SET LOCAL
+ * transaction_timeout firing, an admin terminate, a Postgres restart — emits
+ * 'error' with no listener and crashes the whole process (td-894144: prod
+ * worker, job 6985). The in-flight query still rejects; this listener only
+ * keeps the process alive. The pool discards the dead client on release.
+ */
+function guardCheckout(client: pg.PoolClient): () => void {
+	const onError = (err: Error) => console.error(`[db] connection lost: ${err.message}`);
+	client.on('error', onError);
+	return () => client.removeListener('error', onError);
+}
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 	text: string,
 	params?: unknown[]
@@ -81,6 +95,7 @@ async function queryTimedInner<T extends pg.QueryResultRow = pg.QueryResultRow>(
 		throw new Error(`queryTimed: pool acquisition exceeded ${timeoutMs}ms`);
 	}
 	const client = acquired.client;
+	const unguard = guardCheckout(client);
 	let ok = false;
 	try {
 		const remaining = Math.max(1, deadlineAt - Date.now());
@@ -92,6 +107,7 @@ async function queryTimedInner<T extends pg.QueryResultRow = pg.QueryResultRow>(
 		ok = true;
 		return r;
 	} finally {
+		unguard();
 		client.release(ok ? undefined : new Error('queryTimed: discarding client after error/timeout'));
 	}
 }
@@ -105,6 +121,7 @@ export async function withTransaction<T>(
 	fn: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {
 	const client = await getPool().connect();
+	const unguard = guardCheckout(client);
 	try {
 		await client.query('BEGIN');
 		const result = await fn(client);
@@ -118,6 +135,7 @@ export async function withTransaction<T>(
 		}
 		throw err;
 	} finally {
+		unguard();
 		client.release();
 	}
 }
@@ -133,6 +151,7 @@ export async function withTransaction<T>(
  */
 export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
 	const client = await getPool().connect();
+	const unguard = guardCheckout(client);
 	try {
 		await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
 		const result = await fn(client);
@@ -146,6 +165,7 @@ export async function withReadSnapshot<T>(fn: (client: pg.PoolClient) => Promise
 		}
 		throw err;
 	} finally {
+		unguard();
 		client.release();
 	}
 }

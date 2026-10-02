@@ -35,6 +35,9 @@ function makeClient() {
     release: vi.fn<(err?: unknown) => void>((err?: unknown) =>
       pgMock.state.released.push(err ?? "clean"),
     ),
+    // db.ts guards every checkout with an 'error' listener (connection loss).
+    on: vi.fn(),
+    removeListener: vi.fn(),
   };
 }
 
