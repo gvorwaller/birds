@@ -797,6 +797,60 @@ export interface EvalSetSummary {
   perStratum: Record<string, { n: number; labelled: number }>;
   gates: unknown;
   lastGate: { reportId: string; passed: boolean } | null;
+  /** Answers given by a whole-family confirmation (0075), not page by page. */
+  fromTaxa: number;
+  /**
+   * Labelling sets only: the taxa the revision lists whole (assign rules),
+   * with this set's pages from each — what the owner may confirm at once.
+   */
+  listedTaxa: ListedTaxon[];
+}
+
+export interface ListedTaxon {
+  rank: string;
+  value: string;
+  /** Common family name from the taxonomy, when the rank is family. */
+  name: string | null;
+  pages: number;
+  unanswered: number;
+}
+
+/** Listed (assign) taxa of the set's revision, with the set's pages in each. */
+async function listedTaxaFor(
+  setId: string,
+  revisionId: string,
+  tag: string,
+): Promise<ListedTaxon[]> {
+  return (
+    await query<ListedTaxon>(
+      `WITH listed AS (
+         SELECT DISTINCT t->>'rank' AS rank, v AS value
+           FROM tag_revision r, jsonb_array_elements(r.artifact->'taxon') t,
+                jsonb_array_elements_text(t->'values') v
+          WHERE r.id = $1 AND t->>'action' = 'assign'
+       ), items AS (
+         SELECT si.order_name, si.family_sci_name, si.genus, l.id AS label_id
+           FROM tag_eval_item i
+           JOIN species_tag_input si ON si.species_code = i.species_code
+           LEFT JOIN tag_eval_label l
+             ON l.tag = $3 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+          WHERE i.set_id = $2
+       )
+       SELECT ls.rank, ls.value,
+              (SELECT min(tc.family) FROM taxonomy_cache tc
+                WHERE ls.rank = 'family' AND tc.family_sci_name = ls.value) AS name,
+              count(it.*)::int AS pages,
+              count(it.*) FILTER (WHERE it.label_id IS NULL)::int AS unanswered
+         FROM listed ls
+         LEFT JOIN items it
+           ON (ls.rank = 'order' AND it.order_name = ls.value)
+           OR (ls.rank = 'family' AND it.family_sci_name = ls.value)
+           OR (ls.rank = 'genus' AND it.genus = ls.value)
+        GROUP BY ls.rank, ls.value
+        ORDER BY unanswered DESC, ls.rank, ls.value`,
+      [revisionId, setId, tag],
+    )
+  ).rows;
 }
 
 export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
@@ -816,8 +870,9 @@ export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
   const out: EvalSetSummary[] = [];
   for (const s of sets) {
     const strata = (
-      await query<{ stratum: string; n: number; labelled: number }>(
-        `SELECT i.stratum, count(*)::int AS n, count(l.id)::int AS labelled
+      await query<{ stratum: string; n: number; labelled: number; from_taxa: number }>(
+        `SELECT i.stratum, count(*)::int AS n, count(l.id)::int AS labelled,
+                count(l.id) FILTER (WHERE l.basis <> 'page')::int AS from_taxa
            FROM tag_eval_item i
            LEFT JOIN tag_eval_label l
              ON l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
@@ -844,6 +899,11 @@ export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
       ),
       gates: s.gates,
       lastGate: gate ? { reportId: gate.id, passed: gate.passed } : null,
+      fromTaxa: strata.reduce((a, r) => a + r.from_taxa, 0),
+      listedTaxa:
+        s.status === "labelling"
+          ? await listedTaxaFor(s.id, s.revision_id, tag)
+          : [],
     });
   }
   return out;

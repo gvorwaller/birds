@@ -265,6 +265,51 @@ export const actions: Actions = {
     };
   },
 
+  // Whole-taxon confirmation (0075): answer Yes, once, for every unanswered
+  // page of a labelling set from taxa the revision lists whole.
+  confirmTaxa: async ({ locals, params, request }) => {
+    const g = await guard(locals, params, "op");
+    if ("err" in g) return g.err;
+    const form = await request.formData();
+    const set = await setOf(g.tag, form.get("setId"));
+    if (!set) return bad("op", 404, "Unknown blind-test set.");
+    if (!confirmed(form, g.tag))
+      return bad("op", 400, `Type ${g.tag} to confirm.`);
+    const picked = [...new Set(form.getAll("taxon").map(String))];
+    if (
+      picked.length === 0 ||
+      picked.length > 50 ||
+      !picked.every((t) => /^(order|family|genus):[A-Za-z]+$/.test(t))
+    )
+      return bad("op", 400, "Tick at least one family or genus.");
+    const taxa = picked.map((t) => {
+      const [rank, value] = t.split(":");
+      return { rank, value };
+    });
+    try {
+      const n =
+        (
+          await query<{ n: number }>(
+            "SELECT public.confirm_tag_eval_taxa($1, $2, $3::jsonb) AS n",
+            [set.id, g.user.id, JSON.stringify(taxa)],
+          )
+        ).rows[0]?.n ?? 0;
+      return {
+        kind: "op" as const,
+        ok: true as const,
+        message: `Answered Yes for ${n} page${n === 1 ? "" : "s"} from your family confirmation.`,
+      };
+    } catch (e) {
+      return bad(
+        "op",
+        409,
+        e instanceof Error
+          ? e.message.replace(/^confirm: /, "Not recorded: ")
+          : "Not recorded.",
+      );
+    }
+  },
+
   stage: async ({ locals, params, request }) => {
     const g = await guard(locals, params, "op");
     if ("err" in g) return g.err;

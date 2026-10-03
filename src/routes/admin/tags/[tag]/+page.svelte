@@ -25,7 +25,7 @@
   const d = $derived(data.detail);
 
   type Confirm = {
-    action: "activate" | "rollback" | "retire" | "approve" | "evalCreate" | "freeze" | "abandon";
+    action: "activate" | "rollback" | "retire" | "approve" | "evalCreate" | "freeze" | "abandon" | "confirmTaxa";
     title: string;
     body: string;
     revisionId?: string;
@@ -35,7 +35,21 @@
     gates?: string[];
     /** Set when the design is over the owner's label budget: an explicit tick is required. */
     overBudget?: number;
+    /** Whole-taxon confirmation: "rank:value" keys sent, and the lines shown. */
+    taxa?: { key: string; line: string }[];
   };
+  type Taxon = { rank: string; value: string; name: string | null; pages: number; unanswered: number };
+  const taxonKey = (x: Taxon) => `${x.rank}:${x.value}`;
+  const taxonLine = (x: Taxon) =>
+    `${x.value}${x.name ? ` (${x.name})` : x.rank === "genus" ? " (genus)" : ""}: ${x.unanswered} page${x.unanswered === 1 ? "" : "s"}`;
+  // Ticked taxa per blind test; only those that still have unanswered pages count.
+  let picked = $state<Record<string, string[]>>({});
+  const livePicks = (setId: string, taxa: Taxon[]) =>
+    taxa.filter((x) => x.unanswered > 0 && (picked[setId] ?? []).includes(taxonKey(x)));
+  function togglePick(setId: string, key: string, on: boolean) {
+    const cur = picked[setId] ?? [];
+    picked[setId] = on ? [...cur, key] : cur.filter((k) => k !== key);
+  }
   let acceptOver = $state(false);
   const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
   const gateLines = (g: { precision: { point_min: number; lower_min: number }; retention: { lower_min: number }; named_cases_must_not: string[] }) => [
@@ -521,10 +535,65 @@
           />
           {#if t.lastGate}<AdminBadge tone={t.lastGate.passed ? "ok" : "error"} label={t.lastGate.passed ? "Gate passed" : "Gate failed"} />{/if}
         </h3>
-        <p>{t.labelled} of {t.total} answered ({pctOf(t.labelled, t.total)}%).</p>
+        <p>
+          {t.labelled} of {t.total} answered ({pctOf(t.labelled, t.total)}%){t.fromTaxa
+            ? `, ${t.fromTaxa} of them by family confirmation`
+            : ""}.
+        </p>
         <p class="muted">
           By group: {Object.entries(t.perStratum).map(([h, v]) => `${h} ${v.labelled}/${v.n}`).join(" · ")}
         </p>
+        {#if t.status === "labelling" && t.listedTaxa.some((x) => x.unanswered > 0)}
+          {@const live = livePicks(t.id, t.listedTaxa)}
+          <fieldset class="taxa">
+            <legend>Confirm whole families</legend>
+            <p class="muted">
+              The rules tag these families and genera whole. Tick only the ones where every species is a bird of
+              the open ocean by this test's question: each of their unanswered pages is then answered Yes, as
+              your answer, and skipped when you label. Leave a family unticked if some of its species might not
+              fit; you answer those pages one by one.
+            </p>
+            <ul>
+              {#each t.listedTaxa.filter((x) => x.pages > 0) as x (taxonKey(x))}
+                <li>
+                  <label>
+                    <input
+                      type="checkbox"
+                      value={taxonKey(x)}
+                      disabled={busy || x.unanswered === 0}
+                      checked={x.unanswered > 0 && (picked[t.id] ?? []).includes(taxonKey(x))}
+                      onchange={(e) => togglePick(t.id, taxonKey(x), e.currentTarget.checked)}
+                    />
+                    <span>
+                      {x.value}
+                      <span class="muted"
+                        >{x.name ? `(${x.name})` : x.rank === "genus" ? "(genus)" : ""} · {x.unanswered === 0
+                          ? "all answered"
+                          : `${x.unanswered} unanswered of ${x.pages}`}</span
+                      >
+                    </span>
+                  </label>
+                </li>
+              {/each}
+            </ul>
+            <button
+              type="button"
+              disabled={busy || live.length === 0}
+              onclick={(event) =>
+                openConfirm(
+                  {
+                    action: "confirmTaxa",
+                    setId: t.id,
+                    title: "Answer Yes for these families?",
+                    body: "Every unanswered page from these families is answered Yes, as your answer. Answers can't be changed afterwards.",
+                    taxa: live.map((x) => ({ key: taxonKey(x), line: taxonLine(x) })),
+                  },
+                  event.currentTarget,
+                )}
+              >Answer Yes for {live.length || "ticked"} famil{live.length === 1 ? "y" : "ies"}…</button
+            >
+          </fieldset>
+        {/if}
         <div class="buttons">
           {#if t.status === "labelling"}
             {#if t.labelled < t.total}
@@ -857,6 +926,12 @@
             {#each confirming.gates as line, i (i)}<li>{line}</li>{/each}
           </ul>
         {/if}
+        {#if confirming.taxa}
+          {#each confirming.taxa as x (x.key)}<input type="hidden" name="taxon" value={x.key} />{/each}
+          <ul class="gates">
+            {#each confirming.taxa as x (x.key)}<li>{x.line}</li>{/each}
+          </ul>
+        {/if}
         {#if confirming.overBudget}
           <label class="accept">
             <input type="checkbox" name="acceptOverBudget" value="yes" bind:checked={acceptOver} />
@@ -914,6 +989,34 @@
     margin: 0.4rem 0;
   }
   .accept input {
+    width: 24px;
+    height: 24px;
+    min-height: 0;
+    flex: none;
+  }
+  .taxa {
+    margin: 0.6rem 0;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .taxa legend {
+    font-weight: 600;
+    padding: 0 0.3rem;
+  }
+  .taxa ul {
+    list-style: none;
+    margin: 0.4rem 0 0.6rem;
+    padding: 0;
+  }
+  .taxa label {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-height: 44px;
+    overflow-wrap: anywhere;
+  }
+  .taxa input {
     width: 24px;
     height: 24px;
     min-height: 0;

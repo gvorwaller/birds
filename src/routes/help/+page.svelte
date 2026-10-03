@@ -1340,6 +1340,15 @@
 						every family in it has one.
 					</li>
 					<li>
+						<strong>Confirm whole families.</strong> When the rules tag a family
+						or genus whole (albatrosses, petrels…), a labelling blind test lists
+						them with their page counts. Tick the ones where every species
+						clearly fits, and their unanswered pages are answered Yes in one step,
+						as your answer, then skipped when you label. Leave a family unticked if
+						some species might not fit. The gate report shows how many answers
+						came from confirmations.
+					</li>
+					<li>
 						<strong>Tag rules model.</strong> "Draft rules with AI" uses the
 						model chosen under AI &amp; Cost → Model choice → Tag rules. An AI
 						draft is only a proposal: it goes through Preview, cross-check,

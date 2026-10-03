@@ -7,9 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let setRow: unknown[] = [{ status: "labelling", revision_id: "3" }];
 const sqlCalls: string[] = [];
+const sqlParams: unknown[][] = [];
 vi.mock("$lib/db", () => ({
-  query: async (text: string) => {
+  query: async (text: string, params: unknown[] = []) => {
     sqlCalls.push(text);
+    sqlParams.push(params);
+    if (text.includes("confirm_tag_eval_taxa")) return { rows: [{ n: 61 }] };
     if (text.includes("FROM tag_revision")) return { rows: [{ ok: 1 }] };
     if (text.includes("FROM tag_eval_set")) return { rows: setRow };
     return { rows: [] };
@@ -68,6 +71,7 @@ beforeEach(() => {
   setRow = [{ status: "labelling", revision_id: "3" }];
   draft.draftable = true;
   sqlCalls.length = 0;
+  sqlParams.length = 0;
 });
 
 describe("blind-test actions", () => {
@@ -79,6 +83,7 @@ describe("blind-test actions", () => {
       "freeze",
       "gate",
       "abandon",
+      "confirmTaxa",
     ])
       expect(
         fail(
@@ -163,6 +168,41 @@ describe("blind-test actions", () => {
       expect.any(String),
       1,
     );
+  });
+
+  it("confirm whole families: typed name, well-formed ticked taxa, then the definer gets exactly those", async () => {
+    const send = (fields: Record<string, string>, taxa: string[]) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+      for (const t of taxa) fd.append("taxon", t);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (actions as any).confirmTaxa({
+        ...ADMIN,
+        request: new Request("http://localhost/admin/tags/x", { method: "POST", body: fd }),
+      });
+    };
+    expect(fail(await send({ setId: "5", confirm: "x" }, ["family:Procellariidae"])).status).toBe(400);
+    expect(fail(await send({ setId: "5", confirm: TAG }, [])).status).toBe(400);
+    expect(fail(await send({ setId: "5", confirm: TAG }, ["family:Procellariidae; DROP"])).status).toBe(400);
+    expect(fail(await send({ setId: "5", confirm: TAG }, ["species:Procellariidae"])).status).toBe(400);
+    expect(sqlCalls.some((q) => q.includes("confirm_tag_eval_taxa"))).toBe(false);
+    const ok = await send({ setId: "5", confirm: TAG }, [
+      "family:Procellariidae",
+      "family:Diomedeidae",
+      "family:Procellariidae",
+    ]);
+    expect(ok).toMatchObject({ ok: true, message: expect.stringContaining("61 pages") });
+    const i = sqlCalls.findIndex((q) => q.includes("confirm_tag_eval_taxa"));
+    expect(sqlParams[i]).toEqual([
+      "5",
+      1,
+      JSON.stringify([
+        { rank: "family", value: "Procellariidae" },
+        { rank: "family", value: "Diomedeidae" },
+      ]),
+    ]);
+    setRow = [];
+    expect(fail(await send({ setId: "5", confirm: TAG }, ["family:Procellariidae"])).status).toBe(404);
   });
 
   it("a gate report only for a frozen set; unknown sets 404", async () => {
