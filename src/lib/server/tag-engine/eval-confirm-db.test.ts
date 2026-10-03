@@ -1,5 +1,5 @@
 /**
- * td-894144 (0075 + 0076): whole-taxon confirmation in a blind test. A
+ * td-894144 (0075–0077): whole-taxon confirmation in a blind test. A
  * schema-2 revision lists two fixture families whole.
  *
  * - The owner confirms one; only that family's unanswered pages get the set's
@@ -9,10 +9,14 @@
  * - A later set does NOT inherit the confirmation, but does reuse page labels.
  * - A set whose frame has moved refuses confirmations.
  * - The gate report counts answers by how they were given.
+ * - Races (0077): a page answer and a confirmation of the same item, in two
+ *   sessions, serialize on the item row; whichever commits first wins.
  *
  * Owned fixtures (zzk…) through the shared engine fixture. The Preview runs
  * over the whole test universe, so this is slow.
  */
+import { readFileSync } from "node:fs";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import { runWithClaim } from "$server/jobs";
@@ -101,7 +105,41 @@ const label = (setId: string, itemId: string, value: string) =>
 const FIXTURE = [{ rank: "family", value: "Fixtureidae" }];
 const OTHER = [{ rank: "family", value: "Otheridae" }];
 
-describe.runIf(migrated).sequential("0076: set-local whole-taxon confirmation in a blind test", () => {
+/** A second, independent app-role session on the isolated test DB (for the race tests). */
+async function appSession(): Promise<{ c: pg.Client; pid: number }> {
+  const env = Object.fromEntries(
+    readFileSync(new URL("../../../../.env.test", import.meta.url), "utf8")
+      .split("\n")
+      .map((l) => l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/))
+      .filter((m): m is RegExpMatchArray => m != null)
+      .map((m) => [m[1], m[2].replace(/^['"]|['"]$/g, "")]),
+  );
+  if (env.PGPORT !== "15436" || env.PGDATABASE !== "birds_test")
+    throw new Error("race sessions: isolated birds_test only");
+  const c = new pg.Client({
+    host: env.PGHOST,
+    port: Number(env.PGPORT),
+    database: env.PGDATABASE,
+    user: env.PGUSER,
+    password: env.PGPASSWORD,
+  });
+  await c.connect();
+  const pid = (await c.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+  return { c, pid };
+}
+/** Wait until `pid` is blocked on a lock, proving the second session really waits. */
+async function blockedOnLock(pid: number): Promise<void> {
+  for (let i = 0; i < 120; i++) {
+    const r = await query<{ w: string | null }>("SELECT wait_event_type AS w FROM pg_stat_activity WHERE pid = $1", [
+      pid,
+    ]);
+    if (r.rows[0]?.w === "Lock") return;
+    await new Promise((res) => setTimeout(res, 25));
+  }
+  throw new Error(`session ${pid} never blocked on a lock`);
+}
+
+describe.runIf(migrated).sequential("0076/0077: set-local whole-taxon confirmation in a blind test", () => {
   let A = "";
   let B = "";
   beforeAll(async () => {
@@ -200,8 +238,65 @@ describe.runIf(migrated).sequential("0076: set-local whole-taxon confirmation in
     expect(fixture.filter((r) => r.label === null && r.taxon === null)).toHaveLength(2);
   });
 
+  it("race: a page answer in flight makes a concurrent confirmation of that item wait, then skip it", async () => {
+    const other = (await items(B)).filter((r) => r.family === "Otheridae");
+    expect(other.filter((r) => r.label === null && r.taxon === null)).toHaveLength(2);
+    const s1 = await appSession();
+    const s2 = await appSession();
+    try {
+      await s1.c.query("BEGIN");
+      await s1.c.query("SELECT public.record_tag_eval_label($1, $2, $3, 'no')", [B, other[0].id, fx.adminId]);
+      const pending = s2.c.query<{ n: number }>("SELECT public.confirm_tag_eval_taxa($1, $2, $3::jsonb) AS n", [
+        B,
+        fx.adminId,
+        JSON.stringify(OTHER),
+      ]);
+      await blockedOnLock(s2.pid);
+      await s1.c.query("COMMIT");
+      expect((await pending).rows[0].n).toBe(1);
+    } finally {
+      await s1.c.end();
+      await s2.c.end();
+    }
+    const after = await items(B);
+    expect(after.filter((r) => r.id === other[0].id).map((r) => [r.label, r.taxon])).toEqual([["no", null]]);
+    expect(after.filter((r) => r.id === other[1].id).map((r) => [r.label, r.taxon])).toEqual([
+      [null, "family:Otheridae"],
+    ]);
+  }, 30_000);
+
+  it("race: a confirmation in flight makes a concurrent page answer of one of its items wait, then refuses it", async () => {
+    const fixture = (await items(B)).filter((r) => r.family === "Fixtureidae" && r.label === null && r.taxon === null);
+    expect(fixture).toHaveLength(2);
+    const s1 = await appSession();
+    const s2 = await appSession();
+    try {
+      await s1.c.query("BEGIN");
+      const n = (
+        await s1.c.query<{ n: number }>("SELECT public.confirm_tag_eval_taxa($1, $2, $3::jsonb) AS n", [
+          B,
+          fx.adminId,
+          JSON.stringify(FIXTURE),
+        ])
+      ).rows[0].n;
+      expect(n).toBe(2);
+      const pending = s2.c.query("SELECT public.record_tag_eval_label($1, $2, $3, 'no')", [B, fixture[0].id, fx.adminId]);
+      const settled = pending.then(
+        () => "labelled",
+        (e: Error) => e.message,
+      );
+      await blockedOnLock(s2.pid);
+      await s1.c.query("COMMIT");
+      expect(await settled).toMatch(/family confirmation/);
+    } finally {
+      await s1.c.end();
+      await s2.c.end();
+    }
+    const after = (await items(B)).filter((r) => r.id === fixture[0].id);
+    expect(after.map((r) => [r.label, r.taxon])).toEqual([[null, "family:Fixtureidae"]]);
+  }, 30_000);
+
   it("the gate report counts answers by how they were given; a frozen set refuses confirmations", async () => {
-    expect((await confirm(B, OTHER)).rows[0].n).toBe(2);
     for (const r of (await items(B)).filter((x) => x.label === null && x.taxon === null)) await label(B, r.id, "yes");
     await query("SELECT public.freeze_tag_eval_set($1, $2)", [B, fx.adminId]);
     await expect(confirm(B, FIXTURE)).rejects.toThrow(/not labelling/);
@@ -214,7 +309,8 @@ describe.runIf(migrated).sequential("0076: set-local whole-taxon confirmation in
     const all = await items(B);
     expect(body.labelBasis).toEqual({
       page: all.filter((r) => r.taxon === null).length,
-      "taxon:family:Otheridae": 2,
+      "taxon:family:Otheridae": 1,
+      "taxon:family:Fixtureidae": 2,
     });
   });
 
