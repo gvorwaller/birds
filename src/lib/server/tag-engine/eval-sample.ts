@@ -191,7 +191,7 @@ export interface GateReportBody {
     gating: boolean;
   }[];
   labels: Record<Label, number>;
-  /** Answers by how they were given: "page", or "taxon:<rank>:<value>" (0075). */
+  /** Answers by how they were given: "page", or "taxon:<rank>:<value>" (0076). */
   labelBasis: Record<string, number>;
   n: Record<Stratum, number>;
   N: Record<Stratum, number>;
@@ -232,10 +232,16 @@ export async function computeGate(
       label: Label | null;
       basis: string | null;
     }>(
-      `SELECT i.species_code, i.stratum, i.rules_yes, i.legacy_yes, i.rules_status, i.marine, l.label, l.basis
+      // An item is answered by its set's taxon confirmation (0076, always yes)
+      // or by its page label; the two never coexist from the same set.
+      `SELECT i.species_code, i.stratum, i.rules_yes, i.legacy_yes, i.rules_status, i.marine,
+              CASE WHEN ta.item_id IS NOT NULL THEN 'yes' ELSE l.label END AS label,
+              CASE WHEN ta.item_id IS NOT NULL THEN 'taxon:' || ta.taxon
+                   WHEN l.id IS NOT NULL THEN 'page' END AS basis
          FROM tag_eval_item i
          LEFT JOIN tag_eval_label l
            ON l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+         LEFT JOIN tag_eval_taxon_answer ta ON ta.item_id = i.id
         WHERE i.set_id = $1`,
       [setId, set.tag],
     )
@@ -281,7 +287,7 @@ export async function computeGate(
   const decision = evaluateGate(set.gates, precision, retention, assigned);
   const labels = { yes: 0, no: 0, unsure: 0 } as Record<Label, number>;
   for (const o of obs) labels[o.label]++;
-  // How each answer was given: on its page, or by a whole-taxon confirmation (0075).
+  // How each answer was given: on its page, or by a whole-taxon confirmation (0076).
   const labelBasis: Record<string, number> = {};
   for (const r of rows) labelBasis[r.basis ?? "page"] = (labelBasis[r.basis ?? "page"] ?? 0) + 1;
   return {

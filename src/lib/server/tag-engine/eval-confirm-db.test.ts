@@ -1,10 +1,17 @@
 /**
- * td-894144 (0075): whole-taxon confirmation in a blind test. A schema-2
- * revision lists two fixture families whole. The owner confirms one, and only
- * that family's unanswered pages are answered Yes (basis taxon:family:X). A
- * page answered on its own keeps its answer, and the gate report counts the
- * answers by how they were given. Owned fixtures (zzk…) through the shared
- * engine fixture; the Preview runs over the whole test universe, so this is slow.
+ * td-894144 (0075 + 0076): whole-taxon confirmation in a blind test. A
+ * schema-2 revision lists two fixture families whole.
+ *
+ * - The owner confirms one; only that family's unanswered pages get the set's
+ *   Yes, stored SET-LOCALLY (tag_eval_taxon_answer), never as reusable page
+ *   labels. A page answered on its own keeps its answer, and a confirmed item
+ *   refuses a later page label.
+ * - A later set does NOT inherit the confirmation, but does reuse page labels.
+ * - A set whose frame has moved refuses confirmations.
+ * - The gate report counts answers by how they were given.
+ *
+ * Owned fixtures (zzk…) through the shared engine fixture. The Preview runs
+ * over the whole test universe, so this is slow.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { query } from "$lib/db";
@@ -30,16 +37,16 @@ const dbUp = await query("SELECT 1")
   .then(() => true)
   .catch(() => false);
 const migrated = dbUp
-  ? await query(
-      "SELECT to_regprocedure('public.confirm_tag_eval_taxa(bigint,integer,jsonb)') IS NOT NULL AS ok",
-    ).then((r) => r.rows[0].ok === true)
+  ? await query("SELECT to_regclass('public.tag_eval_taxon_answer') IS NOT NULL AS ok").then(
+      (r) => r.rows[0].ok === true,
+    )
   : false;
 
 const fx = tagEngineFixture("zzk");
 const refs = new Set<string>();
+const setIds: string[] = [];
 let T = "";
 let rev = "";
-let setId = "";
 let viewerId = 0;
 
 const artifact = () => ({
@@ -56,29 +63,47 @@ const artifact = () => ({
   ],
 });
 
-type Row = { id: string; code: string; family: string | null; label: string | null; basis: string | null };
-const items = async (): Promise<Row[]> =>
+/** A new blind test for the revision (design + start); tracked for cleanup. */
+async function newSet(): Promise<string> {
+  for (const c of await seedFrameReferences(T, rev)) refs.add(c);
+  const design = await designSimulation(T, rev);
+  const { setId } = await createBlindTest(
+    { tag: T, revisionId: rev, simulationReportId: design.reportId, gates: FIXTURE_GATES, acceptOverBudget: true },
+    fx.adminId,
+  );
+  setIds.push(setId);
+  return setId;
+}
+
+type Row = { id: string; code: string; family: string | null; label: string | null; taxon: string | null };
+/** Each item of a set with its page label (global, by page key) and its set's taxon answer. */
+const items = async (setId: string): Promise<Row[]> =>
   (
     await query<Row>(
-      `SELECT i.id::text, i.species_code AS code, si.family_sci_name AS family, l.label, l.basis
+      `SELECT i.id::text, i.species_code AS code, si.family_sci_name AS family, l.label, ta.taxon
          FROM tag_eval_item i
          JOIN species_tag_input si ON si.species_code = i.species_code
          LEFT JOIN tag_eval_label l
            ON l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+         LEFT JOIN tag_eval_taxon_answer ta ON ta.item_id = i.id
         WHERE i.set_id = $1 ORDER BY i.species_code`,
       [setId, T],
     )
   ).rows;
-const confirm = (taxa: unknown, user = fx.adminId) =>
+const confirm = (setId: string, taxa: unknown, user = fx.adminId) =>
   query<{ n: number }>("SELECT public.confirm_tag_eval_taxa($1, $2, $3::jsonb) AS n", [
     setId,
     user,
     JSON.stringify(taxa),
   ]);
-const label = (itemId: string, value: string) =>
+const label = (setId: string, itemId: string, value: string) =>
   query("SELECT public.record_tag_eval_label($1, $2, $3, $4)", [setId, itemId, fx.adminId, value]);
+const FIXTURE = [{ rank: "family", value: "Fixtureidae" }];
+const OTHER = [{ rank: "family", value: "Otheridae" }];
 
-describe.runIf(migrated).sequential("0075: confirm whole taxa in a blind test", () => {
+describe.runIf(migrated).sequential("0076: set-local whole-taxon confirmation in a blind test", () => {
+  let A = "";
+  let B = "";
   beforeAll(async () => {
     if ((await tagRepairState())?.pending)
       throw new Error("refusing to run while a repair is pending");
@@ -101,7 +126,7 @@ describe.runIf(migrated).sequential("0075: confirm whole taxa in a blind test", 
     ).rows[0].id;
 
     // A schema-2 revision listing both fixture families whole:
-    // proposal → Preview (in-process) → cross-check → approve.
+    // proposal → Preview (in-process) → cross-check → approve → stage.
     const proposalId = (
       await query<{ id: string }>(
         "SELECT public.create_human_tag_proposal($1, $2::jsonb, $3)::text AS id",
@@ -126,66 +151,79 @@ describe.runIf(migrated).sequential("0075: confirm whole taxa in a blind test", 
     );
     rev = await approveProposal(proposalId, fx.adminId);
     fx.revisions[T] = rev;
-
     await stageRevision(T, rev);
-    for (const c of await seedFrameReferences(T, rev)) refs.add(c);
-    const design = await designSimulation(T, rev);
-    setId = (
-      await createBlindTest(
-        { tag: T, revisionId: rev, simulationReportId: design.reportId, gates: FIXTURE_GATES, acceptOverBudget: true },
-        fx.adminId,
-      )
-    ).setId;
+    A = await newSet();
   }, 900_000);
 
   afterAll(async () => {
-    if (setId) await cleanupEvalSets([setId]);
+    await cleanupEvalSets(setIds);
     await cleanupFamilyReferences(refs);
     if (viewerId) await query("DELETE FROM users WHERE id = $1", [viewerId]);
     await fx.asOwner("DELETE FROM tag_preview_design WHERE tag = $1", [T]);
     await fx.cleanup();
   }, 600_000);
 
-  it("only listed taxa, only admins, never an empty list — and a refusal writes nothing", async () => {
-    await expect(confirm([{ rank: "family", value: "Procellariidae" }])).rejects.toThrow(
+  it("only listed taxa, only admins, never an empty list, and a refusal writes nothing", async () => {
+    await expect(confirm(A, [{ rank: "family", value: "Procellariidae" }])).rejects.toThrow(
       /only taxa the revision lists/,
     );
-    await expect(confirm([{ rank: "genus", value: "Fixtureidae" }])).rejects.toThrow(
+    await expect(confirm(A, [{ rank: "genus", value: "Fixtureidae" }])).rejects.toThrow(
       /only taxa the revision lists/,
     );
-    await expect(confirm([])).rejects.toThrow(/no taxa/);
-    await expect(confirm([{ rank: "family", value: "Fixtureidae" }], viewerId)).rejects.toThrow(/not an admin/);
-    expect((await items()).every((r) => r.label === null)).toBe(true);
+    await expect(confirm(A, [])).rejects.toThrow(/no taxa/);
+    await expect(confirm(A, FIXTURE, viewerId)).rejects.toThrow(/not an admin/);
+    expect((await items(A)).every((r) => r.label === null && r.taxon === null)).toBe(true);
   });
 
-  it("a confirmed family's unanswered pages become Yes (basis recorded); its page answered on its own and every other family are untouched", async () => {
-    const fixture = (await items()).filter((r) => r.family === "Fixtureidae");
+  it("a confirmed family's unanswered pages get the set's Yes (set-local, no page label); a page answered on its own keeps its answer; a confirmed item refuses a page label", async () => {
+    const fixture = (await items(A)).filter((r) => r.family === "Fixtureidae");
     expect(fixture.length).toBe(3);
-    await label(fixture[0].id, "no");
-    const n = (await confirm([{ rank: "family", value: "Fixtureidae" }])).rows[0].n;
-    expect(n).toBe(2);
-    for (const r of await items()) {
-      if (r.code === fixture[0].code) expect([r.label, r.basis]).toEqual(["no", "page"]);
-      else if (r.family === "Fixtureidae") expect([r.label, r.basis]).toEqual(["yes", "taxon:family:Fixtureidae"]);
-      else expect(r.label).toBeNull();
+    await label(A, fixture[0].id, "no");
+    expect((await confirm(A, FIXTURE)).rows[0].n).toBe(2);
+    for (const r of await items(A)) {
+      if (r.code === fixture[0].code) expect([r.label, r.taxon]).toEqual(["no", null]);
+      else if (r.family === "Fixtureidae") expect([r.label, r.taxon]).toEqual([null, "family:Fixtureidae"]);
+      else expect([r.label, r.taxon]).toEqual([null, null]);
     }
-    expect((await confirm([{ rank: "family", value: "Fixtureidae" }])).rows[0].n).toBe(0);
+    const confirmedItem = (await items(A)).find((r) => r.taxon)!;
+    await expect(label(A, confirmedItem.id, "yes")).rejects.toThrow(/family confirmation/);
+    expect((await confirm(A, FIXTURE)).rows[0].n).toBe(0);
+  });
+
+  it("a later blind test inherits page labels but NOT another set's family confirmation", async () => {
+    await query("SELECT public.abandon_tag_eval_set($1, $2)", [A, fx.adminId]);
+    B = await newSet();
+    const fixture = (await items(B)).filter((r) => r.family === "Fixtureidae");
+    expect(fixture.length).toBe(3);
+    // The page answered on its own in A ("no") is reused; the two confirmed pages are not.
+    expect(fixture.filter((r) => r.label === "no")).toHaveLength(1);
+    expect(fixture.filter((r) => r.label === null && r.taxon === null)).toHaveLength(2);
   });
 
   it("the gate report counts answers by how they were given; a frozen set refuses confirmations", async () => {
-    for (const r of (await items()).filter((x) => x.label === null)) await label(r.id, "yes");
-    await query("SELECT public.freeze_tag_eval_set($1, $2)", [setId, fx.adminId]);
-    await expect(confirm([{ rank: "family", value: "Otheridae" }])).rejects.toThrow(/not labelling/);
-    const { reportId } = await recordGateReport(setId);
+    expect((await confirm(B, OTHER)).rows[0].n).toBe(2);
+    for (const r of (await items(B)).filter((x) => x.label === null && x.taxon === null)) await label(B, r.id, "yes");
+    await query("SELECT public.freeze_tag_eval_set($1, $2)", [B, fx.adminId]);
+    await expect(confirm(B, FIXTURE)).rejects.toThrow(/not labelling/);
+    const { reportId } = await recordGateReport(B);
     const body = (
       await query<{ body: { labelBasis: Record<string, number> } }>("SELECT body FROM tag_report WHERE id = $1", [
         reportId,
       ])
     ).rows[0].body;
-    const all = await items();
+    const all = await items(B);
     expect(body.labelBasis).toEqual({
-      page: all.filter((r) => r.basis === "page").length,
-      "taxon:family:Fixtureidae": 2,
+      page: all.filter((r) => r.taxon === null).length,
+      "taxon:family:Otheridae": 2,
     });
   });
+
+  it("a blind test whose frame has moved refuses confirmations and writes nothing", async () => {
+    const C = await newSet();
+    await fx.addSpecies("late");
+    await fx.settleUniverse();
+    await stageRevision(T, rev);
+    await expect(confirm(C, FIXTURE)).rejects.toThrow(/species data changed/);
+    expect((await items(C)).every((r) => r.taxon === null)).toBe(true);
+  }, 300_000);
 });

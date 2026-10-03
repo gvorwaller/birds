@@ -797,7 +797,7 @@ export interface EvalSetSummary {
   perStratum: Record<string, { n: number; labelled: number }>;
   gates: unknown;
   lastGate: { reportId: string; passed: boolean } | null;
-  /** Answers given by a whole-family confirmation (0075), not page by page. */
+  /** Answers given by a whole-family confirmation (0076, set-local), not page by page. */
   fromTaxa: number;
   /**
    * Labelling sets only: the taxa the revision lists whole (assign rules),
@@ -829,18 +829,20 @@ async function listedTaxaFor(
                 jsonb_array_elements_text(t->'values') v
           WHERE r.id = $1 AND t->>'action' = 'assign'
        ), items AS (
-         SELECT si.order_name, si.family_sci_name, si.genus, l.id AS label_id
+         SELECT si.order_name, si.family_sci_name, si.genus,
+                (l.id IS NOT NULL OR ta.item_id IS NOT NULL) AS answered
            FROM tag_eval_item i
-           JOIN species_tag_input si ON si.species_code = i.species_code
+           JOIN species_tag_input si ON si.species_code = i.species_code AND si.input_hash = i.input_hash
            LEFT JOIN tag_eval_label l
              ON l.tag = $3 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+           LEFT JOIN tag_eval_taxon_answer ta ON ta.item_id = i.id
           WHERE i.set_id = $2
        )
        SELECT ls.rank, ls.value,
               (SELECT min(tc.family) FROM taxonomy_cache tc
                 WHERE ls.rank = 'family' AND tc.family_sci_name = ls.value) AS name,
               count(it.*)::int AS pages,
-              count(it.*) FILTER (WHERE it.label_id IS NULL)::int AS unanswered
+              count(it.*) FILTER (WHERE NOT it.answered)::int AS unanswered
          FROM listed ls
          LEFT JOIN items it
            ON (ls.rank = 'order' AND it.order_name = ls.value)
@@ -871,11 +873,13 @@ export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
   for (const s of sets) {
     const strata = (
       await query<{ stratum: string; n: number; labelled: number; from_taxa: number }>(
-        `SELECT i.stratum, count(*)::int AS n, count(l.id)::int AS labelled,
-                count(l.id) FILTER (WHERE l.basis <> 'page')::int AS from_taxa
+        `SELECT i.stratum, count(*)::int AS n,
+                count(*) FILTER (WHERE l.id IS NOT NULL OR ta.item_id IS NOT NULL)::int AS labelled,
+                count(ta.item_id)::int AS from_taxa
            FROM tag_eval_item i
            LEFT JOIN tag_eval_label l
              ON l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+           LEFT JOIN tag_eval_taxon_answer ta ON ta.item_id = i.id
           WHERE i.set_id = $1 GROUP BY i.stratum ORDER BY i.stratum`,
         [s.id, tag],
       )
@@ -982,9 +986,11 @@ export async function nextLabelItem(
   if (!set || set.status !== "labelling") return null;
   const counts = (
     await query<{ total: number; labelled: number }>(
-      `SELECT count(*)::int AS total, count(l.id)::int AS labelled
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE l.id IS NOT NULL OR ta.item_id IS NOT NULL)::int AS labelled
          FROM tag_eval_item i
          LEFT JOIN tag_eval_label l ON l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash
+         LEFT JOIN tag_eval_taxon_answer ta ON ta.item_id = i.id
         WHERE i.set_id = $1`,
       [setId, tag],
     )
@@ -1001,6 +1007,7 @@ export async function nextLabelItem(
         WHERE i.set_id = $1 AND NOT EXISTS (
               SELECT 1 FROM tag_eval_label l
                WHERE l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash)
+          AND NOT EXISTS (SELECT 1 FROM tag_eval_taxon_answer ta WHERE ta.item_id = i.id)
         ORDER BY i.display_position LIMIT 1`,
       [setId, tag],
     )

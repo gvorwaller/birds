@@ -549,9 +549,10 @@
             <legend>Confirm whole families</legend>
             <p class="muted">
               The rules tag these families and genera whole. Tick only the ones where every species is a bird of
-              the open ocean by this test's question: each of their unanswered pages is then answered Yes, as
-              your answer, and skipped when you label. Leave a family unticked if some of its species might not
-              fit; you answer those pages one by one.
+              the open ocean by this test's question: each of their unanswered pages in this blind test is then
+              answered Yes by that confirmation (the gate report counts these separately) and skipped when you
+              label. Leave a family unticked if some of its species might not fit; you answer those pages one by
+              one.
             </p>
             <ul>
               {#each t.listedTaxa.filter((x) => x.pages > 0) as x (taxonKey(x))}
@@ -585,7 +586,7 @@
                     action: "confirmTaxa",
                     setId: t.id,
                     title: "Answer Yes for these families?",
-                    body: "Every unanswered page from these families is answered Yes, as your answer. Answers can't be changed afterwards.",
+                    body: "Every unanswered page from these families in this blind test is answered Yes by this confirmation. It applies to this blind test only and can't be undone.",
                     taxa: live.map((x) => ({ key: taxonKey(x), line: taxonLine(x) })),
                   },
                   event.currentTarget,
@@ -845,6 +846,17 @@
               The old AI had no correct tags among these birds, so there is nothing to keep.
             {/if}
           </p>
+          {#if b.labelBasis}
+            {@const basis = Object.entries(b.labelBasis as Record<string, number>)}
+            {@const byTaxa = basis.filter(([k]) => k.startsWith("taxon:"))}
+            <p class="muted">
+              Answers: {nf((b.labelBasis as Record<string, number>).page ?? 0)} on their pages{byTaxa.length
+                ? `; ${nf(byTaxa.reduce((a, [, n]) => a + n, 0))} by family confirmation (${byTaxa
+                    .map(([k, n]) => `${k.split(":").at(-1)} ${n}`)
+                    .join(", ")})`
+                : ""}.
+            </p>
+          {/if}
           {#if (b.namedCases as unknown[])?.length}
             <ul class="plain">
               {#each b.namedCases as { code: string; name: string; expect: string; assigned: boolean; gating: boolean }[] as c (c.code)}
@@ -1013,7 +1025,7 @@
     display: flex;
     gap: 10px;
     align-items: center;
-    min-height: 44px;
+    min-height: 48px;
     overflow-wrap: anywhere;
   }
   .taxa input {

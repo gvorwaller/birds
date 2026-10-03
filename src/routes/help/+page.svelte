@@ -1343,10 +1343,10 @@
 						<strong>Confirm whole families.</strong> When the rules tag a family
 						or genus whole (albatrosses, petrels…), a labelling blind test lists
 						them with their page counts. Tick the ones where every species
-						clearly fits, and their unanswered pages are answered Yes in one step,
-						as your answer, then skipped when you label. Leave a family unticked if
-						some species might not fit. The gate report shows how many answers
-						came from confirmations.
+						clearly fits, and their unanswered pages in that blind test are answered
+						Yes by the confirmation, then skipped when you label. It applies to that
+						blind test only. Leave a family unticked if some species might not fit.
+						The gate report shows how many answers came from confirmations.
 					</li>
 					<li>
 						<strong>Tag rules model.</strong> "Draft rules with AI" uses the
