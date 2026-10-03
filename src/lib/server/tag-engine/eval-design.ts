@@ -53,8 +53,11 @@ export const EVAL_TEXT_DENY = [
 
 export const TAG_EVAL_DESIGNS: Readonly<Record<string, TagEvalDesign>> = {
   "habitat:open-ocean": {
+    // Owner 2026-10-03: the strict (pelagic) meaning. The earlier "feed or rest
+    // at sea, away from shore" wording also admitted terns, gulls, cormorants
+    // and sea ducks, which the owner does not mean by open ocean.
     question:
-      "From this article and its family's article, does this bird feed or rest at sea, away from shore, as a regular part of its life?",
+      "From this article and its family's article, is this a bird of the open ocean, one that spends much of its life far out at sea, away from coasts, the way albatrosses and petrels do?",
     marineOrders: [
       "Procellariiformes",
       "Sphenisciformes",

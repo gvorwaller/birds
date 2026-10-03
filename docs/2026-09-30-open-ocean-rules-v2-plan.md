@@ -600,3 +600,8 @@ No. The drafts missed both claims by a wide margin, for the structural reason in
 - **Red Phalarope counts.** Its article says it "migrates mainly on oceanic routes, wintering at sea on tropical oceans", and Audubon says "for most of year found only out at sea". In drafts 2–4, `x_migration` (stem "migrate", clause scope, binds `*`) cancelled that sentence. Draft 5 binds `x_migration` to the `open-sea` group only.
   - birds_test dry run against draft 4: exactly one bird changes (redpha1 becomes assigned). Assigned goes 235 → 236; legacy positives kept go 230 → 231.
   - A broader fix, a ±4-word window, also admitted Black Tern on "…some to the open ocean", so it was not used.
+- **2026-10-03: the blind-test question takes the strict meaning.** The owner labelled all 222 pages of blind test 1 under the B4 question ("does this bird feed or rest at sea, away from shore, as a regular part of its life?").
+  - Read literally, that question also covers terns, many gulls, sea-going cormorants and scoters/eiders. A read-only gate estimate failed retention: point 0.79, lower bound 0.76; precision 0.98.
+  - The owner chose the strict meaning ("true pelagics who only nest on shore, but otherwise are flying open ocean"). The question is now "…is this a bird of the open ocean, one that spends much of its life far out at sea, away from coasts, the way albatrosses and petrels do?"
+  - The tag definition text matches it.
+  - Revision 1's rules are unchanged. The question is not in previewDesignHash, so Preview 3 and the stage results stay current; designHash and evaluatorHash change, so blind test 1 is abandoned and labelling restarts.
