@@ -37,7 +37,7 @@
     overBudget?: number;
     /** Whole-taxon confirmation: "rank:value" keys sent, and the lines shown. */
     taxa?: { key: string; line: string }[];
-    /** Activate with a blind test that did not pass (0078): the line the owner ticks to accept it. */
+    /** Activate rules below the blind-test mark (0078): the line the owner ticks to use them anyway. */
     acceptGate?: string;
   };
   type Taxon = { rank: string; value: string; name: string | null; pages: number; unanswered: number };
@@ -280,7 +280,7 @@
                     body: "Rules will decide this tag for every species from now on. Species the rules do not assign lose the tag.",
                     acceptGate:
                       !ready?.gateReportId && ready?.acceptableGate
-                        ? `I accept that its blind test did not pass (the rules were right for ${pct1(ready.acceptableGate.precision.point)} of the birds they tag; the bar was ${Math.round(data.proposedGates.precision.point_min * 100)}%) and want them to decide this tag anyway.`
+                        ? `Use these rules anyway. They agreed with my blind-test answers on ${pct1(ready.acceptableGate.precision.point)} of the birds they tag (the mark was ${Math.round(data.proposedGates.precision.point_min * 100)}%).`
                         : undefined,
                   },
                   event.currentTarget,
@@ -333,9 +333,9 @@
           {/if}
           {#if !ready?.gateReportId && ready?.acceptableGate}
             <p class="muted">
-              Its blind test did not pass: the rules were right for {pct1(ready.acceptableGate.precision.point)} of the
-              birds they tag (the bar was {Math.round(data.proposedGates.precision.point_min * 100)}%), and none of the must-not birds is tagged. You can still activate it:
-              the Activate dialog asks you to accept that result.
+              The rules agreed with your blind-test answers on {pct1(ready.acceptableGate.precision.point)} of the birds
+              they tag; the mark was {Math.round(data.proposedGates.precision.point_min * 100)}%. None of the must-not birds is tagged. You can still activate
+              them: the Activate dialog asks you to confirm you want them anyway.
             </p>
           {/if}
         {/if}
@@ -554,7 +554,7 @@
             tone={t.status === "frozen" ? "ok" : t.status === "abandoned" ? "neutral" : "warn"}
             label={t.status === "labelling" ? "Labelling" : t.status === "frozen" ? "Frozen" : "Abandoned"}
           />
-          {#if t.lastGate}<AdminBadge tone={t.lastGate.passed ? "ok" : "error"} label={t.lastGate.passed ? "Gate passed" : "Gate failed"} />{/if}
+          {#if t.lastGate}<AdminBadge tone={t.lastGate.passed ? "ok" : "error"} label={t.lastGate.passed ? "Rules met the mark" : "Rules below the mark"} />{/if}
         </h3>
         <p>
           {t.labelled} of {t.total} answered ({pctOf(t.labelled, t.total)}%){t.fromTaxa
@@ -809,7 +809,13 @@
           {#if r.revisionId}· revision {r.revisionId}{/if}
           {#if "passed" in b}<AdminBadge
               tone={b.passed ? "ok" : "error"}
-              label={b.passed ? "Passed" : "Did not pass"}
+              label={r.kind === "gate"
+                ? b.passed
+                  ? "Rules met the mark"
+                  : "Rules below the mark"
+                : b.passed
+                  ? "Passed"
+                  : "Did not pass"}
             />{/if}
         </h3>
         <p class="muted">{fmtWhen(r.at)}</p>
@@ -870,9 +876,9 @@
           {@const pr = b.precision as { point: number | null; lower: number | null }}
           {@const rt = b.retention as { point: number | null; lower: number | null; note: string | null }}
           <p>
-            Precision {pr.point != null ? `${(pr.point * 100).toFixed(1)}%` : "—"} (at least {pr.lower != null ? `${(pr.lower * 100).toFixed(1)}%` : "—"}).
+            The rules agreed with your answers on {pr.point != null ? `${(pr.point * 100).toFixed(1)}%` : "—"} of the birds they tag (at least {pr.lower != null ? `${(pr.lower * 100).toFixed(1)}%` : "—"}).
             {#if rt.lower != null}
-              Keeps {rt.point != null ? `${(rt.point * 100).toFixed(1)}%` : "all"} of the old AI's correct tags (at least {(rt.lower * 100).toFixed(1)}%).
+              They keep {rt.point != null ? `${(rt.point * 100).toFixed(1)}%` : "all"} of the old AI's tags you said Yes to (at least {(rt.lower * 100).toFixed(1)}%).
             {:else}
               The old AI had no correct tags among these birds, so there is nothing to keep.
             {/if}

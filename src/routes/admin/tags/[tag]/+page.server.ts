@@ -385,7 +385,7 @@ export const actions: Actions = {
     const ready = await activationReadiness(g.tag, revisionId);
     if (!ready.benchmarkReportId)
       return bad("op", 409, "This revision needs a passing switch benchmark first.");
-    // A blind test that did not pass can still be accepted by the owner
+    // Rules below the blind-test mark can still be used if the owner says so
     // (0078), unless it tags a must-not bird; the definer re-checks.
     let gateReportId = ready.gateReportId;
     let acceptFailedGate = false;
@@ -396,7 +396,7 @@ export const actions: Actions = {
         return bad(
           "op",
           400,
-          "Its blind test did not pass. Tick the box to accept that result and activate anyway.",
+          "These rules are below the blind-test mark. Tick the box to use them anyway.",
         );
       gateReportId = ready.acceptableGate.reportId;
       acceptFailedGate = true;
