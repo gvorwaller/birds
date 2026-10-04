@@ -160,6 +160,76 @@ describe("actions", () => {
     );
   });
 
+  it("activate with a blind test that did not pass: only with the owner's tick, the job carries the acceptance, never without a benchmark (0078)", async () => {
+    const acceptable = {
+      reportId: "5",
+      precision: { point: 0.86, lower: 0.826 },
+      retention: { point: 0.99, lower: 0.931 },
+    };
+    m.activationReadiness.mockResolvedValue({
+      gateReportId: null,
+      benchmarkReportId: "8",
+      acceptableGate: acceptable,
+    });
+    const r = failure(
+      await call("activate", ADMIN, { revisionId: "3", confirm: TAG }),
+    );
+    expect(r.status).toBe(400);
+    expect(r.data.message).toMatch(/Tick the box/);
+    expect(m.enqueueTagOp).not.toHaveBeenCalled();
+    await call("activate", ADMIN, {
+      revisionId: "3",
+      confirm: TAG,
+      acceptFailedGate: "yes",
+      gateReportId: "999",
+    });
+    expect(m.enqueueTagOp).toHaveBeenCalledWith(
+      "tag_activate",
+      {
+        tag: TAG,
+        revisionId: "3",
+        gateReportId: "5",
+        benchmarkReportId: "8",
+        acceptFailedGate: true,
+      },
+      1,
+    );
+    // A passing gate never sends an acceptance, even with the box ticked.
+    m.enqueueTagOp.mockClear();
+    m.activationReadiness.mockResolvedValue({
+      gateReportId: "7",
+      benchmarkReportId: "8",
+      acceptableGate: null,
+    });
+    await call("activate", ADMIN, {
+      revisionId: "3",
+      confirm: TAG,
+      acceptFailedGate: "yes",
+    });
+    expect(m.enqueueTagOp).toHaveBeenCalledWith(
+      "tag_activate",
+      { tag: TAG, revisionId: "3", gateReportId: "7", benchmarkReportId: "8" },
+      1,
+    );
+    // No passing benchmark: refused, whatever the gate.
+    m.enqueueTagOp.mockClear();
+    m.activationReadiness.mockResolvedValue({
+      gateReportId: null,
+      benchmarkReportId: null,
+      acceptableGate: acceptable,
+    });
+    expect(
+      failure(
+        await call("activate", ADMIN, {
+          revisionId: "3",
+          confirm: TAG,
+          acceptFailedGate: "yes",
+        }),
+      ).status,
+    ).toBe(409);
+    expect(m.enqueueTagOp).not.toHaveBeenCalled();
+  });
+
   it("rollback and retire need the typed tag name", async () => {
     expect(failure(await call("rollback", ADMIN, { confirm: "" })).status).toBe(
       400,

@@ -1351,6 +1351,13 @@
 						The gate report shows how many answers came from confirmations.
 					</li>
 					<li>
+						<strong>Accepting a blind test that did not pass.</strong> If the
+						blind test misses its bar but none of the must-not birds is tagged,
+						<strong>Activate…</strong> can still switch the tag to the rules: its
+						dialog asks you to tick that you accept the result. The activation
+						records that you did. A switch benchmark must still pass first.
+					</li>
+					<li>
 						<strong>Tag rules model.</strong> "Draft rules with AI" uses the
 						model chosen under AI &amp; Cost → Model choice → Tag rules. An AI
 						draft is only a proposal: it goes through Preview, cross-check,

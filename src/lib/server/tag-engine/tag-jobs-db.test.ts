@@ -68,6 +68,23 @@ describe("parseTagOpPayload", () => {
       parseTagOpPayload("tag_consistency", { tag: "habitat:open-ocean" }),
     ).toBeNull();
   });
+
+  it("tag_activate carries the owner's acceptance of a failed gate only as literal true (0078)", () => {
+    const base = {
+      tag: "habitat:open-ocean",
+      revisionId: "1",
+      gateReportId: "2",
+      benchmarkReportId: "3",
+    };
+    expect(parseTagOpPayload("tag_activate", base)).toEqual(base);
+    expect(
+      parseTagOpPayload("tag_activate", { ...base, acceptFailedGate: true }),
+    ).toEqual({ ...base, acceptFailedGate: true });
+    for (const bad of ["yes", "true", 1, false, null])
+      expect(
+        parseTagOpPayload("tag_activate", { ...base, acceptFailedGate: bad }),
+      ).toBeNull();
+  });
 });
 
 const fx = tagEngineFixture("zzj");

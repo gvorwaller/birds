@@ -383,12 +383,24 @@ export const actions: Actions = {
     if (!confirmed(form, g.tag))
       return bad("op", 400, `Type ${g.tag} to confirm.`);
     const ready = await activationReadiness(g.tag, revisionId);
-    if (!ready.gateReportId || !ready.benchmarkReportId)
-      return bad(
-        "op",
-        409,
-        "This revision needs a passing gate report and a passing benchmark first.",
-      );
+    if (!ready.benchmarkReportId)
+      return bad("op", 409, "This revision needs a passing switch benchmark first.");
+    // A blind test that did not pass can still be accepted by the owner
+    // (0078), unless it tags a must-not bird; the definer re-checks.
+    let gateReportId = ready.gateReportId;
+    let acceptFailedGate = false;
+    if (!gateReportId) {
+      if (!ready.acceptableGate)
+        return bad("op", 409, "This revision needs a passing gate report first.");
+      if (form.get("acceptFailedGate") !== "yes")
+        return bad(
+          "op",
+          400,
+          "Its blind test did not pass. Tick the box to accept that result and activate anyway.",
+        );
+      gateReportId = ready.acceptableGate.reportId;
+      acceptFailedGate = true;
+    }
     return queued(
       "activation",
       await enqueueTagOp(
@@ -396,8 +408,9 @@ export const actions: Actions = {
         {
           tag: g.tag,
           revisionId,
-          gateReportId: ready.gateReportId,
+          gateReportId,
           benchmarkReportId: ready.benchmarkReportId,
+          ...(acceptFailedGate ? { acceptFailedGate: true as const } : {}),
         },
         g.user.id,
       ),

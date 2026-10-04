@@ -123,6 +123,8 @@ interface TagOpPayload {
 	revisionId?: string;
 	gateReportId?: string;
 	benchmarkReportId?: string;
+	/** tag_activate only: the owner accepted a gate report that did not pass (0078). */
+	acceptFailedGate?: boolean;
 }
 
 const ID = /^[1-9][0-9]{0,18}$/;
@@ -145,8 +147,15 @@ export function parseTagOpPayload(type: string, raw: unknown): TagOpPayload | nu
 			const revisionId = id('revisionId');
 			const gateReportId = id('gateReportId');
 			const benchmarkReportId = id('benchmarkReportId');
+			if (p.acceptFailedGate !== undefined && p.acceptFailedGate !== true) return null;
 			return revisionId && gateReportId && benchmarkReportId
-				? { tag: p.tag, revisionId, gateReportId, benchmarkReportId }
+				? {
+						tag: p.tag,
+						revisionId,
+						gateReportId,
+						benchmarkReportId,
+						...(p.acceptFailedGate === true ? { acceptFailedGate: true } : {})
+					}
 				: null;
 		}
 		default:
@@ -307,6 +316,7 @@ export async function runTagOpJob(job: JobRow): Promise<void> {
 					revisionId: p.revisionId!,
 					gateReportId: p.gateReportId,
 					benchmarkReportId: p.benchmarkReportId,
+					acceptFailedGate: p.acceptFailedGate === true,
 					userId: job.requested_by
 				});
 				result = { activationId };

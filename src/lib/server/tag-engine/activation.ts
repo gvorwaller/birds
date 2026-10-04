@@ -224,12 +224,16 @@ export async function stageRevision(
  * §B4i). It runs inside a savepoint so the WAL it wrote can still be read.
  * A real activation passes report ids; the definer verifies the gate →
  * frozen blind-test set → gates hash → frame hash recomputed right then.
+ * `acceptFailedGate` (0078, owner decision) lets the definer accept a gate
+ * report that did not pass, unless it tags a must-not bird.
  */
 export async function activateRevision(opts: {
   tag: string;
   revisionId: string;
   gateReportId?: string;
   benchmarkReportId?: string;
+  /** The owner accepts a gate report that did not pass (never one with a must-not violation). */
+  acceptFailedGate?: boolean;
   userId: number;
   dryRun?: boolean;
   benchmark?: boolean;
@@ -275,7 +279,7 @@ export async function activateRevision(opts: {
         const t2 = performance.now();
         const callSwitch = (dry: boolean) =>
           tx.exec<{ id: string }>(
-            "SELECT public.switch_tag_ownership($1, $2, $3, $4, $5, $6, $7) AS id",
+            "SELECT public.switch_tag_ownership($1, $2, $3, $4, $5, $6, $7, $8) AS id",
             [
               opts.tag,
               opts.revisionId,
@@ -284,6 +288,7 @@ export async function activateRevision(opts: {
               opts.userId,
               TAG_ENGINE_KEY.toString(),
               dry,
+              opts.acceptFailedGate === true,
             ],
           );
         let act: string | null = null;

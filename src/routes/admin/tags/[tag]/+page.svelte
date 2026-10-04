@@ -37,6 +37,8 @@
     overBudget?: number;
     /** Whole-taxon confirmation: "rank:value" keys sent, and the lines shown. */
     taxa?: { key: string; line: string }[];
+    /** Activate with a blind test that did not pass (0078): the line the owner ticks to accept it. */
+    acceptGate?: string;
   };
   type Taxon = { rank: string; value: string; name: string | null; pages: number; unanswered: number };
   const taxonKey = (x: Taxon) => `${x.rank}:${x.value}`;
@@ -51,6 +53,8 @@
     picked[setId] = on ? [...cur, key] : cur.filter((k) => k !== key);
   }
   let acceptOver = $state(false);
+  let acceptGate = $state(false);
+  const pct1 = (x: number | null | undefined) => (typeof x === "number" ? `${(x * 100).toFixed(1)}%` : "—");
   const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
   const gateLines = (g: { precision: { point_min: number; lower_min: number }; retention: { lower_min: number }; named_cases_must_not: string[] }) => [
     `Of the birds the rules tag, at least ${Math.round(g.precision.point_min * 100)}% must be right, and even at the pessimistic end of the margin of error at least ${Math.round(g.precision.lower_min * 100)}%.`,
@@ -70,6 +74,7 @@
     confirming = c;
     typed = "";
     acceptOver = false;
+    acceptGate = false;
     await tick();
     confirmInput?.focus();
   }
@@ -264,8 +269,8 @@
             <button
               type="button"
               disabled={busy ||
-                !ready?.gateReportId ||
-                !ready?.benchmarkReportId}
+                !ready?.benchmarkReportId ||
+                (!ready?.gateReportId && !ready?.acceptableGate)}
               onclick={(event) =>
                 openConfirm(
                   {
@@ -273,6 +278,10 @@
                     revisionId: r.id,
                     title: `Activate revision ${r.id}?`,
                     body: "Rules will decide this tag for every species from now on. Species the rules do not assign lose the tag.",
+                    acceptGate:
+                      !ready?.gateReportId && ready?.acceptableGate
+                        ? `I accept that its blind test did not pass (the rules were right for ${pct1(ready.acceptableGate.precision.point)} of the birds they tag; the bar was ${Math.round(data.proposedGates.precision.point_min * 100)}%) and want them to decide this tag anyway.`
+                        : undefined,
                   },
                   event.currentTarget,
                 )}>Activate…</button
@@ -314,15 +323,21 @@
             {#if liveSet}A blind test for this revision is already open below.{/if}
           </p>
         {/if}
-        {#if d.owned?.revisionId !== r.id && (!ready?.gateReportId || !ready?.benchmarkReportId)}
-          <p class="muted">
-            Activate needs {[
-              !ready?.gateReportId && "a passing gate report (the blind test)",
-              !ready?.benchmarkReportId && "a passing switch benchmark",
-            ]
-              .filter(Boolean)
-              .join(" and ")}.
-          </p>
+        {#if d.owned?.revisionId !== r.id}
+          {@const needs = [
+            !ready?.gateReportId && !ready?.acceptableGate && "a passing gate report (the blind test)",
+            !ready?.benchmarkReportId && "a passing switch benchmark",
+          ].filter(Boolean)}
+          {#if needs.length}
+            <p class="muted">Activate needs {needs.join(" and ")}.</p>
+          {/if}
+          {#if !ready?.gateReportId && ready?.acceptableGate}
+            <p class="muted">
+              Its blind test did not pass: the rules were right for {pct1(ready.acceptableGate.precision.point)} of the
+              birds they tag (the bar was {Math.round(data.proposedGates.precision.point_min * 100)}%), and none of the must-not birds is tagged. You can still activate it:
+              the Activate dialog asks you to accept that result.
+            </p>
+          {/if}
         {/if}
       </div>
     {/each}
@@ -966,6 +981,12 @@
             I accept labelling {confirming.overBudget} birds (more than {data.labelBudget}).
           </label>
         {/if}
+        {#if confirming.acceptGate}
+          <label class="accept">
+            <input type="checkbox" name="acceptFailedGate" value="yes" bind:checked={acceptGate} />
+            {confirming.acceptGate}
+          </label>
+        {/if}
         <label for="confirm-input"
           >Type <strong>{d.tag}</strong> to confirm</label
         >
@@ -982,7 +1003,7 @@
           <button type="button" class="secondary" onclick={closeConfirm}
             >Cancel</button
           >
-          <button type="submit" disabled={busy || typed.trim() !== d.tag || (!!confirming.overBudget && !acceptOver)}
+          <button type="submit" disabled={busy || typed.trim() !== d.tag || (!!confirming.overBudget && !acceptOver) || (!!confirming.acceptGate && !acceptGate)}
             >{busy ? "Working…" : "Confirm"}</button
           >
         </div>

@@ -614,6 +614,8 @@ export async function enqueueTagOp(
     revisionId?: string;
     gateReportId?: string;
     benchmarkReportId?: string;
+    /** tag_activate only: the owner accepted a gate report that did not pass (0078). */
+    acceptFailedGate?: true;
   },
   userId: number,
 ): Promise<{ jobId: number; deduped: boolean }> {
@@ -766,11 +768,27 @@ export async function rejectProposal(
 
 export { ensureTagRepairJob, runTagConsistencyNow };
 
-/** Latest passing gate / benchmark reports for a revision (Activate's preconditions). */
+/** A gate report that did not pass but that the owner may accept (0078). */
+export interface AcceptableGate {
+  reportId: string;
+  precision: { point: number | null; lower: number | null };
+  retention: { point: number | null; lower: number | null };
+}
+
+/**
+ * Activate's preconditions for a revision: the latest passing gate and
+ * benchmark reports and, when no gate passed, the LATEST gate report if the
+ * owner may accept it anyway (0078: it did not pass, but tags no must-not
+ * bird). The switch definer re-checks all of it.
+ */
 export async function activationReadiness(
   tag: string,
   revisionId: string,
-): Promise<{ gateReportId: string | null; benchmarkReportId: string | null }> {
+): Promise<{
+  gateReportId: string | null;
+  benchmarkReportId: string | null;
+  acceptableGate: AcceptableGate | null;
+}> {
   const r = (
     await query<{ kind: string; id: string }>(
       `SELECT DISTINCT ON (kind) kind, id::text FROM tag_report
@@ -780,9 +798,45 @@ export async function activationReadiness(
       [tag, revisionId],
     )
   ).rows;
+  const gateReportId = r.find((x) => x.kind === "gate")?.id ?? null;
+  const latestGate = gateReportId
+    ? undefined
+    : (
+        await query<{
+          id: string;
+          passed: string | null;
+          clean: boolean;
+          precision: AcceptableGate["precision"] | null;
+          retention: AcceptableGate["retention"] | null;
+        }>(
+          `SELECT id::text, body->>'passed' AS passed, body->'precision' AS precision,
+                  body->'retention' AS retention,
+                  coalesce(jsonb_typeof(body->'namedCaseViolations') = 'array'
+                           AND jsonb_array_length(body->'namedCaseViolations') = 0, false) AS clean
+             FROM tag_report
+            WHERE tag = $1 AND revision_id = $2 AND kind = 'gate' AND body->>'provisional' IS NULL
+            ORDER BY id DESC LIMIT 1`,
+          [tag, revisionId],
+        )
+      ).rows[0];
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
   return {
-    gateReportId: r.find((x) => x.kind === "gate")?.id ?? null,
+    gateReportId,
     benchmarkReportId: r.find((x) => x.kind === "benchmark")?.id ?? null,
+    acceptableGate:
+      latestGate && latestGate.passed === "false" && latestGate.clean
+        ? {
+            reportId: latestGate.id,
+            precision: {
+              point: num(latestGate.precision?.point),
+              lower: num(latestGate.precision?.lower),
+            },
+            retention: {
+              point: num(latestGate.retention?.point),
+              lower: num(latestGate.retention?.lower),
+            },
+          }
+        : null,
   };
 }
 

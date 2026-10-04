@@ -71,7 +71,15 @@ export async function censusGate(
   revisionId: string,
   adminId: number,
   track: { setIds: Set<string>; refs?: Set<string> },
-): Promise<{ gate: string; bench: string; setId: string }> {
+  opts: {
+    /** The answer each unlabelled page gets (default: what the rules say, so the gate passes). */
+    label?: (rulesYes: boolean) => "yes" | "no" | "unsure";
+    /** The gate JSON confirmed for the set (default FIXTURE_GATES). */
+    gates?: typeof FIXTURE_GATES;
+    /** Return a gate that did not pass instead of throwing (0078 tests). */
+    allowFail?: boolean;
+  } = {},
+): Promise<{ gate: string; bench: string; setId: string; passed: boolean }> {
   if (!tagEvalDesign(tag)) __registerEvalDesignForTests(tag);
   // Every frame species needs a family reference (td-894144 B5, plan §4).
   for (const code of await seedFrameReferences(tag, revisionId))
@@ -85,7 +93,7 @@ export async function censusGate(
     revisionId,
     n,
     expectedFrameHash: frame.frameHash,
-    gates: FIXTURE_GATES,
+    gates: opts.gates ?? FIXTURE_GATES,
     userId: adminId,
     seed: createHash("sha256")
       .update(`fixture|${tag}|${revisionId}`)
@@ -107,21 +115,22 @@ export async function censusGate(
         set.setId,
         it.id,
         adminId,
-        it.rules_yes ? "yes" : "no",
+        (opts.label ?? ((y: boolean) => (y ? "yes" : "no")))(it.rules_yes),
       ]);
   await query("SELECT public.freeze_tag_eval_set($1, $2)", [
     set.setId,
     adminId,
   ]);
   const gate = await recordGateReport(set.setId);
-  if (!gate.passed) throw new Error("fixture census gate did not pass");
+  if (!gate.passed && !opts.allowFail)
+    throw new Error("fixture census gate did not pass");
   const bench = (
     await query<{ id: string }>(
       `SELECT record_tag_report('benchmark', $1, $2, '{"passed":true}'::jsonb)::text AS id`,
       [tag, revisionId],
     )
   ).rows[0].id;
-  return { gate: gate.reportId, bench, setId: set.setId };
+  return { gate: gate.reportId, bench, setId: set.setId, passed: gate.passed };
 }
 
 /**
