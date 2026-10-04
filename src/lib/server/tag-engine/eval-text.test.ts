@@ -1,24 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildEvalText,
-  cueRanges,
-  maskNames,
-  maskReference,
-} from "./eval-text";
+import { buildEvalText, cueRanges, evalSections } from "./eval-text";
 import { designHash, evaluatorHash, tagEvalDesign } from "./eval-design";
 
 const PAGE = { evaluatorHash: "e".repeat(64), reference: null };
 
 describe("evaluator text (rev 23 §B4h)", () => {
-  const names = { common: "American Kestrel", scientific: "Falco sparverius" };
-  it("masks the common name, its group noun (plural/possessive), the binomial, genus and epithet", () => {
-    const t = maskNames(
-      "The American Kestrel (Falco sparverius) is the smallest falcon. Kestrels hunt insects; the kestrel's diet varies. Other Falco species differ; sparverius means sparrow-like.",
-      names,
-    );
-    expect(t).not.toMatch(/\b(kestrel|kestrels|sparverius|falco)\b/i);
-    expect(t).toContain("[this bird] ([this bird]) is the smallest falcon");
-    expect(t).toContain("Other [genus] species");
+  it("v3 (owner 2026-10-03): the bird's names are shown, never masked", () => {
+    const text =
+      "The American Kestrel (Falco sparverius) is the smallest falcon. Kestrels hunt insects; the kestrel's diet varies.";
+    const page = buildEvalText({ extract: text, sections: [] }, ["sea"], PAGE);
+    expect(page.sections).toEqual([{ title: "", text }]);
+    expect(JSON.stringify(page)).not.toMatch(/\[this bird\]|\[genus\]/);
+    expect(evalSections({ extract: text, sections: [] })).toEqual(page.sections);
   });
   it("drops the fixed global sections, keeps the lead and habitat, and is independent of any rule set", () => {
     const a = buildEvalText(
@@ -33,7 +26,6 @@ describe("evaluator text (rev 23 §B4h)", () => {
           { title: "In culture", text: "A mascot." },
         ],
       },
-      names,
       ["sea"],
       PAGE,
     );
@@ -48,7 +40,6 @@ describe("evaluator text (rev 23 §B4h)", () => {
           },
         ],
       },
-      names,
       ["sea"],
       PAGE,
     );
@@ -64,7 +55,6 @@ describe("evaluator text (rev 23 §B4h)", () => {
           },
         ],
       },
-      names,
       ["sea", "ocean"],
       PAGE,
     );
@@ -86,8 +76,7 @@ describe("evaluator text (rev 23 §B4h)", () => {
   });
 });
 
-describe("evaluator text v2: the family reference (plan §4 option b)", () => {
-  const names = { common: "Sooty Shearwater", scientific: "Ardenna grisea" };
+describe("evaluator text: the family reference (plan §4 option b)", () => {
   const article = {
     extract: "The Sooty Shearwater is a shearwater in the seabird family Procellariidae.",
     sections: [],
@@ -99,21 +88,18 @@ describe("evaluator text v2: the family reference (plan §4 option b)", () => {
     lead: "The family Procellariidae is a group of seabirds that includes the shearwaters. The Sooty Shearwater breeds in the south.",
   };
   const page = (over: Partial<typeof reference> = {}) =>
-    buildEvalText(article, names, ["sea"], {
+    buildEvalText(article, ["sea"], {
       evaluatorHash: evaluatorHash("habitat:open-ocean"),
       reference: { ...reference, ...over },
     });
 
-  it("masks only the species' full names in the reference, keeping the family's own words", () => {
-    expect(maskReference(reference.lead, names)).toBe(
-      "The family Procellariidae is a group of seabirds that includes the shearwaters. The [this bird] breeds in the south.",
-    );
+  it("shows the family's lead as stored, names and all (v3: nothing masked)", () => {
     expect(page().reference).toMatchObject({
       familyCode: "procel1",
       title: "Procellariidae",
       revId: 1354727834,
       lead: reference.lead,
-      displayLead: maskReference(reference.lead, names),
+      displayLead: reference.lead,
     });
   });
 
@@ -124,13 +110,13 @@ describe("evaluator text v2: the family reference (plan §4 option b)", () => {
     expect(page({ familyCode: "other1" }).hash).not.toBe(h);
     expect(page({ lead: reference.lead + " More." }).hash).not.toBe(h);
     expect(
-      buildEvalText(article, names, ["sea"], {
+      buildEvalText(article, ["sea"], {
         evaluatorHash: "f".repeat(64),
         reference,
       }).hash,
     ).not.toBe(h);
     expect(
-      buildEvalText(article, names, ["sea"], {
+      buildEvalText(article, ["sea"], {
         evaluatorHash: evaluatorHash("habitat:open-ocean"),
         reference: null,
       }).hash,

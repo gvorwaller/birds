@@ -25,11 +25,13 @@ export interface TagEvalDesign {
 
 /** Sections dropped from the evaluator text for EVERY tag and revision (revision-independent). */
 /**
- * Bump when masking, section filtering, cue rendering or the family reference
+ * Bump when section filtering, cue rendering or the family reference
  * rendering changes (single source; eval-text imports it). v2 (td-894144 B5):
  * each page also shows the lead of the species' family's Wikipedia article.
+ * v3 (owner 2026-10-03): the bird's names are shown, never masked — "blind"
+ * hides what answer the system wants, not which bird is being judged.
  */
-export const EVAL_TEXT_VERSION = "evaltext-v2";
+export const EVAL_TEXT_VERSION = "evaltext-v3";
 
 /** How the family reference is sourced and masked (plan §4 option b). */
 export const FAMILY_REFERENCE_VERSION = "famref-wikipedia-lead-v1";

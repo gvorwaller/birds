@@ -23,6 +23,8 @@ import {
   loadTaxonomyForCheck,
 } from "$server/tag-engine/taxon-check";
 import type { PreviewBody } from "$server/tag-engine/preview";
+import { evalSections } from "$server/tag-engine/eval-text";
+import { normalizeDisplay } from "$server/tag-engine/normalize";
 import { runTagConsistencyNow } from "$server/tag-jobs";
 
 // ── overview ──────────────────────────────────────────────────────────────
@@ -964,12 +966,20 @@ export interface LabelPageItem {
   question: string;
   /** The frozen family reference this page shows (null for pre-B5 sets). */
   familyReference: { title: string; displayLead: string } | null;
+  /** The bird being judged (owner 2026-10-03: shown, never masked). */
+  species: { comName: string; sciName: string };
 }
 
 /**
- * The next page to label in a set: the lowest display position whose page
- * (tag, species, eval_text_hash) has no label yet. Carries NO system output —
- * no species name, stratum, rules result or legacy value.
+ * The next page to label in a set: the lowest display position whose page has
+ * no answer yet. It names the bird, but carries NO system output — no stratum,
+ * rules result, legacy value, matched rule or evidence.
+ *
+ * The text shown is rebuilt, unmasked, from the stored article whenever that
+ * article is still the one the set froze (same input_hash). Sets made before
+ * v3 froze their text with the names masked; this shows those pages unmasked
+ * too, without changing what was sampled. If the article has moved since, the
+ * frozen text is shown.
  */
 export async function nextLabelItem(
   tag: string,
@@ -1000,10 +1010,22 @@ export async function nextLabelItem(
       id: string;
       display_position: number;
       article: { title: string; text: string }[];
-      family_reference: { title?: string; displayLead?: string } | null;
+      family_reference: { title?: string; lead?: string; displayLead?: string } | null;
+      com_name: string | null;
+      sci_name: string | null;
+      code: string;
+      current: boolean;
+      wikipedia_extract: string | null;
+      wikipedia_sections: { title: string; text: string }[] | null;
     }>(
-      `SELECT i.id::text, i.display_position, i.article, i.family_reference
+      `SELECT i.id::text, i.display_position, i.article, i.family_reference,
+              tc.com_name, tc.sci_name, i.species_code AS code,
+              (si.input_hash = i.input_hash) AS current,
+              se.wikipedia_extract, se.wikipedia_sections
          FROM tag_eval_item i
+         LEFT JOIN taxonomy_cache tc ON tc.species_code = i.species_code
+         LEFT JOIN species_tag_input si ON si.species_code = i.species_code
+         LEFT JOIN species_enrichment se ON se.species_code = i.species_code
         WHERE i.set_id = $1 AND NOT EXISTS (
               SELECT 1 FROM tag_eval_label l
                WHERE l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash)
@@ -1023,23 +1045,29 @@ export async function nextLabelItem(
       cueWords: [],
       question: set.question ?? "",
       familyReference: null,
+      species: { comName: "", sciName: "" },
     };
+  const ref = it.family_reference;
   return {
     setId,
     itemId: it.id,
     position: it.display_position,
     total: counts.total,
     labelled: counts.labelled,
-    sections: it.article,
+    sections: it.current
+      ? evalSections({ extract: it.wikipedia_extract, sections: it.wikipedia_sections })
+      : it.article,
     cueWords: set.cue ?? [],
     question: set.question ?? "",
     familyReference:
-      it.family_reference?.title && it.family_reference.displayLead
+      ref?.title && (ref.lead || ref.displayLead)
         ? {
-            title: it.family_reference.title,
-            displayLead: it.family_reference.displayLead,
+            title: ref.title,
+            // The stored lead, normalized: never masked (v2 snapshots masked displayLead).
+            displayLead: ref.lead ? normalizeDisplay(ref.lead) : ref.displayLead!,
           }
         : null,
+    species: { comName: it.com_name ?? it.code, sciName: it.sci_name ?? "" },
   };
 }
 

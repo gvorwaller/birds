@@ -36,7 +36,7 @@ export interface FrameRow {
   legacyYes: boolean;
   status: RulesStatus;
   marine: boolean;
-  /** The names masked out of the page — bound into the frame hash (CODEX1 rev-25 P1-1). */
+  /** The bird's names (shown on the page since v3; v2 masked them) — bound into the frame hash (CODEX1 rev-25 P1-1). */
   comName: string;
   sciName: string;
   evalTextHash: string;
@@ -192,7 +192,6 @@ export async function buildFrame(
         : null;
     const text = buildEvalText(
       { extract: r.wikipedia_extract, sections: r.wikipedia_sections },
-      { common: r.com_name, scientific: r.sci_name },
       design.cueWords,
       { evaluatorHash: evaluator, reference },
     );

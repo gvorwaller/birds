@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * Blind labelling (td-894144 Release B4, plan rev 26 §B4h): one masked
-   * article, one fixed question, three answers. Nothing the rules or the old
-   * AI tags said is shown. After an answer is saved the bird is named, for
-   * context only, and the next page appears.
+   * Blind labelling (td-894144 Release B4, plan rev 26 §B4h): the bird's
+   * names, its article and its family's article, one fixed question, three
+   * answers. Nothing the rules or the old AI tags said is shown (owner
+   * 2026-10-03: blind hides the wanted answer, not the bird).
    */
   import { enhance } from "$app/forms";
   import type { ActionData, PageData } from "./$types";
@@ -36,7 +36,7 @@
   <p class="back"><a href="/admin/tags/{encodeURIComponent(data.tag)}">← {data.tag}</a></p>
 
   {#if form && "revealed" in form && form.revealed}
-    <p class="reveal" role="status">Saved “{form.answered}”. That was <strong>{form.revealed}</strong>.</p>
+    <p class="reveal" role="status">Saved “{form.answered}” for <strong>{form.revealed}</strong>.</p>
   {:else if form && !form.ok}
     <p class="error" role="alert">{form.message}</p>
   {/if}
@@ -59,14 +59,17 @@
       <progress max={item.total} value={item.labelled} aria-label={`${pct}% answered`}></progress>
     </div>
 
+    <section class="card bird" aria-label="The bird">
+      <h1>{item.bird.comName}</h1>
+      {#if item.bird.sciName}<p class="sci">{item.bird.sciName}</p>{/if}
+    </section>
+
     <section class="card question-card" aria-labelledby="question">
-      <h1 id="question">{data.question}</h1>
+      <h2 id="question">{data.question}</h2>
       <p class="muted">
-        Judge only what the two texts say: the bird's own article, and below it the opening of its family's
-        Wikipedia article. The bird's names are hidden as “[this bird]”. Sea and ocean words are underlined on every
-        page as a reading aid; they are not an answer. <a href="#answer" onclick={jumpToAnswers}
-          >Jump to the answer buttons</a
-        >.
+        Judge from the two texts: the bird's own article, and below it the opening of its family's Wikipedia
+        article. Sea and ocean words are underlined on every page as a reading aid; they are not an answer.
+        <a href="#answer" onclick={jumpToAnswers}>Jump to the answer buttons</a>.
       </p>
     </section>
 
@@ -144,6 +147,23 @@
   }
   h1 {
     font-size: 1.15rem;
+    margin: 0 0 0.5rem;
+    line-height: 1.4;
+  }
+  .bird h1 {
+    font-size: 1.6rem;
+    margin: 0;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .bird .sci {
+    margin: 0.2rem 0 0;
+    font-size: 1.1rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  .question-card h2 {
+    font-size: 1.1rem;
     margin: 0 0 0.5rem;
     line-height: 1.4;
   }

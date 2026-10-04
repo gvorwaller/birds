@@ -1,6 +1,7 @@
 /**
- * Blind labelling page (plan rev 26 §B4h): admin only, no system output in
- * the loaded page, write-once answers surfaced plainly, reveal after save.
+ * Blind labelling page (plan rev 26 §B4h): admin only, the bird named but no
+ * system output in the loaded page (owner 2026-10-03), write-once answers
+ * surfaced plainly.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,7 +54,7 @@ describe("label page", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("the loaded page carries text, question and progress only — no name, stratum, rules or legacy value", async () => {
+  it("the loaded page names the bird and carries text, question and progress — no stratum, rules, legacy value or evidence", async () => {
     m.nextLabelItem.mockResolvedValue({
       setId: "5",
       itemId: "77",
@@ -62,11 +63,14 @@ describe("label page", () => {
       labelled: 2,
       sections: [{ title: "", text: "It feeds far out at sea." }], question: "Q?",
       cueWords: ["sea"],
+      familyReference: null,
+      species: { comName: "Northern Fulmar", sciName: "Fulmarus glacialis" },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const d = await (load as any)(ADMIN);
+    expect(d.item.bird).toEqual({ comName: "Northern Fulmar", sciName: "Fulmarus glacialis" });
     expect(JSON.stringify(d)).not.toMatch(
-      /stratum|rules|legacy|species|com_name|sci_name/i,
+      /stratum|rules|legacy|evidence|assigned|matched/i,
     );
     expect(d.item.sections[0].runs).toEqual([
       { text: "It feeds far out at ", cue: false },

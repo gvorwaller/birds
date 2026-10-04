@@ -7,10 +7,11 @@ import { cueRanges } from "$server/tag-engine/eval-text";
 
 /**
  * Blind labelling (td-894144 Release B4, plan rev 26 §B4h). One page at a
- * time: the masked article (fixed reading aid only), one fixed question,
- * three answers. No system output — no species name, stratum, rules result or
- * legacy value — until the answer is saved; then the bird is revealed for
- * context. Answers are write-once (the definer refuses a second answer).
+ * time: the bird's names, its article and its family's article (fixed reading
+ * aid only), one fixed question, three answers. Blind means NO system output:
+ * no rules result, legacy value, matched rule, evidence or stratum. It does
+ * not hide which bird is being judged (owner 2026-10-03). Answers are
+ * write-once (the definer refuses a second answer).
  */
 const ID = /^[1-9][0-9]{0,18}$/;
 
@@ -64,6 +65,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       labelled: item.labelled,
       sections,
       family,
+      bird: item.species,
       done: item.itemId === "",
     },
   };

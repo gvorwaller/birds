@@ -1333,7 +1333,7 @@
 					<li>
 						<strong>The blind test.</strong> You label a random sample of birds
 						without seeing what the rules or the old tags said. Each page shows
-						the bird's article (its names hidden) and, below it, the opening of
+						the bird's name, its article and, below it, the opening of
 						its <strong>family's Wikipedia article</strong>; you answer from
 						both. <strong>Fetch family articles</strong> (in Blind tests) loads
 						any family articles still missing — a blind test cannot start until
