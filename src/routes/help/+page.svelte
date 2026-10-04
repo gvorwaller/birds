@@ -1337,7 +1337,9 @@
 						its <strong>family's Wikipedia article</strong>; you answer from
 						both. <strong>Fetch family articles</strong> (in Blind tests) loads
 						any family articles still missing — a blind test cannot start until
-						every family in it has one.
+						every family in it has one. If the question or the page layout
+						changes, an open blind test takes no more answers: abandon it, press
+						<strong>Design blind test</strong> again, then start a new one.
 					</li>
 					<li>
 						<strong>Confirm whole families.</strong> When the rules tag a family

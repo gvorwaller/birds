@@ -30,10 +30,29 @@ export interface TagEvalDesign {
  * each page also shows the lead of the species' family's Wikipedia article.
  * v3 (owner 2026-10-03): the bird's names are shown, never masked — "blind"
  * hides what answer the system wants, not which bird is being judged.
+ * A bump closes every open blind test to further answers (evalTextOutdated);
+ * say what changed in OUTDATED_SET_MESSAGE and the tag page's note.
  */
 export const EVAL_TEXT_VERSION = "evaltext-v3";
 
-/** How the family reference is sourced and masked (plan §4 option b). */
+/**
+ * A blind test is labelled only on pages rendered by the CURRENT text version
+ * (the set records its version at creation; sets made before v3 have none).
+ * An older set froze pages today's code no longer shows (before v3 every page
+ * masked the bird's name, which the owner ruled out 2026-10-03), and answering
+ * it on a page rendered today would mix two page protocols in one set
+ * (CODEX1 on d6f5ff5). Such a set takes no more answers; it can be abandoned
+ * and a new blind test started.
+ */
+export function evalTextOutdated(recordedVersion: unknown): boolean {
+  return recordedVersion !== EVAL_TEXT_VERSION;
+}
+
+/** The owner-facing reason an outdated blind test takes no more answers. */
+export const OUTDATED_SET_MESSAGE =
+  "This blind test was made before its pages named the bird, so it takes no more answers. Abandon it on the tag page, then start a new blind test.";
+
+/** How the family reference is sourced (plan §4 option b). */
 export const FAMILY_REFERENCE_VERSION = "famref-wikipedia-lead-v1";
 
 /** Locale-independent ordering for anything hashed (CODEX1 rev-26 #5). */

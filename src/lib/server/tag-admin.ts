@@ -18,13 +18,12 @@ import { enqueueJob, type JobType } from "$server/jobs";
 import { ensureTagRepairJob, tagRepairState } from "$server/tag-engine/repair";
 import { TagTxRefusal, withTagWriteTx } from "$server/tag-engine/runtime";
 import { parseRuleset, RulesetError } from "$server/tag-engine/rules";
+import { evalTextOutdated } from "$server/tag-engine/eval-design";
 import {
   checkTaxonRules,
   loadTaxonomyForCheck,
 } from "$server/tag-engine/taxon-check";
 import type { PreviewBody } from "$server/tag-engine/preview";
-import { evalSections } from "$server/tag-engine/eval-text";
-import { normalizeDisplay } from "$server/tag-engine/normalize";
 import { runTagConsistencyNow } from "$server/tag-jobs";
 
 // ── overview ──────────────────────────────────────────────────────────────
@@ -802,8 +801,14 @@ export interface EvalSetSummary {
   /** Answers given by a whole-family confirmation (0076, set-local), not page by page. */
   fromTaxa: number;
   /**
-   * Labelling sets only: the taxa the revision lists whole (assign rules),
-   * with this set's pages from each — what the owner may confirm at once.
+   * Its pages were rendered by an older text version (before v3 they masked
+   * the bird's name): it takes no more answers of either kind.
+   */
+  outdated: boolean;
+  /**
+   * Labelling sets that take answers only: the taxa the revision lists whole
+   * (assign rules), with this set's pages from each — what the owner may
+   * confirm at once.
    */
   listedTaxa: ListedTaxon[];
 }
@@ -865,14 +870,17 @@ export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
       status: EvalSetSummary["status"];
       created_at: string;
       gates: unknown;
+      text_version: string | null;
     }>(
-      `SELECT id::text, revision_id::text, status, created_at::text, gates
+      `SELECT id::text, revision_id::text, status, created_at::text, gates,
+              design->>'evalTextVersion' AS text_version
          FROM tag_eval_set WHERE tag = $1 ORDER BY id DESC LIMIT 20`,
       [tag],
     )
   ).rows;
   const out: EvalSetSummary[] = [];
   for (const s of sets) {
+    const outdated = evalTextOutdated(s.text_version);
     const strata = (
       await query<{ stratum: string; n: number; labelled: number; from_taxa: number }>(
         `SELECT i.stratum, count(*)::int AS n,
@@ -906,8 +914,9 @@ export async function evalSetsFor(tag: string): Promise<EvalSetSummary[]> {
       gates: s.gates,
       lastGate: gate ? { reportId: gate.id, passed: gate.passed } : null,
       fromTaxa: strata.reduce((a, r) => a + r.from_taxa, 0),
+      outdated,
       listedTaxa:
-        s.status === "labelling"
+        s.status === "labelling" && !outdated
           ? await listedTaxaFor(s.id, s.revision_id, tag)
           : [],
     });
@@ -972,28 +981,31 @@ export interface LabelPageItem {
 
 /**
  * The next page to label in a set: the lowest display position whose page has
- * no answer yet. It names the bird, but carries NO system output — no stratum,
- * rules result, legacy value, matched rule or evidence.
- *
- * The text shown is rebuilt, unmasked, from the stored article whenever that
- * article is still the one the set froze (same input_hash). Sets made before
- * v3 froze their text with the names masked; this shows those pages unmasked
- * too, without changing what was sampled. If the article has moved since, the
- * frozen text is shown.
+ * no answer yet, shown exactly as the set froze it (its eval_text_hash is the
+ * answer's identity). It names the bird, but carries NO system output — no
+ * stratum, rules result, legacy value, matched rule or evidence. Null for a
+ * set that is not labelling, or whose pages an older text version rendered
+ * (they are never shown: before v3 they masked the bird's name).
  */
 export async function nextLabelItem(
   tag: string,
   setId: string,
 ): Promise<LabelPageItem | null> {
   const set = (
-    await query<{ status: string; cue: string[] | null; question: string | null }>(
+    await query<{
+      status: string;
+      cue: string[] | null;
+      question: string | null;
+      text_version: string | null;
+    }>(
       `SELECT status, ARRAY(SELECT jsonb_array_elements_text(design->'cueWords')) AS cue,
-              design->>'question' AS question
+              design->>'question' AS question, design->>'evalTextVersion' AS text_version
          FROM tag_eval_set WHERE id = $1 AND tag = $2`,
       [setId, tag],
     )
   ).rows[0];
-  if (!set || set.status !== "labelling") return null;
+  if (!set || set.status !== "labelling" || evalTextOutdated(set.text_version))
+    return null;
   const counts = (
     await query<{ total: number; labelled: number }>(
       `SELECT count(*)::int AS total,
@@ -1010,22 +1022,15 @@ export async function nextLabelItem(
       id: string;
       display_position: number;
       article: { title: string; text: string }[];
-      family_reference: { title?: string; lead?: string; displayLead?: string } | null;
+      family_reference: { title?: string; displayLead?: string } | null;
       com_name: string | null;
       sci_name: string | null;
       code: string;
-      current: boolean;
-      wikipedia_extract: string | null;
-      wikipedia_sections: { title: string; text: string }[] | null;
     }>(
       `SELECT i.id::text, i.display_position, i.article, i.family_reference,
-              tc.com_name, tc.sci_name, i.species_code AS code,
-              (si.input_hash = i.input_hash) AS current,
-              se.wikipedia_extract, se.wikipedia_sections
+              tc.com_name, tc.sci_name, i.species_code AS code
          FROM tag_eval_item i
          LEFT JOIN taxonomy_cache tc ON tc.species_code = i.species_code
-         LEFT JOIN species_tag_input si ON si.species_code = i.species_code
-         LEFT JOIN species_enrichment se ON se.species_code = i.species_code
         WHERE i.set_id = $1 AND NOT EXISTS (
               SELECT 1 FROM tag_eval_label l
                WHERE l.tag = $2 AND l.species_code = i.species_code AND l.eval_text_hash = i.eval_text_hash)
@@ -1054,18 +1059,12 @@ export async function nextLabelItem(
     position: it.display_position,
     total: counts.total,
     labelled: counts.labelled,
-    sections: it.current
-      ? evalSections({ extract: it.wikipedia_extract, sections: it.wikipedia_sections })
-      : it.article,
+    sections: it.article,
     cueWords: set.cue ?? [],
     question: set.question ?? "",
     familyReference:
-      ref?.title && (ref.lead || ref.displayLead)
-        ? {
-            title: ref.title,
-            // The stored lead, normalized: never masked (v2 snapshots masked displayLead).
-            displayLead: ref.lead ? normalizeDisplay(ref.lead) : ref.displayLead!,
-          }
+      ref?.title && ref.displayLead
+        ? { title: ref.title, displayLead: ref.displayLead }
         : null,
     species: { comName: it.com_name ?? it.code, sciName: it.sci_name ?? "" },
   };

@@ -22,6 +22,12 @@ import { CONFIG_KEYS, getConfig } from "$server/app-config";
 import { draftableTag } from "$server/tag-draft-job";
 import { familyReferenceStatus } from "$server/tag-family-refs";
 import { PROPOSED_GATES } from "$server/tag-engine/eval-stats";
+import {
+  OUTDATED_SET_MESSAGE,
+  designHash,
+  evalTextOutdated,
+  tagEvalDesign,
+} from "$server/tag-engine/eval-design";
 import { OWNER_LABEL_BUDGET } from "$server/tag-eval-jobs";
 
 /**
@@ -62,6 +68,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     draftModel: resolveModel(draftCfg, DEFAULT_MODEL_IDS.tagDraft).label,
     evalSets,
     designs,
+    // A design report made under another question or page format can't start
+    // a blind test (the job refuses it); the page offers "Design" again instead.
+    currentDesignHash: tagEvalDesign(tag) ? designHash(tag) : null,
     familyRefs,
     proposedGates: PROPOSED_GATES,
     labelBudget: OWNER_LABEL_BUDGET,
@@ -110,11 +119,24 @@ const queued = (what: string, r: { jobId: number; deduped: boolean }) => ({
 const setOf = async (tag: string, raw: FormDataEntryValue | null) => {
   const id = String(raw ?? "");
   if (!/^[1-9][0-9]{0,18}$/.test(id)) return null;
-  const r = await query<{ status: string; revision_id: string }>(
-    "SELECT status, revision_id::text FROM tag_eval_set WHERE id = $1 AND tag = $2",
+  const r = await query<{
+    status: string;
+    revision_id: string;
+    text_version: string | null;
+  }>(
+    "SELECT status, revision_id::text, design->>'evalTextVersion' AS text_version FROM tag_eval_set WHERE id = $1 AND tag = $2",
     [id, tag],
   );
-  return r.rows[0] ? { id, ...r.rows[0] } : null;
+  const row = r.rows[0];
+  return row
+    ? {
+        id,
+        status: row.status,
+        revision_id: row.revision_id,
+        // Its pages were rendered by an older text version: no more answers.
+        outdated: row.status === "labelling" && evalTextOutdated(row.text_version),
+      }
+    : null;
 };
 
 export const actions: Actions = {
@@ -162,6 +184,12 @@ export const actions: Actions = {
       return bad("op", 400, `Type ${g.tag} to confirm.`);
     const design = (await latestDesigns(g.tag))[revisionId];
     if (!design) return bad("op", 409, "Run the blind-test design first.");
+    if (design.body.designHash !== (tagEvalDesign(g.tag) ? designHash(g.tag) : null))
+      return bad(
+        "op",
+        409,
+        "The blind-test question or page format changed since the latest design. Press Design blind test again first.",
+      );
     const over = design.body.needsOwnerDecision === true;
     if (over && form.get("acceptOverBudget") !== "yes")
       return bad(
@@ -273,6 +301,7 @@ export const actions: Actions = {
     const form = await request.formData();
     const set = await setOf(g.tag, form.get("setId"));
     if (!set) return bad("op", 404, "Unknown blind-test set.");
+    if (set.outdated) return bad("op", 409, OUTDATED_SET_MESSAGE);
     if (!confirmed(form, g.tag))
       return bad("op", 400, `Type ${g.tag} to confirm.`);
     const picked = [...new Set(form.getAll("taxon").map(String))];

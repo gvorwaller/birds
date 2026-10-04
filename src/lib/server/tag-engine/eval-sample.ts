@@ -6,13 +6,13 @@
  * stratum by sha256(seed|v1|tag|revision|stratum|code) (ties by code), take
  * the first n_h, and hand the set to create_tag_eval_set — which recomputes
  * the frame AND the ranked selection itself and refuses any difference (no
- * operator substitution). Only the display fields (masked text snapshot,
+ * operator substitution). Only the display fields (page text snapshot,
  * display order, eval_text_hash) come from here.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { query, withTransaction } from "$lib/db";
 import { buildFrame, type EvalFrame, type FrameRow } from "./eval-frame";
-import { tagEvalDesign } from "./eval-design";
+import { EVAL_TEXT_VERSION, tagEvalDesign } from "./eval-design";
 import {
   STRATA,
   evaluateGate,
@@ -145,6 +145,9 @@ export async function createEvalSet(
       cueWords: [...design.cueWords],
       // The question is frozen with the set: the page always asks what this test asked.
       question: design.question,
+      // How the pages were rendered (v3: the bird is named, nothing masked).
+      // A set without it predates v3 and is never labelled further.
+      evalTextVersion: EVAL_TEXT_VERSION,
       N: frame.N,
       n: input.n,
       // π_h and the selection, recorded and re-verified by the definer (CODEX1 rev-26 #4).

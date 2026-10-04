@@ -229,7 +229,8 @@
     {#each d.revisions as r (r.id)}
       {@const ready = readiness(r.id)}
       {@const design = data.designs[r.id]}
-        {@const db = design?.body as { total: number; needsOwnerDecision: boolean; N: Record<string, number>; n: Record<string, number> } | undefined}
+        {@const db = design?.body as { total: number; needsOwnerDecision: boolean; designHash: string; N: Record<string, number>; n: Record<string, number> } | undefined}
+        {@const designStale = !!db && db.designHash !== data.currentDesignHash}
         {@const liveSet = data.evalSets.find((s) => s.revisionId === r.id && s.status === "labelling")}
       <div class="revision">
         <h3>
@@ -283,7 +284,7 @@
             <input type="hidden" name="revisionId" value={r.id} />
             <button type="submit" class="secondary" disabled={busy}>Design blind test</button>
           </form>
-          {#if db && !liveSet}
+          {#if db && !liveSet && !designStale}
             <button
               type="button"
               disabled={busy}
@@ -293,7 +294,7 @@
                     action: "evalCreate",
                     revisionId: r.id,
                     title: `Start a blind test of ${db.total} birds?`,
-                    body: "A random sample is drawn and frozen. You will answer one question per bird from its article text, with the names hidden. These pass/fail rules are fixed for this test:",
+                    body: "A random sample is drawn and frozen. Each page names the bird and shows its article and its family's article; you answer one question per bird. Nothing on the page says what the rules or the old tags answered. These pass/fail rules are fixed for this test:",
                     gates: gateLines(data.proposedGates),
                     overBudget: db.needsOwnerDecision ? db.total : undefined,
                   },
@@ -304,7 +305,12 @@
         </div>
         {#if db}
           <p class="muted">
-            Latest design: {db.total} birds to label{db.needsOwnerDecision ? ` — more than your ${data.labelBudget}-label budget` : ""}.
+            {#if designStale}
+              The latest design was made before the blind-test question or page format changed. Press “Design blind
+              test” again before starting a blind test.
+            {:else}
+              Latest design: {db.total} birds to label{db.needsOwnerDecision ? ` — more than your ${data.labelBudget}-label budget` : ""}.
+            {/if}
             {#if liveSet}A blind test for this revision is already open below.{/if}
           </p>
         {/if}
@@ -595,10 +601,18 @@
             >
           </fieldset>
         {/if}
+        {#if t.status === "labelling" && t.outdated && t.labelled < t.total}
+          <p class="notice" role="note">
+            Made before the pages named the bird, so it takes no more answers. Abandon it, then press “Design blind
+            test” and “Start blind test…” for a new one. Confirming whole families there takes one click again.
+          </p>
+        {/if}
         <div class="buttons">
           {#if t.status === "labelling"}
-            {#if t.labelled < t.total}
+            {#if t.labelled < t.total && !t.outdated}
               <a class="button-link" href="/admin/tags/{encodeURIComponent(d.tag)}/label/{t.id}">Label ({t.total - t.labelled} left)</a>
+            {:else if t.labelled < t.total}
+              <!-- Outdated: only Abandon (the note above says why). -->
             {:else}
               <button
                 type="button"
@@ -625,7 +639,9 @@
                     action: "abandon",
                     setId: t.id,
                     title: "Abandon this blind test?",
-                    body: "It stays in the history but can never gate an activation. Your answers are kept and reused by a later blind test.",
+                    body: t.outdated
+                      ? "It stays in the history but can never gate an activation. Its pages hid the bird's name, so a new blind test asks about every bird again."
+                      : "It stays in the history but can never gate an activation. A later blind test reuses your answer for any page it shows unchanged; family confirmations count for this blind test only.",
                   },
                   event.currentTarget,
                 )}>Abandon…</button

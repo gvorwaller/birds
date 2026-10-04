@@ -4,6 +4,10 @@ import { ALL_TAGS } from "$lib/species-tags";
 import { query } from "$lib/db";
 import { nextLabelItem, revealItem } from "$server/tag-admin";
 import { cueRanges } from "$server/tag-engine/eval-text";
+import {
+  OUTDATED_SET_MESSAGE,
+  evalTextOutdated,
+} from "$server/tag-engine/eval-design";
 
 /**
  * Blind labelling (td-894144 Release B4, plan rev 26 §B4h). One page at a
@@ -11,9 +15,26 @@ import { cueRanges } from "$server/tag-engine/eval-text";
  * aid only), one fixed question, three answers. Blind means NO system output:
  * no rules result, legacy value, matched rule, evidence or stratum. It does
  * not hide which bird is being judged (owner 2026-10-03). Answers are
- * write-once (the definer refuses a second answer).
+ * write-once (the definer refuses a second answer). A set whose pages an
+ * older text version rendered is never shown and takes no answers.
  */
 const ID = /^[1-9][0-9]{0,18}$/;
+
+/** The set's status, and whether a labelling set is outdated (older page text). */
+async function setState(tag: string, setId: string) {
+  const row = (
+    await query<{ status: string; text_version: string | null }>(
+      "SELECT status, design->>'evalTextVersion' AS text_version FROM tag_eval_set WHERE id = $1 AND tag = $2",
+      [setId, tag],
+    )
+  ).rows[0];
+  return row
+    ? {
+        status: row.status,
+        outdated: row.status === "labelling" && evalTextOutdated(row.text_version),
+      }
+    : null;
+}
 
 export const load: PageServerLoad = async ({ locals, params }) => {
   if (locals.user?.role !== "admin") throw error(404, "Not found");
@@ -21,15 +42,14 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     throw error(404, "Not found");
   const item = await nextLabelItem(params.tag, params.set);
   if (!item) {
-    const exists = await query(
-      "SELECT status FROM tag_eval_set WHERE id = $1 AND tag = $2",
-      [params.set, params.tag],
-    );
-    if (!exists.rows[0]) throw error(404, "Not found");
+    // Closed, or outdated: nextLabelItem never returns an outdated set's pages.
+    const set = await setState(params.tag, params.set);
+    if (!set) throw error(404, "Not found");
     return {
       tag: params.tag,
       setId: params.set,
-      closed: exists.rows[0].status as string,
+      closed: set.outdated ? null : set.status,
+      outdated: set.outdated ? OUTDATED_SET_MESSAGE : null,
       item: null,
       question: "",
     };
@@ -58,6 +78,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     tag: params.tag,
     setId: params.set,
     closed: null,
+    outdated: null,
     question: item.question,
     item: {
       itemId: item.itemId,
@@ -85,12 +106,14 @@ export const actions: Actions = {
         ok: false as const,
         message: "Choose Yes, No or Unsure.",
       });
-    const owns = await query(
-      "SELECT 1 FROM tag_eval_set WHERE id = $1 AND tag = $2",
-      [params.set, params.tag],
-    );
-    if (!owns.rows[0])
+    const set = await setState(params.tag, params.set);
+    if (!set)
       return fail(404, { ok: false as const, message: "Unknown set." });
+    // Its pages were rendered differently (before v3 they hid the bird's
+    // name): an answer now would mix two page protocols in one set. The
+    // design is immutable, so this cannot change before the definer runs.
+    if (set.outdated)
+      return fail(409, { ok: false as const, message: OUTDATED_SET_MESSAGE });
     try {
       await query("SELECT public.record_tag_eval_label($1, $2, $3, $4)", [
         params.set,

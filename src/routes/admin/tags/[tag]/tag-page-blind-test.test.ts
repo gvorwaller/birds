@@ -4,8 +4,10 @@
  * freeze → gate, abandon. Read models and the queue are mocked.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EVAL_TEXT_VERSION, designHash } from "$server/tag-engine/eval-design";
 
-let setRow: unknown[] = [{ status: "labelling", revision_id: "3" }];
+const CURRENT = { status: "labelling", revision_id: "3", text_version: EVAL_TEXT_VERSION };
+let setRow: unknown[] = [CURRENT];
 const sqlCalls: string[] = [];
 const sqlParams: unknown[][] = [];
 vi.mock("$lib/db", () => ({
@@ -66,9 +68,12 @@ beforeEach(() => {
   m.enqueueEvalJob.mockResolvedValue({ jobId: 9, deduped: false });
   m.enqueueTagDraft.mockResolvedValue({ jobId: 8, deduped: false });
   m.latestDesigns.mockResolvedValue({
-    "3": { reportId: "41", body: { total: 120, needsOwnerDecision: false } },
+    "3": {
+      reportId: "41",
+      body: { total: 120, needsOwnerDecision: false, designHash: designHash(TAG) },
+    },
   });
-  setRow = [{ status: "labelling", revision_id: "3" }];
+  setRow = [CURRENT];
   draft.draftable = true;
   sqlCalls.length = 0;
   sqlParams.length = 0;
@@ -132,9 +137,22 @@ describe("blind-test actions", () => {
     });
   });
 
+  it("start blind test refuses a design made under another question or page format", async () => {
+    m.latestDesigns.mockResolvedValue({
+      "3": { reportId: "41", body: { total: 120, needsOwnerDecision: false, designHash: "0".repeat(64) } },
+    });
+    const r = fail(await call("evalCreate", ADMIN, { revisionId: "3", confirm: TAG }));
+    expect(r.status).toBe(409);
+    expect(r.data.message).toMatch(/Design blind test again/);
+    expect(m.enqueueEvalJob).not.toHaveBeenCalled();
+  });
+
   it("over the budget needs the explicit tick", async () => {
     m.latestDesigns.mockResolvedValue({
-      "3": { reportId: "41", body: { total: 420, needsOwnerDecision: true } },
+      "3": {
+        reportId: "41",
+        body: { total: 420, needsOwnerDecision: true, designHash: designHash(TAG) },
+      },
     });
     const r = fail(
       await call("evalCreate", ADMIN, { revisionId: "3", confirm: TAG }),
@@ -205,9 +223,29 @@ describe("blind-test actions", () => {
     expect(fail(await send({ setId: "5", confirm: TAG }, ["family:Procellariidae"])).status).toBe(404);
   });
 
+  it("a set made before the pages named the bird refuses family confirmations before the definer", async () => {
+    for (const text_version of [null, "evaltext-v2"]) {
+      setRow = [{ ...CURRENT, text_version }];
+      const fd = new FormData();
+      fd.append("setId", "5");
+      fd.append("confirm", TAG);
+      fd.append("taxon", "family:Procellariidae");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = fail(await (actions as any).confirmTaxa({
+        ...ADMIN,
+        request: new Request("http://localhost/admin/tags/x", { method: "POST", body: fd }),
+      }));
+      expect(r.status).toBe(409);
+      expect(r.data.message).toMatch(/before its pages named the bird/);
+    }
+    expect(sqlCalls.some((q) => q.includes("confirm_tag_eval_taxa"))).toBe(false);
+    // It can still be abandoned.
+    expect(await call("abandon", ADMIN, { setId: "5", confirm: TAG })).toMatchObject({ ok: true });
+  });
+
   it("a gate report only for a frozen set; unknown sets 404", async () => {
     expect(fail(await call("gate", ADMIN, { setId: "5" })).status).toBe(409);
-    setRow = [{ status: "frozen", revision_id: "3" }];
+    setRow = [{ ...CURRENT, status: "frozen" }];
     expect(await call("gate", ADMIN, { setId: "5" })).toMatchObject({
       ok: true,
     });

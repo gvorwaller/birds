@@ -11,6 +11,9 @@
  * - The gate report counts answers by how they were given.
  * - Races (0077): a page answer and a confirmation of the same item, in two
  *   sessions, serialize on the item row; whichever commits first wins.
+ * - Pages name the bird (eval text v3): a new set records its text version,
+ *   nothing is masked, and the label page shows exactly the frozen page its
+ *   answer is keyed to; a set the older code made never shows a page.
  *
  * Owned fixtures (zzk…) through the shared engine fixture. The Preview runs
  * over the whole test universe, so this is slow.
@@ -20,12 +23,13 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { query } from "$lib/db";
 import { runWithClaim } from "$server/jobs";
-import { approveProposal } from "$server/tag-admin";
+import { approveProposal, nextLabelItem } from "$server/tag-admin";
 import { createBlindTest, designSimulation } from "$server/tag-eval-jobs";
 import { runTagPreviewJob } from "$server/tag-preview-job";
 import { withOwnerClient } from "../tag-fixtures.test-helper";
 import { stageRevision } from "./activation";
-import { __registerEvalDesignForTests, tagEvalDesign } from "./eval-design";
+import { EVAL_TEXT_VERSION, __registerEvalDesignForTests, tagEvalDesign } from "./eval-design";
+import { buildFrame } from "./eval-frame";
 import { recordGateReport } from "./eval-sample";
 import {
   cleanupEvalSets,
@@ -103,6 +107,9 @@ const confirm = (setId: string, taxa: unknown, user = fx.adminId) =>
 const label = (setId: string, itemId: string, value: string) =>
   query("SELECT public.record_tag_eval_label($1, $2, $3, $4)", [setId, itemId, fx.adminId, value]);
 const FIXTURE = [{ rank: "family", value: "Fixtureidae" }];
+/** Fixture species "a" gets an article that names it (common and scientific name). */
+const NAMED = `zzk${fx.RUN}a`;
+const NAMED_TEXT = `The zzk ${NAMED} Plover (Zzkia ${NAMED}) is a shorebird of the fixture coast.`;
 const OTHER = [{ rank: "family", value: "Otheridae" }];
 
 /** A second, independent app-role session on the isolated test DB (for the race tests). */
@@ -148,7 +155,7 @@ describe.runIf(migrated).sequential("0076/0077: set-local whole-taxon confirmati
     await fx.setup(1);
     T = fx.tags[0];
     __registerEvalDesignForTests(T);
-    for (const k of ["a", "b", "c"]) await fx.addSpecies(k);
+    for (const k of ["a", "b", "c"]) await fx.addSpecies(k, k === "a" ? { text: NAMED_TEXT } : {});
     for (const k of ["x", "y"]) await fx.addSpecies(k, { family: "Otheridae" });
     await fx.settleUniverse();
     await fx.asOwner("INSERT INTO tag_preview_design (tag, design_hash) VALUES ($1, $2)", [
@@ -211,6 +218,51 @@ describe.runIf(migrated).sequential("0076/0077: set-local whole-taxon confirmati
     await expect(confirm(A, [])).rejects.toThrow(/no taxa/);
     await expect(confirm(A, FIXTURE, viewerId)).rejects.toThrow(/not an admin/);
     expect((await items(A)).every((r) => r.label === null && r.taxon === null)).toBe(true);
+  });
+
+  it("a new blind test records its text version; the label page names the bird, masks nothing, and shows exactly the frozen page its answer is keyed to", async () => {
+    expect(
+      (await query<{ v: string | null }>("SELECT design->>'evalTextVersion' AS v FROM tag_eval_set WHERE id = $1", [A]))
+        .rows[0].v,
+    ).toBe(EVAL_TEXT_VERSION);
+    const frozen = (
+      await query<{
+        id: string;
+        code: string;
+        article: unknown;
+        family_reference: { title: string; displayLead: string } | null;
+        eval_text_hash: string;
+        com_name: string;
+        sci_name: string;
+      }>(
+        `SELECT i.id::text, i.species_code AS code, i.article, i.family_reference, i.eval_text_hash,
+                tc.com_name, tc.sci_name
+           FROM tag_eval_item i JOIN taxonomy_cache tc ON tc.species_code = i.species_code
+          WHERE i.set_id = $1`,
+        [A],
+      )
+    ).rows;
+    // Nothing is masked; the article that names its bird keeps both names.
+    expect(JSON.stringify(frozen.map((r) => [r.article, r.family_reference]))).not.toMatch(/\[this bird\]|\[genus\]/);
+    const named = frozen.find((r) => r.code === NAMED)!;
+    expect(JSON.stringify(named.article)).toContain(named.com_name);
+    expect(JSON.stringify(named.article)).toContain(named.sci_name);
+    // Each frozen page is the page the current code builds, under the hash its answer is keyed to.
+    const frame = await buildFrame(T, rev);
+    for (const r of frozen) {
+      const f = frame.rows.find((x) => x.code === r.code)!;
+      expect([f.evalTextHash, f.evalText]).toEqual([r.eval_text_hash, r.article]);
+    }
+    // The label page shows the next frozen page exactly, under the bird's own names.
+    const page = (await nextLabelItem(T, A))!;
+    const shown = frozen.find((r) => r.id === page.itemId)!;
+    expect(page.species).toEqual({ comName: shown.com_name, sciName: shown.sci_name });
+    expect(page.sections).toEqual(shown.article);
+    expect(page.familyReference).toEqual(
+      shown.family_reference
+        ? { title: shown.family_reference.title, displayLead: shown.family_reference.displayLead }
+        : null,
+    );
   });
 
   it("a confirmed family's unanswered pages get the set's Yes (set-local, no page label); a page answered on its own keeps its answer; a confirmed item refuses a page label", async () => {
@@ -322,4 +374,35 @@ describe.runIf(migrated).sequential("0076/0077: set-local whole-taxon confirmati
     await expect(confirm(C, FIXTURE)).rejects.toThrow(/species data changed/);
     expect((await items(C)).every((r) => r.taxon === null)).toBe(true);
   }, 300_000);
+
+  it("a blind test the older code made (no recorded text version) never shows a page", async () => {
+    // As the older code made it: the open set C copied without its text
+    // version (C is abandoned first: one open set per revision).
+    const C = setIds[setIds.length - 1];
+    await query("SELECT public.abandon_tag_eval_set($1, $2)", [C, fx.adminId]);
+    const old = await withOwnerClient(async (c) => {
+      const id = (
+        await c.query<{ id: string }>(
+          `INSERT INTO tag_eval_set (tag, revision_id, design, frame_hash, gates, gates_sha256, gates_confirmed_by)
+           SELECT tag, revision_id, design - 'evalTextVersion', frame_hash, gates, gates_sha256, gates_confirmed_by
+             FROM tag_eval_set WHERE id = $1 RETURNING id::text`,
+          [C],
+        )
+      ).rows[0].id;
+      await c.query(
+        `INSERT INTO tag_eval_item (set_id, species_code, stratum, rules_yes, legacy_yes, rules_status, marine,
+                                    inclusion_prob, display_position, input_hash, eval_text_hash, article, family_reference)
+         SELECT $2, species_code, stratum, rules_yes, legacy_yes, rules_status, marine,
+                inclusion_prob, display_position, input_hash, eval_text_hash, article, family_reference
+           FROM tag_eval_item WHERE set_id = $1`,
+        [C, id],
+      );
+      return id;
+    });
+    setIds.push(old);
+    // It has unanswered pages, yet the label page gets none of them.
+    expect((await items(old)).some((r) => r.label === null && r.taxon === null)).toBe(true);
+    expect(await nextLabelItem(T, old)).toBeNull();
+    expect(await nextLabelItem(T, setIds[0])).toBeNull(); // abandoned: closed, as before
+  });
 });

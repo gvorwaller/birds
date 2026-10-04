@@ -41,7 +41,12 @@
     <p class="error" role="alert">{form.message}</p>
   {/if}
 
-  {#if data.closed}
+  {#if data.outdated}
+    <section class="card">
+      <h1>Start a new blind test</h1>
+      <p>{data.outdated}</p>
+    </section>
+  {:else if data.closed}
     <section class="card">
       <h1>Blind test closed</h1>
       <p>This blind test is {data.closed}. There is nothing left to label here.</p>
