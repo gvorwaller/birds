@@ -30,6 +30,7 @@ describe("restoreDecision (td-671082)", () => {
     expect(restoreDecision("place=Bangor%2C+ME", SAVED).restore).toBe(false);
     expect(restoreDecision("lat=27.7&lng=-82.6&loc=Pin", SAVED).restore).toBe(false);
     expect(restoreDecision("species=snakit&region=US-FL", SAVED).restore).toBe(false);
+    expect(restoreDecision("country=JP&month=10", "region=US-CA&country=US").restore).toBe(false);
   });
 
   it("explicit clear wins: PRESENT-but-empty identity keys block the restore (CODEX1 #8)", () => {
@@ -47,7 +48,15 @@ describe("restoreDecision (td-671082)", () => {
   it("hasIdentityParam: the post-goto verification predicate", () => {
     expect(hasIdentityParam("?place=X")).toBe(true);
     expect(hasIdentityParam("?place=")).toBe(true); // present counts — clear state
+    expect(hasIdentityParam("?country=JP&month=10")).toBe(true);
     expect(hasIdentityParam("?month=8")).toBe(false);
     expect(hasIdentityParam("")).toBe(false);
+  });
+
+  it("remembers a country-only species forecast selection", () => {
+    expect(restoreDecision("month=11", "country=MX&month=10")).toEqual({
+      restore: true,
+      target: "country=MX&month=11",
+    });
   });
 });

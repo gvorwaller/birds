@@ -86,6 +86,10 @@
   const dirty = $derived(guideDraftKey(draft) !== guideDraftKey(applied));
   const draftLevels = $derived(placeLevels(draft.place));
   const draftMap = $derived(draft.place.kind === "map" ? draft.place : null);
+  const familyChoices = $derived(data.families.map((family) => ({
+    code: family.code,
+    name: `${family.name ?? family.scientificName ?? family.code}${family.name && family.scientificName ? ` (${family.scientificName})` : ""}`,
+  })));
 
   // Place choices below the chosen level, loaded without navigating.
   const PARENT_OF: Record<GuideChoicesLevel, GuideLevel> = { region: "country", county: "region", hotspot: "county" };
@@ -536,7 +540,11 @@
       <div class="filter-form filter-rest">
         <label class="interest-filter"><input type="checkbox" form="guide-filter-form" name="interest" value="1" checked={draft.interest} onchange={(e) => (draft.interest = e.currentTarget.checked)} /> Special interest only</label>
         <div class="location-fields">
-          <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" form="guide-filter-form" name="family" value={draft.family} onchange={(e) => (draft.family = e.currentTarget.value)}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
+          {#if jsReady}
+            <SearchableSelect id="guide-family" form="guide-filter-form" name="family" label="Bird family" choices={familyChoices} value={draft.family} anywhereLabel="All families" onCommit={(code) => (draft.family = code)} />
+          {:else}
+            <div class="location-field"><label for="guide-family">Bird family</label><select id="guide-family" form="guide-filter-form" name="family" value={draft.family} onchange={(e) => (draft.family = e.currentTarget.value)}><option value="">All families</option>{#each data.families as family}<option value={family.code}>{family.name ?? family.scientificName ?? family.code}{family.name && family.scientificName ? ` (${family.scientificName})` : ''}</option>{/each}</select></div>
+          {/if}
           <div class="location-field"><label for="guide-sort">Sort</label><select id="guide-sort" form="guide-filter-form" name="sort" value={draft.sort} onchange={(e) => (draft.sort = e.currentTarget.value as GuideDraft["sort"])}><option value="relevance">Relevance</option><option value="name">Alphabetical</option><option value="taxonomic" disabled={!data.taxonomyAvailable}>Taxonomic order</option></select></div>
         </div>
         {#if !data.taxonomyAvailable}<p class="muted">Classification and taxonomic ordering await a taxonomy refresh.</p>{/if}

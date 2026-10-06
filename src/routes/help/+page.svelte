@@ -305,7 +305,8 @@
 				<ul>
 					<li>
 						A <strong>Country</strong> picker sits above the region select — it
-						defaults to the US, but any of eBird's countries works. When you
+						defaults to the US; type a country name to narrow the list, then
+						choose it. Any of eBird's countries works. When you
 						have a saved home, countries and regions are ordered nearest-first
 						(the US remains pinned at the top of the country list). Species
 						search is bounded to birds actually reported in the selected
@@ -650,7 +651,13 @@
 						to choose their own theme without accessing private settings.
 					</li>
 					<li>
-						<strong>Viewer life-list owner (admin)</strong> — in Settings → Users,
+						<strong>User admin</strong> — administrators can open the User admin
+						tab in Settings to see each account's saved life-list species,
+						trips, and last recorded login, provision accounts, and reset passwords.
+						Account creation remains administrator controlled.
+					</li>
+					<li>
+						<strong>Viewer life-list owner (admin)</strong> — in Settings → User admin,
 						an administrator chooses and can later change which owner account each
 						viewer displays. Seen and Need then follow that owner's life list;
 						Viewed species, Special interest, appearance, and sign-in remain the
@@ -875,7 +882,7 @@
                 <h3>Taxonomy — explore bird relationships</h3>
                 <p>The <a href="/taxonomy">Taxonomy</a> tab explains orders, families, genera, species, and reporting categories. Open an order and a family to see its current species and counts. Family labels on species pages link here; species links return to the detail page, preserving your place in the taxonomy browser.</p>
                 <p>Classification comes from cached eBird taxonomy. Family descriptions are filled automatically in the background from Animal Diversity Web family accounts where available, otherwise from Wikipedia accounts verified through scientific names and Wikidata identities. Where a family page is sparse, accounts of its living species or genera may supply explicitly scoped natural history. Descriptions using several accounts link each source. These references supply natural history; eBird supplies current classification. AI writes a source-grounded study summary and separately checks its claims against the source. These summaries are not human-reviewed; their source, author attribution and reuse license are linked. ADW adaptations use CC BY-NC-SA 3.0; Wikipedia adaptations use CC BY-SA 4.0. Missing sources and pending descriptions are labeled. Admin → AI &amp; Cost has a separate Family descriptions model setting, defaulting to Sonnet 5 for both writing and checking, with Opus 5 also available. Admin shows coverage and failures, with family-only pause/resume and retry controls, including selecting individual gaps without replacing current descriptions; the main worker pause also applies. Successful descriptions refresh after six months, and changed classifications are rechecked. Failed refreshes keep the previous description. Opening a family does not mark its species Viewed. Your badges remain personal to your account.</p>
-                <p>In Browse species, combine the Bird family filter with location, tags, and search. Choose Relevance, Alphabetical, or Taxonomic order. Results are paginated in groups of 100, with totals and Previous/Next links; all matching species remain reachable. Taxonomic ordering awaits a taxonomy refresh if the metadata has not been loaded.</p>
+                <p>In Browse species, combine the Bird family filter with location, tags, and search. Type in Bird family to narrow its choices, then choose a family and Apply filters. Choose Relevance, Alphabetical, or Taxonomic order. Results are paginated in groups of 100, with totals and Previous/Next links; all matching species remain reachable. Taxonomic ordering awaits a taxonomy refresh if the metadata has not been loaded.</p>
                 <p>Browse species, Taxonomy, and Viewed species accept exact banding codes, ignoring case (for example, OSPR for Osprey). Source codes may be ambiguous; all matching species remain available. Codes are taken from eBird, never generated from names. This release does not remap sightings or change Seen/Need calculations after taxonomy changes.</p>
 				<h3>Special interest — birds to return to</h3>
                 <p>On a species page, select <strong>☆ Special interest</strong> to save it. The filled star and pressed button show it is saved; select again to remove it. Both Seen and Need birds can be saved. Open the <a href="/special-interest">Special interest</a> Field Guide tab to search your collection, sort alphabetically or by recently saved, and remove birds. Selections stay until you remove them and follow your account across devices, including viewer accounts. People sharing a login share its collection.</p>

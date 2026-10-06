@@ -38,13 +38,14 @@ function deviceKey(endpoint: string): string {
   return createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
 }
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
   const userId = locals.user!.id;
   const isAdmin = locals.user!.role === "admin";
+  const isUserTab = isAdmin && url.searchParams.get("tab") === "users";
   const hasGallery = (await ownerGalleryUrl(userId)) != null;
 
   // Admin-only user management (provisioning family accounts).
-  const users = isAdmin
+  const users = isUserTab
     ? (
         await query<{
           id: number;
@@ -54,9 +55,17 @@ export const load: PageServerLoad = async ({ locals }) => {
           views_user_id: number | null;
           gallery_url: string | null;
           last_login_at: string | null;
+          seen_count: string;
+          trip_count: string;
         }>(
-          `SELECT id, username, display_name, role, views_user_id, gallery_url, last_login_at
-					   FROM users ORDER BY id`,
+          `SELECT u.id, u.username, u.display_name, u.role, u.views_user_id,
+                  u.gallery_url, u.last_login_at,
+                  COALESCE(seen.n, 0) AS seen_count,
+                  COALESCE(trips.n, 0) AS trip_count
+             FROM users u
+             LEFT JOIN (SELECT user_id, COUNT(*) AS n FROM seen_species GROUP BY user_id) seen ON seen.user_id = u.id
+             LEFT JOIN (SELECT user_id, COUNT(*) AS n FROM trips GROUP BY user_id) trips ON trips.user_id = u.id
+             ORDER BY u.id`,
         )
       ).rows
     : [];
@@ -222,6 +231,8 @@ export const load: PageServerLoad = async ({ locals }) => {
       views_user_id: u.views_user_id,
       has_gallery: !!u.gallery_url,
       last_login_at: u.last_login_at,
+      seen_count: Number(u.seen_count),
+      trip_count: Number(u.trip_count),
     })),
   };
 };

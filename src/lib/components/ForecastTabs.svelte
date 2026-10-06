@@ -50,6 +50,7 @@
 					sp.get('lat') ||
 					sp.get('species') ||
 					sp.get('q') ||
+					sp.get('country') ||
 					sp.get('region') ||
 					sp.get('dist')
 				);

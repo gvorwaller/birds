@@ -13,10 +13,10 @@
  *   the restored params.
  */
 
-export const IDENTITY_KEYS = ['place', 'lat', 'loc', 'species', 'q', 'region', 'county', 'chooseLocation'] as const;
+export const IDENTITY_KEYS = ['place', 'lat', 'loc', 'species', 'q', 'country', 'region', 'county', 'chooseLocation'] as const;
 
 /** Saved-side identity needs a VALUE (an empty saved place restores nothing). */
-const SAVED_IDENTITY_KEYS = ['place', 'lat', 'species', 'q', 'region'] as const;
+const SAVED_IDENTITY_KEYS = ['place', 'lat', 'species', 'q', 'country', 'region'] as const;
 
 export function hasIdentityParam(search: string): boolean {
 	const sp = new URLSearchParams(search);

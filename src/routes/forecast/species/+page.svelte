@@ -2,7 +2,9 @@
   import { enhance } from "$app/forms";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { onMount } from "svelte";
   import PathNavigation from "$components/PathNavigation.svelte";
+  import SearchableSelect from "$components/SearchableSelect.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
   import ForecastTabs from "$components/ForecastTabs.svelte";
@@ -30,30 +32,12 @@
   const selectedCountryName = $derived(
     data.countries.find((c) => c.code === data.country)?.name ?? data.country,
   );
-  // US pinned first with its own <optgroup> so a ~250-country list doesn't
-  // read as unsorted (GROK UX review #2).
-  // Typing narrows both optgroups (GBV 2026-08-24 — ~250 entries is a lot of
-  // scrolling). The current selection always survives the filter, or the
-  // <select> would render blank.
-  let countryFilter = $state("");
-  const countryMatches = $derived((c: { code: string; name: string }) => {
-    const q = countryFilter.trim().toLowerCase();
-    return (
-      q === "" ||
-      c.code === data.country ||
-      c.name.toLowerCase().includes(q) ||
-      c.code.toLowerCase().startsWith(q)
-    );
-  });
-  const usCountry = $derived(
-    data.countries.find((c) => c.code === "US" && countryMatches(c)) ?? null,
-  );
-  const otherCountries = $derived(
-    data.countries.filter((c) => c.code !== "US" && countryMatches(c)),
-  );
-  function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
+  let countryReady = $state(false);
+  onMount(() => { countryReady = true; });
+  function chooseCountry(code: string) {
+    if (!code || code === data.country) return;
     const params = new URLSearchParams(page.url.searchParams);
-    params.set("country", e.currentTarget.value);
+    params.set("country", code);
     params.delete("region");
     params.delete("county");
     void goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
@@ -263,31 +247,14 @@
   <section class="card">
     {#if data.countries.length > 0}
       <div class="row countrypick">
-        <label for="country-search">Country</label>
-        <input
-          id="country-search"
-          type="search"
-          placeholder="Search {data.countries.length} countries…"
-          autocomplete="off"
-          bind:value={countryFilter}
-        />
-        <select
-          id="country"
-          aria-label="Country"
-          value={data.country}
-          onchange={onCountryChange}
-        >
-          {#if usCountry}
-            <optgroup label="United States">
-              <option value={usCountry.code}>{usCountry.name}</option>
-            </optgroup>
-          {/if}
-          <optgroup label={data.hasHome ? "All countries (nearest known first)" : "All countries"}>
-            {#each otherCountries as c (c.code)}
-              <option value={c.code}>{c.name}</option>
-            {/each}
-          </optgroup>
-        </select>
+        {#if countryReady}
+          <SearchableSelect id="country" name="country" label="Country" choices={data.countries} value={data.country} anywhereLabel="Choose a country" allowEmpty={false} onCommit={chooseCountry} />
+        {:else}
+          <label for="country">Country</label>
+          <select id="country" value={data.country} onchange={(e) => chooseCountry(e.currentTarget.value)}>
+            {#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}
+          </select>
+        {/if}
       </div>
     {/if}
     <form method="GET" class="pick">

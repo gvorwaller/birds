@@ -3,10 +3,12 @@
   import Badge from "$components/Badge.svelte";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import { invalidateAll } from "$app/navigation";
+  import { page } from "$app/state";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  const userTab = $derived(data.isAdmin && page.url.searchParams.get("tab") === "users");
   let busy = $state("");
   let homePick = $state<PickedLocation | null>(null);
 
@@ -175,7 +177,7 @@
 <div class="page">
   <header class="page-head">
     <h1>Settings</h1>
-    <p class="sub">Appearance, life-list sharing, eBird credentials, home location, and syncs</p>
+    <p class="sub">{userTab ? "Account usage and user management" : "Appearance, life-list sharing, eBird credentials, home location, and syncs"}</p>
   </header>
 
   {#if form && "message" in form && form.message}
@@ -185,6 +187,14 @@
     <section class="card"><p class="err" role="alert">{form.error}</p></section>
   {/if}
 
+  {#if data.isAdmin}
+    <nav class="settings-tabs" aria-label="Settings sections">
+      <a href="/settings" aria-current={!userTab ? "page" : undefined}>My settings</a>
+      <a href="/settings?tab=users" aria-current={userTab ? "page" : undefined}>User admin</a>
+    </nav>
+  {/if}
+
+  {#if !userTab}
   <section class="card">
     <h2>Appearance</h2>
     <p>Choose Light, Dark, Forest, Ocean, or Warm Paper for your account.</p>
@@ -674,7 +684,21 @@
     </div>
   </section>
 
-  {#if data.isAdmin}
+  {/if}
+
+  {#if userTab}
+    <section class="card">
+      <h2>Usage by user</h2>
+      <p class="muted">Saved life-list species and trips belong to each account. Last login is the most recent sign-in recorded for that account.</p>
+      {#each data.users as u (u.id)}
+        <div class="obs">
+          <div class="grow">
+            <div class="name">{u.display_name} <span class="muted">@{u.username}</span></div>
+            <div class="meta">{u.seen_count.toLocaleString()} life-list species · {u.trip_count.toLocaleString()} trips · {u.last_login_at ? `last login ${new Date(u.last_login_at).toLocaleDateString()}` : "never logged in"}</div>
+          </div>
+        </div>
+      {/each}
+    </section>
     <section class="card">
       <h2>Users</h2>
       <p class="sub2">
@@ -703,7 +727,7 @@
           </div>
           <form
             method="POST"
-            action="?/set_user_password"
+            action="?tab=users&/set_user_password"
             use:enhance={track(`pw-${u.id}`)}
             class="pw-form"
           >
@@ -720,7 +744,7 @@
           {#if u.role === "viewer"}
             <form
               method="POST"
-              action="?/set_viewer_owner"
+              action="?tab=users&/set_viewer_owner"
               use:enhance={track(`owner-${u.id}`)}
               class="owner-form"
             >
@@ -744,7 +768,7 @@
         <summary>+ Add a user</summary>
         <form
           method="POST"
-          action="?/create_user"
+          action="?tab=users&/create_user"
           use:enhance={track("create-user")}
           class="create-form"
         >
@@ -807,6 +831,31 @@
 </div>
 
 <style>
+  .settings-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .settings-tabs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .settings-tabs a[aria-current="page"] {
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .settings-tabs a:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
   .sharing-choice {
     display: flex;
     align-items: center;
@@ -931,7 +980,7 @@
     flex-wrap: wrap;
   }
   .pw-form input {
-    min-height: 40px;
+    min-height: 48px;
     padding: 6px 10px;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -948,7 +997,7 @@
     cursor: pointer;
     color: var(--link);
     font-weight: 600;
-    min-height: 36px;
+    min-height: 48px;
     display: flex;
     align-items: center;
   }
@@ -962,6 +1011,8 @@
   .create-form label {
     display: flex;
     flex-direction: column;
+    flex: 1 1 200px;
+    min-width: 0;
     gap: 4px;
     font-size: 0.8rem;
     font-weight: 600;
@@ -969,7 +1020,10 @@
   }
   .create-form input,
   .create-form select {
-    min-height: 44px;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 8px;

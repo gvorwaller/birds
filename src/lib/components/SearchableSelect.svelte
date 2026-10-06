@@ -17,10 +17,12 @@
   let {
     id,
     name,
+    form,
     label,
     choices,
     value,
     anywhereLabel,
+    allowEmpty = true,
     disabled = false,
     disabledText = "",
     loading = false,
@@ -29,10 +31,12 @@
   }: {
     id: string;
     name: string;
+    form?: string;
     label: string;
     choices: PlaceChoice[];
     value: string;
     anywhereLabel: string;
+    allowEmpty?: boolean;
     disabled?: boolean;
     disabledText?: string;
     loading?: boolean;
@@ -61,7 +65,7 @@
   const page = $derived(placePage(matches, pages));
   /** Rows in the popup: "anywhere" first, the visible matches, then "show next". */
   const rows = $derived([
-    ...(typed && text.trim()
+    ...(!allowEmpty || (typed && text.trim())
       ? []
       : [{ kind: "anywhere" as const, code: "", name: anywhereLabel }]),
     ...page.shown.map((c) => ({ kind: "choice" as const, code: c.code, name: c.name })),
@@ -235,11 +239,11 @@
       onclick={() => (open ? null : openPopup())}
       onblur={() => { if (open && !touchPress) dismiss(); }}
     />
-    {#if value && !disabled && !loading}
+    {#if allowEmpty && value && !disabled && !loading}
       <button type="button" class="clear" aria-label={`Clear ${label.toLowerCase()}`} onclick={clear}>✕</button>
     {/if}
   </div>
-  <input type="hidden" {name} {value} />
+  <input type="hidden" {name} {value} {form} />
   <p id={`${id}-count`} class="count" aria-live="polite">{countText}</p>
   {#if open}
     <ul id={listId} role="listbox" aria-label={label} class="list">
