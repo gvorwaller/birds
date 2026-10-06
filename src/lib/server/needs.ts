@@ -115,6 +115,14 @@ export interface PlaceRanking {
 
 export interface TargetsView {
   needs: SpeciesActivity[];
+  /**
+   * The rest of the same area feed: species already on the life list
+   * (td-ee2b56, Home's All / Seen lens). Costs no eBird call — it is the part
+   * of `recentAgg` the needs filter used to discard. Never enriched, so each
+   * row describes only its latest report; `needs` ∪ `seenRecent` is the whole
+   * feed with no species in both.
+   */
+  seenRecent: SpeciesActivity[];
   notable: NotableEntry[];
   bestPlaces: PlaceRanking[];
   stale: boolean;
@@ -584,7 +592,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
   return { needs: enriched, partial, stale };
 }
 
-function buildView(
+export function buildView(
   seen: Set<string>,
   recent: CachedResult<EbirdObs[]>,
   notable: CachedResult<EbirdObs[]>,
@@ -603,6 +611,15 @@ function buildView(
   const needs = [...recentAgg.values()]
     .filter((a) => !seen.has(a.speciesCode))
     .sort(sortNeedsByActivity);
+  // Latest report first: these rows are one observation each, so an
+  // "activity" order would rank on a single report (see geoTargetsBase).
+  const seenRecent = [...recentAgg.values()]
+    .filter((a) => seen.has(a.speciesCode))
+    .sort(
+      (a, b) =>
+        b.lastObsDt.localeCompare(a.lastObsDt) ||
+        a.comName.localeCompare(b.comName),
+    );
 
   const notableAgg = aggregate(
     notable.data.map((row) => ({ ...row, source: row.source ?? "notable", fetchedAt: row.fetchedAt ?? notable.fetchedAt.toISOString() })),
@@ -617,6 +634,7 @@ function buildView(
 
   return {
     needs,
+    seenRecent,
     notable: notableList,
     bestPlaces: rankPlaces(
       recent.data,

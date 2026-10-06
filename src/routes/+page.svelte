@@ -20,6 +20,14 @@
   } from "$lib/place-search";
   import { homeUrlWithQuery } from "$lib/return-link";
   import { nearestDistanceKm, sortNeedsByNearest } from "$lib/needs-sort";
+  import {
+    HOME_LISTS,
+    HOME_LIST_LABEL,
+    HOME_LIST_MEANING,
+    homeListHref,
+    parseHomeList,
+    type HomeList,
+  } from "$lib/home-list";
   import { speciesLinkHref } from "$lib/species-context";
   import { backOptionLabel, windowPhrase } from "$lib/time-windows";
   import type { PageData } from "./$types";
@@ -44,6 +52,9 @@
   let showAllNeeds = $state(false);
   let expanded = $state(new Set<string>());
   let needsSort = $state<"activity" | "nearest">("activity");
+  // The All / Seen lenses mix enriched needs with single-report seen rows, so
+  // an activity rank would compare unlike counts; they sort by report instead.
+  let reportSort = $state<"latest" | "nearest">("latest");
   const NEEDS_PREVIEW = 25;
 
   let ql = $derived(q.trim().toLowerCase());
@@ -155,6 +166,43 @@
   let needsAll = $derived(
     (enrichment?.ok ? enrichment.data.needs : null) ?? data.view?.needs ?? [],
   );
+
+  // --- All / Need / Seen lens (td-ee2b56) -----------------------------------
+  // `?list=` is untracked by the loader, like `?loc=`: switching lens reuses
+  // the loaded feed. Seen rows are the same area feed's already-seen species —
+  // never enriched, so each describes only its latest report. Need is the
+  // default and renders exactly the card Home always had.
+  let seenAll = $derived(data.view?.seenRecent ?? []);
+  let seenCodes = $derived(new Set(seenAll.map((n) => n.speciesCode)));
+  let listParse = $derived(parseHomeList(page.url.searchParams));
+  let list = $derived<HomeList>(listParse.list);
+  let listAll = $derived(
+    list === "need"
+      ? needsAll
+      : list === "seen"
+        ? seenAll
+        : [...needsAll, ...seenAll],
+  );
+  let listCounts = $derived<Record<HomeList, number>>({
+    all: needsAll.length + seenAll.length,
+    need: needsAll.length,
+    seen: seenAll.length,
+  });
+  /** How the current lens names its species: "need(s)", "species", "seen species". */
+  function listNoun(count: number): string {
+    if (list === "need") return count === 1 ? "need" : "needs";
+    return list === "seen" ? "seen species" : "species";
+  }
+  // Self-heal a hand-edited or stale value back to the canonical Need URL, the
+  // way a stale `loc` is dropped; idempotent because the repair removes it.
+  $effect(() => {
+    if (listParse.valid) return;
+    goto(homeListHref(page.url, "need"), {
+      keepFocus: true,
+      noScroll: true,
+      replaceState: true,
+    }).catch(() => {});
+  });
   // Every per-species call failed. The stream still resolved `ok`, so without
   // this the page would sit on base rows indefinitely, indistinguishable from
   // a first paint that is about to fill in (GROK P3-c). Skipped enrichment has
@@ -187,14 +235,27 @@
   // The index inverts the species→places data the loader already ships, so this
   // costs no extra requests. Rebuilt only when the view changes, never per
   // keystroke; only `searchPlaces` runs on input.
-  let placeIndex = $derived(buildPlaceIndex(notableAll, needsAll));
+  // Two indexes, not one filtered: absorbing a seen report updates a place's
+  // date, distance and hotspot fields, so a shared index would change what the
+  // Need lens shows and how it ranks (CODEX1 P2-1). The Need lens keeps the
+  // index it always had; All / Seen add the seen species.
+  let needPlaceIndex = $derived(buildPlaceIndex(notableAll, needsAll));
+  let fullPlaceIndex = $derived(buildPlaceIndex(notableAll, needsAll, seenAll));
+  let placeIndex = $derived(list === "need" ? needPlaceIndex : fullPlaceIndex);
   let placeHits = $derived(searching ? searchPlaces(placeIndex, q) : []);
 
   // `?loc=` is the single source of truth. It is deliberately untracked by the
   // loader, so changing it is a client-side navigation that reuses server data.
   let focusKey = $derived(page.url.searchParams.get("loc"));
+  // The lens's own index first; the full one only as a fallback, so a place
+  // focused from All / Seen that has no needs stays focused in the Need lens
+  // ("0 needs at …") instead of being cleared by the self-heal below.
   let focused = $derived(
-    focusKey ? (placeIndex.find((p) => p.key === focusKey) ?? null) : null,
+    focusKey
+      ? (placeIndex.find((p) => p.key === focusKey) ??
+          fullPlaceIndex.find((p) => p.key === focusKey) ??
+          null)
+      : null,
   );
 
   function urlWithFocus(key: string | null): string {
@@ -248,40 +309,40 @@
         ? notableDeduped.filter(matches)
         : notableDeduped,
   );
-  let needsMatched = $derived(
+  let listMatched = $derived(
     focused
-      ? speciesAtPlace(focused, needsAll)
+      ? speciesAtPlace(focused, listAll)
       : searching
-        ? needsAll.filter(matches)
-        : needsAll,
+        ? listAll.filter(matches)
+        : listAll,
   );
-  // "Activity" is a no-op (needsMatched already arrives in that order from the
-  // loader); "Nearest" is the only client-side reorder. Applied before the
-  // preview slice so the sort choice also governs which 25 are shown by
-  // default, not just their order once expanded.
-  let needsSorted = $derived.by(() => {
-    const sorted =
-      needsSort === "nearest"
-        ? sortNeedsByNearest(needsMatched)
-        : needsMatched;
-    // Notable needs stay above the 25-row fold so they don't vanish from
-    // both lists after the Notable→Needs dedup.
-    if (
-      needsSort !== "activity" ||
-      searching ||
-      focused ||
-      showAllNeeds
-    ) {
-      return sorted;
-    }
+  // Need lens: "Activity" is a no-op (needs already arrive in that order from
+  // the loader); "Nearest" is the only client-side reorder. All / Seen sort by
+  // latest report or nearest. Applied before the preview slice so the sort
+  // choice also governs which 25 are shown by default, not just their order
+  // once expanded.
+  let listSorted = $derived.by(() => {
+    const nearest = list === "need" ? needsSort === "nearest" : reportSort === "nearest";
+    const sorted = nearest
+      ? sortNeedsByNearest(listMatched)
+      : list === "need"
+        ? listMatched
+        : [...listMatched].sort(
+            (a, b) =>
+              b.lastObsDt.localeCompare(a.lastObsDt) ||
+              a.comName.localeCompare(b.comName),
+          );
+    // Notable rows stay above the 25-row fold so notable needs don't vanish
+    // from both lists after the Notable→Needs dedup.
+    if (nearest || searching || focused || showAllNeeds) return sorted;
     const notable = sorted.filter((n) => allNotableCodes.has(n.speciesCode));
     const rest = sorted.filter((n) => !allNotableCodes.has(n.speciesCode));
     return [...notable, ...rest];
   });
-  let needsShown = $derived(
+  let listShown = $derived(
     searching || focused || showAllNeeds
-      ? needsSorted
-      : needsSorted.slice(0, NEEDS_PREVIEW),
+      ? listSorted
+      : listSorted.slice(0, NEEDS_PREVIEW),
   );
 
   // Escape hatch when nothing in the loaded reports matches: re-run the real
@@ -355,7 +416,7 @@
   // changes `points` too, and without this the map would snap back to a fitted
   // viewport ~2 s after paint, mid-pan (td-d561a8 §1h).
   let mapFitKey = $derived(
-    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}|${focusKey ?? ""}|${searching ? ql : ""}`,
+    `${data.location?.lat ?? ""},${data.location?.lng ?? ""}|${data.dist}|${data.back}|${list}|${focusKey ?? ""}|${searching ? ql : ""}`,
   );
   // The map mirrors the visible lists: a pin per shown species by default, or
   // every place of each matched species while searching.
@@ -367,6 +428,7 @@
     if (focused) {
       const needCount = focused.needCodes.size;
       const rareCount = focused.notableCodes.size;
+      const seenCount = list === "need" ? 0 : focused.seenCodes.size;
       return [
         {
           lat: focused.lat,
@@ -377,10 +439,11 @@
             rareCount
               ? `${rareCount} ${rareCount === 1 ? "rarity" : "rarities"}`
               : "",
+            seenCount ? `${seenCount} seen` : "",
           ]
             .filter(Boolean)
             .join(" · "),
-          kind: rareCount > 0 ? "notable" : "need",
+          kind: focusedPinKind,
         },
       ];
     }
@@ -406,15 +469,18 @@
           });
         }
       }
-      for (const n of needsMatched) {
+      for (const n of listMatched) {
+        const seen = seenCodes.has(n.speciesCode);
+        // A seen rarity already has its Notable pin; don't stack a second one.
+        if (seen && notableShownCodes.has(n.speciesCode)) continue;
         for (const pl of n.places) {
           pts.push({
             lat: pl.lat,
             lng: pl.lng,
             title: n.comName,
-            sub: pl.locName,
+            sub: seen ? ["Seen", pl.locName].filter(Boolean).join(" · ") : pl.locName,
             href: speciesHref(n.speciesCode),
-            kind: "need",
+            kind: seen ? "seen" : "need",
           });
         }
       }
@@ -430,18 +496,46 @@
         kind: "notable",
       });
     }
-    for (const n of needsShown) {
+    for (const n of listShown) {
+      const seen = seenCodes.has(n.speciesCode);
+      if (seen && notableShownCodes.has(n.speciesCode)) continue;
       pts.push({
         lat: n.lastLat,
         lng: n.lastLng,
         title: n.comName,
-        sub: n.locations[0] ?? "",
+        sub: seen
+          ? ["Seen", n.locations[0]].filter(Boolean).join(" · ")
+          : (n.locations[0] ?? ""),
         href: speciesHref(n.speciesCode),
-        kind: "need",
+        kind: seen ? "seen" : "need",
       });
     }
     return pts;
   });
+  let notableShownCodes = $derived(
+    new Set(notableShown.map((n) => n.speciesCode)),
+  );
+  // Rarity wins, then a need; a place with only seen birds (All / Seen lens,
+  // or a focus carried over from one) gets the seen pin.
+  let focusedPinKind = $derived<ObsPoint["kind"]>(
+    !focused
+      ? "need"
+      : focused.notableCodes.size > 0
+        ? "notable"
+        : focused.needCodes.size > 0 || focused.seenCodes.size === 0
+          ? "need"
+          : "seen",
+  );
+  /** A seen pin is on the map right now, so the legend must name it. */
+  let mapHasSeen = $derived(
+    !focused &&
+      list !== "need" &&
+      (searching ? listMatched : listShown).some(
+        (n) =>
+          seenCodes.has(n.speciesCode) &&
+          !notableShownCodes.has(n.speciesCode),
+      ),
+  );
 </script>
 
 <svelte:head>
@@ -596,13 +690,12 @@
           <!-- Must track the marker kind emitted above, which goes notable
                (red) when the place has a rarity — a fixed `need` dot here
                would show green beside a red pin. -->
-          <span
-            class="dot {focused.notableCodes.size > 0 ? 'notable' : 'need'}"
-          ></span>
+          <span class="dot {focusedPinKind}"></span>
           focused place
         {:else}
           <span class="dot need"></span> need
           <span class="dot notable"></span> notable
+          {#if mapHasSeen}<span class="dot seen"></span> seen{/if}
           <span class="dot home"></span> selected location
         {/if}
       </p>
@@ -662,8 +755,8 @@
           >{placeHits.length}
           {placeHits.length === 1 ? "place" : "places"}{focused
             ? ""
-            : ` · ${notableShown.length + needsMatched.length} ${
-                notableShown.length + needsMatched.length === 1
+            : ` · ${notableShown.length + listMatched.length} ${
+                notableShown.length + listMatched.length === 1
                   ? "bird"
                   : "birds"
               }`}</span
@@ -676,7 +769,7 @@
       {#if focused}
         Showing birds reported at {focused.locName}.
       {:else if searching}
-        {placeHits.length} places and {notableShown.length + needsMatched.length}
+        {placeHits.length} places and {notableShown.length + listMatched.length}
         birds match {q}.
       {/if}
     </p>
@@ -718,6 +811,7 @@
         focusedKey={focusKey}
         {distanceUnit}
         partial={enrichPartial}
+        showSeen={list !== "need"}
         onfocusplace={(p) => focusPlace(p.key)}
       />
       <!-- Shown even while focused: the typed text deliberately survives
@@ -761,14 +855,23 @@
       </h2></summary>
       <p class="muted intro">
         eBird notable reports near {data.location?.label ?? "here"} —
-        {windowPhrase(data.back)}. Species you still need appear in Needs below
-        with a Notable badge.
+        {windowPhrase(data.back)}.
+        {#if list === "seen"}
+          Species you still need are in the
+          <a href={homeListHref(page.url, "need")} data-sveltekit-preload-data="tap" data-sveltekit-noscroll>Need list</a>
+          with a Notable badge.
+        {:else}
+          Species you still need appear in Needs below with a Notable badge.
+        {/if}
       </p>
       {#if data.view.notable.length === 0}
         <p class="muted">No notable reports in this window.</p>
       {:else if notableShown.length === 0}
         <p class="muted">
-          {#if focused && focused.notableCodes.size > 0}
+          {#if focused && focused.notableCodes.size > 0 && list === "seen"}
+            Notable reports at {focused.locName} are needs — see the
+            <a href={homeListHref(page.url, "need")} data-sveltekit-preload-data="tap" data-sveltekit-noscroll>Need list</a>.
+          {:else if focused && focused.notableCodes.size > 0}
             Notable reports at {focused.locName} are in your needs list below.
           {:else if focused}
             No notable reports at {focused.locName} in the reports loaded for
@@ -778,8 +881,13 @@
           {:else}
             <!-- Every notable report this window is also one of your needs —
                  see it there instead, badged "Notable" (item 2). -->
-            All notable reports in this window are already in your needs list
-            below.
+            {#if list === "seen"}
+              All notable reports in this window are needs — see the
+              <a href={homeListHref(page.url, "need")} data-sveltekit-preload-data="tap" data-sveltekit-noscroll>Need list</a>.
+            {:else}
+              All notable reports in this window are already in your needs list
+              below.
+            {/if}
           {/if}
         </p>
       {/if}
@@ -876,26 +984,54 @@
     <details class="card" open>
       <summary><h2>
           {#if focused}
-            {needsMatched.length}
-            {needsMatched.length === 1 ? "need" : "needs"} at {focused.locName} — {windowPhrase(
+            {listMatched.length}
+            {listNoun(listMatched.length)} at {focused.locName} — {windowPhrase(
               data.back,
             )}
           {:else}
-            {needsAll.length} needs reported here — {windowPhrase(data.back)}
+            {listAll.length} {listNoun(listAll.length)} reported here — {windowPhrase(data.back)}
           {/if}
           {#if data.view.stale}<Badge kind="stale" label="cached" />{/if}
           {#if data.view.fetchedAt}
             <span class="asof">as of {asOf(data.view.fetchedAt)}</span>
           {/if}
         </h2></summary>
+      <!-- Plain links, like the Field Guide's scope pills: they work without
+           JavaScript, and with it they are a client-side navigation that the
+           loader ignores (`list` is untracked), so no eBird call is made.
+           Tap-only preload keeps a hover from starting Home's streamed work. -->
+      <nav class="list-scope" aria-label="Reported species: All, Need or Seen">
+        {#each HOME_LISTS as l (l)}
+          <a
+            id={`home-list-${l}`}
+            class:current={list === l}
+            href={homeListHref(page.url, l)}
+            aria-current={list === l ? "true" : undefined}
+            title={HOME_LIST_MEANING[l]}
+            data-sveltekit-preload-data="tap"
+            data-sveltekit-noscroll
+            data-sveltekit-keepfocus
+            ><span class="list-mark" aria-hidden="true"
+              >{list === l ? "●" : "○"}</span
+            >{HOME_LIST_LABEL[l]} <span class="list-count">{listCounts[l]}</span></a
+          >
+        {/each}
+      </nav>
       <div class="needs-head">
-        {#if needsAll.length > 1}
+        {#if listAll.length > 1}
           <label class="sort-control">
             <span>Sort</span>
-            <select bind:value={needsSort}>
-              <option value="activity">Activity</option>
-              <option value="nearest">Nearest</option>
-            </select>
+            {#if list === "need"}
+              <select bind:value={needsSort}>
+                <option value="activity">Activity</option>
+                <option value="nearest">Nearest</option>
+              </select>
+            {:else}
+              <select bind:value={reportSort}>
+                <option value="latest">Latest report</option>
+                <option value="nearest">Nearest</option>
+              </select>
+            {/if}
           </label>
         {/if}
       </div>
@@ -903,7 +1039,23 @@
            (no sync timestamp, and an empty list), and rendering both notes
            would say two different things about the same state. Never-synced
            wins, because it is the actionable one. -->
-      {#if !data.lifeListSyncedAt}
+      {#if list === "seen" && (!data.lifeListSyncedAt || data.seenCount === 0)}
+        <p class="muted">
+          {#if !data.lifeListSyncedAt}
+            {#if isViewer}
+              Life list not synced, so no species can show as seen.
+            {:else}
+              Your life list is not synced yet, so no species can show as seen.
+              <a href="/settings">Sync it in Settings →</a>
+            {/if}
+          {:else}
+            Your life list is empty, so no species can show as seen.
+            {#if !isViewer}Sync it in <a href="/settings">Settings</a>.{/if}
+          {/if}
+        </p>
+      {:else if list === "seen"}
+        <!-- Nothing to add: seen rows never wait on the needs' place details. -->
+      {:else if !data.lifeListSyncedAt}
         <p class="muted">
           {#if isViewer}
             Life list not synced. Showing area-level needs.
@@ -923,7 +1075,15 @@
            synced account with an empty list would otherwise hide a failed
            enrichment behind the empty-list note (CODEX1 P3-1) — masking an
            error with an unrelated explanation. -->
-      {#if enrichError}
+      {#if list !== "need" && seenAll.length > 0}
+        <p class="muted">
+          Seen species show only their latest report here.
+        </p>
+      {/if}
+      {#if list === "seen"}
+        <!-- The enrichment notes below describe the needs' place details,
+             which no Seen row uses. -->
+      {:else if enrichError}
         <!-- Honest about scope: the needs themselves are real (they come from
              the area feed); only the per-place detail is missing. -->
         <p class="muted">{enrichError} Place details are unavailable.</p>
@@ -939,29 +1099,41 @@
           Reload to try the remaining place details.
         </p>
       {/if}
-      {#if enrichStale}
+      {#if enrichStale && list !== "seen"}
         <p class="muted">
           Place details for some species came from cached reports.
         </p>
       {/if}
-      {#if (searching || focused) && needsMatched.length === 0}
+      {#if (searching || focused) && listMatched.length === 0}
         <p class="muted">
           {#if focused}
-            None of your needs were reported at {focused.locName} in the reports
-            loaded for this view.
+            {#if list === "all"}
+              No species were reported at {focused.locName} in the reports
+              loaded for this view.
+            {:else}
+              None of your {listNoun(2)} were reported at {focused.locName} in
+              the reports loaded for this view.
+            {/if}
           {:else}
-            No needs match “{q}”.
+            No {listNoun(2)} match “{q}”.
           {/if}
         </p>
+      {:else if list === "seen" && listAll.length === 0 && data.lifeListSyncedAt && data.seenCount > 0}
+        <p class="muted">
+          No species on your life list were reported here in this window.
+        </p>
       {/if}
-      {#each needsShown as n (n.speciesCode)}
+      {#each listShown as n (n.speciesCode)}
         {@const nearestKm = nearestDistanceKm(n)}
         {@const rowKm = n.enriched ? (nearestKm ?? n.distanceKm) : n.distanceKm}
         <div class="obs">
           <div class="grow">
             <div class="name">
               <a class="path-focus-target" id={`home-needs-${encodeURIComponent(n.speciesCode)}`} href={speciesHref(n.speciesCode)} onclick={navigationAction(data.user?.id,{label:n.comName,originId:`home-needs-${encodeURIComponent(n.speciesCode)}`})}>{n.comName}</a>
-              <Badge kind="need" label="Need" />
+              {#if seenCodes.has(n.speciesCode)}<Badge
+                  kind="seen"
+                  label="Seen"
+                />{:else}<Badge kind="need" label="Need" />{/if}
               {#if allNotableCodes.has(n.speciesCode)}<Badge
                   kind="notable"
                   label="Notable"
@@ -1069,13 +1241,13 @@
           </div>
         </div>
       {/each}
-      <!-- `needsShown` already returns everything while focused, so without
+      <!-- `listShown` already returns everything while focused, so without
            `!focused` this button can appear and then do nothing. -->
-      {#if !searching && !focused && needsMatched.length > NEEDS_PREVIEW}
+      {#if !searching && !focused && listMatched.length > NEEDS_PREVIEW}
         <button class="more" onclick={() => (showAllNeeds = !showAllNeeds)}>
           {showAllNeeds
             ? "Show fewer"
-            : `Show all ${needsMatched.length} needs`}
+            : `Show all ${listMatched.length} ${listNoun(listMatched.length)}`}
         </button>
       {/if}
     </details>
@@ -1250,6 +1422,42 @@
   }
   .dot.home {
     background: #084298;
+  }
+  .dot.seen {
+    background: #41464b;
+  }
+  /* Same pills as the Field Guide's All / Need / Seen scope (species page). */
+  .list-scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
+  .list-scope a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  /* The selected lens differs in shape (filled mark, heavier border), not colour alone. */
+  .list-scope a.current {
+    border: 2px solid var(--accent);
+    background: var(--card);
+    color: var(--accent);
+  }
+  .list-scope a:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .list-count {
+    font-weight: 400;
   }
   .needs-head {
     display: flex;

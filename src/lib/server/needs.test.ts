@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregate, rankPlaces } from "./needs";
+import { aggregate, buildView, rankPlaces } from "./needs";
 import type { EbirdObs } from "./ebird";
 
 function obs(
@@ -243,5 +243,42 @@ describe("rankPlaces", () => {
       "bkcchi",
       "ospre1",
     ]);
+  });
+});
+
+describe("buildView seen split (td-ee2b56)", () => {
+  const feed = [
+    obs({ speciesCode: "ospre1", comName: "Osprey", locId: "L1", locName: "Harbor", lat: 44.4, lng: -68.6, obsDt: "2026-06-20 08:00" }),
+    obs({ speciesCode: "amerob", comName: "American Robin", locId: "L2", locName: "Park", lat: 44.41, lng: -68.61, obsDt: "2026-06-21 09:00" }),
+    obs({ speciesCode: "bkcchi", comName: "Black-capped Chickadee", locId: "L1", locName: "Harbor", lat: 44.4, lng: -68.6, obsDt: "2026-06-19 07:00" }),
+    obs({ speciesCode: "norcar", comName: "Northern Cardinal", locId: "L2", locName: "Park", lat: 44.41, lng: -68.61, obsDt: "2026-06-21 09:00" }),
+  ];
+  const cached = <T,>(data: T) => ({ data, fetchedAt: new Date("2026-06-21T12:00:00Z"), stale: false });
+  const view = (seen: Set<string>) =>
+    buildView(seen, cached(feed), cached([]), { lat: 44.4, lon: -68.6 }, new Map());
+
+  it("splits the one area feed into needs and seen, with no species in both", () => {
+    const v = view(new Set(["amerob", "bkcchi", "norcar"]));
+    expect(v.needs.map((n) => n.speciesCode)).toEqual(["ospre1"]);
+    const seen = v.seenRecent.map((n) => n.speciesCode);
+    expect(new Set([...v.needs.map((n) => n.speciesCode), ...seen])).toEqual(
+      new Set(feed.map((o) => o.speciesCode)),
+    );
+    expect(seen.filter((c) => c === "ospre1")).toEqual([]);
+  });
+
+  it("orders seen species by latest report, then name", () => {
+    const v = view(new Set(["amerob", "bkcchi", "norcar"]));
+    expect(v.seenRecent.map((n) => n.speciesCode)).toEqual(["amerob", "norcar", "bkcchi"]);
+  });
+
+  it("leaves the needs list exactly as before (seen species never leak in)", () => {
+    const none = view(new Set());
+    expect(none.seenRecent).toEqual([]);
+    expect(none.needs).toHaveLength(4);
+    const some = view(new Set(["amerob"]));
+    expect(some.needs.map((n) => n.speciesCode)).toEqual(
+      none.needs.map((n) => n.speciesCode).filter((c) => c !== "amerob"),
+    );
   });
 });

@@ -74,6 +74,12 @@ export interface PlaceMatch {
   /** Species codes from the notable feed, reported here. */
   notableCodes: Set<string>;
   /**
+   * Species codes already on the life list, reported here (Home's All / Seen
+   * lens, td-ee2b56). Empty unless the caller passes the seen feed; never
+   * counted as needs, so need-based ranking is unchanged by it.
+   */
+  seenCodes: Set<string>;
+  /**
    * Every raw {@link placeKey} folded into this entry, including its own.
    *
    * Membership is recorded here at build time rather than re-derived later:
@@ -126,10 +132,11 @@ function absorb(
   target: PlaceMatch,
   place: IndexedPlace,
   speciesCode: string,
-  kind: "need" | "notable",
+  kind: "need" | "notable" | "seen",
 ): void {
   if (kind === "need") target.needCodes.add(speciesCode);
-  else target.notableCodes.add(speciesCode);
+  else if (kind === "notable") target.notableCodes.add(speciesCode);
+  else target.seenCodes.add(speciesCode);
 
   target.lastObsDt = newer(target.lastObsDt, place.lastObsDt);
   // A verified hotspot flag on any record is authoritative for the place.
@@ -173,6 +180,7 @@ function reconcile(byKey: Map<string, PlaceMatch>): Map<string, PlaceMatch> {
 
     for (const code of entry.needCodes) host.needCodes.add(code);
     for (const code of entry.notableCodes) host.notableCodes.add(code);
+    for (const code of entry.seenCodes) host.seenCodes.add(code);
     for (const member of entry.memberKeys) host.memberKeys.add(member);
     host.lastObsDt = newer(host.lastObsDt, entry.lastObsDt);
     host.isHotspot ||= entry.isHotspot;
@@ -193,15 +201,20 @@ function reconcile(byKey: Map<string, PlaceMatch>): Map<string, PlaceMatch> {
  *
  * Both lists are merged deliberately: `view.bestPlaces` is needs-only, so a
  * rarity the user has already seen contributes nothing there and it cannot be
- * the source for this feature.
+ * the source for this feature. `seen` (optional) adds the area feed's
+ * already-seen species, so a place reported only for them is still focusable.
  */
 export function buildPlaceIndex(
   notable: IndexedSpecies[],
   needs: IndexedSpecies[],
+  seen: IndexedSpecies[] = [],
 ): PlaceMatch[] {
   const byKey = new Map<string, PlaceMatch>();
 
-  const ingest = (list: IndexedSpecies[], kind: "need" | "notable") => {
+  const ingest = (
+    list: IndexedSpecies[],
+    kind: "need" | "notable" | "seen",
+  ) => {
     for (const species of list) {
       for (const place of species.places ?? []) {
         const key = placeKey(place.locId, place.lat, place.lng);
@@ -219,6 +232,7 @@ export function buildPlaceIndex(
             lastObsDt: place.lastObsDt,
             needCodes: new Set(),
             notableCodes: new Set(),
+            seenCodes: new Set(),
             memberKeys: new Set([key]),
           };
           byKey.set(key, entry);
@@ -228,10 +242,11 @@ export function buildPlaceIndex(
     }
   };
 
-  // Notable first so a rarity's record establishes the entry's name; needs then
-  // contribute their species without renaming it.
+  // Notable first so a rarity's record establishes the entry's name; needs and
+  // seen species then contribute their species without renaming it.
   ingest(notable, "notable");
   ingest(needs, "need");
+  ingest(seen, "seen");
 
   return [...reconcile(byKey).values()];
 }

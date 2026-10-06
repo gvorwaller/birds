@@ -60,4 +60,16 @@ describe("Home loader URL tracking", () => {
         `as a tracked key and re-runs this loader on every focus change.`,
     ).toBe(false);
   });
+
+  it("does not track the All / Need / Seen lens param", () => {
+    // td-ee2b56: the lens re-filters the feed the loader already returned
+    // (`view.needs` + `view.seenRecent`). Tracking `list` would turn every
+    // pill tap into a full geoTargets() re-run.
+    const body = loaderBody();
+    expect(
+      /searchParams\s*\.\s*(get|has|getAll)\(\s*["'`]list["'`]/.test(body),
+      `${LOADER} must not read "list" from searchParams: doing so registers ` +
+        `it as a tracked key and re-runs this loader on every lens switch.`,
+    ).toBe(false);
+  });
 });

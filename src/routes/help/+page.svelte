@@ -487,6 +487,15 @@
 						life list from your eBird account (add your API key in Settings).
 					</li>
 					<li>
+						<strong>All, Need and Seen</strong> at the top of the needs list switch
+						between every species reported in the area, only your needs (the
+						default), or only species already on your life list. Seen species show
+						their latest report only — where and when, how far away, and its
+						checklist — while needs keep their full place breakdown. The choice stays
+						in the page address, works with the filter box and a focused place, and
+						never contacts eBird again: all three come from the same area reports.
+					</li>
+					<li>
 						<strong>Rare this week</strong> lists eBird's notable reports for the same
 						place and window, whether or not they're on your needs list.
 					</li>

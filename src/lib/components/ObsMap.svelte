@@ -7,7 +7,7 @@
     href?: string;
     linkText?: string;
     img?: string;
-    kind?: "need" | "notable" | "home" | "photo" | "pending";
+    kind?: "need" | "notable" | "seen" | "home" | "photo" | "pending";
     /** Short text rendered inside the pin (e.g. a lifer count). */
     glyph?: string;
     /** Pre-built (already-escaped) info-window body — the multi-item path
@@ -58,6 +58,9 @@
       glyphColor: "#fff",
     },
     home: { background: "#084298", borderColor: "#052c65", glyphColor: "#fff" },
+    // Already on the life list (Home's All / Seen lens) — a dark slate that
+    // recedes behind need green and notable red, distinct from `pending` gray.
+    seen: { background: "#41464b", borderColor: "#2b2f32", glyphColor: "#fff" },
     // No data loaded yet — a muted gray so candidates read as "not yet".
     pending: {
       background: "#868e96",

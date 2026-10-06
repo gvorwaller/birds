@@ -11,6 +11,7 @@
     focusedKey = null,
     distanceUnit = "mi",
     partial = false,
+    showSeen = false,
     onfocusplace,
     navigationSource,
     accountId,
@@ -21,6 +22,8 @@
     distanceUnit?: DistanceUnit;
     /** Some per-species detail calls failed, so coverage is incomplete. */
     partial?: boolean;
+    /** Count already-seen species too (Home's All / Seen lens, td-ee2b56). */
+    showSeen?: boolean;
     onfocusplace?: (place: PlaceMatch) => void;
     navigationSource?: string;
     accountId?: number | null;
@@ -61,6 +64,7 @@
         `${p.notableCodes.size} ${p.notableCodes.size === 1 ? "rarity" : "rarities"}`,
       );
     }
+    if (showSeen && p.seenCodes.size > 0) bits.push(`${p.seenCodes.size} seen`);
     if (p.distanceKm != null) bits.push(formatDistance(p.distanceKm, distanceUnit));
     bits.push(p.lastObsDt.slice(0, 10));
     return bits.join(" · ");

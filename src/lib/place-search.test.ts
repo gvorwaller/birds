@@ -85,6 +85,31 @@ describe("buildPlaceIndex", () => {
     expect(index[0].needCodes.size).toBe(1);
   });
 
+  it("indexes seen species separately, never as needs (td-ee2b56)", () => {
+    const p = place();
+    const seenOnly = place({ locId: "L2", locName: "Quiet Pond", lat: 31, lng: -82 });
+    const index = buildPlaceIndex(
+      [],
+      [species("need1", [p])],
+      [species("seen1", [p]), species("seen2", [seenOnly])],
+    );
+    const park = index.find((e) => e.key === "L1")!;
+    expect([...park.needCodes]).toEqual(["need1"]);
+    expect([...park.seenCodes]).toEqual(["seen1"]);
+    // A place reported only for seen species is still focusable.
+    const pond = index.find((e) => e.key === "L2")!;
+    expect(pond.needCodes.size).toBe(0);
+    expect([...pond.seenCodes]).toEqual(["seen2"]);
+  });
+
+  it("folds seen codes from a coordinate record into its locId host", () => {
+    const host = place();
+    const coords = place({ locId: null, lat: 30.41005, lng: -81.42005 });
+    const index = buildPlaceIndex([], [species("need1", [host])], [species("seen1", [coords])]);
+    expect(index).toHaveLength(1);
+    expect([...index[0].seenCodes]).toEqual(["seen1"]);
+  });
+
   it("keeps distinct places apart and keys locId-less ones by coords", () => {
     const index = buildPlaceIndex(
       [],
