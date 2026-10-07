@@ -510,9 +510,16 @@
 					</li>
 					<li>
 						<strong>Within</strong> starts at your saved search radius (change the
-						saved default in Settings). Searching a place or changing the radius on
-						the page affects that view only — <strong>Reset home defaults</strong> puts both
-						back.
+						saved default in Settings). Home remembers your last search — the place
+						or map point, Within and Window — for your sign-in, on every device, so
+						the Home tab reopens it. <strong>Reset home defaults</strong> goes back to your
+						saved home location and radius and keeps the Window you chose. Saving a
+						new home location in Settings forgets the whole search, Window included.
+						Without a saved home the button is <strong>Clear this search</strong> and
+						forgets all of it. Only
+						searching remembers — opening an older Home link or going Back shows that
+						search without replacing the one Home reopens. Each family login remembers
+						its own search.
 					</li>
 					<li>
 						Tap any species to open its page — recent sightings around the place you

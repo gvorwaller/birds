@@ -13,6 +13,7 @@
   import PathNavigation from "$components/PathNavigation.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { afterNavigate, goto } from "$app/navigation";
+  import { enhance } from "$app/forms";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
   import {
@@ -445,10 +446,6 @@
     (code: string) => searching || !!focused || expanded.has(code),
   );
 
-  // One-action reset to the saved home *and* the saved radius, keeping only the
-  // chosen report window. Dropping `place` and `dist` is what restores both.
-  let resetHomeHref = $derived(`/?back=${data.back}`);
-
   // Null while focused. `ObsMap` always extends its bounds with `center` and
   // counts entries rather than unique coordinates, so passing the focused
   // coordinates *and* a marker at those same coordinates would score 2 points
@@ -641,7 +638,16 @@
 
   <details class="card" open>
     <summary><h2>Search area</h2></summary>
-    <form method="GET" class="filters" bind:this={searchForm}>
+    <!-- POST so that searching is what Home remembers (td-9304cd); the action
+         answers with the ordinary shareable GET URL. Loading a URL never
+         changes the remembered search. -->
+    <form
+      method="POST"
+      action="?/search"
+      class="filters"
+      bind:this={searchForm}
+      use:enhance
+    >
       {#if formPin}
         <input type="hidden" name="lat" value={formPin.lat.toFixed(5)} />
         <input type="hidden" name="lng" value={formPin.lng.toFixed(5)} />
@@ -654,8 +660,11 @@
             id="home-place"
             type="text"
             name="place"
-            placeholder="View a different area…"
-            value={formPin?.label ?? data.location?.label ?? ""}
+            placeholder={data.showingHome && data.location
+              ? `${data.location.label} (saved home)`
+              : "View a different area…"}
+            value={formPin?.label ??
+              (data.showingHome ? "" : (data.location?.label ?? ""))}
             list="place-suggestions"
           />
           {#if jsReady}
@@ -739,18 +748,30 @@
         </div>
       </section>
     {/if}
-    {#if data.location}
+    <!-- Not only when a place resolved: an account without a saved home can
+         have just a remembered Within or Window, and must still be able to
+         clear it (CODEX1). -->
+    {#if data.location || data.canReset}
       <div class="loc">
-        <p class="muted loc-text">
-          📍 {data.location.label} · within {formatDistance(
-            data.dist,
-            distanceUnit,
-          )} · {windowPhrase(data.back)}
-        </p>
-        {#if data.hasHome && !data.usingSavedHome}
-          <!-- Clears the searched place *and* the view-only radius, so it is a
-               reset to both saved defaults, not just a re-centering on home. -->
-          <a href={resetHomeHref} class="reset-home">↺ Reset home defaults</a>
+        {#if data.location}
+          <p class="muted loc-text">
+            📍 {data.location.label} · within {formatDistance(
+              data.dist,
+              distanceUnit,
+            )} · {windowPhrase(data.back)}
+          </p>
+        {/if}
+        {#if data.canReset}
+          <!-- Forgets the searched place *and* the radius, keeping only the
+               chosen report window, so it is a reset to both saved defaults,
+               not just a re-centering on home. Without a saved home it just
+               clears the remembered search. -->
+          <form method="POST" action="?/reset" use:enhance>
+            <input type="hidden" name="back" value={data.back} />
+            <button type="submit" class="reset-home"
+              >↺ {data.hasHome ? "Reset home defaults" : "Clear this search"}</button
+            >
+          </form>
         {/if}
       </div>
     {/if}

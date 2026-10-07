@@ -50,3 +50,23 @@ it("lets a viewer set personal interest without allowing adjacent or owner mutat
     expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
   }
 });
+
+it("lets a viewer search and reset Home (their own remembered search) but nothing adjacent", async () => {
+  for (const [path,method,expected] of [
+    ['/?/search','POST',200],
+    ['/?/reset','POST',200],
+    ['/?/other&/search','POST',403],
+    ['/?/delete','POST',403],
+    ['/?/search','PUT',403],
+    ['/trips?/search','POST',403],
+    ['/settings?/reset','POST',403],
+  ] as const) {
+    const url = new URL('http://localhost'+path);
+    const resolve = vi.fn(async () => new Response('resolved'));
+    const event = {url, request:new Request(url,{method}), locals:{user:{id:2,role:'viewer'},scopeId:1}, cookies:{get:()=>undefined}};
+    const response = await handle({event,resolve} as unknown as Parameters<typeof handle>[0]);
+    expect(response.status, `${method} ${path}`).toBe(expected);
+    await response.text();
+    expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
+  }
+});

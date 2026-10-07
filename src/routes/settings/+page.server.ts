@@ -368,8 +368,12 @@ export const actions: Actions = {
     ) {
       return fail(400, { error: "Pick a location on the map first." });
     }
+    // A new home also forgets this account's remembered Home search
+    // (td-9304cd, owner decision): Home then opens on the home just set. One
+    // statement, so the two cannot disagree.
     await query(
-      "UPDATE users SET home_lat = $2, home_lon = $3, home_label = $4, home_google_place_id = $5 WHERE id = $1",
+      `WITH forget AS (DELETE FROM home_search WHERE user_id = $1)
+       UPDATE users SET home_lat = $2, home_lon = $3, home_label = $4, home_google_place_id = $5 WHERE id = $1`,
       [userId, lat, lon, label, googlePlaceId],
     );
     return {

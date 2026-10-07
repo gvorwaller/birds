@@ -2,6 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE_NAME, validateSession } from '$server/session';
 import { isSpecialInterestRequest } from '$lib/special-interest';
+import { isHomeSearchRequest } from '$lib/home-search-request';
 import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
 import { building, dev } from '$app/environment';
@@ -81,7 +82,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		});
 	}
 
-	// Viewers may write their own appearance, browsing history and Special interest, never owner data.
+	// Viewers may write their own appearance, browsing history, Special interest and
+	// remembered Home search, never owner data.
 	if (event.locals.user?.role === 'viewer') {
 		const method = event.request.method;
 		// td-0753d0: viewers may POST load_enrichment (first-time species data,
@@ -95,7 +97,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
 		// Keep private settings/actions blocked; appearance changes only this user.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method)) {
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method) && !isHomeSearchRequest(path, method, firstAction)) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// The separate appearance page never loads the credential-bearing page.
