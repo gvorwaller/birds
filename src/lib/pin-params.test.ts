@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePin } from "./pin-params";
+import { parsePin, parsePlacePin } from "./pin-params";
 
 describe("parsePin", () => {
   it("REGRESSION: absent params are NOT the Gulf of Guinea", () => {
@@ -38,5 +38,68 @@ describe("parsePin", () => {
 
   it("truncates absurdly long labels", () => {
     expect(parsePin("1", "1", "x".repeat(500))?.label).toHaveLength(120);
+  });
+});
+
+describe("parsePlacePin", () => {
+  it("uses the point while the place box still holds the picked label", () => {
+    expect(
+      parsePlacePin(
+        "Bar Harbor, ME",
+        "44.38770",
+        "-68.20390",
+        "Bar Harbor, ME",
+      ),
+    ).toEqual({ lat: 44.3877, lng: -68.2039, label: "Bar Harbor, ME" });
+  });
+
+  it("ignores surrounding whitespace on both sides", () => {
+    expect(
+      parsePlacePin(
+        "  Bar Harbor, ME ",
+        "44.3877",
+        "-68.2039",
+        " Bar Harbor, ME",
+      )?.label,
+    ).toBe("Bar Harbor, ME");
+  });
+
+  it("drops the point once a different place is typed", () => {
+    expect(
+      parsePlacePin(
+        "Jacksonville, FL",
+        "44.3877",
+        "-68.2039",
+        "Bar Harbor, ME",
+      ),
+    ).toBeNull();
+  });
+
+  it("needs a place and a pin label — coordinates alone never apply", () => {
+    expect(parsePlacePin("", "44.3877", "-68.2039", "")).toBeNull();
+    expect(parsePlacePin("", "44.3877", "-68.2039", null)).toBeNull();
+    expect(
+      parsePlacePin("Bar Harbor, ME", "44.3877", "-68.2039", null),
+    ).toBeNull();
+  });
+
+  it("keeps a long picked name whole, unlike a bare pin label", () => {
+    const long = `${"Long Road ".repeat(15)}Bar Harbor, ME`;
+    expect(parsePlacePin(long, "44.3877", "-68.2039", long)?.label).toBe(long);
+  });
+
+  it("still rejects missing or junk coordinates", () => {
+    expect(
+      parsePlacePin("Bar Harbor, ME", null, null, "Bar Harbor, ME"),
+    ).toBeNull();
+    expect(
+      parsePlacePin("Bar Harbor, ME", "", "", "Bar Harbor, ME"),
+    ).toBeNull();
+    expect(
+      parsePlacePin("Bar Harbor, ME", "abc", "-68", "Bar Harbor, ME"),
+    ).toBeNull();
+    expect(
+      parsePlacePin("Bar Harbor, ME", "91", "0", "Bar Harbor, ME"),
+    ).toBeNull();
   });
 });

@@ -7,10 +7,12 @@
   import RecordedSightingRow from "$components/RecordedSightingRow.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import PlaceMatches from "$components/PlaceMatches.svelte";
+  import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
+  import { onMount, tick } from "svelte";
   import { page } from "$app/state";
   import PathNavigation from "$components/PathNavigation.svelte";
   import { navigationAction } from "$lib/navigation-context.svelte";
-  import { goto } from "$app/navigation";
+  import { afterNavigate, goto } from "$app/navigation";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
   import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
   import {
@@ -45,6 +47,54 @@
 
   // Read-only family accounts can't reach Settings, so never point them there.
   let isViewer = $derived(data.user?.role === "viewer");
+
+  // Search area map chooser (td-8e21b8). Choosing a point writes its label
+  // into the place box and submits the same GET form, so the current Within
+  // and Window apply; the exact point rides along as lat/lng/pin (see
+  // parsePlacePin). Dropping a marker needs JavaScript, so the button only
+  // appears once the page has hydrated.
+  const pickerId = "home-area-picker";
+  let jsReady = $state(false);
+  onMount(() => {
+    jsReady = true;
+  });
+  let showPicker = $state(false);
+  let picked = $state<PickedLocation | null>(null);
+  // The point being submitted, held until the navigation it starts lands and
+  // `data.pin` carries it instead.
+  let submittedPick = $state<PickedLocation | null>(null);
+  afterNavigate(() => {
+    submittedPick = null;
+  });
+  let formPin = $derived(submittedPick ?? data.pin);
+  let searchForm = $state<HTMLFormElement | undefined>();
+  let pickButton = $state<HTMLButtonElement | undefined>();
+  let pickerHeading = $state<HTMLHeadingElement | undefined>();
+
+  async function openPicker() {
+    picked = null;
+    showPicker = true;
+    await tick();
+    pickerHeading?.focus({ preventScroll: true });
+    pickerHeading?.scrollIntoView({ block: "start" });
+  }
+
+  async function closePicker() {
+    showPicker = false;
+    picked = null;
+    await tick();
+    pickButton?.focus();
+  }
+
+  async function searchPicked() {
+    if (!picked) return;
+    submittedPick = picked;
+    showPicker = false;
+    picked = null;
+    await tick();
+    searchForm?.requestSubmit();
+    pickButton?.focus();
+  }
 
   // Client-side species search across both lists (notable + needs). A matched
   // species expands to show every place in range it was reported.
@@ -591,22 +641,42 @@
 
   <details class="card" open>
     <summary><h2>Search area</h2></summary>
-    <form method="GET" class="filters">
-      <label class="grow-field">
-        <span>View a different area</span>
-        <input
-          type="text"
-          name="place"
-          placeholder="View a different area…"
-          value={data.location?.label ?? ""}
-          list="place-suggestions"
-        />
+    <form method="GET" class="filters" bind:this={searchForm}>
+      {#if formPin}
+        <input type="hidden" name="lat" value={formPin.lat.toFixed(5)} />
+        <input type="hidden" name="lng" value={formPin.lng.toFixed(5)} />
+        <input type="hidden" name="pin" value={formPin.label} />
+      {/if}
+      <div class="grow-field place-field">
+        <label for="home-place">View a different area</label>
+        <div class="place-row">
+          <input
+            id="home-place"
+            type="text"
+            name="place"
+            placeholder="View a different area…"
+            value={formPin?.label ?? data.location?.label ?? ""}
+            list="place-suggestions"
+          />
+          {#if jsReady}
+            <button
+              bind:this={pickButton}
+              type="button"
+              class="secondary"
+              aria-expanded={showPicker}
+              aria-controls={pickerId}
+              onclick={() => (showPicker ? closePicker() : openPicker())}
+            >
+              📍 Pick on map
+            </button>
+          {/if}
+        </div>
         <datalist id="place-suggestions">
           {#each data.suggestions as s (s)}
             <option value={s}></option>
           {/each}
         </datalist>
-      </label>
+      </div>
       <label>
         <span>Within</span>
         <select name="dist">
@@ -633,6 +703,42 @@
       </div>
       <button type="submit">Search</button>
     </form>
+    <!-- Outside the form: MapPicker holds its own place-search <form>, and
+         forms cannot nest. -->
+    {#if showPicker}
+      <section
+        id={pickerId}
+        class="picker-wrap"
+        aria-labelledby="home-area-picker-heading"
+      >
+        <h3
+          bind:this={pickerHeading}
+          id="home-area-picker-heading"
+          tabindex="-1"
+        >
+          Choose the search area on the map
+        </h3>
+        <p class="muted">
+          Search for a place or tap the map (drag the pin to fine-tune). Home
+          then searches around that exact point using the Within and Window
+          above.
+        </p>
+        <MapPicker
+          bind:selected={picked}
+          initialLat={data.location?.lat ?? null}
+          initialLng={data.location?.lng ?? null}
+          initialLabel={data.location?.label}
+        />
+        <div class="picker-actions">
+          <button type="button" onclick={searchPicked} disabled={!picked}>
+            {picked ? `Search near ${picked.label}` : "Choose a point first"}
+          </button>
+          <button type="button" class="secondary" onclick={closePicker}
+            >Cancel</button
+          >
+        </div>
+      </section>
+    {/if}
     {#if data.location}
       <div class="loc">
         <p class="muted loc-text">
@@ -1515,6 +1621,58 @@
   }
   .filters .grow-field input {
     width: 100%;
+  }
+  .place-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .place-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .filters .place-row input {
+    flex: 1;
+    width: auto;
+    min-width: 200px;
+  }
+  .picker-wrap {
+    margin-top: 12px;
+  }
+  .picker-wrap h3 {
+    margin: 0 0 6px;
+    font-size: 1.05rem;
+    /* The heading is the programmatic scroll target, so it owns the
+       fixed-navigation clearance. */
+    scroll-margin-top: calc(var(--nav-h) + 16px);
+  }
+  .picker-wrap > .muted {
+    margin: 0 0 10px;
+  }
+  .picker-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .picker-actions button {
+    min-height: 48px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+    text-align: left;
+  }
+  .picker-actions button:disabled {
+    opacity: 0.5;
+  }
+  .filters button.secondary,
+  .picker-actions button.secondary {
+    background: var(--card);
+    color: var(--accent);
   }
   .filters button {
     min-height: 48px;

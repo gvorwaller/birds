@@ -8,6 +8,7 @@ import {
   type TargetsView,
 } from "$server/needs";
 import { geocodePlace } from "$server/geocode";
+import { parsePlacePin } from "$lib/pin-params";
 import { galleryContextFrom } from "$server/access";
 import { streamed, type Streamed } from "$lib/streamed";
 import { recordedDateBounds, recordedSightingsForHome, type RecordedSighting } from "$server/recorded-sightings";
@@ -52,6 +53,15 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
   const userId = locals.scopeId!; // the data owner this account reads
   const place = (url.searchParams.get("place") ?? "").trim();
   const back = parseBackDays(url.searchParams.get("back"), DEFAULT_BACK_DAYS);
+  // A point chosen on the map: exact coordinates for the label in the place
+  // box, so the label is never re-geocoded (a reverse-geocoded name can land
+  // somewhere else). Typing a different place drops it — see parsePlacePin.
+  const pin = parsePlacePin(
+    place,
+    url.searchParams.get("lat"),
+    url.searchParams.get("lng"),
+    url.searchParams.get("pin"),
+  );
 
   // Independent work: the user row, the eBird row, the life list and the
   // geocode all run together. Only the eBird calls below depend on them.
@@ -82,7 +92,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
       [userId],
     ),
     seenSet(userId),
-    place ? geocodePlace(place) : Promise.resolve(null),
+    place && !pin ? geocodePlace(place) : Promise.resolve(null),
   ]);
 
   const u = userRow.rows[0];
@@ -130,10 +140,13 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     [userId],
   );
 
-  // Resolve the location: searched place → geocode; else fall back to home.
+  // Resolve the location: a map point as chosen; else a typed place,
+  // geocoded; else the saved home.
   let location: { lat: number; lng: number; label: string } | null = null;
   let error: string | null = null;
-  if (place) {
+  if (pin) {
+    location = pin;
+  } else if (place) {
     if (geo) {
       location = { lat: geo.lat, lng: geo.lng, label: geo.name };
     } else {
@@ -200,6 +213,9 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     // navigated away from it.
     usingSavedHome: !place && distKm === savedRadiusKm,
     placeQuery: place,
+    // Echoed so the Search form resubmits the same point when only Within or
+    // Window changes.
+    pin,
     dist: distKm,
     savedRadiusKm,
     radiusOptionsKm: radiusSelectOptionsKm(distKm),

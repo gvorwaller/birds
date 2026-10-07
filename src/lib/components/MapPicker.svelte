@@ -41,6 +41,11 @@
   let markerLib: any = null;
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
+  // Every tap, drag and search takes a ticket. A lookup that finishes after a
+  // newer one started is discarded, so a slow reverse geocode for an earlier
+  // tap can never move the pin (and `selected`) back to that point.
+  let pickSeq = 0;
+
   async function reverseGeocode(
     lat: number,
     lng: number,
@@ -85,10 +90,15 @@
         gmpDraggable: true,
       });
       marker.addListener("dragend", async () => {
+        const ticket = ++pickSeq;
         const p = marker.position;
         const dLat = typeof p.lat === "function" ? p.lat() : p.lat;
         const dLng = typeof p.lng === "function" ? p.lng() : p.lng;
+        const label = `${dLat.toFixed(4)}, ${dLng.toFixed(4)}`;
+        selected = { lat: dLat, lng: dLng, label, place_id: null };
+        status = label;
         const location = await reverseGeocode(dLat, dLng);
+        if (ticket !== pickSeq) return;
         selected = location;
         status = location.label;
       });
@@ -103,6 +113,7 @@
     e.preventDefault();
     const q = searchQuery.trim();
     if (!q || !map) return;
+    const ticket = ++pickSeq;
     searching = true;
     status = "";
     try {
@@ -112,6 +123,7 @@
         body: JSON.stringify({ query: q }),
       });
       const data = await res.json();
+      if (ticket !== pickSeq) return;
       if (!res.ok) {
         status = data.error ?? "Search failed.";
         return;
@@ -164,10 +176,12 @@
       map.addListener(
         "click",
         async (ev: { latLng: { lat(): number; lng(): number } }) => {
+          const ticket = ++pickSeq;
           const lat = ev.latLng.lat();
           const lng = ev.latLng.lng();
           placeMarker(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
           const location = await reverseGeocode(lat, lng);
+          if (ticket !== pickSeq) return;
           placeMarker(
             location.lat,
             location.lng,

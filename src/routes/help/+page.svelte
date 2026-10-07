@@ -500,6 +500,15 @@
 						place and window, whether or not they're on your needs list.
 					</li>
 					<li>
+						<strong>📍 Pick on map</strong>, beside <strong>View a different area</strong>,
+						opens a map. Search for a place or tap the map (drag the pin to
+						fine-tune), then choose <strong>Search near …</strong>: the place box
+						fills with that point's name and Home searches around that exact point
+						with the current Within and Window. Type a different place afterwards
+						and Home searches that place instead. Picking on the map needs
+						JavaScript; typing a place does not.
+					</li>
+					<li>
 						<strong>Within</strong> starts at your saved search radius (change the
 						saved default in Settings). Searching a place or changing the radius on
 						the page affects that view only — <strong>Reset home defaults</strong> puts both
