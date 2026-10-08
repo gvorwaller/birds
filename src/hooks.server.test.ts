@@ -75,6 +75,8 @@ it("lets a viewer check off a stop on a trip (td-40a1b5) but make no other trip 
   for (const [path,method,expected] of [
     ['/trips/7?/set_visited','POST',200],
     ['/trips/7?/remove_stop','POST',403],
+    ['/trips/7?/set_anchor','POST',403],
+    ['/trips/7?/clear_anchor','POST',403],
     ['/trips/7?/move_stop&/set_visited','POST',403],
     ['/trips/7?/set_visited','PUT',403],
     ['/trips?/set_visited','POST',403],

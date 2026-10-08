@@ -8,6 +8,7 @@ import { haversineKm } from "$lib/geo";
 import { recentNearbyObs } from "$server/ebird";
 import { seenSet } from "$server/needs";
 import type { AnyTripCountContext } from "$lib/trip-count-context";
+import type { AnchorSource, TripAnchor } from "$lib/trip-anchor";
 
 export interface Trip {
   id: number;
@@ -17,6 +18,11 @@ export interface Trip {
   end_date: string | null;
   notes: string | null;
   created_at: string;
+  /** Start & end point (td-0f3c63); all four set or all null. */
+  anchor_source: AnchorSource | null;
+  anchor_label: string | null;
+  anchor_lat: number | null;
+  anchor_lon: number | null;
 }
 
 export interface TripStop {
@@ -311,6 +317,49 @@ export async function setStopVisited(
   return r.rowCount === 1;
 }
 
+/**
+ * Set or clear a trip's start & end point (td-0f3c63). The owner only
+ * (`userId` = the signed-in account; viewers never reach this, hooks). False
+ * when the trip isn't this user's.
+ */
+export async function setTripAnchor(
+  userId: number,
+  tripId: number,
+  anchor: TripAnchor | null,
+): Promise<boolean> {
+  const r = await query(
+    `UPDATE trips
+        SET anchor_source = $3, anchor_label = $4, anchor_lat = $5, anchor_lon = $6
+      WHERE id = $1 AND user_id = $2`,
+    [
+      tripId,
+      userId,
+      anchor?.source ?? null,
+      anchor?.label ?? null,
+      anchor?.lat ?? null,
+      anchor?.lon ?? null,
+    ],
+  );
+  return r.rowCount === 1;
+}
+
+/** A stop of this user's trip as an anchor, or null (missing, or no coordinates). */
+export async function stopAsAnchor(
+  userId: number,
+  tripId: number,
+  stopId: number,
+): Promise<TripAnchor | null> {
+  const r = await query<{ custom_name: string | null; lat: number | null; lon: number | null }>(
+    `SELECT s.custom_name, s.lat, s.lon
+       FROM trip_stops s JOIN trips t ON t.id = s.trip_id
+      WHERE s.id = $3 AND s.trip_id = $2 AND t.user_id = $1`,
+    [userId, tripId, stopId],
+  );
+  const s = r.rows[0];
+  if (!s || s.lat == null || s.lon == null) return null;
+  return { source: "stop", label: s.custom_name?.trim() || "Stop", lat: s.lat, lon: s.lon };
+}
+
 /** Move a stop up or down by swapping sort_order with its neighbor. */
 export async function moveStop(
   userId: number,
@@ -346,9 +395,10 @@ export async function moveStop(
 
 /**
  * Reorder a trip's stops into a sensible driving route via greedy
- * nearest-neighbor on great-circle distance. Anchors at home when home is
- * near the stops (≤100 km of one), otherwise keeps the current first stop as
- * the start. Stops without coords are pushed to the end, order preserved.
+ * nearest-neighbor on great-circle distance. Starts from the trip's anchor
+ * when it has one (`fromAnchor`, td-0f3c63); otherwise from home when home is
+ * near the stops (≤100 km of one), else keeps the current first stop as the
+ * start. Stops without coords are pushed to the end, order preserved.
  *
  * (Great-circle, not live drive-time — accurate enough for a day trip and
  * needs no Directions API / billing. Live drive-time ordering is a future
@@ -358,6 +408,7 @@ export async function optimizeStopOrder(
   userId: number,
   tripId: number,
   origin: { lat: number; lon: number } | null,
+  fromAnchor = false,
 ): Promise<{ changed: boolean; anchoredAtHome: boolean }> {
   if (!(await assertOwnsTrip(userId, tripId)))
     return { changed: false, anchoredAtHome: false };
@@ -376,9 +427,10 @@ export async function optimizeStopOrder(
 
   const homeNear =
     origin != null &&
-    located.some(
-      (s) => haversineKm(origin.lat, origin.lon, s.lat, s.lon) <= 100,
-    );
+    (fromAnchor ||
+      located.some(
+        (s) => haversineKm(origin.lat, origin.lon, s.lat, s.lon) <= 100,
+      ));
 
   if (homeNear && origin) {
     curLat = origin.lat;

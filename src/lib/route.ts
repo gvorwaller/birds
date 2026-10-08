@@ -22,20 +22,37 @@ export interface OptimizeResult {
 }
 
 const HOME_ANCHOR_KM = 100;
+/** Google DirectionsService accepts at most 25 waypoints between origin and destination. */
+export const MAX_DIRECTIONS_WAYPOINTS = 25;
 
 /**
- * Compute a drive-optimal order for a trip's stops. Round-trips from home when
- * home is within 100 km of a stop; otherwise loops from the current first stop.
+ * Compute a drive-optimal order for a trip's stops. Round-trips from the
+ * trip's start & end point when it has one (td-0f3c63, wherever it is);
+ * otherwise from home when home is within 100 km of a stop; otherwise loops
+ * from the current first stop.
  * Stops without coordinates are appended unchanged. Throws if the Directions
  * service is unavailable so the caller can fall back.
  */
 export async function optimizeDrivingRoute(
 	apiKey: string,
-	opts: { home: { lat: number; lon: number } | null; stops: RouteStop[] }
+	opts: {
+		home: { lat: number; lon: number } | null;
+		anchor?: { lat: number; lon: number } | null;
+		stops: RouteStop[];
+	}
 ): Promise<OptimizeResult> {
 	const located = opts.stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon));
 	const unlocated = opts.stops.filter((s) => !Number.isFinite(s.lat) || !Number.isFinite(s.lon));
 	if (located.length < 2) throw new Error('Need at least 2 located stops to optimize.');
+
+	const fixed = opts.anchor ?? null;
+	const home = opts.home;
+	const homeNear =
+		home != null && located.some((s) => haversineKm(home.lat, home.lon, s.lat, s.lon) <= HOME_ANCHOR_KM);
+	const loopFrom = fixed ?? (homeNear ? home : null);
+	// A loop from a fixed start puts every stop between origin and destination.
+	if ((loopFrom ? located.length : located.length - 1) > MAX_DIRECTIONS_WAYPOINTS)
+		throw new Error('Too many stops for a driving route.'); // caller falls back to straight-line
 
 	const libs = await loadGoogleMaps(apiKey, ['routes']);
 	/* eslint-disable @typescript-eslint/no-explicit-any */
@@ -43,16 +60,12 @@ export async function optimizeDrivingRoute(
 	const service = new routes.DirectionsService();
 	/* eslint-enable @typescript-eslint/no-explicit-any */
 
-	const home = opts.home;
-	const homeNear =
-		home != null && located.some((s) => haversineKm(home.lat, home.lon, s.lat, s.lon) <= HOME_ANCHOR_KM);
-
 	// `kept` is the fixed prefix; `waypointStops` are the stops Google reorders.
 	let anchor: { lat: number; lng: number };
 	let kept: RouteStop[];
 	let waypointStops: RouteStop[];
-	if (homeNear && home) {
-		anchor = { lat: home.lat, lng: home.lon };
+	if (loopFrom) {
+		anchor = { lat: loopFrom.lat, lng: loopFrom.lon };
 		kept = [];
 		waypointStops = located;
 	} else {
@@ -87,7 +100,7 @@ export async function optimizeDrivingRoute(
 
 	return {
 		orderedIds: [...kept, ...orderedWaypoints, ...unlocated].map((s) => s.id),
-		anchoredAtHome: !!homeNear,
+		anchoredAtHome: !fixed && !!homeNear,
 		totalKm: meters / 1000,
 		totalMin: Math.round(seconds / 60)
 	};

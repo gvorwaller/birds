@@ -8,6 +8,7 @@
   import DatePicker from "$components/DatePicker.svelte";
   import DistanceUnitToggle from "$components/DistanceUnitToggle.svelte";
   import MapLink from "$components/MapLink.svelte";
+  import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import TripMap, { type MapStop } from "$components/TripMap.svelte";
   import { normalizeTripStopNote, plannerTargetNote } from "$lib/planner-note";
   import { canShareText, isIosDevice, isIosStandalone, shareFile, shareText } from "$lib/share";
@@ -238,6 +239,7 @@
     try {
       const res = await optimizeDrivingRoute(MAPS_KEY, {
         home: data.home,
+        anchor: data.anchor,
         stops: data.stops.map((s) => ({
           id: s.id,
           lat: s.lat as number,
@@ -317,12 +319,76 @@
         }
       : null,
   );
-  // Multi-waypoint Google Maps hand-off: from the device's location through
-  // every located stop in order that isn't checked off yet (td-40a1b5).
-  let route = $derived(remainingRoute(mapStops));
-  let routeUrl = $derived(
-    route ? mapsRouteUrl(route.stops.map((s) => ({ lat: s.lat, lng: s.lng }))) : "",
+  // Start & end point (td-0f3c63): the map route, its totals and Optimize
+  // order loop from here and back; Navigate ends here.
+  let anchorPoint = $derived(
+    data.anchor
+      ? { lat: data.anchor.lat, lng: data.anchor.lon, label: data.anchor.label }
+      : null,
   );
+  let anchorOpen = $state(false);
+  let anchorPicked = $state<PickedLocation | null>(null);
+  const firstLocated = $derived(
+    data.stops.find((s) => s.lat != null && s.lon != null) ?? null,
+  );
+  const locatedStops = $derived(
+    data.stops.filter((s) => s.lat != null && s.lon != null),
+  );
+  // Where the picker opens. MapPicker pre-selects this point, so it must not
+  // count as a choice: "Use …" waits for a search or tap (CODEX1 P3 — saving
+  // the seed stored "Start & end: <old name>" as the new name).
+  const anchorSeed = $derived(
+    data.anchor
+      ? { lat: data.anchor.lat, lng: data.anchor.lon, label: `Start & end: ${data.anchor.label}` }
+      : firstLocated
+        ? {
+            lat: firstLocated.lat as number,
+            lng: firstLocated.lon as number,
+            label: firstLocated.custom_name ?? "Stop 1",
+          }
+        : data.home
+          ? { lat: data.home.lat, lng: data.home.lon, label: "Saved home location" }
+          : null,
+  );
+  const anchorChoice = $derived(
+    anchorPicked &&
+      !(
+        anchorSeed &&
+        anchorPicked.lat === anchorSeed.lat &&
+        anchorPicked.lng === anchorSeed.lng &&
+        anchorPicked.label === anchorSeed.label
+      )
+      ? anchorPicked
+      : null,
+  );
+  const anchorSourceNote = $derived(
+    data.anchor?.source === "stop"
+      ? "Copied from a stop; moving or removing that stop won't change it."
+      : data.anchor?.source === "home"
+        ? "Copied from your saved home; changing your home won't change it."
+        : "",
+  );
+  function anchorEnhance() {
+    return async ({
+      result,
+      update,
+    }: {
+      result: { type: string };
+      update: () => Promise<void>;
+    }) => {
+      await update();
+      if (result.type === "success") {
+        anchorOpen = false;
+        anchorPicked = null;
+      }
+    };
+  }
+
+  // Multi-waypoint Google Maps hand-off: from the device's location through
+  // every located stop in order that isn't checked off yet (td-40a1b5), then
+  // back to the start & end point when the trip has one.
+  let route = $derived(remainingRoute(mapStops, anchorPoint));
+  let routeUrl = $derived(route ? mapsRouteUrl(route.points) : "");
 
   function fmtDates(start: string | null, end: string | null): string {
     if (!start && !end) return "no dates set";
@@ -484,17 +550,20 @@
     </section>
   {/if}
 
-  {#if mapStops.length > 0 || mapExtra}
+  {#if mapStops.length > 0 || mapExtra || anchorPoint}
     <section class="card map-card">
       <!-- Keyed on stop identity + position, not visited: a check-off
            restyles pins in place, while a reorder (even of two stops at the
            same spot) remounts so pin numbers stay matched to their stops. -->
       {#key mapStops
         .map((s) => `${s.id}@${s.lat},${s.lng}`)
-        .join("|") + (mapExtra ? `+${mapExtra.lat}` : "")}
+        .join("|") +
+        (mapExtra ? `+${mapExtra.lat}` : "") +
+        (anchorPoint ? `S${anchorPoint.lat},${anchorPoint.lng}` : "")}
         <TripMap
           stops={mapStops}
           extra={mapExtra}
+          anchor={anchorPoint}
           onSummary={(s) => (routeSummary = s)}
         />
       {/key}
@@ -503,7 +572,9 @@
           {#if routeSummary}
             <p class="route-summary">
               🚗 ~{formatDistance(routeSummary.km, distanceUnit)} ·
-              {formatDuration(routeSummary.min)} driving (in order)
+              {formatDuration(routeSummary.min)} driving{#if anchorPoint}, from
+                {anchorPoint.label} through the stops in order and back{:else}
+                (in order){/if}
             </p>
           {/if}
           {#if route && routeUrl}
@@ -617,6 +688,112 @@
     {#if data.stops.length === 0}
       <p class="muted">No stops yet — add one below.</p>
     {/if}
+    <div class="anchor">
+      {#if data.anchor}
+        <div class="anchor-row">
+          <span class="anchor-dot" aria-hidden="true">S</span>
+          <div class="grow">
+            <div class="name">
+              {data.anchor.label}
+              <span class="anchor-tag">Start &amp; end</span>
+            </div>
+            <div class="meta">
+              The map's route, its drive time and distance, and Optimize order
+              run from here, through the stops, and back. {anchorSourceNote}
+            </div>
+          </div>
+        </div>
+      {:else if data.canEdit}
+        <p class="meta">
+          No start &amp; end point: the drive is measured from stop 1 to the last
+          stop. Set one, such as your hotel, to see the real day's drive.
+        </p>
+      {/if}
+      {#if data.canEdit}
+        <div class="anchor-controls">
+          <details class="anchor-edit" bind:open={anchorOpen}>
+            <summary
+              >{data.anchor ? "Change start & end" : "Set start & end point"}</summary
+            >
+            <div class="anchor-choices">
+              {#if data.home}
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="home" />
+                  <button type="submit" class="small"
+                    >⌂ Use my saved home ({data.home.label?.trim() ||
+                      "Home"})</button
+                  >
+                </form>
+              {/if}
+              {#if locatedStops.length > 0}
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="stop" />
+                  <label
+                    ><span>One of the stops</span>
+                    <select name="stop_id">
+                      {#each data.stops as s, i (s.id)}
+                        {#if s.lat != null && s.lon != null}
+                          <option value={s.id}
+                            >{i + 1}. {s.custom_name ?? "Stop"}</option
+                          >
+                        {/if}
+                      {/each}
+                    </select>
+                  </label>
+                  <button type="submit" class="small">Use this stop</button>
+                </form>
+              {/if}
+              <h3 class="sub2">Or search or tap the map</h3>
+              {#if anchorOpen}
+                <!-- Mounted only while open: a map in a closed <details>
+                     renders blank. MapPicker has its own search form, so the
+                     place form below is its sibling, not its parent. -->
+                <MapPicker
+                  bind:selected={anchorPicked}
+                  initialLat={anchorSeed?.lat ?? null}
+                  initialLng={anchorSeed?.lng ?? null}
+                  initialLabel={anchorSeed?.label}
+                />
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="place" />
+                  <input
+                    type="hidden"
+                    name="label"
+                    value={anchorChoice?.label ?? ""}
+                  />
+                  <input type="hidden" name="lat" value={anchorChoice?.lat ?? ""} />
+                  <input type="hidden" name="lon" value={anchorChoice?.lng ?? ""} />
+                  <button type="submit" class="small" disabled={!anchorChoice}
+                    >{anchorChoice
+                      ? `Use ${anchorChoice.label}`
+                      : "Search or tap the map first"}</button
+                  >
+                </form>
+              {/if}
+            </div>
+          </details>
+          {#if data.anchor}
+            <form method="POST" action="?/clear_anchor" use:enhance>
+              <button type="submit" class="small secondary-btn"
+                >Remove start &amp; end</button
+              >
+            </form>
+          {/if}
+        </div>
+      {/if}
+    </div>
     {#if visitedError}<p class="err" role="alert">{visitedError}</p>{/if}
     {#each data.stops as s, i (s.id)}
       {@const visited = isVisited(s)}
@@ -1366,6 +1543,85 @@
     font-weight: 700;
     font-size: 0.85rem;
   }
+  /* Start & end point (td-0f3c63). */
+  .anchor {
+    padding: 4px 0 10px;
+  }
+  .anchor-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .anchor-dot {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    margin: 0 10px;
+    border-radius: 50%;
+    background: #4a2c82;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+  .anchor-tag {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+  }
+  .anchor-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 4px 16px;
+    margin-top: 4px;
+  }
+  .anchor-edit {
+    flex: 1 1 100%;
+    /* A flex item defaults to min-width: auto, which let the map picker's
+       search row push the panel past a 320px screen. */
+    min-width: 0;
+  }
+  .anchor-edit summary {
+    cursor: pointer;
+    color: var(--link);
+    font-size: 0.85rem;
+    font-weight: 600;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+  }
+  .anchor-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px 0 8px;
+  }
+  .anchor-choices button {
+    max-width: 100%;
+    white-space: normal;
+  }
+  /* button.small allows 40px; these new controls keep the 48px tap target. */
+  .anchor-controls button.small {
+    min-height: 48px;
+  }
+  .anchor-choices select {
+    font-size: 16px;
+    min-height: 48px;
+    max-width: 100%;
+  }
+  .secondary-btn {
+    background: var(--card);
+    color: var(--accent);
+  }
+
   /* Check-off (td-40a1b5): a 48px target around a 28px box. */
   button.check {
     width: 48px;

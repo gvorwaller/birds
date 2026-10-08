@@ -21,6 +21,10 @@ const TRIP: Trip = {
   end_date: "2026-09-13",
   notes: "Check tide charts.",
   created_at: "2026-08-26",
+  anchor_source: null,
+  anchor_label: null,
+  anchor_lat: null,
+  anchor_lon: null,
 };
 
 const stop = (over: Partial<TripStop>): TripStop => ({
@@ -237,6 +241,46 @@ describe("checked-off stops in exports", () => {
     const shared = buildTripHtml({ ...all, mode: "shared" });
     expect(shared).not.toContain("🧭");
     expect(shared).toContain('<h3 class="visited">1. Ding Darling NWR <span class="mark">✓ visited</span></h3>');
+  });
+});
+
+// td-0f3c63: the start & end point is in the owner's exports only.
+describe("start & end point in exports", () => {
+  const anchored: TripExportData = {
+    ...DATA,
+    trip: {
+      ...TRIP,
+      anchor_source: "place",
+      anchor_label: `Island Inn ${HOSTILE}`,
+      anchor_lat: 26.43,
+      anchor_lon: -82.08,
+    },
+  };
+
+  it("owner markdown names it and Navigate ends there", () => {
+    const md = buildTripMarkdown(anchored);
+    expect(md).toContain(`**Start & end:** Island Inn ${HOSTILE}`);
+    const nav = md.match(/\[🧭 ([^\]]+)\]\(([^)]+)\)/);
+    expect(nav?.[1]).toBe(`Navigate all stops and back to Island Inn ${HOSTILE}`);
+    expect(nav?.[2]).toContain("destination=26.43,-82.08");
+    expect(nav?.[2]).toContain("waypoints=26.44,-82.11|26.47,-81.97");
+  });
+
+  it("owner HTML names it, escaped", () => {
+    const html = buildTripHtml(anchored);
+    expect(html).toContain(
+      '<p class="muted">Start &amp; end: Island Inn &lt;img src=x onerror=alert(1)&gt;</p>',
+    );
+    expect(html).not.toContain("<img");
+    expect(html).toContain("26.43,-82.08");
+  });
+
+  it("the public share page never reveals it", () => {
+    const shared = buildTripHtml({ ...anchored, mode: "shared" });
+    expect(shared).not.toContain("Island Inn");
+    expect(shared).not.toContain("26.43");
+    expect(shared).not.toContain("Start &amp; end");
+    expect(shared).toBe(buildTripHtml({ ...DATA, mode: "shared" }));
   });
 });
 

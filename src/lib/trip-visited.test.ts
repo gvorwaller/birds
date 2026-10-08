@@ -35,11 +35,13 @@ describe("isTripVisitedRequest", () => {
 });
 
 describe("remainingRoute", () => {
-  const p = (visited: boolean, n: number) => ({ n, visited });
+  // Stop n sits at (n, n); `pt` is the point a link drives through.
+  const p = (visited: boolean, n: number) => ({ lat: n, lng: n, visited });
+  const pt = (n: number) => ({ lat: n, lng: n });
 
   it("drives through every stop while none is checked off", () => {
     expect(remainingRoute([p(false, 1), p(false, 2)])).toEqual({
-      stops: [p(false, 1), p(false, 2)],
+      points: [pt(1), pt(2)],
       label: "Navigate all stops",
     });
   });
@@ -48,14 +50,14 @@ describe("remainingRoute", () => {
     expect(
       remainingRoute([p(true, 1), p(false, 2), p(true, 3), p(false, 4)]),
     ).toEqual({
-      stops: [p(false, 2), p(false, 4)],
+      points: [pt(2), pt(4)],
       label: "Navigate the 2 stops left",
     });
   });
 
   it("still links the one stop left on a multi-stop trip", () => {
     expect(remainingRoute([p(true, 1), p(false, 2)])).toEqual({
-      stops: [p(false, 2)],
+      points: [pt(2)],
       label: "Navigate to the last stop left",
     });
   });
@@ -67,11 +69,45 @@ describe("remainingRoute", () => {
   });
 
   it("treats a stop with no visited flag (the planner preview) as not visited", () => {
-    const preview: Array<{ n: number; visited?: boolean }> = [
-      { n: 1 },
-      { n: 2 },
-    ];
-    expect(remainingRoute(preview)?.label).toBe("Navigate all stops");
+    expect(remainingRoute([pt(1), pt(2)])?.label).toBe("Navigate all stops");
+  });
+
+  describe("with a start & end point (td-0f3c63)", () => {
+    const hotel = { lat: 9, lng: 9, label: "Harbor Inn" };
+
+    it("ends every route back at the anchor", () => {
+      expect(remainingRoute([p(false, 1), p(false, 2)], hotel)).toEqual({
+        points: [pt(1), pt(2), pt(9)],
+        label: "Navigate all stops and back to Harbor Inn",
+      });
+      expect(
+        remainingRoute([p(true, 1), p(false, 2), p(false, 3)], hotel),
+      ).toEqual({
+        points: [pt(2), pt(3), pt(9)],
+        label: "Navigate the 2 stops left and back to Harbor Inn",
+      });
+      expect(remainingRoute([p(true, 1), p(false, 2)], hotel)?.label).toBe(
+        "Navigate the last stop left and back to Harbor Inn",
+      );
+    });
+
+    it("a one-stop trip still gets a route, and with everything visited it is the drive back", () => {
+      expect(remainingRoute([p(false, 1)], hotel)?.points).toEqual([
+        pt(1),
+        pt(9),
+      ]);
+      expect(remainingRoute([p(true, 1), p(true, 2)], hotel)).toEqual({
+        points: [pt(9)],
+        label: "Navigate back to Harbor Inn",
+      });
+    });
+
+    it("no located stops yet: the drive to the anchor (CODEX1)", () => {
+      expect(remainingRoute([], hotel)).toEqual({
+        points: [pt(9)],
+        label: "Navigate to Harbor Inn",
+      });
+    });
   });
 });
 

@@ -30,6 +30,8 @@ import {
   removeStop,
   setStopOrder,
   setStopVisited,
+  setTripAnchor,
+  stopAsAnchor,
   updateStopFieldTips,
   updateStopNotes,
   updateTrip,
@@ -40,20 +42,30 @@ import {
   hydrateEbirdLocationPlaceIds,
 } from "$server/location-placeids";
 import { contextMatchesStop, parseAnyTripCountContext } from "$lib/trip-count-context";
+import { tripAnchor, type TripAnchor } from "$lib/trip-anchor";
 
 async function homeOf(
   userId: number,
-): Promise<{ lat: number; lon: number } | null> {
-  const u = await query<{ home_lat: number | null; home_lon: number | null }>(
-    "SELECT home_lat, home_lon FROM users WHERE id = $1",
-    [userId],
-  );
+): Promise<{ lat: number; lon: number; label: string | null } | null> {
+  const u = await query<{
+    home_lat: number | null;
+    home_lon: number | null;
+    home_label: string | null;
+  }>("SELECT home_lat, home_lon, home_label FROM users WHERE id = $1", [
+    userId,
+  ]);
   return u.rows[0]?.home_lat != null && u.rows[0]?.home_lon != null
-    ? { lat: u.rows[0].home_lat, lon: u.rows[0].home_lon }
+    ? {
+        lat: u.rows[0].home_lat,
+        lon: u.rows[0].home_lon,
+        label: u.rows[0].home_label,
+      }
     : null;
 }
 
 const HOTSPOT_SEARCH_DIST_KM = 25;
+/** Longest start & end name accepted from the map picker (an explicit error, never a cut). */
+const ANCHOR_LABEL_MAX = 200;
 const SUGGESTION_DIST_KM = 16;
 const SUGGESTION_BACK_DAYS = 14;
 const SUGGESTION_LIMIT = 8;
@@ -207,6 +219,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     trip,
     stops,
     home,
+    anchor: tripAnchor(trip),
     canEdit: locals.user!.role !== "viewer",
     // Owners only: viewers neither see nor manage share links (and hooks
     // block them from the non-GET actions regardless).
@@ -341,7 +354,11 @@ export const actions: Actions = {
   optimize: async ({ locals, params }) => {
     const tripId = tripIdFrom(params);
     const userId = locals.user!.id;
-    const res = await optimizeStopOrder(userId, tripId, await homeOf(userId));
+    const trip = await getTrip(userId, tripId);
+    const anchor = trip ? tripAnchor(trip) : null;
+    const res = anchor
+      ? await optimizeStopOrder(userId, tripId, anchor, true)
+      : await optimizeStopOrder(userId, tripId, await homeOf(userId));
     if (!res.changed) {
       return fail(400, {
         error: "Add at least 3 located stops to optimize the route.",
@@ -444,6 +461,73 @@ export const actions: Actions = {
     );
     if (!ok) return fail(404, { error: "That stop is no longer on this trip." });
     return { ok: true as const };
+  },
+
+  // Start & end point (td-0f3c63), owner only. A map place arrives as
+  // label + coordinates; a stop or the saved home is read here, never trusted
+  // from the form, and stored as a snapshot.
+  set_anchor: async ({ locals, params, request }) => {
+    const tripId = tripIdFrom(params);
+    const userId = locals.user!.id;
+    const form = await request.formData();
+    const source = (form.get("source") ?? "").toString();
+    let anchor: TripAnchor | null;
+    if (source === "place") {
+      const label = (form.get("label") ?? "").toString().trim();
+      // Plain decimals only: Number() would read a missing or blank field
+      // as 0 and store a confident but false coordinate (CODEX1).
+      const decimal = (v: FormDataEntryValue | null) =>
+        typeof v === "string" && /^-?\d{1,3}(\.\d+)?$/.test(v)
+          ? Number(v)
+          : NaN;
+      const lat = decimal(form.get("lat"));
+      const lon = decimal(form.get("lon"));
+      if (
+        !label ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lon) > 180
+      )
+        return fail(400, { error: "Pick a place on the map first." });
+      if (label.length > ANCHOR_LABEL_MAX)
+        return fail(400, {
+          error: `That place name is over ${ANCHOR_LABEL_MAX} characters; pick a shorter one.`,
+        });
+      anchor = { source, label, lat, lon };
+    } else if (source === "stop") {
+      const stopId = Number(form.get("stop_id"));
+      if (!Number.isInteger(stopId) || stopId <= 0)
+        return fail(400, { error: "Choose a stop." });
+      anchor = await stopAsAnchor(userId, tripId, stopId);
+      if (!anchor)
+        return fail(400, { error: "That stop isn't on this trip or has no location." });
+    } else if (source === "home") {
+      const home = await homeOf(userId);
+      if (!home)
+        return fail(400, { error: "Set a home location in Settings first." });
+      anchor = {
+        source,
+        label: home.label?.trim() || "Home",
+        lat: home.lat,
+        lon: home.lon,
+      };
+    } else {
+      return fail(400, { error: "Bad start & end choice." });
+    }
+    if (!(await setTripAnchor(userId, tripId, anchor)))
+      return fail(404, { error: "Trip not found." });
+    return {
+      ok: true as const,
+      message: `Start & end set to ${anchor.label}.`,
+    };
+  },
+
+  clear_anchor: async ({ locals, params }) => {
+    const tripId = tripIdFrom(params);
+    if (!(await setTripAnchor(locals.user!.id, tripId, null)))
+      return fail(404, { error: "Trip not found." });
+    return { ok: true as const, message: "Start & end removed." };
   },
 
   /** Create (or regenerate) the public share link. Ownership is re-checked

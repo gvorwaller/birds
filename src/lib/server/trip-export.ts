@@ -16,9 +16,12 @@
  * tips, and the actual needed-species lists — which needsCountForStops always
  * computed and the old export threw away, keeping only `.size`. Stops checked
  * off on the trip (td-40a1b5) say so, and the Navigate link skips them; a trip
- * with nothing checked off exports exactly as before.
+ * with nothing checked off exports exactly as before. A trip's start & end
+ * point (td-0f3c63) appears only in the owner's exports — the public share
+ * page never reveals it (owner decision: it is usually where they're staying).
  */
 import type { Trip, TripStop } from '$server/trips';
+import { tripAnchor } from '$lib/trip-anchor';
 import { formatDistance, mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 import { normalizeTripStopNote } from '$lib/planner-note';
 import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type AnyTripCountContext } from '$lib/trip-count-context';
@@ -103,14 +106,22 @@ function stopName(s: TripStop): string {
 	return s.custom_name ?? 'Stop';
 }
 
-/** The Navigate link: located stops not yet checked off, labelled. */
-function navigateRoute(stops: TripStop[]): { url: string; label: string } | null {
+/** The owner's start & end point, or null — always null on the shared page. */
+function exportAnchor(data: TripExportData): { lat: number; lng: number; label: string } | null {
+	if (data.mode === 'shared') return null;
+	const a = tripAnchor(data.trip);
+	return a ? { lat: a.lat, lng: a.lon, label: a.label } : null;
+}
+
+/** The Navigate link: located stops not yet checked off (then the anchor), labelled. */
+function navigateRoute(data: TripExportData): { url: string; label: string } | null {
 	const route = remainingRoute(
-		stops
+		data.stops
 			.filter((s) => s.lat != null && s.lon != null)
-			.map((s) => ({ lat: s.lat as number, lng: s.lon as number, visited: s.visited }))
+			.map((s) => ({ lat: s.lat as number, lng: s.lon as number, visited: s.visited })),
+		exportAnchor(data)
 	);
-	return route ? { url: mapsRouteUrl(route.stops), label: route.label } : null;
+	return route ? { url: mapsRouteUrl(route.points), label: route.label } : null;
 }
 
 /** "3" or, once anything is checked off, "3 · 1 visited". */
@@ -150,13 +161,15 @@ export function buildTripMarkdown(data: TripExportData): string {
 
 	const dates = fmtDates(trip);
 	if (dates) lines.push(`**Dates:** ${dates}`, '');
+	const anchor = exportAnchor(data);
+	if (anchor) lines.push(`**Start & end:** ${anchor.label}`, '');
 	if (trip.notes) lines.push(trip.notes, '');
 
 	lines.push(`## Stops (${stopsCount(stops)})`, '');
 	if (stops.length === 0) {
 		lines.push('_No stops yet._', '');
 	}
-	const navigate = navigateRoute(stops);
+	const navigate = navigateRoute(data);
 	if (navigate) {
 		lines.push(`[🧭 ${navigate.label}](${navigate.url})`, '');
 	}
@@ -277,6 +290,8 @@ export function buildTripHtml(data: TripExportData): string {
 
 	parts.push(`<h1>${esc(trip.name)}</h1>`);
 	if (dates) parts.push(`<p class="muted">${esc(dates)}</p>`);
+	const anchor = exportAnchor(data);
+	if (anchor) parts.push(`<p class="muted">Start &amp; end: ${esc(anchor.label)}</p>`);
 	if (!shared) {
 		parts.push(`<a class="openapp" href="${esc(`${origin}/trips/${trip.id}`)}">Open in app ↗</a>`);
 	}
@@ -284,7 +299,7 @@ export function buildTripHtml(data: TripExportData): string {
 
 	parts.push(`<h2>Stops (${esc(stopsCount(stops))})</h2>`);
 	if (stops.length === 0) parts.push(`<p class="muted">No stops yet.</p>`);
-	const navigate = navigateRoute(stops);
+	const navigate = navigateRoute(data);
 	if (navigate) {
 		parts.push(`<p><a href="${esc(navigate.url)}">🧭 ${esc(navigate.label)}</a></p>`);
 	}

@@ -3,6 +3,7 @@
   import { env } from "$env/dynamic/public";
   import { loadGoogleMaps } from "$lib/google-maps";
   import { mapsPlaceUrl, mapsDirectionsUrl } from "$lib/geo";
+  import { MAX_DIRECTIONS_WAYPOINTS } from "$lib/route";
 
   function escapeHtml(s: string): string {
     return s.replace(
@@ -33,10 +34,14 @@
   let {
     stops = [],
     extra = null,
+    anchor = null,
     onSummary,
   }: {
     stops?: MapStop[];
     extra?: MapStop | null;
+    /** The trip's start & end point (td-0f3c63): the drawn route and its
+     * summary loop anchor -> stops -> anchor. */
+    anchor?: { lat: number; lng: number; label: string } | null;
     /** Reports total driving distance/time of the drawn route, or null if it fell back to a straight line. */
     onSummary?: (s: { km: number; min: number } | null) => void;
   } = $props();
@@ -46,6 +51,7 @@
 
   let mapEl: HTMLDivElement;
   let loadError = $state("");
+  let routeNote = $state("");
 
   // On-demand satellite view on the existing vector map (no extra API/cost):
   // 'hybrid' = satellite imagery + labels, 'roadmap' = the styled base map.
@@ -112,11 +118,11 @@
       /* eslint-enable @typescript-eslint/no-explicit-any */
 
       const pts = stops.filter((s) => s.lat != null && s.lng != null);
-      const center = pts[0] ?? extra ?? { lat: 39.5, lng: -98.35 };
+      const center = pts[0] ?? anchor ?? extra ?? { lat: 39.5, lng: -98.35 };
 
       map = new Map(mapEl, {
         center: { lat: center.lat, lng: center.lng },
-        zoom: pts.length ? 11 : 6,
+        zoom: pts.length || anchor ? 11 : 6,
         mapId: MAP_ID || undefined,
         gestureHandling: "greedy",
         zoomControlOptions: { position: gmaps.ControlPosition.RIGHT_BOTTOM },
@@ -152,6 +158,33 @@
         bounds.extend({ lat: s.lat, lng: s.lng });
       });
 
+      if (anchor) {
+        // "S" for start & end, in a colour no stop or search pin uses.
+        const pin = new markerLib.PinElement({
+          background: "#4a2c82",
+          borderColor: "#2f1b55",
+          glyphColor: "#fff",
+          glyph: "S",
+        });
+        const am = new markerLib.AdvancedMarkerElement({
+          map,
+          position: { lat: anchor.lat, lng: anchor.lng },
+          title: `Start & end: ${anchor.label}`,
+          content: pin.element,
+          zIndex: 2,
+        });
+        am.addListener("click", () => {
+          info.setContent(
+            `<b>Start &amp; end: ${escapeHtml(anchor.label)}</b>` +
+              `<div style="margin-top:6px;font-weight:600">` +
+              `<a href="${mapsDirectionsUrl({ name: anchor.label, lat: anchor.lat, lng: anchor.lng })}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
+              `</div>`,
+          );
+          info.open({ map, anchor: am });
+        });
+        bounds.extend({ lat: anchor.lat, lng: anchor.lng });
+      }
+
       if (extra) {
         const pin = new markerLib.PinElement({
           background: "#084298",
@@ -167,10 +200,17 @@
         bounds.extend({ lat: extra.lat, lng: extra.lng });
       }
 
+      // With an anchor the day is a loop: anchor -> stops -> anchor.
+      const loop = anchor ? { lat: anchor.lat, lng: anchor.lng } : null;
+      const path = [
+        ...(loop ? [loop] : []),
+        ...pts.map((s) => ({ lat: s.lat, lng: s.lng })),
+        ...(loop ? [loop] : []),
+      ];
       const drawStraightLine = () => {
         new gmaps.Polyline({
           map,
-          path: pts.map((s) => ({ lat: s.lat, lng: s.lng })),
+          path,
           strokeColor: "#0a5c43",
           strokeOpacity: 0.8,
           strokeWeight: 3,
@@ -180,7 +220,13 @@
       // Draw the REAL road route through the stops (in current order) so the
       // drive is visible — a straight line across a bridgeless bay is a lie.
       // Falls back to the straight line if Directions is unavailable.
-      if (pts.length >= 2) {
+      if (path.length - 2 > MAX_DIRECTIONS_WAYPOINTS) {
+        // Google can't route this many stops in one request: say so rather
+        // than silently drop the drive total.
+        drawStraightLine();
+        onSummary?.(null);
+        routeNote = `Driving route and total unavailable: Google routes at most ${MAX_DIRECTIONS_WAYPOINTS} stops between the start and the end. Showing straight lines.`;
+      } else if (pts.length >= 1 && path.length >= 2) {
         /* eslint-disable @typescript-eslint/no-explicit-any */
         const routesLib = libs.routes as any;
         /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -197,13 +243,10 @@
             },
           });
           const res = await svc.route({
-            origin: { lat: pts[0].lat, lng: pts[0].lng },
-            destination: {
-              lat: pts[pts.length - 1].lat,
-              lng: pts[pts.length - 1].lng,
-            },
-            waypoints: pts.slice(1, -1).map((s) => ({
-              location: { lat: s.lat, lng: s.lng },
+            origin: path[0],
+            destination: path[path.length - 1],
+            waypoints: path.slice(1, -1).map((p) => ({
+              location: p,
               stopover: true,
             })),
             travelMode: "DRIVING",
@@ -224,12 +267,12 @@
         onSummary?.(null);
       }
 
-      const multi = pts.length + (extra ? 1 : 0) >= 2;
+      const multi = pts.length + (extra ? 1 : 0) + (anchor ? 1 : 0) >= 2;
       const applyView = () => {
         if (multi) map.fitBounds(bounds, 48);
         else {
           map.setCenter({ lat: center.lat, lng: center.lng });
-          map.setZoom(pts.length ? 11 : 6);
+          map.setZoom(pts.length || anchor ? 11 : 6);
         }
       };
       applyView();
@@ -254,6 +297,9 @@
 
 {#if loadError}
   <p class="err" role="alert">{loadError}</p>
+{/if}
+{#if routeNote}
+  <p class="note">{routeNote}</p>
 {/if}
 <div class="map-wrap">
   <div class="map" bind:this={mapEl}></div>
@@ -299,6 +345,11 @@
     border-radius: 8px;
     overflow: hidden;
     background: var(--placeholder-bg);
+  }
+  .note {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 8px;
   }
   .err {
     color: var(--danger);

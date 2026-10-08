@@ -588,15 +588,29 @@
 						change a viewer can make to a trip.
 					</li>
 					<li>
+						<strong>Start &amp; end point</strong> — set one, such as your hotel,
+						so the map shows the real day's drive: from there, through the stops in
+						order, and back, with its total time and distance. Choose it with
+						<strong>Set start &amp; end point</strong> under Stops: your saved home,
+						one of the stops, or any place you search for or tap on the map. It is a
+						copy, so later changes to that stop or your home don't move it.
+						<strong>Optimize order</strong> then plans the best loop from it, however
+						far it is from home. Remove it anytime. Family viewers see it but can't
+						change it.
+					</li>
+					<li>
 						<strong>Directions</strong> — a link opens the route in Google Maps
-						for turn-by-turn navigation. Once you've checked stops off, it goes
-						only through the stops left.
+						for turn-by-turn navigation, starting from wherever your phone is. Once
+						you've checked stops off, it goes only through the stops left; with a
+						start &amp; end point it finishes back there.
 					</li>
 					<li>
 						<strong>Export</strong> — 🔗 Export opens a self-contained field
 						sheet in a browser tab (savable, printable, dark-mode aware) with
 						your per-stop needs and field tips; ⬇ .md downloads Markdown.
 						Checked-off stops are marked “✓ visited” there and on a share link.
+						Your exports also name the start &amp; end point; a share link never
+						shows it, so it doesn't reveal where you're staying.
 					</li>
 					<li>
 						<strong>Share text</strong> — opens the trip text in an in-app panel
