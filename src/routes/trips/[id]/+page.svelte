@@ -550,6 +550,119 @@
     </section>
   {/if}
 
+  <!-- Start & end point (td-0f3c63) sits above the map: it changes the
+       route and drive total drawn there. -->
+  {#if data.anchor || data.canEdit}
+    <section class="card anchor-card" aria-label="Start and end point">
+    <div class="anchor">
+      {#if data.anchor}
+        <div class="anchor-row">
+          <span class="anchor-dot" aria-hidden="true">S</span>
+          <div class="grow">
+            <div class="name">
+              {data.anchor.label}
+              <span class="anchor-tag">Start &amp; end</span>
+            </div>
+            <div class="meta">
+              The map's route, its drive time and distance, and Optimize order
+              run from here, through the stops, and back. {anchorSourceNote}
+            </div>
+          </div>
+        </div>
+      {:else if data.canEdit}
+        <p class="meta">
+          No start &amp; end point: the drive is measured from stop 1 to the last
+          stop. Set one, such as your hotel, to see the real day's drive.
+        </p>
+      {/if}
+      {#if data.canEdit}
+        <div class="anchor-controls">
+          <details class="anchor-edit" bind:open={anchorOpen}>
+            <summary
+              >{data.anchor ? "Change start & end" : "Set start & end point"}</summary
+            >
+            <div class="anchor-choices">
+              {#if data.home}
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="home" />
+                  <button type="submit" class="small"
+                    >⌂ Use my saved home ({data.home.label?.trim() ||
+                      "Home"})</button
+                  >
+                </form>
+              {/if}
+              {#if locatedStops.length > 0}
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="stop" />
+                  <label
+                    ><span>One of the stops</span>
+                    <select name="stop_id">
+                      {#each data.stops as s, i (s.id)}
+                        {#if s.lat != null && s.lon != null}
+                          <option value={s.id}
+                            >{i + 1}. {s.custom_name ?? "Stop"}</option
+                          >
+                        {/if}
+                      {/each}
+                    </select>
+                  </label>
+                  <button type="submit" class="small">Use this stop</button>
+                </form>
+              {/if}
+              <h3 class="sub2">Or search or tap the map</h3>
+              {#if anchorOpen}
+                <!-- Mounted only while open: a map in a closed <details>
+                     renders blank. MapPicker has its own search form, so the
+                     place form below is its sibling, not its parent. -->
+                <MapPicker
+                  bind:selected={anchorPicked}
+                  initialLat={anchorSeed?.lat ?? null}
+                  initialLng={anchorSeed?.lng ?? null}
+                  initialLabel={anchorSeed?.label}
+                />
+                <form
+                  method="POST"
+                  action="?/set_anchor"
+                  use:enhance={anchorEnhance}
+                >
+                  <input type="hidden" name="source" value="place" />
+                  <input
+                    type="hidden"
+                    name="label"
+                    value={anchorChoice?.label ?? ""}
+                  />
+                  <input type="hidden" name="lat" value={anchorChoice?.lat ?? ""} />
+                  <input type="hidden" name="lon" value={anchorChoice?.lng ?? ""} />
+                  <button type="submit" class="small" disabled={!anchorChoice}
+                    >{anchorChoice
+                      ? `Use ${anchorChoice.label}`
+                      : "Search or tap the map first"}</button
+                  >
+                </form>
+              {/if}
+            </div>
+          </details>
+          {#if data.anchor}
+            <form method="POST" action="?/clear_anchor" use:enhance>
+              <button type="submit" class="small secondary-btn"
+                >Remove start &amp; end</button
+              >
+            </form>
+          {/if}
+        </div>
+      {/if}
+    </div>
+    </section>
+  {/if}
+
   {#if mapStops.length > 0 || mapExtra || anchorPoint}
     <section class="card map-card">
       <!-- Keyed on stop identity + position, not visited: a check-off
@@ -688,112 +801,6 @@
     {#if data.stops.length === 0}
       <p class="muted">No stops yet — add one below.</p>
     {/if}
-    <div class="anchor">
-      {#if data.anchor}
-        <div class="anchor-row">
-          <span class="anchor-dot" aria-hidden="true">S</span>
-          <div class="grow">
-            <div class="name">
-              {data.anchor.label}
-              <span class="anchor-tag">Start &amp; end</span>
-            </div>
-            <div class="meta">
-              The map's route, its drive time and distance, and Optimize order
-              run from here, through the stops, and back. {anchorSourceNote}
-            </div>
-          </div>
-        </div>
-      {:else if data.canEdit}
-        <p class="meta">
-          No start &amp; end point: the drive is measured from stop 1 to the last
-          stop. Set one, such as your hotel, to see the real day's drive.
-        </p>
-      {/if}
-      {#if data.canEdit}
-        <div class="anchor-controls">
-          <details class="anchor-edit" bind:open={anchorOpen}>
-            <summary
-              >{data.anchor ? "Change start & end" : "Set start & end point"}</summary
-            >
-            <div class="anchor-choices">
-              {#if data.home}
-                <form
-                  method="POST"
-                  action="?/set_anchor"
-                  use:enhance={anchorEnhance}
-                >
-                  <input type="hidden" name="source" value="home" />
-                  <button type="submit" class="small"
-                    >⌂ Use my saved home ({data.home.label?.trim() ||
-                      "Home"})</button
-                  >
-                </form>
-              {/if}
-              {#if locatedStops.length > 0}
-                <form
-                  method="POST"
-                  action="?/set_anchor"
-                  use:enhance={anchorEnhance}
-                >
-                  <input type="hidden" name="source" value="stop" />
-                  <label
-                    ><span>One of the stops</span>
-                    <select name="stop_id">
-                      {#each data.stops as s, i (s.id)}
-                        {#if s.lat != null && s.lon != null}
-                          <option value={s.id}
-                            >{i + 1}. {s.custom_name ?? "Stop"}</option
-                          >
-                        {/if}
-                      {/each}
-                    </select>
-                  </label>
-                  <button type="submit" class="small">Use this stop</button>
-                </form>
-              {/if}
-              <h3 class="sub2">Or search or tap the map</h3>
-              {#if anchorOpen}
-                <!-- Mounted only while open: a map in a closed <details>
-                     renders blank. MapPicker has its own search form, so the
-                     place form below is its sibling, not its parent. -->
-                <MapPicker
-                  bind:selected={anchorPicked}
-                  initialLat={anchorSeed?.lat ?? null}
-                  initialLng={anchorSeed?.lng ?? null}
-                  initialLabel={anchorSeed?.label}
-                />
-                <form
-                  method="POST"
-                  action="?/set_anchor"
-                  use:enhance={anchorEnhance}
-                >
-                  <input type="hidden" name="source" value="place" />
-                  <input
-                    type="hidden"
-                    name="label"
-                    value={anchorChoice?.label ?? ""}
-                  />
-                  <input type="hidden" name="lat" value={anchorChoice?.lat ?? ""} />
-                  <input type="hidden" name="lon" value={anchorChoice?.lng ?? ""} />
-                  <button type="submit" class="small" disabled={!anchorChoice}
-                    >{anchorChoice
-                      ? `Use ${anchorChoice.label}`
-                      : "Search or tap the map first"}</button
-                  >
-                </form>
-              {/if}
-            </div>
-          </details>
-          {#if data.anchor}
-            <form method="POST" action="?/clear_anchor" use:enhance>
-              <button type="submit" class="small secondary-btn"
-                >Remove start &amp; end</button
-              >
-            </form>
-          {/if}
-        </div>
-      {/if}
-    </div>
     {#if visitedError}<p class="err" role="alert">{visitedError}</p>{/if}
     {#each data.stops as s, i (s.id)}
       {@const visited = isVisited(s)}
@@ -1544,8 +1551,8 @@
     font-size: 0.85rem;
   }
   /* Start & end point (td-0f3c63). */
-  .anchor {
-    padding: 4px 0 10px;
+  .anchor-card .anchor > .meta:first-child {
+    margin-top: 0;
   }
   .anchor-row {
     display: flex;

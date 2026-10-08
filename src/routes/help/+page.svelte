@@ -591,7 +591,7 @@
 						<strong>Start &amp; end point</strong> — set one, such as your hotel,
 						so the map shows the real day's drive: from there, through the stops in
 						order, and back, with its total time and distance. Choose it with
-						<strong>Set start &amp; end point</strong> under Stops: your saved home,
+						<strong>Set start &amp; end point</strong> just above the trip's map: your saved home,
 						one of the stops, or any place you search for or tap on the map. It is a
 						copy, so later changes to that stop or your home don't move it.
 						<strong>Optimize order</strong> then plans the best loop from it, however
