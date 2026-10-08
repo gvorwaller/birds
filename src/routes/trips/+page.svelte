@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from "$app/forms";
 	import DatePicker from "$components/DatePicker.svelte";
+	import { visitedCountLabel } from "$lib/trip-visited";
 	import type { ActionData, PageData } from "./$types";
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -82,7 +83,8 @@
 				<div class="name">{t.name}</div>
 				<div class="meta">
 					{fmtDates(t.start_date, t.end_date)} · {t.stop_count}
-					{t.stop_count === 1 ? "stop" : "stops"}
+					{t.stop_count === 1 ? "stop" : "stops"}{#if t.visited_count > 0}{" "}·
+						{visitedCountLabel(t.visited_count, t.stop_count)}{/if}
 				</div>
 			</div>
 			<div class="chev">›</div>

@@ -29,6 +29,7 @@ import {
   optimizeStopOrder,
   removeStop,
   setStopOrder,
+  setStopVisited,
   updateStopFieldTips,
   updateStopNotes,
   updateTrip,
@@ -420,6 +421,29 @@ export const actions: Actions = {
     if (!Number.isInteger(stopId)) return fail(400, { error: "Bad stop id." });
     await updateStopNotes(locals.user!.id, tripId, stopId, notes);
     return { ok: true as const, message: "Note saved." };
+  },
+
+  // Check a stop off (td-40a1b5). The one trip action viewers may use (hooks
+  // allow exactly this first action), so ownership is the trip owner this
+  // account reads, not the signed-in account. `visited` is the explicit new
+  // value, never a toggle: a double-submit cannot undo itself.
+  set_visited: async ({ locals, params, request }) => {
+    const tripId = tripIdFrom(params);
+    const form = await request.formData();
+    const stopId = Number(form.get("stop_id"));
+    const visited = form.get("visited");
+    if (!Number.isInteger(stopId) || stopId <= 0)
+      return fail(400, { error: "Bad stop id." });
+    if (visited !== "true" && visited !== "false")
+      return fail(400, { error: "Bad visited value." });
+    const ok = await setStopVisited(
+      locals.scopeId!,
+      tripId,
+      stopId,
+      visited === "true",
+    );
+    if (!ok) return fail(404, { error: "That stop is no longer on this trip." });
+    return { ok: true as const };
   },
 
   /** Create (or regenerate) the public share link. Ownership is re-checked

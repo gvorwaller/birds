@@ -70,3 +70,23 @@ it("lets a viewer search and reset Home (their own remembered search) but nothin
     expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
   }
 });
+
+it("lets a viewer check off a stop on a trip (td-40a1b5) but make no other trip change", async () => {
+  for (const [path,method,expected] of [
+    ['/trips/7?/set_visited','POST',200],
+    ['/trips/7?/remove_stop','POST',403],
+    ['/trips/7?/move_stop&/set_visited','POST',403],
+    ['/trips/7?/set_visited','PUT',403],
+    ['/trips?/set_visited','POST',403],
+    ['/trips/plan?/set_visited','POST',403],
+    ['/trips/7/export?/set_visited','POST',403],
+  ] as const) {
+    const url = new URL('http://localhost'+path);
+    const resolve = vi.fn(async () => new Response('resolved'));
+    const event = {url, request:new Request(url,{method}), locals:{user:{id:2,role:'viewer'},scopeId:1}, cookies:{get:()=>undefined}};
+    const response = await handle({event,resolve} as unknown as Parameters<typeof handle>[0]);
+    expect(response.status, `${method} ${path}`).toBe(expected);
+    await response.text();
+    expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
+  }
+});

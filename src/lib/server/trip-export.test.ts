@@ -36,6 +36,7 @@ const stop = (over: Partial<TripStop>): TripStop => ({
   target_count_at_save: null,
   field_tip: null,
   field_tip_generated_at: null,
+  visited: false,
   ...over,
 });
 
@@ -187,6 +188,55 @@ describe("buildTripMarkdown", () => {
     expect(out).toContain("When planned: 2 species in the area-feed preview");
     expect(out).toContain("cached/stale feed");
     expect(out).not.toContain("(was");
+  });
+});
+
+// td-40a1b5: stops checked off on the trip.
+describe("checked-off stops in exports", () => {
+  const checked = (ids: number[]): TripExportData => ({
+    ...DATA,
+    stops: DATA.stops.map((s) => ({ ...s, visited: ids.includes(s.id) })),
+  });
+
+  it("nothing checked off: the export is byte-identical to before", () => {
+    const none = checked([]);
+    expect(buildTripMarkdown(none)).toBe(buildTripMarkdown(DATA));
+    expect(buildTripHtml(none)).toBe(buildTripHtml(DATA));
+    expect(buildTripMarkdown(none)).not.toContain("visited");
+    // CODEX1 P2: not even the check-off CSS rides along on an untouched trip.
+    expect(buildTripHtml(none)).not.toContain("visited");
+  });
+
+  it("markdown marks the visited stop, counts it, and navigates only what's left", () => {
+    const md = buildTripMarkdown(checked([1]));
+    expect(md).toContain("## Stops (3 · 1 visited)");
+    expect(md).toContain(
+      "### 1. [Ding Darling NWR](https://birds.example.test/hotspots/L123456) ✓ visited",
+    );
+    expect(md).not.toMatch(/### 2\..*visited/);
+    // Stop 3 has no coordinates, so one located stop is left: Bunche Beach.
+    const nav = md.match(/\[🧭 Navigate to the last stop left\]\(([^)]+)\)/)?.[1];
+    expect(nav).toContain("26.47%2C-81.97");
+    expect(nav).not.toContain("26.44");
+    expect(md).not.toContain("Navigate all stops");
+  });
+
+  it("HTML strikes the visited stop through with a text label, escaped as before", () => {
+    const html = buildTripHtml(checked([2]));
+    expect(html).toContain("<h2>Stops (3 · 1 visited)</h2>");
+    expect(html).toContain(
+      '<h3 class="visited">2. Bunche Beach &lt;img src=x onerror=alert(1)&gt; <span class="mark">✓ visited</span></h3>',
+    );
+    expect(html).toMatch(/<h3>1\. <a /);
+    expect(html).not.toContain("<img");
+  });
+
+  it("no Navigate link once every located stop is visited; the shared sheet shows marks too", () => {
+    const all = checked([1, 2]);
+    expect(buildTripMarkdown(all)).not.toContain("🧭");
+    const shared = buildTripHtml({ ...all, mode: "shared" });
+    expect(shared).not.toContain("🧭");
+    expect(shared).toContain('<h3 class="visited">1. Ding Darling NWR <span class="mark">✓ visited</span></h3>');
   });
 });
 

@@ -579,13 +579,24 @@
 						Open one to see its stops, map, weather, and field tips.
 					</li>
 					<li>
-						<strong>Directions</strong> — a link opens the full route in Google
-						Maps for turn-by-turn navigation.
+						<strong>Check off stops</strong> — tick the box under a stop's number
+						once you've been there. Its name is struck through and marked
+						Visited, its map pin turns grey, and the Stops heading counts
+						“2 / 5 visited” (the Trips list shows the same count). Tick it again
+						to undo. The owner and the owner's family viewers share the
+						check-offs, so either phone can tick stops; checking off is the only
+						change a viewer can make to a trip.
+					</li>
+					<li>
+						<strong>Directions</strong> — a link opens the route in Google Maps
+						for turn-by-turn navigation. Once you've checked stops off, it goes
+						only through the stops left.
 					</li>
 					<li>
 						<strong>Export</strong> — 🔗 Export opens a self-contained field
 						sheet in a browser tab (savable, printable, dark-mode aware) with
 						your per-stop needs and field tips; ⬇ .md downloads Markdown.
+						Checked-off stops are marked “✓ visited” there and on a share link.
 					</li>
 					<li>
 						<strong>Share text</strong> — opens the trip text in an in-app panel

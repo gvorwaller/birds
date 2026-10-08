@@ -1,5 +1,7 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
+  import { invalidateAll } from "$app/navigation";
+  import type { SubmitFunction } from "@sveltejs/kit";
   import { tick } from "svelte";
   import { env } from "$env/dynamic/public";
   import Badge from "$components/Badge.svelte";
@@ -17,6 +19,7 @@
   import { canonicalHref, withReturnTo } from "$lib/navigation-context";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { formatLegacyCountSnapshot, formatPlannedCountSnapshot } from "$lib/trip-count-context";
+  import { remainingRoute, visitedCountLabel } from "$lib/trip-visited";
   import {
     formatFeet,
     formatTideDate,
@@ -249,6 +252,48 @@
     }
   }
 
+  // Check-off (td-40a1b5). The tick shows at once; the server's answer then
+  // replaces it via the reload, or it reverts with an inline error. A second
+  // tap on the same stop while one is in flight is dropped, so responses
+  // can't land out of order.
+  let pendingVisited = $state<Record<number, boolean>>({});
+  let visitedError = $state("");
+  const isVisited = (s: { id: number; visited: boolean }) =>
+    pendingVisited[s.id] ?? s.visited;
+  const visitedCount = $derived(data.stops.filter(isVisited).length);
+
+  // `enhance` ignores later parameter changes, so the new value is read from
+  // the submitted form, never captured here.
+  function checkOff(stopId: number): SubmitFunction {
+    return ({ cancel, formData }) => {
+      if (stopId in pendingVisited) {
+        cancel();
+        return;
+      }
+      pendingVisited[stopId] = formData.get("visited") === "true";
+      visitedError = "";
+      return async ({ result }) => {
+        try {
+          if (result.type === "success") {
+            // Reload the data only: update()/applyAction would move focus to
+            // <body>, losing a keyboard user's place in the list.
+            await invalidateAll();
+          } else {
+            visitedError =
+              result.type === "failure" && typeof result.data?.error === "string"
+                ? `${result.data.error} The check-off was not saved.`
+                : "Could not save that check-off — it has been undone. Try again.";
+            // A 404 means the stop went away (removed elsewhere): show the
+            // trip as it is now. Other failures leave the page alone.
+            if (result.type === "failure") await invalidateAll();
+          }
+        } finally {
+          delete pendingVisited[stopId];
+        }
+      };
+    };
+  }
+
   let mapStops = $derived<MapStop[]>(
     data.stops
       .filter((s) => s.lat != null && s.lon != null)
@@ -258,6 +303,8 @@
         label: s.custom_name ?? s.hotspot_id ?? "Stop",
         order: i + 1,
         googlePlaceId: s.google_place_id,
+        id: s.id,
+        visited: isVisited(s),
       })),
   );
   let mapExtra = $derived<MapStop | null>(
@@ -271,11 +318,10 @@
       : null,
   );
   // Multi-waypoint Google Maps hand-off: from the device's location through
-  // every located stop in order. Needs ≥2 stops to be a "route".
+  // every located stop in order that isn't checked off yet (td-40a1b5).
+  let route = $derived(remainingRoute(mapStops));
   let routeUrl = $derived(
-    mapStops.length >= 2
-      ? mapsRouteUrl(mapStops.map((s) => ({ lat: s.lat, lng: s.lng })))
-      : "",
+    route ? mapsRouteUrl(route.stops.map((s) => ({ lat: s.lat, lng: s.lng }))) : "",
   );
 
   function fmtDates(start: string | null, end: string | null): string {
@@ -440,8 +486,11 @@
 
   {#if mapStops.length > 0 || mapExtra}
     <section class="card map-card">
+      <!-- Keyed on stop identity + position, not visited: a check-off
+           restyles pins in place, while a reorder (even of two stops at the
+           same spot) remounts so pin numbers stay matched to their stops. -->
       {#key mapStops
-        .map((s) => `${s.lat},${s.lng}`)
+        .map((s) => `${s.id}@${s.lat},${s.lng}`)
         .join("|") + (mapExtra ? `+${mapExtra.lat}` : "")}
         <TripMap
           stops={mapStops}
@@ -457,9 +506,9 @@
               {formatDuration(routeSummary.min)} driving (in order)
             </p>
           {/if}
-          {#if routeUrl}
+          {#if route && routeUrl}
             <a class="navigate" href={routeUrl} target="_blank" rel="noopener"
-              >🧭 Navigate all stops ↗</a
+              >🧭 {route.label} ↗</a
             >
           {/if}
         </div>
@@ -502,7 +551,11 @@
 
   <section class="card">
     <div class="stops-head">
-      <h2>Stops</h2>
+      <h2>
+        Stops{#if data.stops.length > 0}{" "}<span class="visit-count"
+            >{visitedCountLabel(visitedCount, data.stops.length)}</span
+          >{/if}
+      </h2>
       <div class="stops-actions">
         {#if data.stops.length > 0 && data.canEdit}
           <form
@@ -564,9 +617,37 @@
     {#if data.stops.length === 0}
       <p class="muted">No stops yet — add one below.</p>
     {/if}
+    {#if visitedError}<p class="err" role="alert">{visitedError}</p>{/if}
     {#each data.stops as s, i (s.id)}
-      <div class="stop path-focus-target" id={`trip-stop-${s.id}`}>
-        <div class="ordnum">{i + 1}</div>
+      {@const visited = isVisited(s)}
+      <div
+        class="stop path-focus-target"
+        class:visited
+        id={`trip-stop-${s.id}`}
+      >
+        <div class="lead">
+          <div class="ordnum">{i + 1}</div>
+          <!-- A real form POST, so it works before hydration and without JS;
+               role=checkbox gives it checkbox semantics for screen readers. -->
+          <form
+            method="POST"
+            action="?/set_visited"
+            use:enhance={checkOff(s.id)}
+          >
+            <input type="hidden" name="stop_id" value={s.id} />
+            <input type="hidden" name="visited" value={String(!visited)} />
+            <button
+              type="submit"
+              class="check"
+              role="checkbox"
+              aria-checked={visited}
+              aria-label={`Visited: ${s.custom_name ?? "Stop"}`}
+              title={visited ? "Visited — tap to uncheck" : "Check off as visited"}
+              ><span class="box" aria-hidden="true">{visited ? "✓" : ""}</span
+              ></button
+            >
+          </form>
+        </div>
         <div class="grow">
           <div class="name">
             {#if s.hotspot_id}
@@ -591,8 +672,9 @@
                 <span class="reported-status">Reported location</span>
               {/if}
             {:else}
-              {s.custom_name ?? "Stop"}
+              <span class="stop-title">{s.custom_name ?? "Stop"}</span>
             {/if}
+            {#if visited}<Badge kind="seen" label="Visited" />{/if}
           </div>
           {#if s.hotspot_id && !s.isVerifiedHotspot}
             <div class="meta reported-status">
@@ -1169,9 +1251,10 @@
   }
   .stops-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 0 12px;
   }
   .stops-head h2 {
     margin-bottom: 10px;
@@ -1263,6 +1346,13 @@
   .stop:first-of-type {
     border-top: none;
   }
+  .lead {
+    flex: 0 0 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
   .ordnum {
     flex: 0 0 28px;
     width: 28px;
@@ -1275,6 +1365,53 @@
     justify-content: center;
     font-weight: 700;
     font-size: 0.85rem;
+  }
+  /* Check-off (td-40a1b5): a 48px target around a 28px box. */
+  button.check {
+    width: 48px;
+    min-height: 48px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .check .box {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--on-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+  .check[aria-checked="true"] .box {
+    background: var(--accent);
+  }
+  .check:hover .box {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .visited .name .place-link,
+  .visited .name .stop-title {
+    color: var(--muted);
+    text-decoration-line: line-through;
+  }
+  .visited .name .place-link {
+    text-decoration-line: underline line-through;
+  }
+  .visit-count {
+    white-space: nowrap;
+    margin-left: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
   }
   .grow {
     flex: 1;

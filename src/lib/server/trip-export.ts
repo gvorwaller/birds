@@ -14,12 +14,15 @@
  * Content both formats share: "Open in app" link, per-stop deep links back
  * into the app (hotspot pages, field-guide species pages), per-stop AI field
  * tips, and the actual needed-species lists — which needsCountForStops always
- * computed and the old export threw away, keeping only `.size`.
+ * computed and the old export threw away, keeping only `.size`. Stops checked
+ * off on the trip (td-40a1b5) say so, and the Navigate link skips them; a trip
+ * with nothing checked off exports exactly as before.
  */
 import type { Trip, TripStop } from '$server/trips';
 import { formatDistance, mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 import { normalizeTripStopNote } from '$lib/planner-note';
 import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type AnyTripCountContext } from '$lib/trip-count-context';
+import { remainingRoute } from '$lib/trip-visited';
 
 export interface TripExportData {
 	trip: Trip;
@@ -100,10 +103,20 @@ function stopName(s: TripStop): string {
 	return s.custom_name ?? 'Stop';
 }
 
-function routePoints(stops: TripStop[]): { lat: number; lng: number }[] {
-	return stops
-		.filter((s) => s.lat != null && s.lon != null)
-		.map((s) => ({ lat: s.lat as number, lng: s.lon as number }));
+/** The Navigate link: located stops not yet checked off, labelled. */
+function navigateRoute(stops: TripStop[]): { url: string; label: string } | null {
+	const route = remainingRoute(
+		stops
+			.filter((s) => s.lat != null && s.lon != null)
+			.map((s) => ({ lat: s.lat as number, lng: s.lon as number, visited: s.visited }))
+	);
+	return route ? { url: mapsRouteUrl(route.stops), label: route.label } : null;
+}
+
+/** "3" or, once anything is checked off, "3 · 1 visited". */
+function stopsCount(stops: TripStop[]): string {
+	const visited = stops.filter((s) => s.visited).length;
+	return visited > 0 ? `${stops.length} · ${visited} visited` : String(stops.length);
 }
 
 function needsLabel(n: number, shared: boolean): string {
@@ -139,22 +152,23 @@ export function buildTripMarkdown(data: TripExportData): string {
 	if (dates) lines.push(`**Dates:** ${dates}`, '');
 	if (trip.notes) lines.push(trip.notes, '');
 
-	lines.push(`## Stops (${stops.length})`, '');
+	lines.push(`## Stops (${stopsCount(stops)})`, '');
 	if (stops.length === 0) {
 		lines.push('_No stops yet._', '');
 	}
-	const points = routePoints(stops);
-	if (points.length >= 2) {
-		lines.push(`[🧭 Navigate all stops](${mapsRouteUrl(points)})`, '');
+	const navigate = navigateRoute(stops);
+	if (navigate) {
+		lines.push(`[🧭 ${navigate.label}](${navigate.url})`, '');
 	}
 	stops.forEach((s, i) => {
 		const name = stopName(s);
+		const mark = s.visited ? ' ✓ visited' : '';
 		// Deep link into the app's own hotspot page when the stop IS a hotspot;
 		// the external eBird link below stays for the eBird-native view.
 		lines.push(
 			s.hotspot_id && !shared
-				? `### ${i + 1}. [${name}](${origin}/hotspots/${s.hotspot_id})`
-				: `### ${i + 1}. ${name}`
+				? `### ${i + 1}. [${name}](${origin}/hotspots/${s.hotspot_id})${mark}`
+				: `### ${i + 1}. ${name}${mark}`
 		);
 		const meta: string[] = [];
 		const n = counts.get(s.id);
@@ -249,6 +263,12 @@ footer { margin-top: 32px; border-top: 1px solid var(--rule); padding-top: 8px; 
 }
 `.trim();
 
+/** Added only when a stop is checked off, so untouched trips export unchanged. */
+const VISITED_STYLE = `
+h3.visited > a, h3.visited { text-decoration: line-through; }
+h3.visited .mark { display: inline-block; text-decoration: none; font-size: 0.85rem; color: var(--muted); }
+`.trim();
+
 export function buildTripHtml(data: TripExportData): string {
 	const { trip, stops, counts, species, origin } = data;
 	const shared = data.mode === 'shared';
@@ -262,19 +282,21 @@ export function buildTripHtml(data: TripExportData): string {
 	}
 	if (trip.notes) parts.push(`<p>${esc(trip.notes)}</p>`);
 
-	parts.push(`<h2>Stops (${stops.length})</h2>`);
+	parts.push(`<h2>Stops (${esc(stopsCount(stops))})</h2>`);
 	if (stops.length === 0) parts.push(`<p class="muted">No stops yet.</p>`);
-	const points = routePoints(stops);
-	if (points.length >= 2) {
-		parts.push(`<p><a href="${esc(mapsRouteUrl(points))}">🧭 Navigate all stops</a></p>`);
+	const navigate = navigateRoute(stops);
+	if (navigate) {
+		parts.push(`<p><a href="${esc(navigate.url)}">🧭 ${esc(navigate.label)}</a></p>`);
 	}
 
 	stops.forEach((s, i) => {
 		const name = stopName(s);
+		const open = s.visited ? '<h3 class="visited">' : '<h3>';
+		const mark = s.visited ? ' <span class="mark">✓ visited</span>' : '';
 		parts.push(
 			s.hotspot_id && !shared
-				? `<h3>${i + 1}. <a href="${esc(`${origin}/hotspots/${s.hotspot_id}`)}">${esc(name)}</a></h3>`
-				: `<h3>${i + 1}. ${esc(name)}</h3>`
+				? `${open}${i + 1}. <a href="${esc(`${origin}/hotspots/${s.hotspot_id}`)}">${esc(name)}</a>${mark}</h3>`
+				: `${open}${i + 1}. ${esc(name)}${mark}</h3>`
 		);
 		const meta: string[] = [];
 		const n = counts.get(s.id);
@@ -331,7 +353,7 @@ export function buildTripHtml(data: TripExportData): string {
 			? ['<meta name="robots" content="noindex">', '<meta name="referrer" content="no-referrer">']
 			: []),
 		`<title>${esc(trip.name)}</title>`,
-		`<style>${HTML_STYLE}</style>`,
+		`<style>${stops.some((s) => s.visited) ? `${HTML_STYLE}\n${VISITED_STYLE}` : HTML_STYLE}</style>`,
 		'</head>',
 		'<body>',
 		...parts,

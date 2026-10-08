@@ -24,6 +24,10 @@
     label: string;
     order: number;
     googlePlaceId?: string | null;
+    /** The trip stop's id, when the stop is saved (keys the caller's remount). */
+    id?: number;
+    /** Checked off on the trip (td-40a1b5): drawn as a faded pin. */
+    visited?: boolean;
   }
 
   let {
@@ -49,6 +53,46 @@
   let map: any = null;
   let satellite = $state(false);
   let mapReady = $state(false);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  let markerLib: any = null;
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const markers: Array<{ order: number; marker: any }> = [];
+
+  // Visited stops fade to light grey with a dark number (11:1) and sit under
+  // the ones still to visit.
+  function pinFor(s: MapStop) {
+    return new markerLib.PinElement(
+      s.visited
+        ? {
+            background: "#ced4da",
+            borderColor: "#868e96",
+            glyphColor: "#212529",
+            glyph: String(s.order),
+          }
+        : {
+            background: "#0a5c43",
+            borderColor: "#07472f",
+            glyphColor: "#fff",
+            glyph: String(s.order),
+          },
+    );
+  }
+  const markerTitle = (s: MapStop) => (s.visited ? `${s.label} (visited)` : s.label);
+
+  // A check-off changes only `visited`, which doesn't remount the map (the
+  // caller keys it on stop ids + positions, so `order` names the same stop
+  // for this mount's lifetime); restyle the existing pins in place.
+  $effect(() => {
+    const byOrder = new Map(stops.map((s) => [s.order, s]));
+    if (!mapReady) return;
+    for (const { order, marker } of markers) {
+      const s = byOrder.get(order);
+      if (!s) continue;
+      marker.content = pinFor(s).element;
+      marker.title = markerTitle(s);
+      marker.zIndex = s.visited ? 0 : 1;
+    }
+  });
   function toggleSatellite() {
     satellite = !satellite;
     map?.setMapTypeId(satellite ? "hybrid" : "roadmap");
@@ -63,7 +107,7 @@
       const libs = await loadGoogleMaps(API_KEY, ["maps", "marker", "routes"]);
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const gmaps = (window as any).google.maps;
-      const markerLib = libs.marker as any;
+      markerLib = libs.marker as any;
       const { Map } = libs.maps as any;
       /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -84,21 +128,20 @@
       const bounds = new gmaps.LatLngBounds();
 
       pts.forEach((s) => {
-        const pin = new markerLib.PinElement({
-          background: "#0a5c43",
-          borderColor: "#07472f",
-          glyphColor: "#fff",
-          glyph: String(s.order),
-        });
         const m = new markerLib.AdvancedMarkerElement({
           map,
           position: { lat: s.lat, lng: s.lng },
-          title: s.label,
-          content: pin.element,
+          title: markerTitle(s),
+          content: pinFor(s).element,
+          zIndex: s.visited ? 0 : 1,
         });
+        markers.push({ order: s.order, marker: m });
         m.addListener("click", () => {
+          // Read the current prop: the stop may have been checked off since.
+          const visited = stops.find((x) => x.order === s.order)?.visited;
           info.setContent(
             `<b>${s.order}. ${escapeHtml(s.label)}</b>` +
+              (visited ? `<div style="margin-top:4px">✓ Visited</div>` : "") +
               `<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
               `<a href="${mapsPlaceUrl({ name: s.label, lat: s.lat, lng: s.lng, google_place_id: s.googlePlaceId })}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
               `<a href="${mapsDirectionsUrl({ name: s.label, lat: s.lat, lng: s.lng, google_place_id: s.googlePlaceId })}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +

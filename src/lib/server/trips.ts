@@ -35,10 +35,13 @@ export interface TripStop {
   planned_count_context?: AnyTripCountContext | null;
   field_tip: string | null;
   field_tip_generated_at: string | null;
+  /** Checked off in the field (td-40a1b5); shared by the owner and viewers. */
+  visited: boolean;
 }
 
 export interface TripSummary extends Trip {
   stop_count: number;
+  visited_count: number;
 }
 
 export async function listTrips(userId: number): Promise<TripSummary[]> {
@@ -47,7 +50,8 @@ export async function listTrips(userId: number): Promise<TripSummary[]> {
     // (node-pg otherwise hands back JS Date objects, which break date display
     // and the date-picker prefill). The trailing aliases override t.*.
     `SELECT t.*, t.start_date::text AS start_date, t.end_date::text AS end_date,
-		        COUNT(s.id)::int AS stop_count
+		        COUNT(s.id)::int AS stop_count,
+		        COUNT(s.id) FILTER (WHERE s.visited)::int AS visited_count
 		   FROM trips t
 		   LEFT JOIN trip_stops s ON s.trip_id = t.id
 		  WHERE t.user_id = $1
@@ -282,6 +286,29 @@ export async function updateStopFieldTips(
       );
     }
   });
+}
+
+/**
+ * Check a stop off, or un-check it (td-40a1b5). `ownerId` is the trip owner
+ * the account reads (locals.scopeId), so an owner's viewer can tick stops on
+ * the owner's trip. Sets an explicit value rather than toggling, so a
+ * repeated or replayed request cannot flip it back. False when no such stop
+ * on a trip that owner has.
+ */
+export async function setStopVisited(
+  ownerId: number,
+  tripId: number,
+  stopId: number,
+  visited: boolean,
+): Promise<boolean> {
+  const r = await query(
+    `UPDATE trip_stops s SET visited = $4
+       FROM trips t
+      WHERE s.id = $3 AND s.trip_id = $2
+        AND t.id = s.trip_id AND t.user_id = $1`,
+    [ownerId, tripId, stopId, visited],
+  );
+  return r.rowCount === 1;
 }
 
 /** Move a stop up or down by swapping sort_order with its neighbor. */
