@@ -25,7 +25,8 @@ import { tripAnchor } from '$lib/trip-anchor';
 import { formatDistance, mapsPlaceUrl, mapsDirectionsUrl, mapsRouteUrl } from '$lib/geo';
 import { normalizeTripStopNote } from '$lib/planner-note';
 import { formatLegacyCountSnapshot, formatPlannedCountSnapshot, type AnyTripCountContext } from '$lib/trip-count-context';
-import { remainingRoute } from '$lib/trip-visited';
+import { isTripDay, remainingRoute } from '$lib/trip-visited';
+import { FORECAST_CALENDAR_TZ } from '$lib/forecast-calendar';
 
 export interface TripExportData {
 	trip: Trip;
@@ -44,6 +45,8 @@ export interface TripExportData {
 	mode?: 'owner' | 'shared';
 	/** Injectable for deterministic tests; defaults to now. */
 	generatedAt?: Date;
+	/** YYYY-MM-DD; defaults to today in the app's zone. Decides where Navigate starts. */
+	today?: string;
 	/** Validated saved planner snapshots keyed by stop id. */
 	plannedContexts?: Map<number, AnyTripCountContext>;
 	/** Batched cache membership; an id alone is never proof of hotspot status. */
@@ -113,15 +116,23 @@ function exportAnchor(data: TripExportData): { lat: number; lng: number; label: 
 	return a ? { lat: a.lat, lng: a.lon, label: a.label } : null;
 }
 
-/** The Navigate link: located stops not yet checked off (then the anchor), labelled. */
+/**
+ * The Navigate link: located stops not yet checked off (then the anchor),
+ * labelled. Exported on a day outside the trip's dates, an anchored trip's
+ * link starts at the anchor — the same rule as the trip page.
+ */
 function navigateRoute(data: TripExportData): { url: string; label: string } | null {
+	const today =
+		data.today ??
+		(data.generatedAt ?? new Date()).toLocaleDateString('en-CA', { timeZone: FORECAST_CALENDAR_TZ });
 	const route = remainingRoute(
 		data.stops
 			.filter((s) => s.lat != null && s.lon != null)
 			.map((s) => ({ lat: s.lat as number, lng: s.lon as number, visited: s.visited })),
-		exportAnchor(data)
+		exportAnchor(data),
+		!isTripDay(data.trip.start_date, data.trip.end_date, today)
 	);
-	return route ? { url: mapsRouteUrl(route.points), label: route.label } : null;
+	return route ? { url: mapsRouteUrl(route.points, route.origin), label: route.label } : null;
 }
 
 /** "3" or, once anything is checked off, "3 · 1 visited". */

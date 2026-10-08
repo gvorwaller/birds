@@ -602,7 +602,10 @@
 						<strong>Directions</strong> — a link opens the route in Google Maps
 						for turn-by-turn navigation, starting from wherever your phone is. Once
 						you've checked stops off, it goes only through the stops left; with a
-						start &amp; end point it finishes back there.
+						start &amp; end point it finishes back there. With a start &amp; end
+						point, on any day that isn't one of the trip's dates (or when the trip
+						has no dates), it starts there too, so while planning at home you see
+						the real day's drive rather than the drive from home.
 					</li>
 					<li>
 						<strong>Export</strong> — 🔗 Export opens a self-contained field

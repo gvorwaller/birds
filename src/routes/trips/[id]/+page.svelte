@@ -2,7 +2,7 @@
   import { enhance } from "$app/forms";
   import { invalidateAll } from "$app/navigation";
   import type { SubmitFunction } from "@sveltejs/kit";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { env } from "$env/dynamic/public";
   import Badge from "$components/Badge.svelte";
   import DatePicker from "$components/DatePicker.svelte";
@@ -20,7 +20,7 @@
   import { canonicalHref, withReturnTo } from "$lib/navigation-context";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { formatLegacyCountSnapshot, formatPlannedCountSnapshot } from "$lib/trip-count-context";
-  import { remainingRoute, visitedCountLabel } from "$lib/trip-visited";
+  import { isTripDay, remainingRoute, visitedCountLabel } from "$lib/trip-visited";
   import {
     formatFeet,
     formatTideDate,
@@ -387,8 +387,21 @@
   // Multi-waypoint Google Maps hand-off: from the device's location through
   // every located stop in order that isn't checked off yet (td-40a1b5), then
   // back to the start & end point when the trip has one.
-  let route = $derived(remainingRoute(mapStops, anchorPoint));
-  let routeUrl = $derived(route ? mapsRouteUrl(route.points) : "");
+  // On one of the trip's own days Navigate starts from the phone; any other
+  // day (planning from home) it starts at the anchor — owner, 2026-10-08.
+  let deviceToday = $state<string | null>(null);
+  onMount(() => {
+    deviceToday = new Date().toLocaleDateString("en-CA"); // the device's own date
+  });
+  const today = $derived(deviceToday ?? data.today);
+  let route = $derived(
+    remainingRoute(
+      mapStops,
+      anchorPoint,
+      !isTripDay(data.trip.start_date, data.trip.end_date, today),
+    ),
+  );
+  let routeUrl = $derived(route ? mapsRouteUrl(route.points, route.origin) : "");
 
   function fmtDates(start: string | null, end: string | null): string {
     if (!start && !end) return "no dates set";

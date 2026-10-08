@@ -22,42 +22,78 @@ export function isTripVisitedRequest(
 }
 
 /**
+ * Is `today` (YYYY-MM-DD) one of the trip's own days? Inclusive; a trip with
+ * only one date set has just that day; a trip with no dates has none.
+ */
+export function isTripDay(
+  start: string | null,
+  end: string | null,
+  today: string,
+): boolean {
+  const lo = start ?? end;
+  const hi = end ?? start;
+  return lo != null && hi != null && lo <= today && today <= hi;
+}
+
+/**
  * Where a "Navigate" link should still drive: every located stop not yet
  * checked off, in trip order, then back to the trip's start & end point when
- * it has one (td-0f3c63) — Google Maps starts from wherever the phone is.
- * `label` names what the link covers. Without an anchor there is no link when
- * nothing is left, or when the trip only ever had one located stop (its own
- * Directions link covers that); with one there is always a route, if only the
- * drive to the anchor.
+ * it has one (td-0f3c63). It starts from wherever the phone is — except when
+ * `fromAnchor`: on any day that isn't one of the trip's own days (planning
+ * from home), a trip with an anchor starts there, so the link is the planned
+ * day, matching the map's drive total (owner, 2026-10-08). `label` names what
+ * the link covers. Without an anchor there is no link when nothing is left,
+ * or when the trip only ever had one located stop (its own Directions link
+ * covers that); with one there is always a route, if only the drive to it.
  */
 export function remainingRoute<
   T extends { lat: number; lng: number; visited?: boolean },
 >(
   located: T[],
   anchor: { lat: number; lng: number; label: string } | null = null,
-): { points: { lat: number; lng: number }[]; label: string } | null {
+  fromAnchor = false,
+): {
+  origin: { lat: number; lng: number } | null;
+  points: { lat: number; lng: number }[];
+  label: string;
+} | null {
   const left = located.filter((s) => !s.visited);
   const points = left.map((s) => ({ lat: s.lat, lng: s.lng }));
   if (anchor) {
-    const there = [{ lat: anchor.lat, lng: anchor.lng }];
-    // No located stops yet: the route is just the drive to the anchor.
-    if (located.length === 0)
-      return { points: there, label: `Navigate to ${anchor.label}` };
-    const back = `back to ${anchor.label}`;
-    const label =
-      left.length === 0
-        ? `Navigate ${back}`
-        : left.length === located.length
-          ? `Navigate all stops and ${back}`
-          : left.length === 1
-            ? `Navigate the last stop left and ${back}`
-            : `Navigate the ${left.length} stops left and ${back}`;
-    return { points: [...points, ...there], label };
+    const there = { lat: anchor.lat, lng: anchor.lng };
+    // Nothing left to visit: the only drive is to the anchor, from here.
+    if (left.length === 0)
+      return {
+        origin: null,
+        points: [there],
+        label:
+          located.length === 0
+            ? `Navigate to ${anchor.label}`
+            : `Navigate back to ${anchor.label}`,
+      };
+    const which =
+      left.length === located.length
+        ? "all stops"
+        : left.length === 1
+          ? "the last stop left"
+          : `the ${left.length} stops left`;
+    return fromAnchor
+      ? {
+          origin: there,
+          points: [...points, there],
+          label: `Navigate from ${anchor.label} through ${which} and back`,
+        }
+      : {
+          origin: null,
+          points: [...points, there],
+          label: `Navigate ${which} and back to ${anchor.label}`,
+        };
   }
   if (located.length < 2 || left.length === 0) return null;
   if (left.length === located.length)
-    return { points, label: "Navigate all stops" };
+    return { origin: null, points, label: "Navigate all stops" };
   return {
+    origin: null,
     points,
     label:
       left.length === 1

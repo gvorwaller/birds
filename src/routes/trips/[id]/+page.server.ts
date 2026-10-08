@@ -43,6 +43,7 @@ import {
 } from "$server/location-placeids";
 import { contextMatchesStop, parseAnyTripCountContext } from "$lib/trip-count-context";
 import { tripAnchor, type TripAnchor } from "$lib/trip-anchor";
+import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
 
 async function homeOf(
   userId: number,
@@ -220,6 +221,11 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     stops,
     home,
     anchor: tripAnchor(trip),
+    // Today in the app's zone, for the server render of Navigate; the page
+    // switches to the device's own date once it runs.
+    today: new Date().toLocaleDateString("en-CA", {
+      timeZone: FORECAST_CALENDAR_TZ,
+    }),
     canEdit: locals.user!.role !== "viewer",
     // Owners only: viewers neither see nor manage share links (and hooks
     // block them from the non-GET actions regardless).

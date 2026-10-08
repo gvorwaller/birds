@@ -257,13 +257,22 @@ describe("start & end point in exports", () => {
     },
   };
 
-  it("owner markdown names it and Navigate ends there", () => {
+  it("owner markdown names it; exported before the trip, Navigate starts there and returns", () => {
+    // generatedAt 2026-08-26 is before the trip's 2026-09-12..13 dates.
     const md = buildTripMarkdown(anchored);
     expect(md).toContain(`**Start & end:** Island Inn ${HOSTILE}`);
     const nav = md.match(/\[🧭 ([^\]]+)\]\(([^)]+)\)/);
-    expect(nav?.[1]).toBe(`Navigate all stops and back to Island Inn ${HOSTILE}`);
-    expect(nav?.[2]).toContain("destination=26.43,-82.08");
+    expect(nav?.[1]).toBe(`Navigate from Island Inn ${HOSTILE} through all stops and back`);
+    expect(nav?.[2]).toContain("origin=26.43,-82.08&destination=26.43,-82.08");
     expect(nav?.[2]).toContain("waypoints=26.44,-82.11|26.47,-81.97");
+  });
+
+  it("exported on a trip day, Navigate starts from the phone and ends there", () => {
+    const md = buildTripMarkdown({ ...anchored, today: "2026-09-13" });
+    const nav = md.match(/\[🧭 ([^\]]+)\]\(([^)]+)\)/);
+    expect(nav?.[1]).toBe(`Navigate all stops and back to Island Inn ${HOSTILE}`);
+    expect(nav?.[2]).not.toContain("origin=");
+    expect(nav?.[2]).toContain("destination=26.43,-82.08");
   });
 
   it("owner HTML names it, escaped", () => {

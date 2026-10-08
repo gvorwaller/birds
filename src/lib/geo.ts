@@ -146,25 +146,28 @@ export function mapsDirectionsUrl(
 }
 
 /**
- * Multi-stop driving directions through every point in order, starting from the
- * device's current location: all but the last point become ordered waypoints,
- * the last is the destination. Google's universal URL preserves waypoint order
- * (it does not re-optimize), so pass coordinates already in trip order. Returns
- * the single-destination URL for one point, and '' for none. Keep the list small
- * — Google's cross-platform URL caps waypoints (≈9).
+ * Multi-stop driving directions through every point in order, starting from
+ * `origin` when given, else from the device's current location: all but the
+ * last point become ordered waypoints, the last is the destination. Google's
+ * universal URL preserves waypoint order (it does not re-optimize), so pass
+ * coordinates already in trip order. Without an origin, one point returns the
+ * single-destination URL; none returns ''. Keep the list small — Google's
+ * cross-platform URL caps waypoints (≈9).
  */
 export function mapsRouteUrl(
   points: Array<{ lat: number; lng: number }>,
+  origin: { lat: number; lng: number } | null = null,
 ): string {
   if (points.length === 0) return "";
-  if (points.length === 1)
+  if (points.length === 1 && !origin)
     return mapsDirectionsUrl(points[0].lat, points[0].lng);
   const dest = points[points.length - 1];
+  const from = origin ? `&origin=${origin.lat},${origin.lng}` : "";
   const waypoints = points
     .slice(0, -1)
     .map((p) => `${p.lat},${p.lng}`)
     .join("|");
-  return `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&waypoints=${waypoints}&travelmode=driving`;
+  return `https://www.google.com/maps/dir/?api=1${from}&destination=${dest.lat},${dest.lng}${waypoints ? `&waypoints=${waypoints}` : ""}&travelmode=driving`;
 }
 
 /**
