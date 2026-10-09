@@ -1639,6 +1639,12 @@
         will catch up when the connection returns.
       </p>
     {/if}
+    <!-- Always mounted so screen readers announce the message when it appears. -->
+    <div role="status">
+      {#if jobsPoll.cancelNotice}
+        <p class="notice">{jobsPoll.cancelNotice.message}</p>
+      {/if}
+    </div>
     {#if jobsPoll.active.length === 0}
       <p class="notice">No loads running or queued.</p>
     {:else}

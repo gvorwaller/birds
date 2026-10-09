@@ -170,7 +170,7 @@ export async function resolveOfficialHotspot(
 			);
 			if (raw != null) {
 				try { validateEbirdHotspotInfo(raw, path); }
-				catch (err) { reportSchemaDrift(err, `fetch hotspotInfo:${locId}`); throw err; }
+				catch (err) { reportSchemaDrift(err, `fetch hotspotInfo:${locId}`); throw err; } // stale-safe: reports schema drift and rethrows
 			}
 			const meta = parseOfficialHotspotInfo(raw, locId);
 			if (!meta) return null;
@@ -188,7 +188,7 @@ export async function resolveOfficialHotspot(
 	try {
 		const meta = await request;
 		return { meta, stale: false };
-	} catch (err) {
+	} catch (err) { // stale-safe: page/route path, never under a claim
 		if (cachedMeta) {
 			return {
 				meta: cachedMeta,

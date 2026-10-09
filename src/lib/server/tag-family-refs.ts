@@ -106,7 +106,7 @@ export async function runTagFamilyRefsJob(job: JobRow): Promise<void> {
       for (let t = 1; t <= MAX_TRIES && !outcome; t++) {
         try {
           outcome = await fetchFamilyLead(f.family);
-        } catch (err) {
+        } catch (err) { // stale-safe: wraps the Wikipedia fetch; no fenced call inside
           error = sanitizeErrorText(
             err instanceof Error ? err.message : String(err),
           ).slice(0, 300);

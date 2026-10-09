@@ -291,7 +291,7 @@ export function parsePredictions(json: unknown): TidePredictionsPayload {
     let at: string;
     try {
       at = parseCoopsTime(String(p?.t ?? ""));
-    } catch {
+    } catch { // stale-safe: parse only
       schemaIssues.push(`predictions[${i}].t must be a valid GMT timestamp`);
       continue;
     }
@@ -539,7 +539,7 @@ async function loadStations(opts: TideFetchOpts): Promise<TideStation[]> {
     );
     stationMemo = { stations, loadedAt: now.getTime() };
     return stations;
-  } catch (err) {
+  } catch (err) { // stale-safe: page/route path, never under a claim
     reportSchemaDrift(err, `fetch ${STATIONS_CACHE_KEY}`);
     if (row) {
       const stations = validateCachedStations(row.payload);
@@ -588,7 +588,7 @@ async function fetchPredictions(
   let json: unknown;
   try {
     json = JSON.parse(text);
-  } catch {
+  } catch { // stale-safe: parse only
     throw new Error("predictions: non-JSON response");
   }
   const parsed = parsePredictions(json); // throws TideUnavailable on {error} first
@@ -640,7 +640,7 @@ async function predictionsForStationDate(
       [key, JSON.stringify(parsed)],
     );
     return { extremes: parsed.extremes, stale: false };
-  } catch (err) {
+  } catch (err) { // stale-safe: page/route path, never under a claim
     reportSchemaDrift(err, `fetch ${key}`);
     if (err instanceof TideUnavailable) return null; // never cache, never stale-fallback
     if (row) {
@@ -722,7 +722,7 @@ export async function nearestTideStation(
   let stations: TideStation[];
   try {
     stations = await loadStations(opts);
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return null;
   }
   return nearestStation(stations, lat, lon);
@@ -746,7 +746,7 @@ export async function tidesNear(
   let stations: TideStation[];
   try {
     stations = await loadStations(opts);
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return null;
   }
   const nearest = nearestStation(stations, lat, lon);
@@ -790,7 +790,7 @@ export async function tidesForStops(
   let stations: TideStation[];
   try {
     stations = await loadStations(opts);
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return {};
   }
 

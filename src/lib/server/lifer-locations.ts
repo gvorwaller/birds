@@ -87,7 +87,7 @@ async function lookupHotspot(
 	try {
 		const hs = validateEbirdHotspotCoordinates(raw, path);
 		return { name: hs.name ?? null, lat: hs.latitude, lng: hs.longitude };
-	} catch (err) {
+	} catch (err) { // stale-safe: reports schema drift and rethrows
 		reportSchemaDrift(err, `fetch lifer hotspotInfo:${locId}`);
 		throw err;
 	}
@@ -110,7 +110,7 @@ async function lookupOwnerHtml(
 			return null;
 		}
 		return { ...coords, locName: null };
-	} catch (err) {
+	} catch (err) { // stale-safe: rethrows non-eBird errors
 		if (err instanceof EbirdLoginError) return { stop: 'auth' };
 		if (err instanceof EbirdUpstreamError) {
 			if (err.status === 404) return null;
@@ -221,7 +221,7 @@ export async function resolveLiferLocations(
 					out.resolved++;
 					hotspotHit = true;
 				}
-			} catch (err) {
+			} catch (err) { // stale-safe: rethrows non-eBird errors
 				if (err instanceof EbirdError) {
 					stop('upstream');
 					break;

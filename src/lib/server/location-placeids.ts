@@ -302,7 +302,7 @@ async function resolveMissingGooglePlaceIds(
         candidate,
         candidate ? "matched" : "no_confident_match",
       );
-    } catch {
+    } catch { // stale-safe: page/route path, never under a claim
       await setGooglePlaceResult(loc.locId, null, "lookup_failed");
     }
   }

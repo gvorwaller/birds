@@ -2,6 +2,7 @@ import { fetchAdwFamily } from "./animal-diversity";
 import { fetchWikidataTaxonCandidates, isRateLimitedError } from "./wikidata";
 import { fetchFamilyArticle } from "./family-wikipedia";
 import { revisionPermalink } from "./wikipedia";
+import { isStaleClaim } from "./job-claim";
 import type {
   FamilySource,
   FamilySourceDocument,
@@ -92,6 +93,9 @@ export async function discoverFamilySources(
       "No usable Animal Diversity Web family account",
     );
   } catch (error) {
+    // The checkpoint runs inside this try: a lost claim is never a transport
+    // failure and never moves on to the next source (td-b99b6d G5).
+    if (isStaleClaim(error)) throw error;
     if (error instanceof FamilySourceInterrupted) throw error;
     record(
       family.scientificName,
@@ -183,6 +187,9 @@ export async function discoverFamilySources(
       record(name, "accepted", `${rank} account: ${valid[0].title}`);
       return valid[0];
     } catch (error) {
+      // Same rule for the nested lookup: its checkpoints (before the
+      // candidates request and each article) run inside this try.
+      if (isStaleClaim(error)) throw error;
       if (error instanceof FamilySourceInterrupted) throw error;
       record(name, "transport_failure", "Wikipedia or Wikidata request failed");
       if (isRateLimitedError(error)) throw error;

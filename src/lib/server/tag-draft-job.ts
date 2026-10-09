@@ -10,6 +10,7 @@
  *  4. Store a `proposed` row. AI output can only ever become a proposal.
  */
 import { query } from "$lib/db";
+import { claimFencedQuery, isStaleClaim } from "$server/job-claim";
 import { ALL_TAGS, TAG_DEFINITIONS } from "$lib/species-tags";
 import { meteredAiCall } from "$server/ai-call";
 import { CONFIG_KEYS } from "$server/app-config";
@@ -199,10 +200,13 @@ export async function runTagDraftJob(
   }
   try {
     const candidates = await selectAuthoring(tag);
+    // Fenced to the live claim (td-b99b6d); §3cc's claim-aware definer is
+    // still Phase 2 of the B5 plan.
     const frozen = (
-      await query<{ c: string }>(
+      await claimFencedQuery<{ c: string }>(
         "SELECT c FROM public.freeze_tag_authoring_set($1, $2::text[]) c",
         [tag, candidates.codes],
+        "freeze authoring set",
       )
     ).rows.map((r) => r.c);
     const examples = await authoringExamples(tag, frozen);
@@ -244,7 +248,7 @@ export async function runTagDraftJob(
             return { result: raw, envelope };
           },
         });
-      } catch (e) {
+      } catch (e) { // stale-safe: rethrows unless the drain cut the call short
         // Only a call the drain actually cut short is an interruption; a
         // result that arrived before the drain is kept and stored.
         if (drain.signal.aborted) throw new DraftInterrupted("worker draining");
@@ -266,7 +270,7 @@ export async function runTagDraftJob(
           requestedModel: call.requestedModel,
           servedModel: call.servedModel,
         });
-      } catch (e) {
+      } catch (e) { // stale-safe: rethrows non-RulesetError
         if (!(e instanceof RulesetError)) throw e;
         previousError = e.message;
         attemptsLog.push({
@@ -316,14 +320,16 @@ export async function runTagDraftJob(
     const successfulAttempt = attemptDetails.at(-1);
     const lastCall = successfulAttempt?.aiUsageCallId ?? null;
     const proposalId = (
-      await query<{ id: string }>(
+      await claimFencedQuery<{ id: string }>(
         `INSERT INTO tag_rule_proposal (tag, artifact, source, ai_usage_call_id)
 				 VALUES ($1, $2::jsonb, 'ai', $3::uuid) RETURNING id::text`,
         [tag, JSON.stringify(proposalArtifact), lastCall],
+        "AI proposal",
       )
     ).rows[0].id;
     await completeJob(job.id, attempts, { ...result, proposalId });
   } catch (err) {
+    if (isStaleClaim(err)) throw err;
     if (err instanceof DraftInterrupted) {
       await requeueInterrupted(job.id, attempts, err.reason);
       return;

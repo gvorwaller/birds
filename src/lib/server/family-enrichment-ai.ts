@@ -200,7 +200,7 @@ export async function familyAiCall<T>(
           .map((b) => b.text)
           .join("");
         return { result: parse(JSON.parse(text)), envelope };
-      } catch (err) {
+      } catch (err) { // stale-safe: parse only; rethrows with the envelope attached
         const e =
           err instanceof Error ? err : Error("Invalid family AI response");
         (e as Error & { envelope: AiCallEnvelope }).envelope = envelope;

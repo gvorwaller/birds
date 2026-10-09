@@ -18,6 +18,8 @@ import { browser } from '$app/environment';
 import { invalidateAll } from '$app/navigation';
 import { navigating } from '$app/state';
 import {
+	cancelFailureMessage,
+	CANCEL_UNREACHABLE_MESSAGE,
 	classifyPollResponse,
 	invalidateStep,
 	isOutstanding,
@@ -91,6 +93,12 @@ class JobsPoll {
 	isStale = $state(false);
 	/** True after an auth stop — session gone, polling suspended. */
 	authStopped = $state(false);
+	/**
+	 * A cancel that did not go through (td-b99b6d Rev 3.1): shown inline while
+	 * polling continues; cleared by the next cancel or once that job is no
+	 * longer outstanding.
+	 */
+	cancelNotice = $state<{ jobId: number; message: string } | null>(null);
 
 	#timer: ReturnType<typeof setTimeout> | null = null;
 	#running = false;
@@ -174,11 +182,18 @@ class JobsPoll {
 	}
 
 	async cancel(jobId: number): Promise<void> {
+		this.cancelNotice = null;
 		try {
-			await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+			const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+			if (!res.ok) {
+				// 503 job_busy: the worker held the row while finishing a step.
+				const body = await res.json().catch(() => null);
+				this.cancelNotice = { jobId, message: cancelFailureMessage(body) };
+			}
 		} catch {
-			// next poll shows reality either way
+			this.cancelNotice = { jobId, message: CANCEL_UNREACHABLE_MESSAGE };
 		}
+		// Polling continues either way — the next poll shows reality.
 		this.track(jobId);
 	}
 
@@ -214,6 +229,9 @@ class JobsPoll {
 				);
 				this.worker = data.worker;
 				this.jobs = data.jobs;
+				const noticed = this.cancelNotice?.jobId;
+				if (noticed != null && !data.jobs.some((j) => j.id === noticed && isOutstanding(j)))
+					this.cancelNotice = null;
 				this.staleSince = null;
 				this.isStale = false;
 				// NEVER invalidate while a navigation is in flight (td-671082 root

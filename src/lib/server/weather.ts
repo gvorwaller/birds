@@ -103,7 +103,7 @@ export async function weatherFor(
 	let cachedPayload: CachedPayload | null = null;
 	if (row) {
 		try { cachedPayload = validateCachedPayload(row.payload); }
-		catch (err) { reportSchemaDrift(err, `cache ${key}`); }
+		catch (err) { reportSchemaDrift(err, `cache ${key}`); } // stale-safe: cached-row validation only
 	}
 	const fresh =
 		row && Date.now() - new Date(row.fetched_at).getTime() < TTL_MIN * 60_000;
@@ -130,7 +130,7 @@ export async function weatherFor(
 			stale: false,
 			fetchedAt: new Date().toISOString(),
 		};
-	} catch (err) {
+	} catch (err) { // stale-safe: page/route path, never under a claim
 		reportSchemaDrift(err, `fetch ${key}`);
 		if (err instanceof WeatherUnavailable) return null; // outside US — no forecast
 		if (row && cachedPayload) {

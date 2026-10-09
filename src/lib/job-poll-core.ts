@@ -164,3 +164,22 @@ export function invalidateStep(
 	}
 	return { fire: false, state: { pending: owed, lastInvalidateAt: state.lastInvalidateAt } };
 }
+
+/** Shown when the cancel request never reached the app (network error). */
+export const CANCEL_UNREACHABLE_MESSAGE =
+	'The cancel request did not reach the app — check the connection and try again.';
+/** Shown for a failed cancel whose response carried no usable message. */
+export const CANCEL_FAILED_MESSAGE = 'The job could not be cancelled just now — try again.';
+
+/**
+ * The inline message for a cancel that did not go through (td-b99b6d Rev 3.1):
+ * the server's own message when it sent one (503 job_busy — the worker held
+ * the job row while finishing a step), otherwise a generic retry line. Never
+ * a raw status code or body.
+ */
+export function cancelFailureMessage(body: unknown): string {
+	const message = (body as { message?: unknown } | null)?.message;
+	return typeof message === 'string' && message.trim() && message.length <= 200
+		? message
+		: CANCEL_FAILED_MESSAGE;
+}

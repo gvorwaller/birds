@@ -11,7 +11,7 @@ export function loadTestEnv(): void {
   let raw = "";
   try {
     raw = readFileSync(new URL("../../../../.env.test", import.meta.url), "utf8");
-  } catch {
+  } catch { // stale-safe: test harness, never under a claim
     // Fall through: the safety check below reports what is missing.
   }
   const env: Record<string, string> = {};
@@ -35,7 +35,7 @@ export function loadTestEnv(): void {
 export async function requireTestDb(query: (sql: string) => Promise<unknown>): Promise<void> {
   try {
     await query("SELECT 1");
-  } catch (err) {
+  } catch (err) { // stale-safe: test harness, never under a claim
     throw new Error(
       `birds_test is unreachable (${err instanceof Error ? err.message : String(err)}); start it with npm run test:db:up.`,
     );

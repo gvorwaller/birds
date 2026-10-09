@@ -16,6 +16,7 @@
  *  4. integrity: legacy baseline + runtime-role grants (catalog).
  */
 import { query } from "$lib/db";
+import { claimFencedQuery, isStaleClaim } from "$server/job-claim";
 import { sanitizeErrorText } from "$server/job-policy";
 import { lexiconFor, materializeMany } from "./materialize";
 import { beginTagRepair, ensureTagRepairJob, tagRepairState } from "./repair";
@@ -44,8 +45,10 @@ async function recordRun(
   durationMs: number,
   details: Record<string, unknown>,
 ): Promise<string> {
+  // Fenced to the nightly job's live claim (td-b99b6d); no claim (the admin
+  // tab, tests) is a plain statement.
   return (
-    await query<{ id: string }>(
+    await claimFencedQuery<{ id: string }>(
       "SELECT public.record_tag_consistency_run($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7::jsonb)::text AS id",
       [
         startedAt.toISOString(),
@@ -56,6 +59,7 @@ async function recordRun(
         durationMs,
         JSON.stringify(details),
       ],
+      "consistency run",
     )
   ).rows[0].id;
 }
@@ -267,6 +271,8 @@ export async function runTagConsistency(opts: {
     );
     return { runId, status, checked, fixed, failures, durationMs, details };
   } catch (err) {
+    // A lost claim records no "failed" run: the live claim owns the pass.
+    if (isStaleClaim(err)) throw err;
     const detail = sanitizeErrorText(
       err instanceof Error ? err.message : String(err),
     ).slice(0, 500);
@@ -282,7 +288,7 @@ export async function runTagConsistency(opts: {
         Date.now() - t0,
         details,
       );
-    } catch {
+    } catch { // stale-safe: best-effort run record; the original error is rethrown
       // Best effort: preserve the execution error that controls retry behavior.
     }
     throw err;

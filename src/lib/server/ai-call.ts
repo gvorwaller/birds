@@ -90,7 +90,7 @@ export async function meteredAiCall<T>(opts: MeteredAiCallOpts<T>): Promise<AiAt
 			servedModel: finalServedModel(envelope),
 			envelope
 		};
-	} catch (err) {
+	} catch (err) { // stale-safe: receipt then rethrow (ruling Q2)
 		// Failed/aborted provider calls are often the slowest calls worth
 		// diagnosing. Count them exactly once just like successful calls; the
 		// usage-ledger write below is a separate DB bucket operation.

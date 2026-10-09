@@ -12,10 +12,21 @@
  *   (CODEX1 #5): the returned id and the recorded event always refer to the
  *   winning row.
  * - Payloads/events/results NEVER contain credentials (cs.md sacred rules).
+ * - Under a handler's claim every write is fenced to that claim (td-b99b6d,
+ *   job-claim.ts): queue writes by claim_seq, events by a FOR SHARE locking
+ *   CTE, enqueues inside withClaimTx. Every queue writer is a bounded
+ *   lock_timeout micro-transaction retried to a deadline, so a held row
+ *   delays a transition but never wedges it.
  */
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type pg from 'pg';
-import { query, queryTimed, withTransaction } from '$lib/db';
+import { query, queryTimed } from '$lib/db';
+import {
+	assertNotInOwnClaimTx,
+	boundedQueueWrite,
+	currentClaim,
+	StaleClaimError,
+	withClaimTx
+} from './job-claim';
 import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
 
 export type JobType =
@@ -75,46 +86,24 @@ export type JobEventAction =
 	| 'failed'
 	| 'cancelled';
 
-// ── claim fencing (td-894144 B5 plan §3z) ────────────────────────────────
-/**
- * The claim a handler runs under: the job and its per-claim identity
- * (jobs.claim_seq — incremented by every claim, never refunded, unlike
- * `attempts`, which a drain or yield refunds). runJob runs each handler inside
- * this context, so every async continuation of THAT execution — including a
- * late one after a requeue and a same-process re-claim — keeps its own claim.
- */
-export interface JobClaim {
-	jobId: number;
-	claimSeq: string;
-}
-const claimContext = new AsyncLocalStorage<JobClaim>();
-
-/** Run `fn` as the holder of this claim (the worker's runJob; tests). */
-export function runWithClaim<T>(job: { id: number; claim_seq?: string | number | null }, fn: () => Promise<T>): Promise<T> {
-	return claimContext.run({ jobId: job.id, claimSeq: String(job.claim_seq ?? '0') }, fn);
-}
-
-/** The claim this execution holds for `jobId`, if any. */
-export function currentClaim(jobId: number): JobClaim | null {
-	const c = claimContext.getStore();
-	return c && c.jobId === jobId ? c : null;
-}
-
-/**
- * This execution no longer holds its job's claim (the job left `running`, or
- * a newer claim owns it). Thrown by fenced queue writes; runJob catches it
- * once at its boundary and stops without further writes.
- */
-export class StaleClaimError extends Error {
-	constructor(jobId: number, where: string) {
-		super(`stale claim: job ${jobId} is no longer held by this execution (${where})`);
-		this.name = 'StaleClaimError';
-	}
-}
-
-export const isStaleClaim = (err: unknown): boolean =>
-	err instanceof StaleClaimError ||
-	(err instanceof Error && /^stale claim\b/.test(err.message));
+// ── claim fencing (td-894144 B5 plan §3z; td-b99b6d) ─────────────────────
+// The claim context, its errors and the fencing helpers live in job-claim.ts
+// (imports only $lib/db, so library modules can fence without importing the
+// queue); re-exported here so queue callers keep one import.
+export {
+	type JobClaim,
+	runWithClaim,
+	currentClaim,
+	heldClaim,
+	StaleClaimError,
+	isStaleClaim,
+	ClaimTxMisuseError,
+	QueueLockTimeoutError,
+	QueueWriteUnrecoverableError,
+	assertClaimHeld,
+	withClaimTx,
+	claimFencedQuery
+} from './job-claim';
 
 export interface EnqueueParams {
 	type: JobType;
@@ -132,7 +121,43 @@ export interface EnqueueParams {
 	runAfterMs?: number;
 }
 
+/**
+ * A handler's job event. Under the holder's claim it is fenced at COMMIT time
+ * (td-b99b6d spec §4.1): the locking CTE takes the job row FOR SHARE, so a
+ * transition (FOR NO KEY UPDATE) either waits for this INSERT to commit or —
+ * having committed first — leaves no qualifying row (READ COMMITTED
+ * re-evaluates the new version) and the event is refused with
+ * StaleClaimError. A lock-free EXISTS would only check the statement's
+ * snapshot, and the INSERT's own FK lock (FOR KEY SHARE) does not conflict
+ * with a transition. Without a claim context it is a plain INSERT.
+ */
 export async function recordEvent(
+	jobId: number,
+	action: JobEventAction,
+	details: unknown = {}
+): Promise<void> {
+	const claim = currentClaim(jobId);
+	if (!claim) return recordQueueEvent(jobId, action, details);
+	const r = await query(
+		`WITH j AS (
+		   SELECT id FROM jobs
+		    WHERE id = $1 AND status = 'running' AND claim_seq = $3
+		    FOR SHARE
+		 )
+		 INSERT INTO job_events (job_id, action, details)
+		 SELECT $1, $2, $4 FROM j`,
+		[jobId, action, claim.claimSeq, JSON.stringify(scrubStoredValue(details ?? {}))]
+	);
+	if (!r.rowCount) throw new StaleClaimError(jobId, `${action} event`);
+}
+
+/**
+ * The queue's OWN events, unfenced: post-transition events (written only by
+ * the CAS winner, after the row left `running`) and the no-claim writers
+ * (requestCancel, reclaimStartupJobs). Handlers never call this — the
+ * catch-discovery test refuses it outside jobs.ts.
+ */
+export async function recordQueueEvent(
 	jobId: number,
 	action: JobEventAction,
 	details: unknown = {}
@@ -147,22 +172,9 @@ export async function recordEvent(
 	]);
 }
 
-/**
- * The handler's "claimed" event, fenced (td-894144 B5 §3cc): under the
- * holder's claim it is written only while the job is running under THIS
- * claim (one statement), else StaleClaimError — a stale execution leaves no
- * event at all. Without a claim context it is a plain recordEvent.
- */
+/** The handler's "claimed" event — kept as an alias so the B5 call sites read as before. */
 export async function recordClaimedEvent(jobId: number, details: unknown = {}): Promise<void> {
-	const claim = currentClaim(jobId);
-	if (!claim) return recordEvent(jobId, 'claimed', details);
-	const r = await query(
-		`INSERT INTO job_events (job_id, action, details)
-		 SELECT $1, 'claimed', $2
-		  WHERE EXISTS (SELECT 1 FROM jobs WHERE id = $1 AND status = 'running' AND claim_seq = $3)`,
-		[jobId, JSON.stringify(scrubStoredValue(details ?? {})), claim.claimSeq]
-	);
-	if (!r.rowCount) throw new StaleClaimError(jobId, 'claimed event');
+	return recordEvent(jobId, 'claimed', details);
 }
 
 /**
@@ -208,11 +220,13 @@ export async function insertJobOn(client: pg.PoolClient, p: EnqueueParams): Prom
 /**
  * Enqueue with atomic dedup. One transaction, bounded retry: INSERT with the
  * partial-unique-index inference predicate; on conflict SELECT the active
- * winner; if it finished in the gap, loop and insert again (max 3).
+ * winner; if it finished in the gap, loop and insert again (max 3). From a
+ * handler the transaction is fenced to its claim (withClaimTx asserts first):
+ * a stale execution can no longer CREATE work (td-b99b6d §4.4).
  */
 export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; deduped: boolean }> {
 	for (let round = 0; round < 3; round++) {
-		const outcome = await withTransaction(async (client) => {
+		const outcome = await withClaimTx(async (client) => {
 			const inserted = await insertJobOn(client, p);
 			if (inserted != null) return { jobId: inserted, deduped: false };
 			const active = await client.query<{ id: number }>(
@@ -229,7 +243,7 @@ export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; ded
 				return { jobId: active.rows[0].id, deduped: true };
 			}
 			return null; // winner finished between INSERT and SELECT — retry
-		});
+		}, { where: 'enqueue' });
 		if (outcome) return outcome;
 	}
 	throw new Error('enqueueJob: dedup race did not settle after 3 rounds');
@@ -288,23 +302,47 @@ export async function claimNextJob(scope?: ClaimScope): Promise<JobRow | null> {
  * Progress write doubles as job heartbeat AND cancel check — one query per
  * unit. Under the holder's claim it is fenced (running + claim_seq) and a
  * miss throws StaleClaimError: a stale execution never overwrites the current
- * claim's progress or heartbeat, and never reads its cancel flag.
+ * claim's progress or heartbeat, and never reads its cancel flag. Like every
+ * queue writer it runs as a bounded micro-transaction retried to the deadline
+ * (td-b99b6d §4.3), and it refuses to run inside its own job's fenced
+ * transaction (ClaimTxMisuseError — that would self-deadlock).
  */
 export async function updateProgress(
 	jobId: number,
 	progress: JobProgress
 ): Promise<{ cancelRequested: boolean }> {
+	assertNotInOwnClaimTx(jobId, 'updateProgress');
 	const claim = currentClaim(jobId);
-	const r = await query<{ cancel_requested: boolean }>(
-		`UPDATE jobs SET progress = $2, heartbeat_at = NOW()
-		  WHERE id = $1${claim ? ` AND status = 'running' AND claim_seq = $3` : ''}
-		  RETURNING cancel_requested`,
-		claim
-			? [jobId, JSON.stringify(scrubStoredValue(progress)), claim.claimSeq]
-			: [jobId, JSON.stringify(scrubStoredValue(progress))]
+	const r = await boundedQueueWrite(jobId, 'updateProgress', (c) =>
+		c.query<{ cancel_requested: boolean }>(
+			`UPDATE jobs SET progress = $2, heartbeat_at = NOW()
+			  WHERE id = $1${claim ? ` AND status = 'running' AND claim_seq = $3` : ''}
+			  RETURNING cancel_requested`,
+			claim
+				? [jobId, JSON.stringify(scrubStoredValue(progress)), claim.claimSeq]
+				: [jobId, JSON.stringify(scrubStoredValue(progress))]
+		)
 	);
 	if (claim && r.rows.length === 0) throw new StaleClaimError(jobId, 'progress');
 	return { cancelRequested: r.rows[0]?.cancel_requested ?? false };
+}
+
+/**
+ * The job's display label, written by the handler itself (the family job names
+ * the family it is working on). Fenced exactly like updateProgress: under the
+ * holder's claim only while running under THAT claim, else StaleClaimError.
+ */
+export async function setJobLabel(jobId: number, label: string): Promise<void> {
+	assertNotInOwnClaimTx(jobId, 'setJobLabel');
+	const claim = currentClaim(jobId);
+	const r = await boundedQueueWrite(jobId, 'setJobLabel', (c) =>
+		c.query(
+			`UPDATE jobs SET label = $2
+			  WHERE id = $1${claim ? ` AND status = 'running' AND claim_seq = $3` : ''}`,
+			claim ? [jobId, label, claim.claimSeq] : [jobId, label]
+		)
+	);
+	if (claim && !r.rowCount) throw new StaleClaimError(jobId, 'label');
 }
 
 /**
@@ -319,6 +357,9 @@ export async function updateProgress(
  * matching single event), or null when it lost. Under the holder's claim the
  * CAS also requires the claim_seq (plan §3z) and a loss throws
  * StaleClaimError — attempts alone repeats after a refunding drain.
+ * Bounded micro-transaction retried to the deadline (td-b99b6d §4.3): it
+ * never throws a lock timeout before D, and past D it throws
+ * QueueWriteUnrecoverableError.
  */
 async function transition(
 	jobId: number,
@@ -326,12 +367,15 @@ async function transition(
 	desiredSet: string,
 	params: unknown[]
 ): Promise<string | null> {
+	assertNotInOwnClaimTx(jobId, 'transition');
 	const claim = currentClaim(jobId);
-	const r = await query<{ status: string }>(
-		`UPDATE jobs SET ${desiredSet}
-		  WHERE id = $1 AND status = 'running' AND attempts = $2${claim ? ` AND claim_seq = $${params.length + 3}` : ''}
-		  RETURNING status`,
-		claim ? [jobId, expectedAttempts, ...params, claim.claimSeq] : [jobId, expectedAttempts, ...params]
+	const r = await boundedQueueWrite(jobId, 'transition', (c) =>
+		c.query<{ status: string }>(
+			`UPDATE jobs SET ${desiredSet}
+			  WHERE id = $1 AND status = 'running' AND attempts = $2${claim ? ` AND claim_seq = $${params.length + 3}` : ''}
+			  RETURNING status`,
+			claim ? [jobId, expectedAttempts, ...params, claim.claimSeq] : [jobId, expectedAttempts, ...params]
+		)
 	);
 	if (claim && r.rows.length === 0) throw new StaleClaimError(jobId, 'transition');
 	return r.rows[0]?.status ?? null;
@@ -349,8 +393,8 @@ export async function completeJob(
 		 result = $3, finished_at = NOW()`,
 		[JSON.stringify(scrubStoredValue(result ?? null))]
 	);
-	if (final === 'succeeded') await recordEvent(jobId, 'completed', { result });
-	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_completion' });
+	if (final === 'succeeded') await recordQueueEvent(jobId, 'completed', { result });
+	else if (final === 'cancelled') await recordQueueEvent(jobId, 'cancelled', { when: 'at_completion' });
 	return final != null;
 }
 
@@ -368,8 +412,8 @@ export async function failJob(
 		 result = $4, finished_at = NOW()`,
 		[scrubStoredValue(error), JSON.stringify(scrubStoredValue(result ?? null))]
 	);
-	if (final === 'failed') await recordEvent(jobId, 'failed', { error });
-	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_failure' });
+	if (final === 'failed') await recordQueueEvent(jobId, 'failed', { error });
+	else if (final === 'cancelled') await recordQueueEvent(jobId, 'cancelled', { when: 'at_failure' });
 	return final != null;
 }
 
@@ -384,7 +428,7 @@ export async function cancelRunningJob(
 		`status = 'cancelled', result = $3, finished_at = NOW()`,
 		[JSON.stringify(scrubStoredValue(result ?? null))]
 	);
-	if (final != null) await recordEvent(jobId, 'cancelled', { when: 'running' });
+	if (final != null) await recordQueueEvent(jobId, 'cancelled', { when: 'running' });
 	return final != null;
 }
 
@@ -408,12 +452,12 @@ export async function scheduleRetry(
 		[Math.round(delayMs / 1000), JSON.stringify(scrubStoredValue(result ?? null))]
 	);
 	if (final === 'pending')
-		await recordEvent(jobId, 'retry_scheduled', {
+		await recordQueueEvent(jobId, 'retry_scheduled', {
 			delayMs,
 			reason,
 			attempt: expectedAttempts
 		});
-	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_retry' });
+	else if (final === 'cancelled') await recordQueueEvent(jobId, 'cancelled', { when: 'at_retry' });
 	return final != null;
 }
 
@@ -444,8 +488,8 @@ export async function yieldRemainder(
 		 attempts = GREATEST(attempts - 1, 0)`,
 		[newPayload == null ? null : JSON.stringify(scrubStoredValue(newPayload))]
 	);
-	if (final === 'pending') await recordEvent(jobId, 'yielded', { summary: chunkSummary });
-	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_yield' });
+	if (final === 'pending') await recordQueueEvent(jobId, 'yielded', { summary: chunkSummary });
+	else if (final === 'cancelled') await recordQueueEvent(jobId, 'cancelled', { when: 'at_yield' });
 	return final != null;
 }
 
@@ -468,8 +512,8 @@ export async function requeueInterrupted(
 		 attempts = GREATEST(attempts - 1, 0)`,
 		[]
 	);
-	if (final === 'pending') await recordEvent(jobId, 'interrupted', { reason });
-	else if (final === 'cancelled') await recordEvent(jobId, 'cancelled', { when: 'at_requeue' });
+	if (final === 'pending') await recordQueueEvent(jobId, 'interrupted', { reason });
+	else if (final === 'cancelled') await recordQueueEvent(jobId, 'cancelled', { when: 'at_requeue' });
 	return final != null;
 }
 
@@ -487,6 +531,9 @@ export async function requeueInterrupted(
  *
  * Returns {won, successorId} — won=false when the CAS lost (raced transition);
  * successorId=null when the successor was skipped (cancel win / dedup race).
+ * A queue writer like transition(): the whole transaction is the bounded
+ * micro-transaction (nothing durable precedes its UPDATE), retried to the
+ * deadline on a lock timeout (td-b99b6d §4.3).
  */
 export async function terminalizeAndReschedule(
 	jobId: number,
@@ -496,8 +543,9 @@ export async function terminalizeAndReschedule(
 		| { kind: 'fail'; error: string; result?: unknown },
 	successor: EnqueueParams
 ): Promise<{ won: boolean; finalStatus: string | null; successorId: number | null }> {
+	assertNotInOwnClaimTx(jobId, 'terminalizeAndReschedule');
 	const claim = currentClaim(jobId);
-	return withTransaction(async (client) => {
+	return boundedQueueWrite(jobId, 'terminalizeAndReschedule', async (client) => {
 		const desired = outcome.kind === 'complete' ? 'succeeded' : 'failed';
 		const term = await client.query<{ status: string }>(
 			`UPDATE jobs SET
@@ -590,6 +638,9 @@ export async function hasActiveJob(dedupKey: string): Promise<boolean> {
  * could move running→pending between them and the cancel was silently lost.
  * Under READ COMMITTED a blocked cancel re-evaluates the committed row, so a
  * reclaim that re-pends the job while we wait still gets cancelled here.
+ * A web request: ONE bounded attempt (15 s lock_timeout) — a job row held by
+ * the worker's fenced transaction throws QueueLockTimeoutError, which the
+ * route answers with 503 job_busy instead of hanging (td-b99b6d Rev 3.1).
  */
 export async function requestCancel(
 	jobId: number,
@@ -600,18 +651,24 @@ export async function requestCancel(
 	// in Settings instead. Reconciliation would resurrect it regardless.
 	const typeRow = await query<{ type: string }>(`SELECT type FROM jobs WHERE id = $1`, [jobId]);
 	if (typeRow.rows[0] && RECURRING_TYPES.has(typeRow.rows[0].type)) return 'noop';
-	const r = await query<{ status: string }>(
-		`UPDATE jobs SET
-		    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
-		    finished_at = CASE WHEN status = 'pending' THEN NOW() ELSE finished_at END,
-		    cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END
-		  WHERE id = $1 AND status IN ('pending', 'running')
-		  RETURNING status`,
-		[jobId]
+	const r = await boundedQueueWrite(
+		jobId,
+		'requestCancel',
+		(c) =>
+			c.query<{ status: string }>(
+				`UPDATE jobs SET
+				    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+				    finished_at = CASE WHEN status = 'pending' THEN NOW() ELSE finished_at END,
+				    cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END
+				  WHERE id = $1 AND status IN ('pending', 'running')
+				  RETURNING status`,
+				[jobId]
+			),
+		{ retry: false }
 	);
 	const final = r.rows[0]?.status ?? null;
 	if (final === 'cancelled') {
-		await recordEvent(jobId, 'cancelled', { when: 'pending', requestedBy });
+		await recordQueueEvent(jobId, 'cancelled', { when: 'pending', requestedBy });
 		return 'cancelled';
 	}
 	if (final === 'running') return 'flagged';
@@ -624,45 +681,63 @@ export async function requestCancel(
  * pending (event carries the inference + prior progress); exhausted → failed.
  */
 export async function reclaimStartupJobs(note: string, scope?: ClaimScope): Promise<number> {
-	// ONE conditional UPDATE for all crash-wreckage rows: the cancelled vs
-	// pending vs failed decision is made INSIDE the statement from each row's
-	// committed state at lock time — no SELECT/recheck window, so a cancel
-	// whose flag commits before this statement acquires the row can never be
-	// overwritten into pending/failed (CODEX1 re-review). A cancel-flagged row
-	// must resolve to cancelled, never pending: claimNextJob excludes flagged
-	// pending rows, so re-pending it would wedge the job forever. Events are
-	// emitted only for rows the UPDATE actually returned, matching the FINAL
-	// status of each.
+	// One conditional UPDATE PER crash-wreckage row: the cancelled vs pending
+	// vs failed decision is made INSIDE the statement from the row's committed
+	// state at lock time — no SELECT/recheck window, so a cancel whose flag
+	// commits before this statement acquires the row can never be overwritten
+	// into pending/failed (CODEX1 re-review). A cancel-flagged row must resolve
+	// to cancelled, never pending: claimNextJob excludes flagged pending rows,
+	// so re-pending it would wedge the job forever. Events are emitted only for
+	// rows an UPDATE actually returned, matching the FINAL status of each.
+	//
+	// Per row, in id order, each its own bounded micro-transaction retried to
+	// the deadline (td-b99b6d §4.3): one multirow UPDATE would keep every row
+	// it had already locked while it waited on a later one, so a run of waits
+	// just under the lock timeout could hold an early row past the deadline of
+	// another writer — our own code breaking the holder bound (CODEX1 Phase A
+	// review #2). The id list is only a candidate set: a row that left
+	// `running` in the meantime simply returns nothing. If a row cannot be
+	// written before the deadline, startup fails and PM2 restarts the worker
+	// (operator-visible: health reports no worker).
 	const s = claimScopeSql(scope);
-	const r = await query<{ id: number; status: string; progress: unknown }>(
-		`UPDATE jobs SET
-		    status = CASE
-		      WHEN cancel_requested THEN 'cancelled'
-		      WHEN attempts < max_attempts THEN 'pending'
-		      ELSE 'failed'
-		    END,
-		    next_retry_at = CASE WHEN NOT cancel_requested AND attempts < max_attempts
-		                         THEN NOW() ELSE next_retry_at END,
-		    finished_at = CASE WHEN cancel_requested OR attempts >= max_attempts
-		                       THEN NOW() ELSE finished_at END,
-		    error = CASE WHEN NOT cancel_requested AND attempts >= max_attempts
-		                 THEN 'worker crashed or restarted during this job'
-		                 ELSE error END
-		  WHERE status = 'running'
-		  ${s.sql}
-		  RETURNING id, status, progress`,
+	const candidates = await query<{ id: number }>(
+		`SELECT id FROM jobs WHERE status = 'running' ${s.sql} ORDER BY id`,
 		s.params
 	);
-	for (const row of r.rows) {
+	let reclaimed = 0;
+	for (const { id } of candidates.rows) {
+		const r = await boundedQueueWrite(id, 'reclaimStartupJobs', (c) =>
+			c.query<{ id: number; status: string; progress: unknown }>(
+				`UPDATE jobs SET
+				    status = CASE
+				      WHEN cancel_requested THEN 'cancelled'
+				      WHEN attempts < max_attempts THEN 'pending'
+				      ELSE 'failed'
+				    END,
+				    next_retry_at = CASE WHEN NOT cancel_requested AND attempts < max_attempts
+				                         THEN NOW() ELSE next_retry_at END,
+				    finished_at = CASE WHEN cancel_requested OR attempts >= max_attempts
+				                       THEN NOW() ELSE finished_at END,
+				    error = CASE WHEN NOT cancel_requested AND attempts >= max_attempts
+				                 THEN 'worker crashed or restarted during this job'
+				                 ELSE error END
+				  WHERE id = $1 AND status = 'running'
+				  RETURNING id, status, progress`,
+				[id]
+			)
+		);
+		const row = r.rows[0];
+		if (!row) continue;
+		reclaimed++;
 		if (row.status === 'cancelled') {
-			await recordEvent(row.id, 'cancelled', { when: 'at_reclaim', note });
+			await recordQueueEvent(row.id, 'cancelled', { when: 'at_reclaim', note });
 		} else if (row.status === 'pending') {
-			await recordEvent(row.id, 'reclaimed', { note, priorProgress: row.progress });
+			await recordQueueEvent(row.id, 'reclaimed', { note, priorProgress: row.progress });
 		} else {
-			await recordEvent(row.id, 'failed', { note: `${note} (attempts exhausted)` });
+			await recordQueueEvent(row.id, 'failed', { note: `${note} (attempts exhausted)` });
 		}
 	}
-	return r.rows.length;
+	return reclaimed;
 }
 
 /**
@@ -809,7 +884,7 @@ export async function workerPauseRequested(): Promise<boolean> {
 			WORKER_CONTROL_READ_TIMEOUT_MS
 		);
 		return r.rows[0]?.pause_requested ?? true;
-	} catch (err) {
+	} catch (err) { // stale-safe: pause-control read only; fails safe to paused
 		console.error(
 			'[birds-worker] pause control read failed; pausing safely:',
 			err instanceof Error ? err.message : err
@@ -836,6 +911,20 @@ export async function setWorkerStatus(
 			[fields.pid, fields.version, fields.state, fields.currentJobId, historyNote]
 		);
 	}
+}
+
+/**
+ * A history note beside the worker's current status row (pid/version/state as
+ * they stand) — for an event the worker reports without changing state, such
+ * as the unrecoverable-queue-write exit (td-b99b6d §4.3). Callers treat it as
+ * best-effort.
+ */
+export async function recordWorkerHistoryNote(note: string, currentJobId: number | null): Promise<void> {
+	await query(
+		`INSERT INTO worker_status_history (pid, version, state, current_job_id, note)
+		 SELECT pid, version, state, $2, $1 FROM worker_status WHERE id = TRUE`,
+		[note, currentJobId]
+	);
 }
 
 export async function markWorkerStarted(pid: number, version: string): Promise<void> {

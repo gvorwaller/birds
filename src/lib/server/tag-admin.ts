@@ -708,7 +708,7 @@ export async function approvalRefusal(
   let rs;
   try {
     rs = parseRuleset(JSON.parse(p.artifact_text), ALL_TAGS);
-  } catch (e) {
+  } catch (e) { // stale-safe: admin path (no claim); rethrows non-RulesetError
     if (e instanceof RulesetError) return `These rules do not load: ${e.message}`;
     throw e;
   }
@@ -744,13 +744,13 @@ export async function approveProposal(
               [proposalId, userId],
             )
           ).rows[0].id;
-        } catch (e) {
+        } catch (e) { // stale-safe: admin path (no claim): a definer refusal is an owner answer
           // Every definer refusal is an owner-facing answer, not a failure to record.
           throw new TagTxRefusal(e instanceof Error ? e.message : String(e));
         }
       },
     );
-  } catch (e) {
+  } catch (e) { // stale-safe: rethrows everything but a refusal
     if (e instanceof TagTxRefusal) throw new Error(e.reason);
     throw e;
   }

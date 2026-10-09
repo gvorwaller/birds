@@ -568,7 +568,7 @@ export async function needsCountForStops(
             .map(([code, comName]) => ({ code, comName }))
             .sort((a, b) => a.comName.localeCompare(b.comName)),
         );
-      } catch {
+      } catch { // stale-safe: page/route path, never under a claim
         error = true;
         unavailableStopIds.push(s.id);
       }

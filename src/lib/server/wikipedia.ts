@@ -139,7 +139,7 @@ export async function fetchArticlePlaintext(
 			headers: { 'User-Agent': enrichmentUserAgent() },
 			signal
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
 		throw new WikipediaError(
 			`Wikipedia unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
 			0,
@@ -214,7 +214,7 @@ export async function fetchFamilyLead(
 			headers: { 'User-Agent': enrichmentUserAgent() },
 			signal
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
 		throw new WikipediaError(
 			`Wikipedia unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
 			0,

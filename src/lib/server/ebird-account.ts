@@ -8,7 +8,8 @@
  *
  * Credentials are stored AES-GCM-encrypted (crypto.ts) and never logged.
  */
-import { query, withTransaction } from '$lib/db';
+import { query } from '$lib/db';
+import { claimFencedQuery, isStaleClaim, withClaimTx } from '$server/job-claim';
 import { resolveLiferLocations, type LiferLocResolution } from '$server/lifer-locations';
 import { decryptSecret } from '$server/crypto';
 import { buildMatcher } from '$server/species-match';
@@ -187,7 +188,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 	let formRes: Response;
 	try {
 		formRes = await followRedirects(await fetchWithJar(CAS_LOGIN_URL, jar), jar);
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the CAS transport error; no fenced call inside
 		// Reachability (DNS/timeout/reset) is an UPSTREAM problem, never a
 		// credential one — classifying it as EbirdLoginError made a Cornell
 		// outage fail sync/frequency jobs terminally on attempt 1 instead of
@@ -234,7 +235,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 			body: body.toString()
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the CAS transport error; no fenced call inside
 		throw new EbirdUpstreamError(
 			`Could not reach the eBird login endpoint: ${err instanceof Error ? err.message : err}`,
 			0
@@ -246,7 +247,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 	if (loginRes.status >= 300 && loginRes.status < 400) {
 		try {
 			await followRedirects(loginRes, jar);
-		} catch (err) {
+		} catch (err) { // stale-safe: wraps the CAS transport error; no fenced call inside
 			throw new EbirdUpstreamError(
 				`Could not complete the eBird sign-in redirect: ${err instanceof Error ? err.message : err}`,
 				0
@@ -368,7 +369,7 @@ export async function fetchAuthenticatedEbird(
 	const doFetch = async (jar: CookieJar): Promise<Response> => {
 		try {
 			return await followRedirects(await fetchWithJar(url, jar, undefined, t), jar, 8, t);
-		} catch (err) {
+		} catch (err) { // stale-safe: maps a timeout, rethrows everything else
 			if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
 				throw new EbirdUpstreamError('eBird did not respond within 30 seconds.', 504);
 			}
@@ -633,7 +634,7 @@ export async function importLifeList(
 
 	let retained: string[] = [];
 	let retainedNames: string[] = [];
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		if (unmatchedSpecies.length > 0) {
 			// Incomplete import: replace only the rows it matched; keep the rest.
 			const kept = (
@@ -785,7 +786,7 @@ export async function syncLifeListFromEbird(
 		let csvRes: Response;
 		try {
 			csvRes = await followRedirects(await fetchWithJar(LIFELIST_CSV_URL, jar), jar);
-		} catch (err) {
+		} catch (err) { // stale-safe: wraps the export transport error; no fenced call inside
 			throw new EbirdUpstreamError(
 				`Could not reach the eBird life-list export: ${err instanceof Error ? err.message : err}`,
 				0
@@ -816,7 +817,11 @@ export async function syncLifeListFromEbird(
 		const result = await importLifeList(userId, parseLifeListCsv(text), 'ebird_sync');
 		if (hb) await hb();
 		// importLifeList wrote life_list_status/error ('ok' or 'partial').
-		await query(`UPDATE user_ebird SET life_list_synced_at = NOW() WHERE user_id = $1`, [userId]);
+		await claimFencedQuery(
+			`UPDATE user_ebird SET life_list_synced_at = NOW() WHERE user_id = $1`,
+			[userId],
+			'life list synced'
+		);
 		// Install the post-CSV jar so the resolver's fetchAuthenticatedEbird
 		// calls reuse this session (no second casLogin — GROK §1 pin).
 		sessionMemo.set(userId, { jar, at: Date.now() });
@@ -835,23 +840,30 @@ export async function syncLifeListFromEbird(
 			else if (result.locs.stopped && result.locs.stopReason === 'auth') locStatus = 'error';
 			else if (result.locs.stopped) locStatus = 'stopped';
 			const locError = locStatus === 'error' ? 'eBird session could not authenticate' : null;
-			await query(
+			await claimFencedQuery(
 				`UPDATE user_ebird SET loc_resolution_status = $2, loc_resolution_error = $3 WHERE user_id = $1`,
-				[userId, locStatus, locError]
+				[userId, locStatus, locError],
+				'loc resolution status'
 			);
 		} catch (err) {
+			// A lost claim stops the sync here: no fail-soft status write.
+			if (isStaleClaim(err)) throw err;
 			result.locs = undefined;
-			await query(
+			await claimFencedQuery(
 				`UPDATE user_ebird SET loc_resolution_status = 'error', loc_resolution_error = $2 WHERE user_id = $1`,
-				[userId, (err instanceof Error ? err.message : String(err)).slice(0, 300)]
+				[userId, (err instanceof Error ? err.message : String(err)).slice(0, 300)],
+				'loc resolution status'
 			).catch(() => {});
 		}
 		return result;
 	} catch (err) {
+		// A lost claim is not a sync failure: the live claim owns the status.
+		if (isStaleClaim(err)) throw err;
 		const message = err instanceof Error ? err.message : String(err);
-		await query(
+		await claimFencedQuery(
 			`UPDATE user_ebird SET life_list_status = 'error', life_list_error = $2 WHERE user_id = $1`,
-			[userId, message]
+			[userId, message],
+			'life list status'
 		);
 		throw err;
 	}

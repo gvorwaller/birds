@@ -16,6 +16,7 @@
  * definer user ids are audit data).
  */
 import { query } from '$lib/db';
+import { claimFencedQuery, isStaleClaim } from '$server/job-claim';
 import { ALL_TAGS } from '$lib/species-tags';
 import { dedupKeys, retryDelayMs, sanitizeErrorText, type JobRow } from '$server/job-policy';
 import {
@@ -101,6 +102,7 @@ export async function runTagConsistencyJob(job: JobRow): Promise<void> {
 			consistencyParams(adminId, msUntilQuietHour())
 		);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
 		if (attempts < job.max_attempts) {
 			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
@@ -237,13 +239,13 @@ export async function stageReportBody(tag: string, revisionId: string): Promise<
 }
 
 async function recordReport(kind: string, tag: string, revisionId: string, body: unknown): Promise<string> {
+	// Fenced to the job's live claim (td-b99b6d): a stale op records no report.
 	return (
-		await query<{ id: string }>('SELECT public.record_tag_report($1, $2, $3, $4::jsonb)::text AS id', [
-			kind,
-			tag,
-			revisionId,
-			JSON.stringify(body)
-		])
+		await claimFencedQuery<{ id: string }>(
+			'SELECT public.record_tag_report($1, $2, $3, $4::jsonb)::text AS id',
+			[kind, tag, revisionId, JSON.stringify(body)],
+			`${kind} report`
+		)
 	).rows[0].id;
 }
 
@@ -334,6 +336,7 @@ export async function runTagOpJob(job: JobRow): Promise<void> {
 		}
 		await completeJob(job.id, attempts, result);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		// Owner operations are not retried blindly: a refusal (pending repair,
 		// failed coverage, missing report) is an answer, not a transient.
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);

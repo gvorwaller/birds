@@ -17,7 +17,8 @@
  * search_tsv.
  */
 import { createHash } from 'node:crypto';
-import { query, withTransaction } from '$lib/db';
+import { query } from '$lib/db';
+import { claimFencedQuery, isStaleClaim, withClaimTx } from '$server/job-claim';
 import type pg from 'pg';
 
 /**
@@ -115,7 +116,7 @@ export async function upsertResolution(
 	exec?: Exec
 ): Promise<void> {
 	if (exec) return upsertResolutionWithExec(code, row, exec);
-	await withTransaction(async (client) =>
+	await withClaimTx(async (client) =>
 		upsertResolutionWithExec(code, row, clientExec(client))
 	);
 }
@@ -270,13 +271,14 @@ export async function markWikiNoArticleTx(tx: TagWriteTx, code: string): Promise
  * are untouched, so the last good revision keeps serving (CODEX1 #3).
  */
 export async function markWikiError(code: string, message: string): Promise<void> {
-	await query(
+	await claimFencedQuery(
 		`INSERT INTO species_enrichment (species_code, wiki_status, wiki_error, wiki_fetched_at)
 		 VALUES ($1, 'error', $2, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   wiki_status = 'error', wiki_error = $2, wiki_fetched_at = NOW(),
 		   updated_at = NOW()`,
-		[code, sanitizeErrorText(message).slice(0, 500)]
+		[code, sanitizeErrorText(message).slice(0, 500)],
+		'markWikiError'
 	);
 }
 
@@ -395,7 +397,7 @@ export async function upsertAiProseData(
 				: `No usable note returned for ${candidateCount} candidate(s) after retries.`
 			: null;
 
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		await client.query(
 			`UPDATE species_enrichment SET
 			   field_craft = $2, ai_model = $3, ai_generated_at = NOW(),
@@ -493,21 +495,24 @@ export async function markAiError(
 	// never-attempted clause true every scan). When NOT participating (inat
 	// pending/error), similar_* stays untouched so the substage runs the
 	// moment inat lands. Existing notes are PRESERVED either way (last-good).
+	// One statement per branch, each fenced to the held claim (td-b99b6d).
 	if (opts.similarParticipating) {
-		await query(
+		await claimFencedQuery(
 			`UPDATE species_enrichment SET
 			   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(),
 			   similar_status = 'error', similar_error = $2, similar_attempted_at = NOW(),
 			   updated_at = NOW()
 			 WHERE species_code = $1`,
-			[code, sanitizeErrorText(message).slice(0, 500)]
+			[code, sanitizeErrorText(message).slice(0, 500)],
+			'markAiError'
 		);
 	} else {
-		await query(
+		await claimFencedQuery(
 			`UPDATE species_enrichment SET
 			   ai_status = 'error', ai_error = $2, ai_attempted_at = NOW(), updated_at = NOW()
 			 WHERE species_code = $1`,
-			[code, sanitizeErrorText(message).slice(0, 500)]
+			[code, sanitizeErrorText(message).slice(0, 500)],
+			'markAiError'
 		);
 	}
 }
@@ -766,7 +771,7 @@ export async function enrichOneNow(
 			target = wikiFetchTitleFor(row, sciName);
 			article = target ? await fetchArticlePlaintext(target.title, fetchOpts) : null;
 		}
-	} catch {
+	} catch { // stale-safe: page action, never runs under a claim (no fenced call inside)
 		// Timeout, WDQS/Wikipedia error, rate limit — all transient here.
 		return { outcome: 'transient' };
 	}
@@ -1332,7 +1337,7 @@ export async function upsertMediaOk(
 		await replace(exec);
 		return;
 	}
-	await withTransaction(async (client) => replace(clientExec(client)));
+	await withClaimTx(async (client) => replace(clientExec(client)));
 }
 
 /**
@@ -1343,13 +1348,14 @@ export async function upsertMediaOk(
  * yet (belt-and-braces, matching markWikiError).
  */
 export async function markMediaError(code: string, message: string): Promise<void> {
-	await query(
+	await claimFencedQuery(
 		`INSERT INTO species_enrichment (species_code, media_status, media_error, media_fetched_at)
 		 VALUES ($1, 'error', $2, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   media_status = 'error', media_error = $2, media_fetched_at = NOW(),
 		   updated_at = NOW()`,
-		[code, sanitizeErrorText(message).slice(0, 500)]
+		[code, sanitizeErrorText(message).slice(0, 500)],
+		'markMediaError'
 	);
 }
 
@@ -1725,7 +1731,7 @@ async function focalInatState(code: string, exec: Exec = query): Promise<FocalIn
  * truth for the page, the model, and the stored notes.
  */
 export async function similarCandidatesFor(code: string): Promise<SimilarCandidateRow[]> {
-	return withTransaction(async (client) => {
+	return withClaimTx(async (client) => {
 		const exec = clientExec(client);
 		const st = await focalInatState(code, exec);
 		const forward = selectInatCandidates(await loadResolvedEdges(code, exec), st.family);
@@ -1889,7 +1895,7 @@ async function candidateNames(
  */
 export async function markSimilarDeclined(code: string, declinedCodes: readonly string[]): Promise<void> {
 	if (declinedCodes.length === 0) return;
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		const exec = clientExec(client);
 		const display = await exec<{ resolved_code: string; origin: 'forward' | 'reverse' }>(
 			`SELECT resolved_code, origin FROM species_similar_display
@@ -1946,7 +1952,7 @@ export async function reconcileSimilarState(
 	status: 'ok' | 'none',
 	model: string | null
 ): Promise<void> {
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		const exec = clientExec(client);
 		await exec(
 			`UPDATE species_enrichment SET
@@ -2284,7 +2290,7 @@ export async function upsertInatSimilar(
 	resolution: InatResolution,
 	rows: readonly InatEdgeInput[]
 ): Promise<void> {
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		const exec = clientExec(client);
 		const before = await exec<{
 			inat_taxon_id: string;
@@ -2376,7 +2382,7 @@ export async function upsertInatSimilar(
  * cannot re-fire against a mapping that no longer exists.
  */
 export async function markInatNoMapping(code: string): Promise<void> {
-	await withTransaction(async (client) => {
+	await withClaimTx(async (client) => {
 		const exec = clientExec(client);
 		const stale = await exec<{ inat_taxon_id: string; inat_sci_name: string }>(
 			`DELETE FROM species_inat_similar WHERE species_code = $1
@@ -2418,14 +2424,15 @@ export async function markInatNoMapping(code: string): Promise<void> {
  * move — the 7-day error lane owns the retry.
  */
 export async function markInatError(code: string, message: string): Promise<void> {
-	await query(
+	await claimFencedQuery(
 		`INSERT INTO species_enrichment
 		   (species_code, inat_similar_status, inat_similar_error, inat_similar_attempted_at)
 		 VALUES ($1, 'error', $2, NOW())
 		 ON CONFLICT (species_code) DO UPDATE SET
 		   inat_similar_status = 'error', inat_similar_error = $2,
 		   inat_similar_attempted_at = NOW(), updated_at = NOW()`,
-		[code, sanitizeErrorText(message).slice(0, 500)]
+		[code, sanitizeErrorText(message).slice(0, 500)],
+		'markInatError'
 	);
 }
 
@@ -2554,6 +2561,7 @@ export async function enrichSpeciesMedia(
 	try {
 		xc = await fetchXenoCantoRecordings(sciName, opts);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		if (err instanceof XenoCantoError && err.rateLimited) throw err;
 		xcOk = false;
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(

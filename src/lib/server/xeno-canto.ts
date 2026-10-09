@@ -206,7 +206,7 @@ export async function fetchXenoCantoRecordings(
 			headers: { Accept: 'application/json', 'User-Agent': enrichmentUserAgent() },
 			signal
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
 		throw new XenoCantoError(
 			`xeno-canto unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
 			0,

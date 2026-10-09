@@ -137,7 +137,7 @@ export function titleFromArticleUrl(url: string | null): string | null {
 	if (!m) return null;
 	try {
 		return decodeURIComponent(m[1]).replace(/_/g, ' ');
-	} catch {
+	} catch { // stale-safe: URL decode only
 		return null;
 	}
 }
@@ -169,7 +169,7 @@ async function runSparql(
 			body: new URLSearchParams({ query: queryText }),
 			signal
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the WDQS transport error; no fenced call inside
 		throw new WikidataError(
 			`Wikidata unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
 			0,
@@ -314,7 +314,7 @@ function filenameFromCommonsUri(uri: string | undefined): string | null {
 	if (!m) return null;
 	try {
 		return decodeURIComponent(m[1]);
-	} catch {
+	} catch { // stale-safe: URL decode only
 		return null;
 	}
 }

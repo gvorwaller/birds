@@ -124,7 +124,7 @@ export async function generateFieldTips(
 			body: JSON.stringify(built.body),
 			signal: opts.signal ?? AbortSignal.timeout(GUIDANCE_TIMEOUT_MS)
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside (page guidance, never under a claim)
 		// Same mislabel enrichment already fixed (GROK P2): a timeout is not a
 		// network failure, and telling the user the service is unreachable
 		// sends them down the wrong debugging path.
@@ -163,7 +163,7 @@ export async function generateFieldTips(
 	let data: any;
 	try {
 		data = await res.json();
-	} catch {
+	} catch { // stale-safe: parse only
 		fail(new GuidanceError('The AI response could not be read — try again.'));
 	}
 	envelope.attempts = extractEnvelope(data);
@@ -183,7 +183,7 @@ export async function generateFieldTips(
 		const end = text.lastIndexOf(']');
 		if (start < 0 || end < 0) throw new Error('no array');
 		arr = JSON.parse(text.slice(start, end + 1));
-	} catch {
+	} catch { // stale-safe: parse only
 		fail(new GuidanceError('The AI response could not be read — try again.'));
 		throw new Error('unreachable'); // fail() always throws; satisfies TS flow
 	}

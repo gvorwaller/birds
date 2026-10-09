@@ -4,7 +4,9 @@
  * shared engine fixture; everything created is removed.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { query } from "$lib/db";
+import { query, withTransaction } from "$lib/db";
+import type { JobRow } from "$server/job-policy";
+import { requeueInterrupted, runWithClaim, StaleClaimError } from "../jobs";
 import { activateRevision, stageRevision } from "./activation";
 import { __registerEvalDesignForTests, designHash } from "./eval-design";
 import { buildFrame, canonicalFrameHash } from "./eval-frame";
@@ -473,5 +475,91 @@ describe.runIf(migrated).sequential("0071 blind-test contract", () => {
     ).rows[0].design;
     expect(stored.selectedCodes).toEqual(base.selectedCodes);
     await query("SELECT abandon_tag_eval_set($1, $2)", [ok.id, fx.adminId]);
+  }, 60_000);
+
+  it("createEvalSet is fenced to the live claim inside its REPEATABLE READ snapshot (td-b99b6d)", async () => {
+    const frame = await buildFrame(T, rev);
+    const n = Object.fromEntries(STRATA.map((h) => [h, 0])) as typeof frame.N;
+    n.B = 2;
+    const input = {
+      tag: T,
+      revisionId: rev,
+      n,
+      expectedFrameHash: frame.frameHash,
+      gates: FIXTURE_GATES,
+      userId: fx.adminId,
+      seed: "c".repeat(64),
+    };
+    const setCount = async () =>
+      Number(
+        (
+          await query<{ n: string }>(
+            "SELECT count(*)::text AS n FROM tag_eval_set WHERE tag = $1 AND revision_id = $2",
+            [T, rev],
+          )
+        ).rows[0].n,
+      );
+    const id = (
+      await query<{ id: number }>(
+        `INSERT INTO jobs (type, payload, requested_by, label, max_attempts)
+         VALUES ('tag_eval_create', '{}', $1, 'CLAIMTEST eval-sample', 3) RETURNING id`,
+        [fx.adminId],
+      )
+    ).rows[0].id;
+    const claim = async () =>
+      (
+        await query<JobRow>(
+          `UPDATE jobs SET status = 'running', attempts = attempts + 1, started_at = NOW(),
+                           heartbeat_at = NOW(), claim_seq = claim_seq + 1
+            WHERE id = $1 AND status = 'pending' RETURNING *`,
+          [id],
+        )
+      ).rows[0];
+    try {
+      const a = await claim();
+      await runWithClaim(a, () => requeueInterrupted(id, a.attempts));
+      const b = await claim();
+      const before = await setCount();
+      // A (drained and re-claimed as B): refused, no set.
+      await expect(runWithClaim(a, () => createEvalSet(input))).rejects.toBeInstanceOf(StaleClaimError);
+      expect(await setCount()).toBe(before);
+      // The race: a transition of B's row is in flight (uncommitted) when B's
+      // createEvalSet takes its snapshot; the fence waits on it, it commits,
+      // and REPEATABLE READ reports the concurrent update (40001) — mapped to
+      // StaleClaimError, never retried into a set.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => (locked = r));
+      const transition = withTransaction(async (c) => {
+        await c.query(
+          "UPDATE jobs SET status = 'pending', attempts = GREATEST(attempts - 1, 0) WHERE id = $1 AND status = 'running'",
+          [id],
+        );
+        locked();
+        await gate;
+      });
+      await isLocked;
+      let settled = false;
+      const create = runWithClaim(b, () => createEvalSet(input)).finally(() => (settled = true));
+      const outcome = create.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      expect(settled).toBe(false); // waiting on the in-flight transition's row lock
+      release();
+      await transition;
+      expect(await outcome).toBeInstanceOf(StaleClaimError);
+      expect(await setCount()).toBe(before);
+      // The live claim creates the set.
+      const c = await claim();
+      const set = await runWithClaim(c, () => createEvalSet(input));
+      sets.setIds.add(set.setId);
+      expect(await setCount()).toBe(before + 1);
+      await query("SELECT abandon_tag_eval_set($1, $2)", [set.setId, fx.adminId]);
+    } finally {
+      await query("DELETE FROM jobs WHERE id = $1", [id]);
+    }
   }, 60_000);
 });

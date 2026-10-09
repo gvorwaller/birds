@@ -5,6 +5,7 @@
  */
 import { env } from '$env/dynamic/private';
 import { query, withTransaction } from '$lib/db';
+import { withClaimTx } from '$server/job-claim';
 import { buildMatcher } from '$server/species-match';
 
 const DEFAULT_API = 'https://gaylon.photos/api/photos?collection=birds';
@@ -87,7 +88,8 @@ export async function rematchPhotoLinks(): Promise<{ matched: number; unmatched:
 	}>('SELECT photo_id, source_species, source_sci_name FROM photo_links');
 
 	let matched = 0;
-	await withTransaction(async (client) => {
+	// From sync_taxonomy this rewrite is fenced to the handler's live claim.
+	await withClaimTx(async (client) => {
 		for (const r of rows.rows) {
 			const m =
 				matcher.taxonomySize > 0 ? matcher.match(r.source_species, r.source_sci_name) : null;
@@ -112,7 +114,7 @@ export async function galleryHealth(): Promise<GallerySourceState> {
 		if (!newest) return 'not_configured';
 		const ageHours = (Date.now() - new Date(newest).getTime()) / 3_600_000;
 		return ageHours <= GALLERY_STALE_HOURS ? 'ok' : 'stale';
-	} catch {
+	} catch { // stale-safe: not reachable from a handler (gallery health)
 		return 'error';
 	}
 }
@@ -123,7 +125,7 @@ export async function refreshGalleryIfStale(): Promise<void> {
 	if (state === 'ok') return;
 	try {
 		await syncGallery();
-	} catch {
+	} catch { // stale-safe: not reachable from a handler (lazy gallery refresh)
 		// keep serving stale cache; health endpoint reports the state
 	}
 }

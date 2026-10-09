@@ -95,7 +95,7 @@ export async function runTagPreviewJob(job: JobRow): Promise<void> {
     let ruleset;
     try {
       ruleset = parseRuleset(JSON.parse(prop.artifact_text), ALL_TAGS);
-    } catch (e) {
+    } catch (e) { // stale-safe: parse only; rethrows non-RulesetError
       if (e instanceof RulesetError)
         throw new PreviewRefused(`the rules do not load: ${e.message}`);
       throw e;
@@ -284,7 +284,7 @@ export async function runTagPreviewJob(job: JobRow): Promise<void> {
               ],
             )
           ).rows[0].id;
-        } catch (e) {
+        } catch (e) { // stale-safe: stale-aware: a definer stale claim becomes a refusal, mapped back to StaleClaimError
           const msg = e instanceof Error ? e.message : String(e);
           if (/^stale claim\b/.test(msg)) throw new TagTxRefusal(msg);
           if (/changed during the Preview/.test(msg))

@@ -7,7 +7,9 @@ vi.mock('$server/taxonomy-reference', () => ({taxonomySummary: vi.fn(async () =>
  * Unit-level fetch behavior lives in barchart.test.ts; outcome policy in
  * job-policy.test.ts; real SQL in jobs-db.test.ts.
  */
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueueWriteUnrecoverableError } from "./job-claim";
 
 const mocks = vi.hoisted(() => {
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -61,6 +63,9 @@ const mocks = vi.hoisted(() => {
       async () => new Map(),
     ),
     attemptMeta: vi.fn<(codes: string[]) => Promise<Map<string, unknown>>>(async () => new Map()),
+    recordWorkerHistoryNote: vi.fn<(note: string, jobId: number | null) => Promise<void>>(
+      async () => {},
+    ),
   };
   /* eslint-enable @typescript-eslint/no-explicit-any */
 });
@@ -91,6 +96,14 @@ vi.mock("$server/jobs", () => ({
   runWithClaim: (_job: unknown, fn: () => Promise<unknown>) => fn(),
   isStaleClaim: (err: unknown) =>
     err instanceof Error && /^stale claim\b/.test(err.message),
+  // td-b99b6d additions: the worker-history note for the unrecoverable-write
+  // escalation, and pass-throughs for the claim helpers jobs.ts re-exports
+  // (no claim context here, so they behave as their unfenced selves).
+  recordWorkerHistoryNote: mocks.recordWorkerHistoryNote,
+  setJobLabel: async () => {},
+  assertClaimHeld: async () => {},
+  withClaimTx: (fn: (client: unknown) => Promise<unknown>) =>
+    fn({ query: async () => ({ rows: [], rowCount: 0 }) }),
 }));
 
 const db = vi.hoisted(() => {
@@ -584,6 +597,43 @@ describe("runJob — frequency jobs", () => {
     });
     await runJob(jobRow(), ctx);
     expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("a LOST claim at a unit's progress write stops the load — no more units, no terminal write (td-b99b6d G2)", async () => {
+    mocks.updateProgress
+      .mockResolvedValueOnce({ cancelRequested: false }) // initial write
+      .mockRejectedValueOnce(new Error("stale claim: job 42 is no longer held by this execution (progress)"));
+    let units = 0;
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      for (const loc of locs) {
+        units++;
+        await opts.onUnit(loc, { status: "ok" });
+      }
+      return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+    });
+    await runJob(jobRow(), ctx); // the boundary swallows the stale claim
+    expect(units).toBe(1);
+    expect(mocks.recordEvent.mock.calls.map((c) => c[1])).toEqual(["claimed", "unit_ok"]);
+    for (const m of [mocks.completeJob, mocks.failJob, mocks.scheduleRetry, mocks.cancelRunningJob])
+      expect(m).not.toHaveBeenCalled();
+  });
+
+  it("a LOST claim at a unit's event write stops the load the same way", async () => {
+    mocks.recordEvent
+      .mockResolvedValueOnce(undefined) // claimed
+      .mockRejectedValueOnce(new Error("stale claim: job 42 is no longer held by this execution (unit_ok event)"));
+    let units = 0;
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      for (const loc of locs) {
+        units++;
+        await opts.onUnit(loc, { status: "ok" });
+      }
+      return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+    });
+    await runJob(jobRow(), ctx);
+    expect(units).toBe(1);
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+    expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
   it("malformed payload → failJob with the validation message", async () => {
@@ -3649,5 +3699,58 @@ describe("nudgeEnrichmentScan (admin impatient nudge — direct enqueue)", () =>
       (c) => (c[0] as { type: string }).type === "enrich_species_media",
     );
     expect((media![0] as { payload: { force: boolean } }).payload.force).toBe(true);
+  });
+});
+
+describe("runJob never resolves while its row is stuck running (td-b99b6d §4.3)", () => {
+  const unwritable = () => new QueueWriteUnrecoverableError(42, "transition", 150_000);
+
+  it("failJob past the queue-write deadline → runJob REJECTS, logs the FATAL line, notes the worker history", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.ensureFrequencies.mockRejectedValue(new Error("boom"));
+    mocks.failJob.mockRejectedValueOnce(unwritable());
+    await expect(runJob(jobRow(), ctx)).rejects.toBeInstanceOf(QueueWriteUnrecoverableError);
+    expect(errors.mock.calls.map((c) => String(c[0]))).toContain(
+      "[birds-worker] FATAL: queue row 42 could not be written for 150 s — restarting for startup reclaim",
+    );
+    expect(mocks.recordWorkerHistoryNote).toHaveBeenCalledTimes(1);
+    expect(mocks.recordWorkerHistoryNote.mock.calls[0][1]).toBe(42);
+    errors.mockRestore();
+  });
+
+  it("the handler's own terminal write past the deadline → REJECTS without a further failJob wait", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.ensureFrequencies.mockResolvedValue(ensureResult({ refreshed: ["L1", "L2", "L3"] }));
+    mocks.completeJob.mockRejectedValueOnce(unwritable());
+    await expect(runJob(jobRow(), ctx)).rejects.toBeInstanceOf(QueueWriteUnrecoverableError);
+    expect(mocks.failJob).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("a history-note failure never masks the escalation", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.ensureFrequencies.mockRejectedValue(new Error("boom"));
+    mocks.failJob.mockRejectedValueOnce(unwritable());
+    mocks.recordWorkerHistoryNote.mockRejectedValueOnce(new Error("db down"));
+    await expect(runJob(jobRow(), ctx)).rejects.toBeInstanceOf(QueueWriteUnrecoverableError);
+    errors.mockRestore();
+  });
+
+  it("a stale claim at failJob still resolves (the row is no longer ours)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.ensureFrequencies.mockRejectedValue(new Error("boom"));
+    mocks.failJob.mockRejectedValueOnce(new Error("stale claim: job 42 is no longer held by this execution (transition)"));
+    await expect(runJob(jobRow(), ctx)).resolves.toBeUndefined();
+    expect(mocks.recordWorkerHistoryNote).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("worker/index.ts lets that rejection exit the process for PM2 + startup reclaim (read, not executed)", () => {
+    const src = readFileSync(new URL("../../worker/index.ts", import.meta.url), "utf8");
+    // runJob is awaited unguarded in the loop, and main().catch exits 1.
+    expect(src).toMatch(/\n\t\tawait runJob\(job, ctx\);\n/);
+    expect(src).toMatch(/main\(\)\.catch\(\(err\) => \{[\s\S]*?process\.exit\(1\);/);
+    // Startup reclaim runs before the loop.
+    expect(src.indexOf("reclaimStartupJobs(")).toBeLessThan(src.indexOf("for (;;)"));
   });
 });

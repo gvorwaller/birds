@@ -58,8 +58,10 @@ import {
 	scheduleRetry,
 	terminalizeAndReschedule,
 	updateProgress,
+	recordWorkerHistoryNote,
 	yieldRemainder
 } from '$server/jobs';
+import { claimFencedQuery, QueueWriteUnrecoverableError } from '$server/job-claim';
 import {
 	AI_STAGE_ENABLED,
 	dedupKeys,
@@ -247,7 +249,11 @@ async function runFrequencyJob(
 			);
 			const { cancelRequested } = await updateProgress(job.id, progress);
 			if (cancelRequested) cancelSeen = true;
-		} catch {
+		} catch (err) {
+			// A lost claim stops the load — the fence refused this unit's
+			// event/progress, and every later unit would fetch and store for a
+			// claim that is no longer live (td-b99b6d G2).
+			if (isStaleClaim(err)) throw err;
 			// Progress/event write failures must never fail the load itself
 			// (CODEX1 #6) — the next unit's write will catch up.
 		}
@@ -270,7 +276,8 @@ async function runFrequencyJob(
 		try {
 			const { cancelRequested } = await updateProgress(job.id, progress);
 			if (cancelRequested) cancelSeen = true;
-		} catch {
+		} catch (err) {
+			if (isStaleClaim(err)) throw err;
 			// Same policy as per-unit writes: never fail the load over telemetry.
 		}
 	}
@@ -437,6 +444,7 @@ async function runSyncJob(job: JobRow, fn: () => Promise<unknown>): Promise<void
 		});
 		await completeJob(job.id, attempts, result);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		const message = sanitizeErrorText(
 			err instanceof Error ? err.message : String(err)
 		).slice(0, 300);
@@ -516,6 +524,7 @@ export async function runTagRepairJob(job: JobRow): Promise<void> {
 		}
 		await completeJob(job.id, attempts, result);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
 		if (attempts < job.max_attempts) {
 			await scheduleRetry(job.id, attempts, retryDelayMs(attempts, 'transient'), message);
@@ -602,6 +611,9 @@ async function withBudget<T>(
 	try {
 		return await fn({ signal: controller.signal, checkpoint, raceRead, graceLeftMs });
 	} catch (err) {
+		// A lost claim outranks an expired budget: it must reach runJob's
+		// boundary as itself, never as a per-user budget failure.
+		if (isStaleClaim(err)) throw err;
 		if (controller.signal.aborted) throw new ScanBudgetExceeded();
 		throw err;
 	} finally {
@@ -777,7 +789,7 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 							tag: `need-${c.speciesCode}`
 						});
 						delivered++;
-					} catch (err) {
+					} catch (err) { // stale-safe: rethrows every error that is not a PushError
 						if (err instanceof PushError && err.gone) {
 							goneEndpoints.add(sub.endpoint);
 						} else if (err instanceof PushError) {
@@ -793,6 +805,10 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 					if (lastErr) throw lastErr;
 					continue; // every endpoint was gone — the no-devices prune below
 				}
+				// Deliberately NOT claim-fenced (td-b99b6d ruling Q1): written
+				// only after a confirmed delivery, it is the truthful record of a
+				// push the user already received; refusing it under a lost claim
+				// would turn one straddling push into a duplicate next scan.
 				// A delivered push MUST record its sent-row (or the next scan
 				// re-pings) — never detached; bounded by the SHARED settlement
 				// grace (all remaining writes split one window, they don't
@@ -849,6 +865,9 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: tally.sent });
 			}
 		} catch (err) {
+			// A lost claim is not this user's failure: no unit_failed, no
+			// next user (td-b99b6d G3).
+			if (isStaleClaim(err)) throw err;
 			// Sends completed before the failure still count (they happened —
 			// and their sent-rows are recorded, so no re-ping next scan).
 			alertsSent += tally.sent;
@@ -1222,6 +1241,7 @@ async function runScanEnrichment(job: JobRow): Promise<void> {
 			enrichScanParams(adminId, runAfterMs)
 		);
 	} catch (err) {
+		if (isStaleClaim(err)) throw err;
 		// Scanner transient failure retries the SAME row — never a false
 		// success, never a lost chain (idle-tick ensure is the backstop).
 		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
@@ -1467,12 +1487,16 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							qid: row.qid
 						});
 					}
-				} catch {
+				} catch (err) {
+					// Soft — except a lost claim (its fenced unit_ok event was
+					// refused), which stops the chunk.
+					if (isStaleClaim(err)) throw err;
 					// Soft: see above. WDQS transient/rate-limit on the fallback
 					// leaves the primary results fully usable.
 				}
 			}
 		} catch (err) {
+			if (isStaleClaim(err)) throw err;
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
 				0,
 				300
@@ -1651,6 +1675,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 					kept = next;
 					if (owed().length >= before) kept = prev;
 				} catch (err) {
+					if (isStaleClaim(err)) throw err;
 					await recordEvent(job.id, 'progress', {
 						code,
 						similarEmpty: 'retry_failed',
@@ -1723,11 +1748,12 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 				offeredCodes: effectiveOffered.map((c) => c.code)
 			});
 			if (newlyExposed.length > 0) {
-				await query(
+				await claimFencedQuery(
 						`UPDATE species_enrichment
 						    SET similar_status = NULL, similar_error = NULL, updated_at = NOW()
 						  WHERE species_code = $1`,
-					[code]
+					[code],
+					'similar re-open'
 				);
 				await recordEvent(job.id, 'progress', { code, similarNewlyExposed: newlyExposed });
 			}
@@ -1738,6 +1764,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			}
 			return 'ok';
 		} catch (err) {
+			if (isStaleClaim(err)) throw err;
 			if (err instanceof EnrichmentAiError && err.rateLimited) {
 				aiRateLimited = true;
 				aiRetryAfterMs = err.retryAfterMs;
@@ -1810,6 +1837,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							}
 						}
 				} catch (err) {
+					if (isStaleClaim(err)) throw err;
 					const message = sanitizeErrorText(
 						err instanceof Error ? err.message : String(err)
 					).slice(0, 200);
@@ -1976,6 +2004,7 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 							await unitOk('ok');
 						}
 					} catch (err) {
+						if (isStaleClaim(err)) throw err;
 						if (err instanceof WikipediaError && err.rateLimited) {
 							// Stop the batch — remaining units keep their state and
 							// the whole row retries after the server's Retry-After
@@ -1989,6 +2018,9 @@ async function runEnrichSpecies(job: JobRow, ctx: WorkerContext): Promise<void> 
 			}
 			}
 		} catch (err) {
+			// A lost claim is not this species' failure: no error mark, no
+			// unit_failed, and the rest of the chunk does not run.
+			if (isStaleClaim(err)) throw err;
 			const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
 				0,
 				200
@@ -2183,6 +2215,7 @@ async function runEnrichSpeciesMedia(job: JobRow, ctx: WorkerContext): Promise<v
 				await recordEvent(job.id, 'unit_ok', { code, outcome });
 			}
 		} catch (err) {
+			if (isStaleClaim(err)) throw err;
 			// Structural check — covers CommonsError, WikidataError, and
 			// XenoCantoError today, plus any future provider error carrying the
 			// shared {rateLimited, retryAfterMs} provider-error shape.
@@ -2384,6 +2417,7 @@ async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<vo
 				edges: rows.length
 			});
 		} catch (err) {
+			if (isStaleClaim(err)) throw err;
 			if (isRateLimitedError(err)) {
 				return { retryAfterMs: err.retryAfterMs ?? RATE_LIMIT_RETRY_DELAY_MS };
 			}
@@ -2429,10 +2463,16 @@ async function runEnrichSpeciesInat(job: JobRow, ctx: WorkerContext): Promise<vo
 }
 
 /**
- * Dispatch a claimed job. Never throws — failures become failJob. The handler
- * runs under the job's claim (jobs.ts runWithClaim), so its queue writes are
- * fenced; a StaleClaimError anywhere means this execution lost the claim and
- * stops here without writing anything else (td-894144 B5 §3z).
+ * Dispatch a claimed job. Failures become failJob. The handler runs under the
+ * job's claim (jobs.ts runWithClaim), so its queue writes and durable side
+ * effects are fenced; a StaleClaimError anywhere means this execution lost the
+ * claim and stops here without writing anything else (td-894144 B5 §3z).
+ *
+ * Contract (td-b99b6d §4.3): runJob never RESOLVES while its row is still
+ * `running` under its own claim. Every transition retries its lock to the
+ * queue-write deadline; past it (a lock held outside this codebase) the error
+ * propagates — runJob rejects, the worker exits, and its startup reclaim
+ * converts the row.
  */
 export async function runJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 	return runWithClaim(job, () => dispatchJob(job, ctx));
@@ -2610,17 +2650,41 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				await failJob(job.id, job.attempts, `no handler for job type "${job.type}"`);
 				return;
 		}
-	} catch (err) {
+	} catch (err) { // stale-safe: runJob's boundary — the one place a lost claim is swallowed
 		if (isStaleClaim(err)) {
 			console.warn(`[birds-worker] job ${job.id}: stale claim abandoned`);
 			return;
 		}
+		// The row could not be written for the whole deadline: failJob would
+		// only wait it out again. Escalate instead of retrying further.
+		if (err instanceof QueueWriteUnrecoverableError) await escalateUnwritableRow(job, err);
 		const message = err instanceof Error ? err.message : String(err);
 		try {
 			await failJob(job.id, job.attempts, sanitizeErrorText(message).slice(0, 300));
-		} catch (failErr) {
-			if (!isStaleClaim(failErr)) throw failErr;
+		} catch (failErr) { // stale-safe: boundary — a stale claim is abandoned, anything else propagates
+			if (!isStaleClaim(failErr)) {
+				if (failErr instanceof QueueWriteUnrecoverableError) await escalateUnwritableRow(job, failErr);
+				throw failErr;
+			}
 			console.warn(`[birds-worker] job ${job.id}: stale claim abandoned`);
 		}
 	}
+}
+
+/**
+ * The last resort (td-b99b6d §4.3): this process provably cannot write its own
+ * job row. Say so loudly, leave a best-effort note in the worker history, and
+ * rethrow — the worker's main().catch exits with code 1, PM2 restarts it, and
+ * the startup reclaim resolves the row.
+ */
+async function escalateUnwritableRow(job: JobRow, err: QueueWriteUnrecoverableError): Promise<never> {
+	const seconds = Math.round(err.elapsedMs / 1000);
+	console.error(
+		`[birds-worker] FATAL: queue row ${job.id} could not be written for ${seconds} s — restarting for startup reclaim`
+	);
+	await recordWorkerHistoryNote(
+		`job ${job.id}: queue row unwritable for ${seconds} s (${err.where}) — restarting for startup reclaim`,
+		job.id
+	).catch(() => {});
+	throw err;
 }

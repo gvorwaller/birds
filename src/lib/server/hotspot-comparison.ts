@@ -383,7 +383,7 @@ export async function compareHotspotBatch(
                 pace,
                 paceSignal,
               });
-        } catch (err) {
+        } catch (err) { // stale-safe: page/route path, never under a claim
           if (signal?.aborted) return null;
           const status = err instanceof EbirdError ? err.status : undefined;
           if (status === 401 || status === 403) {

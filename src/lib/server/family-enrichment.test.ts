@@ -22,7 +22,10 @@ import {
 import { fetchWikidataFamily } from "./wikidata";
 import { taxonomySummary } from "./taxonomy-reference";
 import { EnrichmentAiError } from "./ai-enrichment";
-import { claimNextJob } from "./jobs";
+import { claimNextJob, runWithClaim, StaleClaimError } from "./jobs";
+import { withClaimBoundsForTest } from "./job-claim";
+import { discoverFamilySources } from "./family-source-discovery";
+import { withTransaction } from "$lib/db";
 import type { JobRow } from "./job-policy";
 let admin: number;
 let saved: Record<string, unknown>[];
@@ -723,3 +726,160 @@ it('can retry an expired failed refresh while retaining its last published descr
  const row=(await query("SELECT status,content,source FROM family_enrichment WHERE family_code='pandio1'")).rows[0];
  expect(row).toEqual({status:'pending',content:draft,source});
 });
+
+// ── td-b99b6d Phase A: a lost claim commits nothing and is never a family failure ──
+
+/** The claim moves on (a drain + re-claim elsewhere): bump the row's claim_seq. */
+const reclaimElsewhere = (id: number) =>
+  query("UPDATE jobs SET claim_seq = claim_seq + 1 WHERE id = $1", [id]);
+const familyRow = async () =>
+  (
+    await query(
+      "SELECT status,last_error,failures,pending_source,pending_draft,next_attempt_at FROM family_enrichment WHERE family_code='pandio1'",
+    )
+  ).rows[0];
+const diagnosticsCount = async () =>
+  (
+    await query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM family_enrichment_diagnostics WHERE family_code='pandio1'",
+    )
+  ).rows[0].n;
+
+it("nested discovery checkpoint: a stale claim at the article checkpoint is rethrown — no further article, no transport_failure", async () => {
+  const d = deps();
+  const diagnostics: { outcome: string }[] = [];
+  let calls = 0;
+  const shouldStop = async () => {
+    // 1: before ADW, 2: before the family candidates, 3: before the first article.
+    if (++calls === 3) throw new StaleClaimError(1, "progress");
+    return false;
+  };
+  const family = (await taxonomySummary()).families.find((f) => f.code === "pandio1")!;
+  await expect(
+    discoverFamilySources(family, ["Pandion haliaetus"], d, diagnostics as never, shouldStop),
+  ).rejects.toBeInstanceOf(StaleClaimError);
+  expect(calls).toBe(3);
+  expect(d.article).not.toHaveBeenCalled();
+  expect(diagnostics.map((x) => x.outcome)).not.toContain("transport_failure");
+});
+
+it("runFamilyEnrichment under a claim lost mid-discovery: stops, writes no diagnostics or family state", async () => {
+  const j = await job();
+  const d = deps();
+  d.candidates.mockImplementation(async () => {
+    await reclaimElsewhere(j.id);
+    return [{ qid: "Q1", title: "Osprey" }];
+  });
+  const before = { row: await familyRow(), diagnostics: await diagnosticsCount() };
+  await expect(runWithClaim(j, () => runFamilyEnrichment(j, ctx, d))).rejects.toBeInstanceOf(
+    StaleClaimError,
+  );
+  expect(d.article).not.toHaveBeenCalled();
+  expect(await familyRow()).toEqual(before.row);
+  expect(await diagnosticsCount()).toBe(before.diagnostics); // the finally's diagnostics were refused too
+  expect((await query("SELECT status FROM jobs WHERE id=$1", [j.id])).rows[0].status).toBe("running");
+});
+
+it("a lost claim at the failure path never records an error or pauses/blocks the feature", async () => {
+  const j = await job();
+  const d = deps();
+  // The AI rejects the credentials (normally: error state + feature PAUSE) —
+  // but the claim has already moved on when the failure is handled.
+  d.generate.mockImplementation(async () => {
+    await reclaimElsewhere(j.id);
+    throw new EnrichmentAiError("unauthorized", 401, false);
+  });
+  const before = await familyRow();
+  await expect(runWithClaim(j, () => runFamilyEnrichment(j, ctx, d))).rejects.toBeInstanceOf(
+    StaleClaimError,
+  );
+  expect((await familyRow()).status).toBe(before.status);
+  expect((await familyRow()).failures).toBe(before.failures);
+  const c = (await query("SELECT paused,blocked_until FROM family_enrichment_control")).rows[0];
+  expect(c).toEqual({ paused: false, blocked_until: null });
+});
+
+it("the same auth failure under the LIVE claim still records the error and pauses (control)", async () => {
+  const j = await job();
+  const d = deps();
+  d.generate.mockRejectedValue(new EnrichmentAiError("unauthorized", 401, false));
+  await runWithClaim(j, () => runFamilyEnrichment(j, ctx, d));
+  expect((await familyRow()).status).toBe("error");
+  expect((await query("SELECT paused FROM family_enrichment_control")).rows[0].paused).toBe(true);
+});
+
+it("the family nudge re-times the singleton only for a live claim", async () => {
+  const holder = await job();
+  const pending = (
+    await query<{ id: number }>(
+      `INSERT INTO jobs (type,payload,status,dedup_key,requested_by,label,next_retry_at)
+       VALUES ('enrich_families','{}','pending','system:family-enrichment',$1,'Family descriptions test',NOW()+interval '1 day')
+       RETURNING id`,
+      [admin],
+    )
+  ).rows[0].id;
+  const due = async () =>
+    (await query("SELECT next_retry_at<=NOW() AS due FROM jobs WHERE id=$1", [pending])).rows[0].due;
+  const stale = { ...holder, claim_seq: "0" };
+  await reclaimElsewhere(holder.id);
+  await expect(runWithClaim(stale, () => ensureFamilyEnrichment(true))).rejects.toBeInstanceOf(
+    StaleClaimError,
+  );
+  expect(await due()).toBe(false);
+  const live = { ...holder, claim_seq: "1" };
+  await runWithClaim(live, () => ensureFamilyEnrichment(true));
+  expect(await due()).toBe(true);
+});
+
+it(
+  "retryFamilyGaps' jobs-table lock is capped: expiry rolls the retry back and frees every UPDATE jobs",
+  async () => {
+    // A queue row of our own that is NOT a family job (a running family job
+    // makes retryFamilyGaps refuse before it locks anything).
+    const other = (
+      await query<{ id: number }>(
+        `INSERT INTO jobs (type,payload,requested_by,label) VALUES ('tag_preview','{}',$1,$2) RETURNING id`,
+        [admin, "JOBTEST family cap " + randomUUID()],
+      )
+    ).rows[0].id;
+    await query("UPDATE family_enrichment SET status='error' WHERE family_code='pandio1'");
+    const before = { row: await familyRow(), diagnostics: await diagnosticsCount() };
+    // Connection 2 blocks the retry INSIDE its transaction (after it took the
+    // jobs-table lock and locked pandio1), at its first diagnostics INSERT.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const blocker = withTransaction(async (c) => {
+      await c.query("LOCK TABLE family_enrichment_diagnostics IN SHARE MODE");
+      locked();
+      await gate;
+    });
+    try {
+      await isLocked;
+      const t0 = Date.now();
+      const retry = withClaimBoundsForTest({ jobsTableLockTxTimeoutMs: 1_000 }, () =>
+        retryFamilyGaps(["pandio1"]),
+      ).then(
+        () => "resolved",
+        (e: Error) => e.message,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      // Any UPDATE jobs now waits on the retry's SHARE ROW EXCLUSIVE lock…
+      const writerMs = query("UPDATE jobs SET heartbeat_at=NOW() WHERE id=$1", [other]).then(
+        () => Date.now() - t0,
+      );
+      // …until Postgres ends the retry's session at its cap.
+      expect(await writerMs).toBeGreaterThanOrEqual(900);
+      expect(await writerMs).toBeLessThan(2_000);
+      expect(await retry).toMatch(/transaction timeout|terminat/i);
+    } finally {
+      release();
+      await blocker;
+      await query("DELETE FROM jobs WHERE id=$1", [other]);
+    }
+    expect(await familyRow()).toEqual(before.row);
+    expect(await diagnosticsCount()).toBe(before.diagnostics);
+  },
+  15_000,
+);

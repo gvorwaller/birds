@@ -177,7 +177,7 @@ export async function fetchCommonsFileInfo(
       headers: { Accept: "application/json", "User-Agent": enrichmentUserAgent() },
       signal,
     });
-  } catch (err) {
+  } catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
     throw new CommonsError(
       `Commons unreachable: ${err instanceof Error ? err.message : "fetch failed"}`,
       0,

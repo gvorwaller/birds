@@ -37,7 +37,7 @@ async function geocodeCall(
     res = await timed("google", () =>
       fetch(url, { signal: AbortSignal.timeout(10000) }),
     );
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return null;
   }
   if (!res.ok) return null;
@@ -84,7 +84,7 @@ async function placesTextSearch(
     res = await timed("google", () =>
       fetch(url, { signal: AbortSignal.timeout(10000) }),
     );
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return null;
   }
   if (!res.ok) return null;
@@ -192,7 +192,7 @@ export async function placesNearby(
     res = await timed("google", () =>
       fetch(url, { signal: AbortSignal.timeout(10000) }),
     );
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return { status: "upstream_error" };
   }
   if (!res.ok) return { status: "upstream_error" };

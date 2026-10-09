@@ -134,7 +134,7 @@ export async function recordUsage(call: UsageCall): Promise<void> {
 			],
 			USAGE_WRITE_TIMEOUT_MS
 		);
-	} catch (err) {
+	} catch (err) { // stale-safe: best-effort usage receipt, never fenced (ruling Q2); no fenced call inside
 		console.error(
 			'ai-usage: recordUsage failed (metered call unaffected)',
 			err instanceof Error ? err.message : err

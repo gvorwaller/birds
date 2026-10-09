@@ -297,7 +297,7 @@ export async function activateRevision(opts: {
           try {
             await callSwitch(true);
             throw new Error("switch dry run returned instead of raising");
-          } catch (e) {
+          } catch (e) { // stale-safe: rethrows unless the dry run raised
             if (!(e instanceof Error) || !/TAG_DRY_RUN/.test(e.message))
               throw e;
           }
@@ -328,7 +328,7 @@ export async function activateRevision(opts: {
     );
     finishTiming();
     return activationId;
-  } catch (err) {
+  } catch (err) { // stale-safe: rethrows everything but an intentional rollback
     if (err instanceof TagTxRollback) {
       finishTiming();
       return null;

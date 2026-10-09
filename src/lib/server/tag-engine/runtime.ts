@@ -7,18 +7,22 @@
  *   BEGIN; SET LOCAL lock_timeout/statement_timeout/transaction_timeout
  *   pg_advisory_xact_lock[_shared](TAG_ENGINE_KEY)      -- 1st work statement
  *   pg_advisory_xact_lock(TAG_FAILKEY_NS, hash(key))    -- 2nd: serialize this key
- *   postAttemptNo := begin_tag_attempt()                -- 3rd
+ *   jobs row FOR SHARE (held claim only)                -- 3rd: claim fence
+ *   postAttemptNo := begin_tag_attempt()                -- 4th
  *   fn(tx); clear_materialization_failure(key, post); COMMIT
  *   on error: stamp with post if it was allocated, else pre (follow-up txn)
  *
- * Lock order is fixed — engine lock, exactly one key lock, then rows — so no
- * cycle is possible. A `TagWriteTx` can only be obtained here (branded type;
+ * Lock order is fixed — engine lock, exactly one key lock, the running job's
+ * row (td-b99b6d: one central fence for every tag transaction a handler runs),
+ * then rows — so no cycle is possible: nothing that holds a jobs row lock ever
+ * waits for the engine lock. A `TagWriteTx` can only be obtained here (branded type;
  * the static guard rejects any other construction), so an entry point cannot
  * be called without the lock.
  */
 import type pg from 'pg';
 import { query, withTransaction } from '$lib/db';
 import { sanitizeErrorText } from '$server/job-policy';
+import { assertClaimHeldTx, heldClaim, isStaleClaim, runInClaimTxScope, withClaimTx } from '$server/job-claim';
 
 /** Advisory lock key for the whole tag engine (single-bigint form). */
 export const TAG_ENGINE_KEY = 894144n;
@@ -96,9 +100,13 @@ export async function withTagWriteTx<T>(
 				[TAG_ENGINE_KEY.toString()]
 			);
 			await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2))', [TAG_FAILKEY_NS, failureKey]);
+			// Claim fence (td-b99b6d §4.3): under a handler's claim the job row is
+			// held FOR SHARE until COMMIT, so nothing here commits for a stale
+			// execution. It issues no SET LOCAL — the caps above stay in force.
+			await assertClaimHeldTx(client, entryPoint);
 			postAttemptNo = await beginAttempt(exec);
 			const tx = { mode, client, exec, postAttemptNo } as unknown as TagWriteTx;
-			const result = await fn(tx);
+			const result = await runInClaimTxScope(entryPoint, () => fn(tx));
 			await client.query('SELECT public.clear_materialization_failure($1, $2)', [
 				failureKey,
 				postAttemptNo.toString()
@@ -106,19 +114,34 @@ export async function withTagWriteTx<T>(
 			return result;
 		});
 	} catch (err) {
-		if (err instanceof TagTxRollback) throw err;
+		// A lost claim is not a materialization failure: nothing was attempted
+		// on the engine's behalf, the execution simply stopped (td-b99b6d).
+		if (err instanceof TagTxRollback || isStaleClaim(err)) throw err;
 		// Mechanical token rule (rev 18): post if allocated, else pre.
 		const token = postAttemptNo ?? preAttemptNo;
+		const record = [
+			failureKey,
+			opts.speciesCode ?? null,
+			entryPoint,
+			sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 500),
+			token.toString()
+		];
+		// The rollback above released this execution's FOR SHARE on its job row,
+		// and a lock-phase error may have struck before the fence ever ran — so
+		// under a claim the failure record is its OWN fenced transaction
+		// (td-b99b6d, CODEX1 Phase A review #1): a claim that died in between
+		// records nothing and surfaces as the stale claim it is. No claim:
+		// today's autocommit statement exactly.
 		try {
-			await query('SELECT public.record_materialization_failure($1, $2, $3, $4, $5)', [
-				failureKey,
-				opts.speciesCode ?? null,
-				entryPoint,
-				sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 500),
-				token.toString()
-			]);
-		} catch {
-			/* recording is best-effort; the original error is what matters */
+			if (heldClaim())
+				await withClaimTx(
+					(c) => c.query('SELECT public.record_materialization_failure($1, $2, $3, $4, $5)', record),
+					{ where: `${entryPoint} failure record` }
+				);
+			else await query('SELECT public.record_materialization_failure($1, $2, $3, $4, $5)', record);
+		} catch (recordErr) {
+			if (isStaleClaim(recordErr)) throw recordErr;
+			/* otherwise recording is best-effort; the original error is what matters */
 		}
 		throw err;
 	}

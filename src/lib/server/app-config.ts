@@ -84,7 +84,7 @@ export async function getConfig(key: string, compiledDefault: unknown): Promise<
 		const value = r.rows.length > 0 ? r.rows[0].value : compiledDefault;
 		lastKnownGood.set(key, value);
 		return value;
-	} catch (err) {
+	} catch (err) { // stale-safe: config read with last-known-good fallback; no fenced call inside
 		if (lastKnownGood.has(key)) {
 			console.error(
 				`app-config: read of ${key} failed; using last-known-good`,

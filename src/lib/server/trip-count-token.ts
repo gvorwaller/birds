@@ -95,7 +95,7 @@ export function verifyTripCountToken(
   let raw: unknown;
   try {
     raw = JSON.parse(bytes.toString("utf8"));
-  } catch {
+  } catch { // stale-safe: token parse only
     throw new TripCountTokenError();
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw))

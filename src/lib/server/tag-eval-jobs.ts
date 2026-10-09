@@ -13,6 +13,7 @@
  * Every job re-checks at execution time that its requester is an admin.
  */
 import { query } from "$lib/db";
+import { claimFencedQuery, isStaleClaim } from "$server/job-claim";
 import { ALL_TAGS } from "$lib/species-tags";
 import { sanitizeErrorText, type JobRow } from "$server/job-policy";
 import { completeJob, failJob, recordClaimedEvent } from "$server/jobs";
@@ -53,10 +54,12 @@ async function recordReport(
   revisionId: string,
   body: unknown,
 ): Promise<string> {
+  // Fenced to the job's live claim (td-b99b6d): a stale job records no report.
   return (
-    await query<{ id: string }>(
+    await claimFencedQuery<{ id: string }>(
       "SELECT public.record_tag_report($1, $2, $3, $4::jsonb)::text AS id",
       [kind, tag, revisionId, JSON.stringify(body)],
+      `${kind} report`,
     )
   ).rows[0].id;
 }
@@ -135,7 +138,7 @@ export function parseEvalCreatePayload(raw: unknown): EvalCreatePayload | null {
     return null;
   try {
     parseGates(p.gates);
-  } catch {
+  } catch { // stale-safe: payload parse only
     return null;
   }
   return {
@@ -303,6 +306,7 @@ export async function runTagEvalJob(job: JobRow): Promise<void> {
     }
     await completeJob(job.id, attempts, result);
   } catch (err) {
+    if (isStaleClaim(err)) throw err;
     // A refusal (drift, infeasible, over budget, not frozen) is an answer, not a transient.
     await failJob(
       job.id,

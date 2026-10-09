@@ -45,7 +45,7 @@ export function validPushEndpoint(raw: string): boolean {
 	let u: URL;
 	try {
 		u = new URL(raw);
-	} catch {
+	} catch { // stale-safe: URL parse only
 		return false;
 	}
 	if (u.protocol !== 'https:') return false;
@@ -89,7 +89,7 @@ export function platformFromEndpoint(endpoint: string): string {
 	let host: string;
 	try {
 		host = new URL(endpoint).hostname;
-	} catch {
+	} catch { // stale-safe: URL parse only
 		return 'Unknown device';
 	}
 	if (/(^|\.)push\.apple\.com$/.test(host)) return 'Apple device (Safari)';
@@ -156,7 +156,7 @@ export async function sendWebPush(
 			payload,
 			{ TTL: 3600, timeout: PUSH_TIMEOUT_MS }
 		);
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the push-service error; no fenced call inside
 		const status =
 			typeof (err as { statusCode?: unknown })?.statusCode === 'number'
 				? ((err as { statusCode: number }).statusCode as number)

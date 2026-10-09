@@ -18,6 +18,7 @@
  * batch immediately.
  */
 import { query, withTransaction } from '$lib/db';
+import { claimFencedQuery, isStaleClaim, withClaimTx } from '$server/job-claim';
 import { parseRegionCode } from '$lib/region-code';
 import { buildMatcher } from '$server/species-match';
 import {
@@ -513,7 +514,10 @@ export async function deleteFrequencyLocation(locCode: string): Promise<void> {
 }
 
 export async function storeFrequencies(p: StoreParams): Promise<void> {
-	await withTransaction(async (client) => {
+	// From a frequency job this transaction is fenced to the live claim, the
+	// assert first (td-b99b6d; ruling Q4 — measure the cancel delay a large
+	// region's store adds before considering a precheck + final assert).
+	await withClaimTx(async (client) => {
 		await client.query(
 			`INSERT INTO frequency_fetch
 			   (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes,
@@ -607,16 +611,17 @@ export async function storeFrequencies(p: StoreParams): Promise<void> {
 			 ON CONFLICT (loc_code) DO UPDATE SET last_attempt_at = NOW(), status = 'ok', error = NULL`,
 			[p.locCode]
 		);
-	});
+	}, { where: 'storeFrequencies' });
 }
 
 async function recordFailedAttempt(loc: LocToEnsure, message: string): Promise<void> {
-	await query(
+	await claimFencedQuery(
 		`INSERT INTO frequency_fetch_attempts (loc_code, last_attempt_at, status, error, loc_kind, loc_name, region_code)
 		 VALUES ($1, NOW(), 'error', $2, $3, $4, $5)
 		 ON CONFLICT (loc_code) DO UPDATE SET last_attempt_at = NOW(), status = 'error', error = $2,
 		   loc_kind = $3, loc_name = $4, region_code = $5`,
-		[loc.code, message, loc.kind, loc.name, loc.regionCode ?? null]
+		[loc.code, message, loc.kind, loc.name, loc.regionCode ?? null],
+		'recordFailedAttempt'
 	);
 }
 
@@ -843,7 +848,7 @@ export async function ensureFrequencies(
 			let tsv: string;
 			try {
 				tsv = await fetcher(userId, loc.code, beginYear, endYear);
-			} catch (err) {
+			} catch (err) { // stale-safe: rethrows every error that is not an eBird 5xx
 				// eBird's export throws one-off 5xxs (seen live on prod,
 				// 2026-08-14). One automatic retry after a short pause absorbs
 				// the hiccup; a second failure is real. 429 excluded — backing
@@ -882,6 +887,9 @@ export async function ensureFrequencies(
 			result.refreshed.push(loc.code);
 			outcome = { status: 'ok' };
 		} catch (err) {
+			// A lost claim (the fenced store refused) is not a unit failure:
+			// no failed-attempt row, no classification — stop the load.
+			if (isStaleClaim(err)) throw err;
 			let message = err instanceof Error ? err.message : String(err);
 			// A 23503 on frequency_fetch_region_fk (0045) means eBird knows a
 			// region this build's reference seed doesn't — classified HERE,

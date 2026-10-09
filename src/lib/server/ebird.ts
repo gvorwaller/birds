@@ -133,7 +133,7 @@ export async function ebirdFetchOrNull<T>(
 				signal
 			})
 		);
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the eBird transport error; no fenced call inside
 		if (opts.signal?.aborted) {
 			throw new EbirdError('eBird API request aborted (caller cancelled).');
 		}
@@ -161,7 +161,7 @@ export async function ebirdFetchOrNull<T>(
 	if (!body.trim()) return null;
 	try {
 		return JSON.parse(body) as T;
-	} catch {
+	} catch { // stale-safe: parse only
 		return null;
 	}
 }
@@ -213,7 +213,7 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 				signal
 			})
 		);
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the eBird transport error; no fenced call inside
 		// Order matters. Caller cancellation is not a provider fault and must
 		// not read as one; a blown deadline is distinct from "unreachable",
 		// which would misattribute a stalled upstream to the network.
@@ -300,7 +300,7 @@ async function cachedFetchUncoalesced<T>(
 	if (row) {
 		try {
 			cachedData = validate(row.payload);
-		} catch (err) {
+		} catch (err) { // stale-safe: cached-row validation only
 			reportSchemaDrift(err, `cache ${cacheKey}`);
 		}
 	}
@@ -313,16 +313,25 @@ async function cachedFetchUncoalesced<T>(
 		};
 	}
 
+	// Freshness ordering (td-b99b6d §4.8): a fetch that STARTED before a newer
+	// row was stored must never overwrite it — a slow web request racing a
+	// fresh one, or a stale worker continuation. The in-flight map above is per
+	// process, so the order is enforced in SQL. The caller still gets the data
+	// it fetched. Never place a claim checkpoint (assertClaimHeld) inside this
+	// function: the catch below turns ANY fetcher error into a stale-cache
+	// fallback and would swallow it — handlers assert before calling.
+	const startedAt = new Date();
 	try {
 		const data = validate(await fetcher());
 		await query(
 			`INSERT INTO ebird_cache (cache_key, payload, fetched_at)
 			 VALUES ($1, $2, NOW())
-			 ON CONFLICT (cache_key) DO UPDATE SET payload = $2, fetched_at = NOW()`,
-			[cacheKey, JSON.stringify(data)]
+			 ON CONFLICT (cache_key) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = NOW()
+			 WHERE ebird_cache.fetched_at < $3`,
+			[cacheKey, JSON.stringify(data), startedAt]
 		);
 		return { data, fetchedAt: new Date(), stale: false };
-	} catch (err) {
+	} catch (err) { // stale-safe: fetch fallback; no claim checkpoint may live inside this try (see above)
 		// A cancelled pacing owner must not turn a valid stale row into a
 		// provider-refresh failure for every caller coalesced onto its promise.
 		// Paced feed wrappers let still-active callers retry and become the next
@@ -345,6 +354,9 @@ async function cachedFetchUncoalesced<T>(
 		throw err;
 	}
 }
+
+/** Tests only (td-b99b6d §4.8): the uncoalesced path, to race two fetches of one key. */
+export { cachedFetchUncoalesced as __cachedFetchUncoalescedForTests };
 
 /**
  * How long a saved observation feed counts as fresh.
@@ -414,7 +426,7 @@ async function pacedCachedFetch<T>(
 				},
 				validate
 			);
-		} catch (err) {
+		} catch (err) { // stale-safe: retries a cancelled pace owner, rethrows everything else
 			// Any caller still active retries, including an unpaced one (the
 			// hotspot page) that coalesced onto a paced owner that was cancelled.
 			if (err instanceof PaceAborted && !opts.paceSignal?.aborted) continue;
@@ -674,7 +686,7 @@ export async function cachedSubregionLists(parents: readonly string[]): Promise<
 		const parent = row.cache_key.slice('regions:subnational2:'.length);
 		try {
 			out.set(parent, validateEbirdRegions(row.payload, `cache ${row.cache_key}`) as EbirdRegion[]);
-		} catch (err) {
+		} catch (err) { // stale-safe: cached-row validation only
 			reportSchemaDrift(err, `cache ${row.cache_key}`);
 		}
 	}

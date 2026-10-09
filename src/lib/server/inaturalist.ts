@@ -85,7 +85,7 @@ async function inatGet(path: string, opts: FetchOpts): Promise<unknown> {
 			headers: { Accept: 'application/json', 'User-Agent': enrichmentUserAgent() },
 			signal
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
 		throw new InatError(
 			`iNaturalist unreachable: ${err instanceof Error ? err.message : 'fetch failed'}`,
 			0,
@@ -102,7 +102,7 @@ async function inatGet(path: string, opts: FetchOpts): Promise<unknown> {
 	}
 	try {
 		return await res.json();
-	} catch {
+	} catch { // stale-safe: parse only
 		throw providerShape('not JSON');
 	}
 }

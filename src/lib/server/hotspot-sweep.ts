@@ -37,7 +37,7 @@ export async function areaHotspotCounts(
   let hotspots: Awaited<ReturnType<typeof hotspotsInRegion>>["data"];
   try {
     hotspots = (await hotspotsInRegion(apiKey, parsed.code)).data;
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return null; // counts are decoration — never break the page for them
   }
 
@@ -126,7 +126,7 @@ export async function sweepAreaHotspots(
     }
     areaName = match.name;
     hotspots = (await hotspotsInRegion(apiKey, parsed.code)).data;
-  } catch (err) {
+  } catch (err) { // stale-safe: page/route path, never under a claim
     return {
       ok: false,
       status: 502,

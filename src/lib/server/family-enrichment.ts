@@ -3,6 +3,12 @@
 import { EnrichmentAiError } from "./ai-enrichment";
 import { createHash } from "node:crypto";
 import { query, withTransaction } from "$lib/db";
+import {
+  claimBounds,
+  claimFencedQuery,
+  isStaleClaim,
+  withClaimTx,
+} from "./job-claim";
 import { taxonomySummary, type TaxonomyFamily } from "./taxonomy-reference";
 import { isRateLimitedError } from "./wikidata";
 import {
@@ -24,6 +30,7 @@ import {
   enqueueJob,
   terminalizeAndReschedule,
   requeueInterrupted,
+  setJobLabel,
   updateProgress,
   cancelRunningJob,
 } from "./jobs";
@@ -96,6 +103,13 @@ export async function retryFamilyGaps(codes?: string[]) {
   )
     throw new FamilyRetrySelectionError("Select valid family codes.");
   const selected = await withTransaction(async (c) => {
+    // The one code path that locks the whole jobs TABLE (it blocks every
+    // UPDATE jobs while held), so it gets its own cap: the queue writers'
+    // retry deadline is derived from the caps of every code-path holder
+    // (td-b99b6d §4.3). Today this transaction takes milliseconds.
+    await c.query(
+      `SET LOCAL transaction_timeout = '${claimBounds().jobsTableLockTxTimeoutMs}ms'`,
+    );
     await c.query("LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE");
     if (
       (
@@ -256,10 +270,14 @@ export async function ensureFamilyEnrichment(nudge = false) {
     [KEY],
   );
   if (active.rows.length) {
+    // Re-timing the family singleton is a cadence decision: from a handler
+    // (sync_taxonomy) it is fenced to that handler's live claim (td-b99b6d
+    // §3.2); the worker loop and admin paths hold no claim and are unchanged.
     if (nudge)
-      await query(
+      await claimFencedQuery(
         "UPDATE jobs SET next_retry_at=NOW() WHERE id=$1 AND status='pending'",
         [active.rows[0].id],
+        "family nudge",
       );
     return;
   }
@@ -282,7 +300,7 @@ export async function reconcileFamilyInputs() {
       "SELECT family_code,species_code,sci_name FROM taxonomy_cache WHERE category='species' AND family_code IS NOT NULL",
     )
   ).rows;
-  await withTransaction(async (c) => {
+  await withClaimTx(async (c) => {
     for (const f of families) {
       const hash = familyInputHash(
         f,
@@ -298,7 +316,7 @@ export async function reconcileFamilyInputs() {
         [f.code, hash],
       );
     }
-  });
+  }, { where: "reconcile family inputs" });
   return families;
 }
 export const familyDependencies = {
@@ -410,10 +428,7 @@ export async function runFamilyEnrichment(
     return;
   }
   const family = families.find((f) => f.code === due.family_code)!;
-  await query("UPDATE jobs SET label=$2 WHERE id=$1", [
-    job.id,
-    family.name ?? family.code,
-  ]);
+  await setJobLabel(job.id, family.name ?? family.code);
   const discovery: DiscoveryDiagnostic[] = [];
   let stage = "Source retrieval";
   try {
@@ -421,7 +436,7 @@ export async function runFamilyEnrichment(
     if (!source) {
       source = await depsSource();
       if (!source) {
-        await query(
+        await claimFencedQuery(
           "UPDATE family_enrichment SET status='no_source',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',last_error=$3 WHERE family_code=$1 AND input_hash=$2",
           [
             family.code,
@@ -432,13 +447,15 @@ export async function runFamilyEnrichment(
               .join("; ")
               .slice(0, 3000) || "No verified source found",
           ],
+          "family no_source",
         );
         await finish({ family: family.code, outcome: "no_source" }, 1000);
         return;
       }
-      await query(
+      await claimFencedQuery(
         "UPDATE family_enrichment SET pending_source=$3,attempted_at=NOW() WHERE family_code=$1 AND input_hash=$2",
         [family.code, due.input_hash, JSON.stringify(source)],
+        "family pending source",
       );
     }
     if (await stop("Writing " + family.name)) return;
@@ -457,9 +474,10 @@ export async function runFamilyEnrichment(
       );
       draft = generated.result;
       model = generated.servedModel ?? generated.requestedModel;
-      await query(
+      await claimFencedQuery(
         "UPDATE family_enrichment SET pending_draft=$3,pending_model=$4 WHERE family_code=$1 AND input_hash=$2",
         [family.code, due.input_hash, JSON.stringify(draft), model],
+        "family pending draft",
       );
     }
     if (await stop("Checking source support for " + family.name)) return;
@@ -471,31 +489,33 @@ export async function runFamilyEnrichment(
       draft,
     );
     if (!checked.result.supported) {
-      await query(
-        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft,diagnostics)
-        VALUES($1,$2,$3,'audit_rejected',$4,$5,$6)`,
-        [
-          family.code,
-          due.input_hash,
-          FAMILY_RESOLVER_VERSION,
-          source,
-          draft,
-          JSON.stringify(scrubStoredValue([{ detail: checked.result.reason }])),
-        ],
-      );
-      await query(
-        "UPDATE family_enrichment SET pending_draft=$2 WHERE family_code=$1",
-        [
-          family.code,
-          JSON.stringify({
-            ...draft,
-            audit: String(scrubStoredValue(checked.result.reason)).slice(
-              0,
-              1500,
-            ),
-          }),
-        ],
-      );
+      await withClaimTx(async (c) => {
+        await c.query(
+          `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft,diagnostics)
+          VALUES($1,$2,$3,'audit_rejected',$4,$5,$6)`,
+          [
+            family.code,
+            due.input_hash,
+            FAMILY_RESOLVER_VERSION,
+            source,
+            draft,
+            JSON.stringify(scrubStoredValue([{ detail: checked.result.reason }])),
+          ],
+        );
+        await c.query(
+          "UPDATE family_enrichment SET pending_draft=$2 WHERE family_code=$1",
+          [
+            family.code,
+            JSON.stringify({
+              ...draft,
+              audit: String(scrubStoredValue(checked.result.reason)).slice(
+                0,
+                1500,
+              ),
+            }),
+          ],
+        );
+      }, { where: "family audit rejected" });
       throw new FamilyAuditError(
         "Source-support check: " +
           String(scrubStoredValue(checked.result.reason)).slice(0, 1500),
@@ -504,7 +524,10 @@ export async function runFamilyEnrichment(
     stage = "Saving family description";
     // Re-read taxonomy before publishing: a concurrent sync may have changed it.
     await reconcileFamilyInputs();
-    const published = await withTransaction(async (client) => {
+    // withClaimTx fences publication to the live claim BEFORE the table lock
+    // (a stale execution never takes it); the attempts-only predicate it
+    // replaces matched a drain-refunded stale claim (td-b99b6d G5).
+    const published = await withClaimTx(async (client) => {
       // Prevent taxonomy replacement between the final input check and publication.
       // No network work occurs under this short database lock.
       await client.query("LOCK TABLE taxonomy_cache IN SHARE MODE");
@@ -535,7 +558,7 @@ export async function runFamilyEnrichment(
         `UPDATE family_enrichment e SET content=$3,source=$4,model=$5,verifier_model=$6,
    published_hash=input_hash,generated_at=NOW(),status='ready',last_error=NULL,failures=0,
    next_attempt_at=NOW()+interval '180 days',pending_source=NULL,pending_draft=NULL,pending_model=NULL
-   WHERE family_code=$1 AND input_hash=$2 AND EXISTS(SELECT 1 FROM jobs WHERE id=$7 AND status='running' AND attempts=$8 AND NOT cancel_requested)
+   WHERE family_code=$1 AND input_hash=$2 AND EXISTS(SELECT 1 FROM jobs WHERE id=$7 AND status='running' AND NOT cancel_requested)
    RETURNING family_code`,
         [
           family.code,
@@ -545,10 +568,9 @@ export async function runFamilyEnrichment(
           model,
           checked.servedModel ?? checked.requestedModel,
           job.id,
-          job.attempts,
         ],
       );
-    });
+    }, { where: "family publish" });
     await finish(
       {
         family: family.code,
@@ -557,17 +579,22 @@ export async function runFamilyEnrichment(
       1000,
     );
   } catch (err) {
+    // A lost claim is not a family failure: no failure state, no feature
+    // pause/block — the live claim owns the job now (td-b99b6d G5).
+    if (isStaleClaim(err)) throw err;
     if (err instanceof FamilySourceInterrupted) return;
     if (err instanceof FamilySourceInsufficient) {
-      await query(
-        `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft)
-        SELECT family_code,input_hash,$2,'insufficient_source',pending_source,pending_draft FROM family_enrichment WHERE family_code=$1`,
-        [family.code, FAMILY_RESOLVER_VERSION],
-      );
-      await query(
-        "UPDATE family_enrichment SET status='no_source',last_error='Source lacks enough supported family information',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',pending_source=NULL,pending_draft=NULL,pending_model=NULL WHERE family_code=$1 AND input_hash=$2",
-        [family.code, due.input_hash],
-      );
+      await withClaimTx(async (c) => {
+        await c.query(
+          `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,draft)
+          SELECT family_code,input_hash,$2,'insufficient_source',pending_source,pending_draft FROM family_enrichment WHERE family_code=$1`,
+          [family.code, FAMILY_RESOLVER_VERSION],
+        );
+        await c.query(
+          "UPDATE family_enrichment SET status='no_source',last_error='Source lacks enough supported family information',attempted_at=NOW(),next_attempt_at=NOW()+interval '30 days',pending_source=NULL,pending_draft=NULL,pending_model=NULL WHERE family_code=$1 AND input_hash=$2",
+          [family.code, due.input_hash],
+        );
+      }, { where: "family insufficient source" });
       await finish(
         { family: family.code, outcome: "insufficient_source" },
         1000,
@@ -592,7 +619,7 @@ export async function runFamilyEnrichment(
         : e instanceof FamilyAuditError || e instanceof FamilyValidationError
           ? e.message
           : `${stage} failed${e instanceof EnrichmentAiError ? ` (HTTP ${e.status})` : ""}; automatic retry scheduled`;
-    await withTransaction(async (c) => {
+    await withClaimTx(async (c) => {
       await c.query(
         `UPDATE family_enrichment SET status='error',last_error=$3,failures=$4,attempted_at=NOW(),
     next_attempt_at=NOW()+make_interval(secs=>$5)
@@ -605,7 +632,7 @@ export async function runFamilyEnrichment(
     blocked_until=CASE WHEN $1 THEN NULL ELSE NOW()+make_interval(secs=>$2) END,reason=$3 WHERE singleton`,
           [auth, delay / 1000, reason],
         );
-    });
+    }, { where: "family failure" });
     await updateProgress(job.id, {
       phase: "fetching",
       unitsTotal: 1,
@@ -638,7 +665,9 @@ export async function runFamilyEnrichment(
       );
       return collected;
     } finally {
-      await query(
+      // Fenced too: it runs even when discovery threw a stale claim, and the
+      // fence refuses it then.
+      await claimFencedQuery(
         `INSERT INTO family_enrichment_diagnostics(family_code,input_hash,resolver_version,outcome,source,diagnostics)
         VALUES($1,$2,$3,$4,$5,$6)`,
         [
@@ -649,6 +678,7 @@ export async function runFamilyEnrichment(
           collected,
           JSON.stringify(discovery),
         ],
+        "family source diagnostics",
       );
     }
   }

@@ -531,7 +531,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
           source: row.source ?? "recent species",
           fetchedAt: row.fetchedAt ?? result.fetchedAt.toISOString(),
         }));
-      } catch {
+      } catch { // stale-safe: page/route path, never under a claim
         partial = true;
         return null;
       }
@@ -555,7 +555,7 @@ export async function enrichNeedsWithSpeciesReports<T extends SpeciesActivity>(
     placeIds = await withinEnrichmentWindow(hydrateEbirdLocationPlaceIds(allObs, {
       resolveMissing: false,
     }), signal);
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     partial = true;
   }
 

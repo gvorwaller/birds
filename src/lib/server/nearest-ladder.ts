@@ -397,7 +397,7 @@ export async function nearestSpeciesReports(
                 back,
               );
               return { c, res, err: null as unknown, skipped: false as const };
-            } catch (e) {
+            } catch (e) { // stale-safe: page/route path, never under a claim
               return { c, res: null, err: e, skipped: false as const };
             }
           };

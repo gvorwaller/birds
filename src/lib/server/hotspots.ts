@@ -34,7 +34,7 @@ export async function verifiedHotspotLocIds(
       locIds: new Set(hotspots.data.map((h) => h.locId)),
       stale: hotspots.stale,
     };
-  } catch {
+  } catch { // stale-safe: page/route path, never under a claim
     return { locIds: new Set(), stale: false };
   }
 }

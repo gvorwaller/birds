@@ -374,7 +374,7 @@ export async function generateSpeciesAnnotation(
 			body: JSON.stringify(built.body),
 			signal: opts.signal ?? AbortSignal.timeout(AI_TIMEOUT_MS)
 		});
-	} catch (err) {
+	} catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
 		// Distinguishing these is not cosmetic: two species were lost on the first
 		// Opus 5 drain to a 45s abort that was reported as a network failure, in
 		// both the job event and similar_error (GROK P1). No envelope here — no
@@ -431,7 +431,7 @@ export async function generateSpeciesAnnotation(
 	let data: any;
 	try {
 		data = await res.json();
-	} catch {
+	} catch { // stale-safe: parse only
 		fail(new EnrichmentAiError('AI response body was not JSON.', 0, false));
 	}
 	envelope.attempts = extractEnvelope(data);
@@ -451,7 +451,7 @@ export async function generateSpeciesAnnotation(
 			focalCode: input.speciesCode
 		});
 		return { annotation, envelope };
-	} catch (err) {
+	} catch (err) { // stale-safe: parse only; rethrows a typed AI error
 		// The kitmur case: a max_tokens truncation is a 200 whose usage and
 		// stop_reason are in hand right here — the throw must not discard them.
 		if (err instanceof EnrichmentAiError) fail(err);
@@ -695,7 +695,7 @@ export function parseAnnotation(
 		const end = text.lastIndexOf('}');
 		if (start < 0 || end < 0) throw new Error('no object');
 		parsed = JSON.parse(text.slice(start, end + 1));
-	} catch {
+	} catch { // stale-safe: parse only
 		throw new EnrichmentAiError('AI response was not readable JSON.', 0, false);
 	}
 	const fieldCraft =

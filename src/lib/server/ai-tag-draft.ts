@@ -239,7 +239,7 @@ export async function draftTagRules(
       body: JSON.stringify(built.body),
       signal: opts.signal ?? AbortSignal.timeout(TAG_DRAFT_TIMEOUT_MS),
     });
-  } catch (err) {
+  } catch (err) { // stale-safe: wraps the provider transport error; no fenced call inside
     if (
       err instanceof Error &&
       (err.name === "TimeoutError" || err.name === "AbortError")
@@ -293,7 +293,7 @@ export async function draftTagRules(
   let data: any;
   try {
     data = await res.json();
-  } catch {
+  } catch { // stale-safe: parse only
     fail(new TagDraftAiError("AI response body was not JSON.", 0, false));
   }
   envelope.attempts = extractEnvelope(data);
@@ -311,7 +311,7 @@ export async function draftTagRules(
   /* eslint-enable @typescript-eslint/no-explicit-any */
   try {
     return { raw: JSON.parse(text), envelope };
-  } catch {
+  } catch { // stale-safe: parse only
     return fail(
       new TagDraftAiError("The AI draft was not valid JSON.", 0, false),
     );

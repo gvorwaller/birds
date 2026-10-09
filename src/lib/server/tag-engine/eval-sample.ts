@@ -10,7 +10,8 @@
  * display order, eval_text_hash) come from here.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { query, withTransaction } from "$lib/db";
+import { query } from "$lib/db";
+import { claimFencedQuery, withClaimTx } from "$server/job-claim";
 import { buildFrame, type EvalFrame, type FrameRow } from "./eval-frame";
 import { EVAL_TEXT_VERSION, tagEvalDesign } from "./eval-design";
 import {
@@ -100,8 +101,11 @@ export async function createEvalSet(
   parseGates(input.gates);
   const seed = input.seed ?? randomBytes(32).toString("hex");
   if (!/^[0-9a-f]{64}$/.test(seed)) throw new Error("seed must be 64 hex");
-  return withTransaction(async (client) => {
-    await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+  // One REPEATABLE READ snapshot for the frame and the definer. withClaimTx
+  // owns the ordering (td-b99b6d §3.3): SET TRANSACTION first, then — from a
+  // handler — the claim fence as the first data statement; a transition that
+  // commits after the snapshot surfaces as StaleClaimError, never a set.
+  return withClaimTx(async (client) => {
     const exec = ((text: string, params?: unknown[]) =>
       client.query(text, params as never[])) as never;
     const frame = await buildFrame(input.tag, input.revisionId, exec);
@@ -171,7 +175,7 @@ export async function createEvalSet(
       ],
     );
     return { setId: r.rows[0].id, items: items.length, seed };
-  });
+  }, { isolation: "REPEATABLE READ", where: "createEvalSet" });
 }
 
 // ── the gate report ─────────────────────────────────────────────────────────
@@ -332,9 +336,10 @@ export async function recordGateReport(
 ): Promise<{ reportId: string; passed: boolean }> {
   const g = await computeGate(setId);
   const id = (
-    await query<{ id: string }>(
+    await claimFencedQuery<{ id: string }>(
       "SELECT public.record_tag_report('gate', $1, $2, $3::jsonb)::text AS id",
       [g.tag, g.revisionId, JSON.stringify(g.body)],
+      "gate report",
     )
   ).rows[0].id;
   return { reportId: id, passed: g.body.passed };
