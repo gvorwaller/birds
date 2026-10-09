@@ -36,7 +36,7 @@ process.env.EBIRD_KEY_SECRET ??= envTest.EBIRD_KEY_SECRET ?? "test-secret";
 const { query, withTransaction } = await import("$lib/db");
 const {
   cancelRunningJob,
-  claimNextJob,
+  claimNextJob: claimAnyJob,
   completeJob,
   enqueueJob,
   failJob,
@@ -45,7 +45,7 @@ const {
   jobEvents,
   listJobs,
   pruneHistory,
-  reclaimStartupJobs,
+  reclaimStartupJobs: reclaimAnyStartupJobs,
   requeueInterrupted,
   recordEvent,
   requestCancel,
@@ -57,6 +57,13 @@ const {
   setWorkerPauseRequested,
   yieldRemainder,
 } = await import("./jobs");
+
+// td-d425c1: birds_test is shared with real recurring jobs (scan_need_alerts,
+// scan_enrichment, enrich_families). Claim and reclaim only this file's
+// JOBTEST fixtures so a real due job is never claimed or left 'running'.
+const FIXTURE_SCOPE = { labelLike: "JOBTEST %" } as const;
+const claimNextJob = () => claimAnyJob(FIXTURE_SCOPE);
+const reclaimStartupJobs = (note: string) => reclaimAnyStartupJobs(note, FIXTURE_SCOPE);
 
 let dbUp = false;
 try {
@@ -175,6 +182,39 @@ describe.runIf(dbUp)("claim", () => {
     const [x, y] = await Promise.all([claimNextJob(), claimNextJob()]);
     const ids = [x?.id, y?.id].filter((v) => v != null);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe.runIf(dbUp)("test scope never touches non-fixture jobs (td-d425c1)", () => {
+  it("scoped claim and reclaim leave a due pending job and a running job outside the scope alone", async () => {
+    // Stand-ins for real queue rows: due and claimable, but not JOBTEST-labelled.
+    const decoys = (
+      await query<{ id: number }>(
+        `INSERT INTO jobs (type, payload, status, requested_by, label, attempts, started_at, enqueued_at)
+         VALUES ('load_region', '{}', 'pending', $1, 'JOBDECOY d425c1 pending', 0, NULL, NOW() - interval '1 day'),
+                ('load_region', '{}', 'running', $1, 'JOBDECOY d425c1 running', 1, NOW(), NOW() - interval '1 day')
+         RETURNING id`,
+        [userId],
+      )
+    ).rows.map((r) => r.id);
+    const snapshot = () =>
+      query(
+        `SELECT id, status, attempts, claim_seq, started_at, next_retry_at, finished_at
+           FROM jobs WHERE id = ANY($1::bigint[]) ORDER BY id`,
+        [decoys],
+      ).then((r) => r.rows);
+    try {
+      const before = await snapshot();
+      const a = await enqueueJob(params({ label: "JOBTEST scoped" }));
+      // The decoy is older, so an unscoped claim would take it first.
+      expect((await claimNextJob())?.id).toBe(a.jobId);
+      expect(await claimNextJob()).toBeNull();
+      expect(await reclaimStartupJobs("scoped-boot")).toBe(1);
+      expect((await claimAnyJob({ jobIds: [a.jobId] }))?.id).toBe(a.jobId);
+      expect(await snapshot()).toEqual(before);
+    } finally {
+      await query("DELETE FROM jobs WHERE id = ANY($1::bigint[])", [decoys]);
+    }
   });
 });
 

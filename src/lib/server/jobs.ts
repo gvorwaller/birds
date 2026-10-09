@@ -235,8 +235,36 @@ export async function enqueueJob(p: EnqueueParams): Promise<{ jobId: number; ded
 	throw new Error('enqueueJob: dedup race did not settle after 3 rounds');
 }
 
+/**
+ * Test-only scope for claim/reclaim (td-d425c1). Integration tests share the
+ * birds_test queue with real recurring jobs (scan_need_alerts, scan_enrichment,
+ * enrich_families), so an unscoped claim can take a real due job instead of
+ * the test's fixture and leave it 'running'. Every field present narrows the
+ * statement to rows the caller owns. The worker always calls unscoped.
+ */
+export interface ClaimScope {
+	jobIds?: readonly number[];
+	/** SQL LIKE pattern on jobs.label, e.g. 'JOBTEST %'. */
+	labelLike?: string;
+}
+
+function claimScopeSql(scope: ClaimScope | undefined) {
+	const clauses: string[] = [];
+	const params: unknown[] = [];
+	if (scope?.jobIds) {
+		params.push([...scope.jobIds]);
+		clauses.push(`AND id = ANY($${params.length}::bigint[])`);
+	}
+	if (scope?.labelLike != null) {
+		params.push(scope.labelLike);
+		clauses.push(`AND label LIKE $${params.length}`);
+	}
+	return { sql: clauses.join(' '), params };
+}
+
 /** Claim the next runnable job. ONE statement; caller must hold the worker advisory lock. */
-export async function claimNextJob(): Promise<JobRow | null> {
+export async function claimNextJob(scope?: ClaimScope): Promise<JobRow | null> {
+	const s = claimScopeSql(scope);
 	const r = await query<JobRow>(
 		`UPDATE jobs
 		    SET status = 'running', started_at = NOW(), attempts = attempts + 1, heartbeat_at = NOW(),
@@ -246,10 +274,12 @@ export async function claimNextJob(): Promise<JobRow | null> {
 		                 AND NOT cancel_requested
 		                 AND (type <> 'enrich_families' OR EXISTS(SELECT 1 FROM family_enrichment_control WHERE singleton AND NOT paused AND (blocked_until IS NULL OR blocked_until<=NOW())))
 		                 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+		                 ${s.sql}
 		               ORDER BY enqueued_at
 		               LIMIT 1
 		               FOR UPDATE SKIP LOCKED)
-		  RETURNING *`
+		  RETURNING *`,
+		s.params
 	);
 	return r.rows[0] ?? null;
 }
@@ -593,7 +623,7 @@ export async function requestCancel(
  * wreckage from a previous worker. Cancel-flagged → cancelled; budget left →
  * pending (event carries the inference + prior progress); exhausted → failed.
  */
-export async function reclaimStartupJobs(note: string): Promise<number> {
+export async function reclaimStartupJobs(note: string, scope?: ClaimScope): Promise<number> {
 	// ONE conditional UPDATE for all crash-wreckage rows: the cancelled vs
 	// pending vs failed decision is made INSIDE the statement from each row's
 	// committed state at lock time — no SELECT/recheck window, so a cancel
@@ -603,6 +633,7 @@ export async function reclaimStartupJobs(note: string): Promise<number> {
 	// pending rows, so re-pending it would wedge the job forever. Events are
 	// emitted only for rows the UPDATE actually returned, matching the FINAL
 	// status of each.
+	const s = claimScopeSql(scope);
 	const r = await query<{ id: number; status: string; progress: unknown }>(
 		`UPDATE jobs SET
 		    status = CASE
@@ -618,7 +649,9 @@ export async function reclaimStartupJobs(note: string): Promise<number> {
 		                 THEN 'worker crashed or restarted during this job'
 		                 ELSE error END
 		  WHERE status = 'running'
-		  RETURNING id, status, progress`
+		  ${s.sql}
+		  RETURNING id, status, progress`,
+		s.params
 	);
 	for (const row of r.rows) {
 		if (row.status === 'cancelled') {

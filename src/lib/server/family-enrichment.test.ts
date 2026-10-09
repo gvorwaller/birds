@@ -357,34 +357,31 @@ it("honors drain before source or paid calls", async () => {
 it("claim skips paused family scheduler while serving other queued work", async () => {
   await ensureFamilyEnrichment();
   await setFamilyPaused(true);
-  const pending = (
+  // td-d425c1: claim only this test's two jobs. birds_test shares the queue
+  // with real due jobs, which an unscoped claim would take (or, as before,
+  // need every real pending row pushed a year out and restored).
+  const familyId = (
     await query(
-      "SELECT id,next_retry_at FROM jobs WHERE status='pending' AND type<>'enrich_families'",
+      "SELECT id FROM jobs WHERE type='enrich_families' AND status='pending' AND NOT(id=ANY($1::bigint[]))",
+      [oldJobs],
     )
-  ).rows;
+  ).rows[0]?.id;
+  expect(familyId).toBeDefined();
   let otherId: number | undefined;
   try {
-    await query(
-      "UPDATE jobs SET next_retry_at=NOW()+interval '1 year' WHERE id=ANY($1::bigint[])",
-      [pending.map((r) => r.id)],
-    );
-    expect(await claimNextJob()).toBeNull();
+    expect(await claimNextJob({ jobIds: [familyId] })).toBeNull();
     otherId = (
       await query(
         "INSERT INTO jobs(type,payload,requested_by,label) VALUES('sync_taxonomy','{}',$1,'Family queue QA') RETURNING id",
         [admin],
       )
     ).rows[0].id;
-    expect((await claimNextJob())?.id).toBe(otherId);
+    const scope = { jobIds: [familyId, otherId!] };
+    expect((await claimNextJob(scope))?.id).toBe(otherId);
     await setFamilyPaused(false);
-    expect((await claimNextJob())?.type).toBe("enrich_families");
+    expect((await claimNextJob(scope))?.id).toBe(familyId);
   } finally {
     if (otherId) await query("DELETE FROM jobs WHERE id=$1", [otherId]);
-    for (const row of pending)
-      await query("UPDATE jobs SET next_retry_at=$2 WHERE id=$1", [
-        row.id,
-        row.next_retry_at,
-      ]);
   }
 });
 it.runIf(process.env.BIRDS_FAMILY_LIVE_SOURCE === "1")(
