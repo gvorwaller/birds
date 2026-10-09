@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { withTagWriteTx, type TagWriteTx } from "$server/tag-engine/runtime";
 import { lexiconFor, materializeMany } from "$server/tag-engine/materialize";
-import { beginTagRepair, closePendingRepairInline } from "$server/tag-engine/repair";
+import { beginTagRepair } from "$server/tag-engine/repair";
 
 export interface TaxonomyEntry {
   speciesCode: string;
@@ -121,16 +121,18 @@ export async function beginTaxonomyChange(tx: TagWriteTx): Promise<TaxonomyBefor
 
 export type TaxonomyRederive =
   | { mode: "changed"; changed: number }
-  | { mode: "full"; closedGeneration: string | null }
   | { mode: "repair"; changed: number; generation: string; jobId: number | null };
 
 /**
- * After writing, same transaction. Species whose own taxon row changed are
- * always re-derived here (small set). A changed other-taxon LEXICON touches
- * every input:
- *  - no owned tag → re-derive the whole universe inline (within budget) and
- *    close any generation an earlier change left pending;
- *  - tags owned → open a repair generation + its job (batched, off-lock).
+ * After writing, same transaction.
+ *  - Unchanged lexicon → re-derive only the species whose own taxon row
+ *    changed, here. Usually few, but unbounded (td-fbd304).
+ *  - Changed LEXICON → every input is stale: open a repair generation + its
+ *    job (batched, off-lock), whether or not a tag is owned. Nothing is
+ *    re-derived inline — the workset's lexicon-mismatch class already holds
+ *    every changed species. td-861855: on the droplet the old inline paths
+ *    cost ~25 s (whole universe, no owned tag) and ~4.4 ms per changed
+ *    species of the 30 s exclusive cap.
  */
 export async function finishTaxonomyChange(
   tx: TagWriteTx,
@@ -146,15 +148,6 @@ export async function finishTaxonomyChange(
     if (changed.size > 0) await materializeMany(tx, [...changed]);
     return { mode: "changed", changed: changed.size };
   }
-  const owned = Number(
-    (await tx.exec<{ n: string }>("SELECT count(*)::text AS n FROM tag_ownership")).rows[0].n,
-  );
-  if (owned === 0) {
-    await materializeMany(tx, null);
-    const g = await closePendingRepairInline(tx, lex.hash);
-    return { mode: "full", closedGeneration: g?.toString() ?? null };
-  }
-  if (changed.size > 0) await materializeMany(tx, [...changed]);
   const r = await beginTagRepair(tx, lex.hash, requesterId);
   return { mode: "repair", changed: changed.size, generation: r.generation.toString(), jobId: r.jobId };
 }

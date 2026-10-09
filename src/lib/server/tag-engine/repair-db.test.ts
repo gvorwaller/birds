@@ -61,9 +61,10 @@ const A = `zzr${RUN}a`;
 const B = `zzr${RUN}b`;
 const C = `zzr${RUN}c`;
 const D = `zzr${RUN}d`;
+const E = `zzr${RUN}e`; // leaves the universe via taxonomy (species → issf)
 const L = `zzr${RUN}l`; // owned legacy-baseline carrier
 const N = `zzr${RUN}n`; // article, never a taxonomy row → never a member
-const MEMBERS = [A, B, C, D, L];
+const MEMBERS = [A, B, C, D, E, L];
 const ALL = [...MEMBERS, N];
 let T1 = "";
 let T2 = "";
@@ -471,7 +472,7 @@ describe
       expect((await inputOf(A))!.input_hash).not.toBe(beforeInput);
     }, 60_000);
 
-    it("test 1 — a lexicon change with owned tags opens generation + job + event atomically; a rollback leaves none", async () => {
+    it("test 1 — a lexicon change opens generation + job + event atomically, re-derives nothing inline; a rollback leaves none", async () => {
       const s0 = (await tagRepairState())!;
       expect(s0.pending).toBe(false);
       const next = s0.repairGeneration + 1n;
@@ -505,8 +506,16 @@ describe
         ).rows,
       ).toHaveLength(0);
 
+      const inputBefore = (await inputOf(A))!;
       const r = await change(false);
       expect(r).toMatchObject({ mode: "repair", generation: next.toString() });
+      // td-861855: nothing is re-derived inside the exclusive transaction —
+      // not even the renamed species; the batched repair owns all of it.
+      const inputAfter = (await inputOf(A))!;
+      expect(inputAfter.input_hash).toBe(inputBefore.input_hash);
+      expect(inputAfter.lexicon_hash).toBe(inputBefore.lexicon_hash);
+      const target = (await tagRepairState())!.target!;
+      expect(target).not.toBe(inputBefore.lexicon_hash);
       const jobId = (r as { jobId: number }).jobId;
       jobIds.add(jobId);
       const job = (
@@ -580,6 +589,8 @@ describe
       expect(maxGap).toBeLessThan(1000); // plan rev 21: each exclusive hold < 1 s
       expect(await workset()).toEqual([]);
       expect((await tagRepairState())!.pending).toBe(false);
+      expect((await inputOf(A))!.lexicon_hash).toBe(target);
+      expect((await inputOf(A))!.input_hash).not.toBe(inputBefore.input_hash);
       expect(await tagsOf(A)).toEqual(expect.arrayContaining([T1, T2]));
 
       // The job row, claimed after the repair converged, completes as 'already'.
@@ -588,6 +599,44 @@ describe
         status: "succeeded",
         result: { outcome: "already" },
       });
+    }, 180_000);
+
+    it("test 1b — a taxonomy change that moves a member out of the universe (species → issf) drops its input through the repair, not inline", async () => {
+      expect(await inputOf(E)).not.toBeNull();
+      const inWorkset = async (code: string) =>
+        (
+          await query(
+            "SELECT 1 FROM tag_repair_workset($1, $2, 2147483647) c WHERE c = $3",
+            [(await tagRepairState())!.target, scannerRev(), code],
+          )
+        ).rows.length > 0;
+      const r = await withTagWriteTx(
+        "exclusive",
+        `global:test-repair-issf-zzr${RUN}`,
+        "test",
+        async (tx) => {
+          const before = await beginTaxonomyChange(tx);
+          await tx.exec(
+            "UPDATE taxonomy_cache SET category = 'issf' WHERE species_code = $1",
+            [E],
+          );
+          return finishTaxonomyChange(tx, before, adminId);
+        },
+      );
+      // E's names leave the species lexicon, so the lexicon moves → repair.
+      expect(r).toMatchObject({ mode: "repair", changed: 1 });
+      const jobId = (r as { jobId: number }).jobId;
+      jobIds.add(jobId);
+      expect(await inputOf(E)).not.toBeNull(); // nothing inline
+      expect(await inWorkset(E)).toBe(true); // class (d): pointer for a non-member
+      await runTagRepairJob(await claim(jobId));
+      expect(await jobRow(jobId)).toMatchObject({
+        status: "succeeded",
+        result: { outcome: "converged" },
+      });
+      expect(await inputOf(E)).toBeNull();
+      expect(await workset()).toEqual([]);
+      expect((await tagRepairState())!.pending).toBe(false);
     }, 180_000);
 
     it("test 2 — the finalization-window race: a new generation gets its own job, never deduped onto the finishing one", async () => {

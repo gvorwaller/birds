@@ -82,8 +82,8 @@
 	<section class="card repair" aria-labelledby="tag-repair-heading">
 		<h2 id="tag-repair-heading">Taxonomy change being applied <AdminBadge tone="warn" label="Repair pending" /></h2>
 		<p>
-			An eBird taxonomy update changed species names while rule-based tags are live. Every species is being
-			re-checked in small batches (generation {health.repair.generation}). Until it finishes, activating a rule set
+			An eBird taxonomy update changed species or family names, so every species' tag inputs are being re-checked in small
+			batches (generation {health.repair.generation}). Until it finishes, activating a rule set
 			or rolling back to an earlier one waits. <strong>Retire to legacy</strong> still works.
 		</p>
 		{#if job && (job.status === 'pending' || job.status === 'running')}

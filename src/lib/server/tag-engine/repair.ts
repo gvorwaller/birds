@@ -2,8 +2,9 @@
  * Generation-keyed batched repair (td-894144 Release B, plan rev 21 §B2
  * "Taxonomy name change while tags are owned").
  *
- * replaceTaxonomy (exclusive) that changes the lexicon while tags are owned
- * does NOT re-derive the universe in its own transaction (lock budget). It
+ * replaceTaxonomy (exclusive) that changes the lexicon — with or without an
+ * owned tag (td-861855) — does NOT re-derive the universe in its own
+ * transaction (lock budget). It
  * calls beginTagRepair: bump the generation and insert its `tag_repair` job
  * — both on the same transaction, so they commit or roll back together. The
  * job then repairs the workset (migration 0067 `tag_repair_workset`) in short
@@ -86,10 +87,11 @@ export async function beginTagRepair(
 }
 
 /**
- * Same transaction, no owned tag: the caller has just re-derived the whole
- * universe inline, so a generation left pending by an earlier change is
- * closed here (bump + CAS) instead of being stranded with a target the
- * lexicon has moved past.
+ * For a caller that has just re-derived the whole universe inline in the same
+ * transaction (test fixtures settling the universe; replaceTaxonomy no longer
+ * does, td-861855): a generation left pending by an earlier change is closed
+ * here (bump + CAS) instead of being stranded with a target the lexicon has
+ * moved past.
  */
 export async function closePendingRepairInline(tx: TagWriteTx, target: string): Promise<bigint | null> {
 	const s = await readState(tx.exec);
