@@ -565,13 +565,45 @@ export interface SyncResult {
 	total: number;
 	matched: number;
 	unmatched: string[];
+	/**
+	 * td-b52a90: species codes from earlier syncs/imports that this import did
+	 * not match but KEPT, because a species-level name failed to match (the
+	 * taxonomy cache is behind eBird's, e.g. a split). Empty on a clean import.
+	 */
+	retained: string[];
+	/** Display names for `retained` (taxonomy common name, else the code). */
+	retainedNames: string[];
+	/** The species-level names that failed to match (the reason for `retained`). */
+	unmatchedSpecies: string[];
 	/** Present after a credentialed sync: the loc-resolution pass summary. */
 	locs?: LiferLocResolution;
+}
+
+/** eBird categories the matcher never matches (it matches category 'species' only). */
+const NON_SPECIES_CATEGORIES = new Set(['issf', 'form', 'spuh', 'slash', 'hybrid', 'intergrade', 'domestic']);
+
+/**
+ * Could this row be a species-level taxon? The live export carries eBird's
+ * Category; a legacy CSV without it falls back to eBird's naming conventions
+ * for spuhs ("duck sp."), slashes ("Greater/Lesser Scaup") and hybrids
+ * ("Mallard x Mottled Duck (hybrid)"). Every prod sync leaves a few of those
+ * unmatched forever (2026-10-09), so only a species-level miss means drift.
+ */
+export function mayBeSpeciesLevel(row: Pick<LifeListRow, 'comName' | 'category'>): boolean {
+	if (row.category) return !NON_SPECIES_CATEGORIES.has(row.category.trim().toLowerCase());
+	return !/ sp\.| x |\/|\((hybrid|domestic type)\)/i.test(row.comName);
 }
 
 /**
  * Replace the user's synced seen_species rows from parsed life-list rows.
  * Manual rows (source='manual') are preserved.
+ *
+ * td-b52a90: when a species-level name fails to match, the taxonomy cache is
+ * behind eBird's (a split or rename not yet synced), so this import cannot
+ * account for the whole list. Earlier synced rows it did not match are then
+ * KEPT and reported (`retained`) instead of deleted; a later import against a
+ * synced taxonomy prunes them normally. Splits are never guessed onto a
+ * daughter species.
  */
 export async function importLifeList(
 	userId: number,
@@ -585,6 +617,7 @@ export async function importLifeList(
 
 	const seen = new Map<string, LifeListRow>(); // code → CSV row (details ride along)
 	const unmatched: string[] = [];
+	const unmatchedSpecies: string[] = [];
 	for (const row of parsed.rows) {
 		const m = matcher.match(row.comName, row.sciName);
 		if (m) {
@@ -594,14 +627,40 @@ export async function importLifeList(
 			}
 		} else {
 			unmatched.push(row.comName);
+			if (mayBeSpeciesLevel(row)) unmatchedSpecies.push(row.comName);
 		}
 	}
 
+	let retained: string[] = [];
+	let retainedNames: string[] = [];
 	await withTransaction(async (client) => {
-		await client.query(
-			`DELETE FROM seen_species WHERE user_id = $1 AND source IN ('ebird_sync', 'csv_import')`,
-			[userId]
-		);
+		if (unmatchedSpecies.length > 0) {
+			// Incomplete import: replace only the rows it matched; keep the rest.
+			const kept = (
+				await client.query<{ species_code: string; name: string }>(
+					`SELECT s.species_code, COALESCE(t.com_name, s.species_code) AS name
+					   FROM seen_species s
+					   LEFT JOIN taxonomy_cache t ON t.species_code = s.species_code
+					  WHERE s.user_id = $1 AND s.source IN ('ebird_sync', 'csv_import')
+					    AND NOT (s.species_code = ANY($2::text[]))
+					  ORDER BY name, s.species_code`,
+					[userId, [...seen.keys()]]
+				)
+			).rows;
+			retained = kept.map((r) => r.species_code);
+			retainedNames = kept.map((r) => r.name);
+			await client.query(
+				`DELETE FROM seen_species
+				  WHERE user_id = $1 AND source IN ('ebird_sync', 'csv_import')
+				    AND species_code = ANY($2::text[])`,
+				[userId, [...seen.keys()]]
+			);
+		} else {
+			await client.query(
+				`DELETE FROM seen_species WHERE user_id = $1 AND source IN ('ebird_sync', 'csv_import')`,
+				[userId]
+			);
+		}
 		const entries = [...seen.entries()];
 		const COLS = 14;
 		const BATCH = 400; // 14 params/row; stay well under the 65535 cap
@@ -644,9 +703,60 @@ export async function importLifeList(
 				params
 			);
 		}
+		// Durable owner-facing state for BOTH sources (CODEX1: a CSV import's
+		// incompleteness must survive the action response). A user without a
+		// user_ebird row has no status to show; the action message still says it.
+		const note = partialImportNote({ unmatchedSpecies, retainedNames });
+		await client.query(
+			`UPDATE user_ebird SET life_list_status = $2, life_list_error = $3 WHERE user_id = $1`,
+			[userId, note ? 'partial' : 'ok', note]
+		);
 	});
 
-	return { total: parsed.rows.length, matched: seen.size, unmatched };
+	return { total: parsed.rows.length, matched: seen.size, unmatched, retained, retainedNames, unmatchedSpecies };
+}
+
+/**
+ * td-b52a90: the owner-facing explanation when an import could not match a
+ * species-level name (stored as life_list_error under status 'partial'), or
+ * null for a clean import.
+ */
+export function partialImportNote(r: Pick<SyncResult, 'unmatchedSpecies' | 'retainedNames'>): string | null {
+	if (r.unmatchedSpecies.length === 0) return null;
+	const list = (names: string[]) => names.slice(0, 3).join(', ') + (names.length > 3 ? ', …' : '');
+	const n = r.unmatchedSpecies.length;
+	const kept = r.retainedNames.length
+		? ` Kept from your earlier list so nothing is lost: ${list(r.retainedNames)} (${r.retainedNames.length}). ` +
+			`These may include a bird you've since removed on eBird; they clear on the next complete sync.`
+		: '';
+	return (
+		`${n} species from eBird didn't match this app's species list (${list(r.unmatchedSpecies)}).${kept} ` +
+		`eBird has probably updated its taxonomy: run Sync taxonomy in Settings, then sync your life list again. ` +
+		`If the same names keep appearing, tell the admin.`
+	);
+}
+
+export interface LifeListOrphans {
+	/** seen_species rows whose code is not in taxonomy_cache (retired by eBird). */
+	rows: number;
+	users: number;
+	sample: string[];
+}
+
+/**
+ * td-b52a90 audit, run before and after a taxonomy sync: life-list codes the
+ * current taxonomy no longer has. /life still shows them (LEFT JOIN), but a
+ * retired code means eBird split, lumped or renamed that species.
+ */
+export async function lifeListOrphans(): Promise<LifeListOrphans> {
+	const r = await query<{ rows: string; users: string; sample: string[] | null }>(
+		`SELECT count(*)::text AS rows, count(DISTINCT s.user_id)::text AS users,
+		        (array_agg(DISTINCT s.species_code ORDER BY s.species_code))[1:10] AS sample
+		   FROM seen_species s
+		  WHERE NOT EXISTS (SELECT 1 FROM taxonomy_cache t WHERE t.species_code = s.species_code)`
+	);
+	const row = r.rows[0];
+	return { rows: Number(row.rows), users: Number(row.users), sample: row.sample ?? [] };
 }
 
 const RESOLVE_BUDGET_MS = 4 * 60_000;
@@ -705,11 +815,8 @@ export async function syncLifeListFromEbird(
 		}
 		const result = await importLifeList(userId, parseLifeListCsv(text), 'ebird_sync');
 		if (hb) await hb();
-		await query(
-			`UPDATE user_ebird SET life_list_synced_at = NOW(), life_list_status = 'ok', life_list_error = NULL
-			 WHERE user_id = $1`,
-			[userId]
-		);
+		// importLifeList wrote life_list_status/error ('ok' or 'partial').
+		await query(`UPDATE user_ebird SET life_list_synced_at = NOW() WHERE user_id = $1`, [userId]);
 		// Install the post-CSV jar so the resolver's fetchAuthenticatedEbird
 		// calls reuse this session (no second casLogin — GROK §1 pin).
 		sessionMemo.set(userId, { jar, at: Date.now() });

@@ -34,6 +34,7 @@ import {
 } from '$lib/need-alerts-policy';
 import {
 	syncLifeListFromEbird,
+	lifeListOrphans,
 	EbirdLoginError,
 	EbirdUpstreamError
 } from '$server/ebird-account';
@@ -2522,6 +2523,10 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 						matched: r.matched,
 						unmatchedCount: r.unmatched.length,
 						unmatched: r.unmatched.slice(0, 10),
+						// td-b52a90: species-level misses keep earlier rows.
+						unmatchedSpecies: r.unmatchedSpecies.slice(0, 10),
+						retainedCount: r.retained.length,
+						retained: r.retained.slice(0, 10),
 						// Life-list map loc resolution (td-b5986c): full disclosure
 						// of the capped/fail-soft pass in the job record.
 						...(r.locs ? { locs: r.locs } : {})
@@ -2589,11 +2594,15 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 					if (!apiKey) {
 						throw new EbirdLoginError('An eBird API key is required — add one in Settings.');
 					}
+					const orphansBefore = await lifeListOrphans();
 					const taxa = await syncTaxonomy(apiKey, job.requested_by);
+					// td-b52a90: life-list codes the new taxonomy retired (splits/lumps).
+					// Counts only; each owner sees their own codes on /life.
+					const lifeListOrphansAfter = await lifeListOrphans();
 					const rematch = await rematchPhotoLinks();
 					const metadata = await taxonomySummary();
 					await ensureFamilyEnrichment(true);
-                    return { taxa, metadata: { species: metadata.total, classified: metadata.total-metadata.missing, ordered: metadata.ordered, withBandingCodes: metadata.banding }, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched };
+                    return { taxa, metadata: { species: metadata.total, classified: metadata.total-metadata.missing, ordered: metadata.ordered, withBandingCodes: metadata.banding }, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched, lifeListOrphans: { before: orphansBefore.rows, after: lifeListOrphansAfter.rows, users: lifeListOrphansAfter.users } };
 				});
 				return;
 			}

@@ -258,6 +258,16 @@
 						labeled, never hidden.
 					</li>
 					<li>
+						When eBird splits or renames a species before this app has
+						its new taxonomy, a sync can't match that bird. Instead of
+						dropping it, the sync keeps your earlier entry and marks the
+						sync <strong>incomplete</strong> (in Settings and on the Life
+						list page) with the names it couldn't match. Run
+						<strong>Sync taxonomy</strong> in Settings, then sync your life
+						list again. Hybrids, slashes and “sp.” entries never match a
+						species and don't count.
+					</li>
+					<li>
 						Use the <strong>Life list</strong> picker to view lists shared by other
 						signed-in Birds users. Their map, dates, locations, and checklist links
 						are read-only. Switching lists applies to this page; species pages and

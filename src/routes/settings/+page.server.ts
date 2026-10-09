@@ -6,6 +6,7 @@ import { getEbirdApiKey } from "$server/ebird";
 import {
   importLifeList,
   parseLifeListCsv,
+  partialImportNote,
   testEbirdLogin,
   invalidateEbirdSession,
 } from "$server/ebird-account";
@@ -626,9 +627,10 @@ export const actions: Actions = {
     try {
       const parsed = parseLifeListCsv(await file.text());
       const result = await importLifeList(userId, parsed, "csv_import");
+      const note = partialImportNote(result);
       return {
         ok: true as const,
-        message: `CSV imported: ${result.matched} species (${result.unmatched.length} unmatched names).`,
+        message: `CSV imported: ${result.matched} species (${result.unmatched.length} unmatched names).${note ? ` ${note}` : ""}`,
       };
     } catch (err) {
       return fail(400, {

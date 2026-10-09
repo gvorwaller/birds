@@ -206,6 +206,7 @@
   );
   // Stale = last synced more than 8 days ago (the sync is meant to recur);
   // shown to the OWNER with a Settings pointer (GROK pin 5 — stale half).
+  const retiredLifers = $derived(data.lifers.filter((l) => l.retired));
   const syncStale = $derived(
     data.syncedAt != null &&
       Date.now() - new Date(data.syncedAt).getTime() > 8 * 86_400_000,
@@ -256,10 +257,26 @@
         ? ` — ${data.syncError}`
         : ""} · showing the last synced list. <a href="/settings">Settings</a>
     </p>
+  {:else if data.canManage && data.syncStatus === "partial"}
+    <p class="syncnote">
+      ⚠ The last life-list sync was incomplete{data.syncError
+        ? ` — ${data.syncError}`
+        : ""} <a href="/settings">Settings</a>
+    </p>
   {:else if data.canManage && syncStale}
     <p class="syncnote">
       ⚠ Life list last synced {syncedOn} — re-sync from
       <a href="/settings">Settings</a> to pick up new lifers.
+    </p>
+  {/if}
+  {#if data.canManage && retiredLifers.length > 0}
+    <p class="syncnote">
+      ⚠ {retiredLifers.length === 1 ? "1 lifer uses a species code" : `${retiredLifers.length} lifers use species codes`}
+      eBird has retired after a split, lump or rename ({retiredLifers
+        .slice(0, 3)
+        .map((l) => l.species_code)
+        .join(", ")}{retiredLifers.length > 3 ? ", …" : ""}). Sync your life list again from
+      <a href="/settings">Settings</a> to pick up eBird's current names.
     </p>
   {/if}
 
@@ -496,6 +513,14 @@
                     {#if l.liferNum != null && l.liferNum % 100 === 0}⭐{/if}
                   </span>
                   <span class="what">
+                    {#if l.retired}
+                      <span
+                        class="path-focus-target"
+                        id={`life-${data.viewerAccountId}-${encodeURIComponent(l.species_code)}`}
+                        >{l.com_name}</span
+                      >
+                      <span class="muted small">retired eBird code</span>
+                    {:else}
                     <a
                       class="path-focus-target"
                       id={`life-${data.viewerAccountId}-${encodeURIComponent(l.species_code)}`}
@@ -504,6 +529,7 @@
                     >
                       {l.com_name}
                     </a>
+                    {/if}
                     {#if l.exotic}<Badge kind="notable" label="Exotic" />{/if}
                     {#if l.countable === false}<span class="muted small"
                         >not countable</span
@@ -762,6 +788,12 @@
     padding: 0.5rem 0.7rem;
     margin: 0 0 0.6rem;
     color: #664d03;
+  }
+  /* The note keeps its light amber in every theme, so its links must not take
+     the dark theme's light --link (GROK: 1.31:1); use the note's own ink. */
+  .syncnote a {
+    color: #4d3a02;
+    text-decoration: underline;
   }
   .mapcard :global(.map) {
     min-height: 320px;

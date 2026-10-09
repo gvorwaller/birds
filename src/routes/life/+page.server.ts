@@ -16,6 +16,8 @@ export interface LiferRow {
   countable: boolean | null;
   lat: number | null;
   lng: number | null;
+  /** td-b52a90: the code is not in the current eBird taxonomy (split/lumped/renamed). */
+  retired: boolean;
 }
 
 /**
@@ -60,7 +62,8 @@ export const load = (async ({ locals, url }) => {
             ss.location_name, ss.loc_id, ss.region_code, ss.sub_id,
             ss.exotic, ss.countable,
             COALESCE(el.lat, llc.lat) AS lat,
-            COALESCE(el.lng, llc.lng) AS lng
+            COALESCE(el.lng, llc.lng) AS lng,
+            (tc.species_code IS NULL) AS retired
        FROM seen_species ss
        LEFT JOIN taxonomy_cache tc ON tc.species_code = ss.species_code
        LEFT JOIN ebird_locations el ON el.loc_id = ss.loc_id

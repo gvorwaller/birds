@@ -615,7 +615,7 @@
         <span class="glance-value">{data.photoCount}</span>
       </div>
     {/if}
-    <div class="glance-item">
+    <div class="glance-item glance-sync">
       <span class="glance-label">Sync</span>
       <span class="glance-value">
         {#if data.lifeListSyncedAt}
@@ -631,6 +631,11 @@
         {:else}
           <a href="/settings">not synced</a>
         {/if}
+        <!-- td-b52a90: an eBird sync or a CSV import can leave the list
+             incomplete, with or without an eBird sync timestamp. -->
+        {#if data.lifeListStatus === "partial" && !isViewer}<a href="/settings"
+            ><Badge kind="stale" label="sync incomplete" /></a
+          >{/if}
       </span>
     </div>
     </div>
@@ -1520,6 +1525,13 @@
   .glance-value {
     font-weight: 700;
     font-size: 0.95rem;
+  }
+  /* td-b52a90 (GROK 320px): the Sync value can carry a badge; let it wrap
+     inside the row instead of overflowing the page. */
+  .glance-sync {
+    white-space: normal;
+    flex-wrap: wrap;
+    min-width: 0;
   }
   .map-card {
     padding: 8px;

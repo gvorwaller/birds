@@ -360,19 +360,27 @@
     </div>
     <p class="muted">
       {#if data.ebird.life_list_synced_at}
-        Last sync {new Date(data.ebird.life_list_synced_at).toLocaleString()}
+        Last eBird sync {new Date(data.ebird.life_list_synced_at).toLocaleString()}
         {#if data.ebird.life_list_status === "error"}
           <Badge kind="notable" label="error" /> {data.ebird.life_list_error}
         {/if}
       {:else}
-        Never synced.
+        Never synced from eBird.
       {/if}
     </p>
+    {#if data.ebird.life_list_status === "partial"}
+      <!-- td-b52a90: set by either an eBird sync or a CSV import, so it shows
+           even when there is no eBird sync timestamp. -->
+      <p class="muted">
+        <Badge kind="stale" label="incomplete" /> {data.ebird.life_list_error}
+      </p>
+    {/if}
     <details>
       <summary>Fallback: import a CSV instead</summary>
       <p class="muted">
         eBird → My eBird → Download my data, or a life-list export. Replaces the
-        synced list.
+        synced list; if a species name doesn't match, your earlier entries are
+        kept and the import is marked incomplete.
       </p>
       <form
         method="POST"

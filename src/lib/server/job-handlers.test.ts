@@ -188,7 +188,8 @@ const syncMocks = vi.hoisted(() => {
     FakeEbirdLoginError,
     FakeEbirdUpstreamError,
     FakeEbirdError,
-    syncLifeListFromEbird: vi.fn<(userId: number) => Promise<{ total: number; matched: number; unmatched: string[] }>>(),
+    syncLifeListFromEbird: vi.fn<(userId: number) => Promise<{ total: number; matched: number; unmatched: string[]; unmatchedSpecies: string[]; retained: string[] }>>(),
+    lifeListOrphans: vi.fn<() => Promise<{ rows: number; users: number; sample: string[] }>>(async () => ({ rows: 0, users: 0, sample: [] })),
     getEbirdApiKey: vi.fn<(userId: number) => Promise<string | null>>(async () => "key"),
     syncTaxonomy: vi.fn<(apiKey: string) => Promise<number>>(async () => 42),
     rematchPhotoLinks: vi.fn<() => Promise<{ matched: number; unmatched: number }>>(
@@ -206,6 +207,7 @@ vi.mock("$server/ebird-account", () => ({
   EbirdLoginError: syncMocks.FakeEbirdLoginError,
   EbirdUpstreamError: syncMocks.FakeEbirdUpstreamError,
   syncLifeListFromEbird: syncMocks.syncLifeListFromEbird,
+  lifeListOrphans: syncMocks.lifeListOrphans,
 }));
 vi.mock("$server/ebird", () => ({
   EbirdError: syncMocks.FakeEbirdError,
@@ -1132,6 +1134,8 @@ describe("runJob — sync jobs (Phase 3)", () => {
       total: 412,
       matched: 400,
       unmatched: Array.from({ length: 12 }, (_, i) => `Mystery bird ${i}`),
+      unmatchedSpecies: ["Mystery bird 0"],
+      retained: Array.from({ length: 11 }, (_, i) => `kept${i}`),
     });
     await runJob(jobRow({ type: "sync_lifelist" }), ctx);
     expect(syncMocks.syncLifeListFromEbird).toHaveBeenCalledWith(7, expect.objectContaining({ heartbeat: expect.any(Function) }));
@@ -1144,6 +1148,9 @@ describe("runJob — sync jobs (Phase 3)", () => {
     };
     expect(result).toMatchObject({ total: 412, matched: 400, unmatchedCount: 12 });
     expect(result.unmatched).toHaveLength(10); // first 10 only — compact
+    // td-b52a90: species-level misses and the rows they kept are disclosed.
+    expect(result).toMatchObject({ unmatchedSpecies: ["Mystery bird 0"], retainedCount: 11 });
+    expect((result as unknown as { retained: string[] }).retained).toHaveLength(10);
   });
 
   it("sync_lifelist credential failure → terminal failJob, never a retry", async () => {
@@ -1219,7 +1226,10 @@ describe("runJob — sync jobs (Phase 3)", () => {
     expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
-  it("sync_taxonomy success → taxa + photo re-match counts", async () => {
+  it("sync_taxonomy success → taxa + photo re-match counts + life-list orphan audit", async () => {
+    syncMocks.lifeListOrphans
+      .mockResolvedValueOnce({ rows: 0, users: 0, sample: [] })
+      .mockResolvedValueOnce({ rows: 2, users: 1, sample: ["oldcode1", "oldcode2"] });
     await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
     expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key", 7); // requester owns any tag_repair job (td-894144 rev 21)
     expect(mocks.completeJob.mock.calls[0][2]).toEqual({
@@ -1227,6 +1237,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
       metadata: {species:40,classified:38,ordered:38,withBandingCodes:10},
       photosMatched: 5,
       photosUnmatched: 1,
+      lifeListOrphans: { before: 0, after: 2, users: 1 },
     });
   });
 
