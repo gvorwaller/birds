@@ -121,3 +121,8 @@ Each slice is reviewed and deployed on its own so it can be rolled back on its o
 - td-47179c moved ahead of the admin observability pages (Phase 1.75).
 - New tickets created: td-cf46cf (backup verification and restore drill, P2) and td-626d50 (dependency and runtime security inventory, P3).
 - Implementation starts with Phase 1, beginning with td-d425c1.
+
+## Status and re-ordering (2026-10-10)
+- Phase 1 done and deployed (bd426b4): td-d425c1, td-861855, td-b52a90, td-b99b6d Phase A. Phase B split to td-9ccae2.
+- Phase 1.5 done: td-cf46cf (dated backups + restore drill), td-626d50 (inventory) -> td-a7f6a7 (SvelteKit/devalue security bumps, deploy pending GROK smoke), td-4c419b (droplet maintenance, done), td-4701cd (Node 24, P4), td-f39440 (vite/vitest dev bumps, P4). Monthly update check LaunchAgent added.
+- **Owner: td-de2150 (Hotspots & data species counts; Codex plan docs/2026-10-10-hotspots-species-counts-design-fix-plan.md) goes right after the td-a7f6a7 deploy**, ahead of Phase 1.75 (td-47179c) and Phase 2.
