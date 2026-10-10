@@ -1,0 +1,10 @@
+# npm audit findings the monthly update check reports as accepted rather than
+# actionable. One package per line, then the reason. Remove a line when its
+# reason no longer holds. See docs/2026-10-10-dependency-security-inventory.md.
+cookie          Kit 2 pins ^0.6.0; app cookie names/paths are constants (inventory item 6)
+vitest          dev/build only; blocked by an npm arborist bug — tracked td-f39440
+@vitest/mocker  dev/build only — tracked td-f39440
+vite            dev/build only — tracked td-f39440
+postcss         dev/build only (via vite) — tracked td-f39440
+nanoid          dev/build only (via vite/postcss) — tracked td-f39440
+source-map-js   dev/build only (via vite/postcss) — tracked td-f39440

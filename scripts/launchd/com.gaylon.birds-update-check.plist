@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Monthly update check (scripts/monthly-update-check.sh). Install:
+     cp scripts/launchd/com.gaylon.birds-update-check.plist ~/Library/LaunchAgents/
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gaylon.birds-update-check.plist
+     launchd runs a missed calendar slot at the next wake. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gaylon.birds-update-check</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/gaylonvorwaller/birds/scripts/monthly-update-check.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>23</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/gaylonvorwaller/Library/Logs/birds-update-check/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gaylonvorwaller/Library/Logs/birds-update-check/launchd.err.log</string>
+</dict>
+</plist>

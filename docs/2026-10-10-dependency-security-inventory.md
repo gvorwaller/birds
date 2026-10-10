@@ -54,3 +54,17 @@ bundle (esbuild, target `node22`) keeps `pg`, `argon2`, `web-push` external.
   unattended-upgrades (automatic PG restarts) or keep these manual with a
   monthly check.
 - **C (early 2027):** Node 24 LTS on prod + worker build target.
+
+## Monthly check (automated)
+
+`scripts/monthly-update-check.sh` runs on the 1st of each month at 09:23 from
+the LaunchAgent `com.gaylon.birds-update-check` (plist in `scripts/launchd/`;
+launchd runs a missed slot at the next wake). Read-only. It checks the
+droplet's pending pgdg/nodesource/kernel/nginx/openssl packages, a pending
+reboot and Node 22's end of life, plus birds' `npm audit` and in-range
+updates. Findings listed in `scripts/update-check-accepted.txt` (or inherited
+only through accepted packages) are reported as information. Every run writes
+`~/Library/Logs/birds-update-check/<YYYY-MM>.md`; if anything needs action
+it files one td task "Monthly update check <YYYY-MM>" (never duplicated) and
+posts a macOS notification. Applying droplet updates stays manual (owner,
+2026-10-10).
