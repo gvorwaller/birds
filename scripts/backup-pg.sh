@@ -17,6 +17,8 @@
 #   prod/pg_hba.conf          - /etc/postgresql/17/birds/pg_hba.conf
 #   prod/pm2-birds.json       - pm2 jlist filtered to the birds app, secrets redacted
 #   prod/PULL_OK_AT           - ISO-8601 timestamp on success
+#   prod/history/birds-<day>.pgdump - dated copies: last 7 days + Sundays
+#                               for ~5 weeks (lib/backup-retention.sh)
 #   local/birds.pgdump        - local test DB dump when --local-only is used
 #   preflight.log             - tee of every run (uid, args, stdout, stderr)
 #
@@ -72,7 +74,10 @@ PROD_PGCONF_DEST="${PROD_BACKUP_DIR}/postgresql.conf"
 PROD_PGHBA_DEST="${PROD_BACKUP_DIR}/pg_hba.conf"
 PROD_PM2_DEST="${PROD_BACKUP_DIR}/pm2-birds.json"
 PROD_PULL_MARKER="${PROD_BACKUP_DIR}/PULL_OK_AT"
+PROD_HISTORY_DIR="${PROD_BACKUP_DIR}/history"
 LOG_FILE="${BACKUP_DIR}/preflight.log"
+# shellcheck source=lib/backup-retention.sh
+source "${SCRIPT_DIR}/lib/backup-retention.sh"
 
 mkdir -p "${BACKUP_DIR}" "${LOCAL_BACKUP_DIR}" "${PROD_BACKUP_DIR}"
 {
@@ -287,3 +292,13 @@ warn_or_commit_tmp ${SCP_PM2_RC}    "prod pm2 jlist"       "${PROD_PM2_DEST}.tmp
 
 /bin/date -u +%Y-%m-%dT%H:%M:%SZ > "${PROD_PULL_MARKER}"
 echo "[backup-pg] prod snapshot ok: ${PROD_DUMP} ($(size_of "${PROD_DUMP}") bytes)"
+
+# Dated history (td-cf46cf): only a verified dump is kept. A retention
+# failure is reported but never fails the snapshot that just succeeded.
+TODAY="$(/bin/date -u +%Y-%m-%d)"
+if keep_dated_dump "${PROD_DUMP}" "${PROD_HISTORY_DIR}" "${TODAY}" \
+  && prune_dated_dumps "${PROD_HISTORY_DIR}" "${TODAY}"; then
+  echo "[backup-pg] history: $(ls "${PROD_HISTORY_DIR}" | grep -c '^birds-.*\.pgdump$') dated dump(s) in ${PROD_HISTORY_DIR}"
+else
+  echo "[backup-pg] WARN: dated history update failed in ${PROD_HISTORY_DIR}"
+fi
