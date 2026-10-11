@@ -55,7 +55,8 @@ export type JobType =
 	| 'tag_eval_create'
 	| 'tag_gate_report'
 	| 'tag_preview'
-	| 'tag_family_refs';
+	| 'tag_family_refs'
+	| 'refresh_species_counts';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -67,7 +68,8 @@ export const RECURRING_TYPES: ReadonlySet<string> = new Set([
 	'scan_need_alerts',
 	'scan_enrichment',
 	'enrich_families',
-	'tag_consistency'
+	'tag_consistency',
+	'refresh_species_counts'
 ]);
 
 export type JobEventAction =
@@ -1012,6 +1014,11 @@ export async function listJobs(limit = 15): Promise<JobRow[]> {
 		 (SELECT j.*, u.display_name AS requested_by_name FROM jobs j
 		   JOIN users u ON u.id = j.requested_by
 		  WHERE j.status NOT IN ('pending','running')
+		    -- td-de2150: the species-count refresh looks every 10 minutes; a
+		    -- look that published nothing would push real loads out of the
+		    -- recent history. Its builds and failures still list.
+		    AND NOT (j.type = 'refresh_species_counts' AND j.status = 'succeeded'
+		             AND j.result ->> 'outcome' IN ('unchanged', 'deferred'))
 		  ORDER BY j.finished_at DESC NULLS LAST LIMIT $1)`,
 		[limit]
 	);

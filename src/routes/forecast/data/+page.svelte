@@ -19,6 +19,7 @@
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { jobPresentationText } from "$lib/job-presentation";
   import { fmtNextScan } from "$lib/next-scan";
+  import { speciesCountStatus } from "$lib/species-count-status";
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
   import Skeleton from "$components/Skeleton.svelte";
@@ -44,6 +45,18 @@
   import type { HubDiscovery, HubResult, HubSummaryArea } from "$server/hub-discovery";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Species totals (td-de2150): how recent the published counts are.
+  const speciesCountState = $derived(
+    speciesCountStatus({
+      hasCounts: data.speciesCounts.counts != null,
+      builtAt: data.speciesCounts.builtAt,
+      failing: data.speciesCounts.failing,
+      sourceChanged: data.speciesCounts.sourceChanged,
+      refreshActive: data.speciesCounts.refreshActive,
+      readAt: data.speciesCounts.readAt,
+    }),
+  );
 
   // Country picker (td-f1d6da): switching countries reloads the loader with
   // the new ?country= so the region select + stored-data labels update —
@@ -829,7 +842,12 @@
   const scheduledJobs = $derived(
     jobsPoll.active.filter((j) => ["scheduled", "retry-scheduled", "waiting"].includes(j.presentation?.state ?? "")),
   );
-  const recurringJobTypes = new Set(["scan_enrichment", "scan_need_alerts", "enrich_families"]);
+  const recurringJobTypes = new Set([
+    "scan_enrichment",
+    "scan_need_alerts",
+    "enrich_families",
+    "refresh_species_counts",
+  ]);
   let activityOpen = $state<number[]>([]);
   function toggleActivity(jobId: number, open: boolean) {
     activityOpen = activityOpen.filter((id) => id !== jobId);
@@ -1313,34 +1331,32 @@
 {/snippet}
 
 {#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string, name: string = "")}
+  <!-- td-de2150: published by the background worker; never computed per page
+       load. A place missing from the published counts has NO number — only a
+       counted zero says "0 species". -->
+  {@const counts = data.speciesCounts.counts}
+  {@const count = counts ? (kind === "world" ? counts.world : counts[kind][code]) : undefined}
   <span class="species-total">
-    {#await data.speciesCounts}
-      Counting species…
-    {:then result}
-      {@const count = result.ok ? (kind === "world" ? result.data.world : result.data[kind][code]) : undefined}
-      {#if count !== undefined}
-        {count.toLocaleString()} species
-        <!-- Countries and states open the Field Guide list; continent groups
-             and the worldwide total have no Field Guide place to open. -->
-        {#if kind === "regions" && count > 0}
-          {@const listHref = speciesListHref(code)}
-          {#if listHref}
-            · <a
-              id={speciesListId(code)}
-              class="specieslist path-focus-target"
-              href={listHref}
-              aria-label={`See the species list for ${name || code} in the Field Guide`}
-              onclick={navigationAction(data.accountId, { label: "Field guide", originId: speciesListId(code) })}
-              >see the species →</a
-            >
-          {/if}
+    {#if count !== undefined}
+      {count.toLocaleString()} species
+      <!-- Countries and states open the Field Guide list; continent groups
+           and the worldwide total have no Field Guide place to open. -->
+      {#if kind === "regions" && count > 0}
+        {@const listHref = speciesListHref(code)}
+        {#if listHref}
+          · <a
+            id={speciesListId(code)}
+            class="specieslist path-focus-target"
+            href={listHref}
+            aria-label={`See the species list for ${name || code} in the Field Guide`}
+            onclick={navigationAction(data.accountId, { label: "Field guide", originId: speciesListId(code) })}
+            >see the species →</a
+          >
         {/if}
-      {:else}
-        Species counts unavailable
       {/if}
-    {:catch}
-      Species counts unavailable
-    {/await}
+    {:else}
+      {speciesCountState.rowText}
+    {/if}
   </span>
 {/snippet}
 
@@ -1869,6 +1885,10 @@
         Species totals count each species once across loaded historical data—not
         a complete range checklist.
       </p>
+      <p class="notice count-status" data-state={speciesCountState.state}>
+        <strong>{speciesCountState.lead}</strong>
+        {speciesCountState.detail}
+      </p>
       {#each geographicAreas as area (area.id)}
         {@render geographicArea(area)}
       {/each}
@@ -2351,6 +2371,13 @@
   }
   .notice.ok {
     color: var(--accent);
+  }
+  .count-status strong {
+    color: var(--text);
+  }
+  .count-status[data-state="failed"] strong,
+  .count-status[data-state="unavailable"] strong {
+    color: var(--danger);
   }
   .jobs {
     list-style: none;

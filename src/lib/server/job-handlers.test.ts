@@ -335,9 +335,20 @@ vi.mock("$server/crypto", () => ({
   encryptSecret: (v: string) => `enc-${v}`,
 }));
 
+// td-de2150: the refresh itself has its own real-SQL suite
+// (loaded-species-counts.test.ts); here only the job wiring is pinned.
+const speciesCountMocks = vi.hoisted(() => ({
+  refreshSpeciesCountSnapshot: vi.fn<() => Promise<unknown>>(),
+}));
+vi.mock("$server/loaded-species-counts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./loaded-species-counts")>()),
+  refreshSpeciesCountSnapshot: speciesCountMocks.refreshSpeciesCountSnapshot,
+}));
+
 const {
   runJob,
   ensureNeedAlertScan,
+  ensureSpeciesCountRefresh,
   nudgeEnrichmentScan,
   ENRICH_SCAN_DRAIN_MS,
   ENRICH_SCAN_IDLE_MS,
@@ -1752,6 +1763,89 @@ describe("ensureNeedAlertScan (reconciliation)", () => {
     mocks.hasActiveJob.mockResolvedValueOnce(true);
     await ensureNeedAlertScan();
     expect(mocks.enqueueJob).not.toHaveBeenCalled();
+  });
+});
+
+describe("species-count refresh (td-de2150 recurring singleton)", () => {
+  const adminRows = (text: string) =>
+    text.includes("FROM users WHERE role = 'admin'") ? { rows: [{ id: 1 }] } : undefined;
+  const successor = (runAfterMs: number) => ({
+    type: "refresh_species_counts",
+    payload: {},
+    dedupKey: "refresh_species_counts:global",
+    requestedBy: 1,
+    label: "background",
+    runAfterMs,
+  });
+  const refreshJob = () =>
+    jobRow({ type: "refresh_species_counts", payload: {}, label: "background" });
+
+  it("ensure: enqueues the singleton soon when absent (a fresh deploy builds within seconds)", async () => {
+    db.handler = adminRows;
+    mocks.hasActiveJob.mockResolvedValueOnce(false);
+    await ensureSpeciesCountRefresh();
+    expect(mocks.hasActiveJob).toHaveBeenCalledWith("refresh_species_counts:global");
+    expect(mocks.enqueueJob).toHaveBeenCalledWith(successor(10_000));
+  });
+
+  it("ensure: no-ops while an active singleton exists (single copy)", async () => {
+    mocks.hasActiveJob.mockResolvedValueOnce(true);
+    await ensureSpeciesCountRefresh();
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("a published, unchanged or deferred run completes and schedules its successor at the outcome's delay", async () => {
+    db.handler = adminRows;
+    for (const outcome of [
+      { outcome: "published", reason: "quiet", revision: "r", builtAt: "2026-10-10T00:00:00Z", buildMs: 5000, delayMs: 600_000 },
+      { outcome: "unchanged", revision: "r", delayMs: 600_000 },
+      { outcome: "deferred", revision: "r", delayMs: 180_000, loadsQueued: false },
+    ]) {
+      mocks.terminalizeAndReschedule.mockClear();
+      speciesCountMocks.refreshSpeciesCountSnapshot.mockResolvedValueOnce(outcome);
+      await runJob(refreshJob(), ctx);
+      expect(mocks.terminalizeAndReschedule).toHaveBeenCalledWith(
+        42,
+        1,
+        { kind: "complete", result: outcome },
+        successor(outcome.delayMs),
+      );
+    }
+    expect(mocks.failJob).not.toHaveBeenCalled();
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("a failed build is a FAILED run whose successor backs off; the chain survives", async () => {
+    db.handler = adminRows;
+    const outcome = { outcome: "failed", error: "statement timeout", consecutiveFailures: 2, delayMs: 600_000 };
+    speciesCountMocks.refreshSpeciesCountSnapshot.mockResolvedValueOnce(outcome);
+    await runJob(refreshJob(), ctx);
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledWith(
+      42,
+      1,
+      { kind: "fail", error: "statement timeout", result: outcome },
+      successor(600_000),
+    );
+  });
+
+  it("an unexpected error fails the run and keeps the chain at the first backoff step", async () => {
+    db.handler = adminRows;
+    speciesCountMocks.refreshSpeciesCountSnapshot.mockRejectedValueOnce(new Error("connection refused"));
+    await runJob(refreshJob(), ctx);
+    expect(mocks.terminalizeAndReschedule).toHaveBeenCalledWith(
+      42,
+      1,
+      { kind: "fail", error: "connection refused" },
+      successor(5 * 60_000),
+    );
+    expect(mocks.failJob).not.toHaveBeenCalled();
+  });
+
+  it("a lost claim stops the run without any transition", async () => {
+    speciesCountMocks.refreshSpeciesCountSnapshot.mockRejectedValueOnce(new Error("stale claim: job 42"));
+    await runJob(refreshJob(), ctx);
+    expect(mocks.terminalizeAndReschedule).not.toHaveBeenCalled();
+    expect(mocks.failJob).not.toHaveBeenCalled();
   });
 });
 

@@ -4,7 +4,22 @@
  * birds_test snapshot (no writes).
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Records every statement (still run for real) so the loader can be held to
+// the td-de2150 contract: species totals are one snapshot read.
+const sqlLog = vi.hoisted(() => [] as string[]);
+vi.mock("$lib/db", async (importOriginal) => {
+  const real = await importOriginal<typeof import("$lib/db")>();
+  return {
+    ...real,
+    query: (text: string, params?: unknown[]) => {
+      sqlLog.push(text);
+      return real.query(text, params);
+    },
+  };
+});
+
 import { query } from "$lib/db";
 import { _hubData, load } from "./+page.server";
 import { GET } from "../../api/hub-country/+server";
@@ -63,6 +78,24 @@ describe.runIf(dbUp)("country groups ship on demand", () => {
     expect(landing.countrySections.filter((s) => s.countryCode !== target.countryCode && s.groups.length > 0)).toEqual([]);
   });
 
+  it("species totals: the page load reads only the published snapshot — no aggregate, no hash, no enqueue", async () => {
+    const id = await owner();
+    sqlLog.length = 0;
+    const data = (await load(event(id, "/forecast/data"))) as {
+      speciesCounts: { counts: unknown; builtAt: string | null; readAt: string };
+    };
+    expect(sqlLog.filter((t) => t.includes("species_count_snapshot"))).toHaveLength(1);
+    for (const t of sqlLog) {
+      expect(t).not.toContain("GROUPING SETS");
+      expect(t).not.toContain("species_month_freq");
+      expect(t).not.toMatch(/md5\(string_agg\(concat_ws\(':', species_code, category\)/);
+      expect(t).not.toMatch(/INSERT INTO jobs/);
+    }
+    expect(typeof data.speciesCounts.readAt).toBe("string");
+    // Unknown is not zero: with no published row there are no counts at all.
+    if (data.speciesCounts.counts == null) expect(data.speciesCounts.builtAt).toBeNull();
+  });
+
   it("rejects a bad or repeated country and requires a session", async () => {
     const id = await owner();
     const call = async (q: string, locals: unknown = { scopeId: id, user: { id, role: "admin" } }) => {
@@ -99,7 +132,20 @@ describe("page wiring", () => {
     expect(server).toContain("if (countryGroupsCache?.revision !== revision) {");
     expect(server).toContain("last_attempt_at > NOW() - make_interval(secs => $1 / 1000.0)");
     expect(server).not.toContain("date_trunc('hour', NOW())");
-    expect(server).toMatch(/export async function _hubData[\s\S]*?streamed\(loadedSpeciesCounts\(\)/);
+    // td-de2150: the full page reads the published species-count snapshot.
+    expect(server).toMatch(/export async function _hubData[\s\S]*?readSpeciesCountSnapshot\(\)/);
+    expect(server).not.toContain("loadedSpeciesCounts");
+    expect(server).not.toContain("streamed(");
+  });
+
+  it("species totals render directly with a plain status; unknown is never \"0 species\" (td-de2150)", () => {
+    expect(page).not.toContain("{#await data.speciesCounts}");
+    expect(page).not.toContain("Counting species…");
+    // Only a published number says "N species"; anything else says why not.
+    expect(page).toMatch(/\{#if count !== undefined\}\s*\{count\.toLocaleString\(\)\} species/);
+    expect(page).toContain("{speciesCountState.rowText}");
+    expect(page).toContain('<p class="notice count-status" data-state={speciesCountState.state}>');
+    expect(page).toContain('"refresh_species_counts",');
   });
 
   it("invalidates fetched country groups with same-route server data", () => {

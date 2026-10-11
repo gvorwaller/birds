@@ -1,8 +1,7 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { loadedSpeciesCounts } from "$server/loaded-species-counts";
-import { streamed } from "$lib/streamed";
+import { readSpeciesCountSnapshot } from "$server/loaded-species-counts";
 import {
   getEbirdApiKey,
   subregions,
@@ -815,8 +814,8 @@ async function hubInventoryData(
   };
 }
 
-/** The narrow lazy-country boundary. It intentionally does not start the
- * streamed worldwide species aggregation that only the full page renders. */
+/** The narrow lazy-country boundary. It intentionally does not read the
+ * species-count snapshot that only the full page renders. */
 type HubGroups = Awaited<ReturnType<typeof hubInventoryData>>["countrySections"][number]["groups"];
 
 /**
@@ -875,10 +874,14 @@ export function __resetCountryGroupsCacheForTests(): void {
 }
 
 export async function _hubData(event: HubDataEvent, opts: { expand?: string } = {}) {
-  // Start the streamed counts alongside the inventory for the page. The
-  // country-groups endpoint above deliberately bypasses this page-only work.
-  const speciesCounts = streamed(loadedSpeciesCounts(), () => "Species counts unavailable");
-  return { ...(await hubInventoryData(event, opts)), speciesCounts };
+  // Species totals (td-de2150): one small read of the snapshot the worker
+  // publishes — never the aggregate or its revision hash, never an enqueue.
+  // The country-groups endpoint above deliberately skips this page-only read.
+  const [inventory, speciesCounts] = await Promise.all([
+    hubInventoryData(event, opts),
+    readSpeciesCountSnapshot(),
+  ]);
+  return { ...inventory, speciesCounts };
 }
 
 export const load: PageServerLoad = (event) => _hubData(event);

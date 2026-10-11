@@ -337,6 +337,26 @@ describe("canViewJobEvents — type/role boundary (CODEX1 P1 on e3ac335)", () =>
   });
 });
 
+describe("species-count refresh job (td-de2150)", () => {
+  it("has one global dedup key, a system display name, and parks as a scheduled singleton", () => {
+    expect(dedupKeys.refreshSpeciesCounts()).toBe("refresh_species_counts:global");
+    expect(displayName({ type: "refresh_species_counts", label: "background" })).toBe(
+      "Species count refresh (system) — background",
+    );
+    const parked = {
+      type: "refresh_species_counts",
+      status: "pending",
+      next_retry_at: new Date(Date.now() + 600_000).toISOString(),
+      progress: {},
+    };
+    expect(isScheduledSingleton(parked as never)).toBe(true);
+    expect(isScheduledSingleton({ ...parked, next_retry_at: new Date(Date.now() - 1000).toISOString() } as never)).toBe(false);
+    // Its events are admin-only like every non-frequency job.
+    expect(canViewJobEvents("refresh_species_counts", "user")).toBe(false);
+    expect(canViewJobEvents("refresh_species_counts", "admin")).toBe(true);
+  });
+});
+
 describe("isScheduledSingleton (td-b7d021 pin a: parked scans never read as queued)", () => {
   const base = {
     type: "scan_enrichment",

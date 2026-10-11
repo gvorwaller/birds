@@ -93,4 +93,14 @@ describe("Help route — migration ribbon copy (td-950907)", () => {
 		// The Phase 8A location explanation is still there, unchanged in meaning.
 		expect(normalized).toContain("This is recorded presence, not a complete range checklist");
 	});
+
+	it("explains how recent the Hotspots & data species totals are (td-de2150)", () => {
+		const normalized = readFileSync("src/routes/help/+page.svelte", "utf8").replace(/\s+/g, " ");
+		expect(normalized).toContain("The totals are counted in the background, not each time the page opens");
+		for (const state of ["Updated", "Updating…", "Last refresh failed", "Counts being prepared", "Not yet counted"]) {
+			expect(normalized).toContain(`<strong>${state}</strong>`);
+		}
+		expect(normalized).toContain("neither means zero species");
+		expect(normalized).not.toContain("Counts load separately so the controls remain usable");
+	});
 });

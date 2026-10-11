@@ -854,6 +854,29 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     expect(mine.map((r) => r.id).sort()).toEqual([a.jobId, b.jobId].sort());
   });
 
+  it("history omits species-count looks that published nothing; builds and failures still list (td-de2150)", async () => {
+    const ids: Record<string, number> = {};
+    for (const [name, status, outcome] of [
+      ["unchanged", "succeeded", "unchanged"],
+      ["deferred", "succeeded", "deferred"],
+      ["published", "succeeded", "published"],
+      ["failed", "failed", "failed"],
+    ] as const) {
+      ids[name] = Number(
+        (await query<{ id: number }>(
+          `INSERT INTO jobs (type, payload, requested_by, label, status, result, finished_at)
+           VALUES ('refresh_species_counts', '{}', $1, $2, $3, $4, NOW()) RETURNING id`,
+          [userId, `JOBTEST species ${name}`, status, JSON.stringify({ outcome })],
+        )).rows[0].id,
+      );
+    }
+    const listed = new Set((await listJobs(50)).map((r) => Number(r.id)));
+    expect(listed.has(ids.published)).toBe(true);
+    expect(listed.has(ids.failed)).toBe(true);
+    expect(listed.has(ids.unchanged)).toBe(false);
+    expect(listed.has(ids.deferred)).toBe(false);
+  });
+
   it("workerHealth never throws and reports staleness honestly", async () => {
     const h = await workerHealth();
     expect(typeof h.alive).toBe("boolean");
