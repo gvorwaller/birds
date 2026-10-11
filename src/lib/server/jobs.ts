@@ -68,8 +68,7 @@ export const RECURRING_TYPES: ReadonlySet<string> = new Set([
 	'scan_need_alerts',
 	'scan_enrichment',
 	'enrich_families',
-	'tag_consistency',
-	'refresh_species_counts'
+	'tag_consistency'
 ]);
 
 export type JobEventAction =
@@ -1014,11 +1013,11 @@ export async function listJobs(limit = 15): Promise<JobRow[]> {
 		 (SELECT j.*, u.display_name AS requested_by_name FROM jobs j
 		   JOIN users u ON u.id = j.requested_by
 		  WHERE j.status NOT IN ('pending','running')
-		    -- td-de2150: the species-count refresh looks every 10 minutes; a
-		    -- look that published nothing would push real loads out of the
+		    -- td-de2150's species-count refresh (retired by td-7162f6) looked
+		    -- every 10 minutes; its no-op runs would push real loads out of the
 		    -- recent history. Its builds and failures still list.
 		    AND NOT (j.type = 'refresh_species_counts' AND j.status = 'succeeded'
-		             AND j.result ->> 'outcome' IN ('unchanged', 'deferred'))
+		             AND j.result ->> 'outcome' IN ('unchanged', 'deferred', 'retired'))
 		  ORDER BY j.finished_at DESC NULLS LAST LIMIT $1)`,
 		[limit]
 	);

@@ -78,22 +78,21 @@ describe.runIf(dbUp)("country groups ship on demand", () => {
     expect(landing.countrySections.filter((s) => s.countryCode !== target.countryCode && s.groups.length > 0)).toEqual([]);
   });
 
-  it("species totals: the page load reads only the published snapshot — no aggregate, no hash, no enqueue", async () => {
+  it("species totals: the page load reads the presence version, never the frequency tables (td-7162f6)", async () => {
     const id = await owner();
     sqlLog.length = 0;
     const data = (await load(event(id, "/forecast/data"))) as {
-      speciesCounts: { counts: unknown; builtAt: string | null; readAt: string };
+      speciesCounts: { counts: { world: number } | null; unavailable: string[] };
     };
-    expect(sqlLog.filter((t) => t.includes("species_count_snapshot"))).toHaveLength(1);
+    expect(sqlLog.some((t) => t.includes("FROM species_presence_state"))).toBe(true);
     for (const t of sqlLog) {
-      expect(t).not.toContain("GROUPING SETS");
       expect(t).not.toContain("species_month_freq");
-      expect(t).not.toMatch(/md5\(string_agg\(concat_ws\(':', species_code, category\)/);
+      expect(t).not.toContain("species_frequency");
+      expect(t).not.toContain("species_count_snapshot");
       expect(t).not.toMatch(/INSERT INTO jobs/);
     }
-    expect(typeof data.speciesCounts.readAt).toBe("string");
-    // Unknown is not zero: with no published row there are no counts at all.
-    if (data.speciesCounts.counts == null) expect(data.speciesCounts.builtAt).toBeNull();
+    expect(data.speciesCounts.counts).not.toBeNull();
+    expect(Array.isArray(data.speciesCounts.unavailable)).toBe(true);
   });
 
   it("rejects a bad or repeated country and requires a session", async () => {
@@ -133,19 +132,21 @@ describe("page wiring", () => {
     expect(server).toContain("last_attempt_at > NOW() - make_interval(secs => $1 / 1000.0)");
     expect(server).not.toContain("date_trunc('hour', NOW())");
     // td-de2150: the full page reads the published species-count snapshot.
-    expect(server).toMatch(/export async function _hubData[\s\S]*?readSpeciesCountSnapshot\(\)/);
+    expect(server).toMatch(/export async function _hubData[\s\S]*?readSpeciesTotals\(\)/);
     expect(server).not.toContain("loadedSpeciesCounts");
     expect(server).not.toContain("streamed(");
   });
 
-  it("species totals render directly with a plain status; unknown is never \"0 species\" (td-de2150)", () => {
+  it("species totals render directly; a loaded place is a real 0, a broken ledger is never \"0 species\" (td-7162f6)", () => {
     expect(page).not.toContain("{#await data.speciesCounts}");
     expect(page).not.toContain("Counting species…");
-    // Only a published number says "N species"; anything else says why not.
+    expect(page).not.toContain("speciesCountState");
+    expect(page).toContain("{@const broken = !counts || data.speciesCounts.unavailable.includes(code)}");
+    expect(page).toContain("no data loaded");
     expect(page).toMatch(/\{#if count !== undefined\}\s*\{count\.toLocaleString\(\)\} species/);
-    expect(page).toContain("{speciesCountState.rowText}");
-    expect(page).toContain('<p class="notice count-status" data-state={speciesCountState.state}>');
-    expect(page).toContain('"refresh_species_counts",');
+    expect(page).toContain("count unavailable");
+    expect(page).toContain("{#if data.speciesCounts.counts == null}");
+    expect(page).not.toContain('"refresh_species_counts",');
   });
 
   it("invalidates fetched country groups with same-route server data", () => {

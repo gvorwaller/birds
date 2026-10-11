@@ -1,7 +1,7 @@
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { readSpeciesCountSnapshot } from "$server/loaded-species-counts";
+import { readSpeciesTotals } from "$server/species-presence";
 import {
   getEbirdApiKey,
   subregions,
@@ -874,12 +874,12 @@ export function __resetCountryGroupsCacheForTests(): void {
 }
 
 export async function _hubData(event: HubDataEvent, opts: { expand?: string } = {}) {
-  // Species totals (td-de2150): one small read of the snapshot the worker
-  // publishes — never the aggregate or its revision hash, never an enqueue.
-  // The country-groups endpoint above deliberately skips this page-only read.
+  // Species totals (td-7162f6): read from the presence tables the database
+  // maintains at write time — one 1-row version read when nothing changed,
+  // never the frequency tables. The country-groups endpoint above skips it.
   const [inventory, speciesCounts] = await Promise.all([
     hubInventoryData(event, opts),
-    readSpeciesCountSnapshot(),
+    readSpeciesTotals(),
   ]);
   return { ...inventory, speciesCounts };
 }

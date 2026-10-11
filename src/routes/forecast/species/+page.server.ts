@@ -186,8 +186,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
            FROM taxonomy_cache tc
           WHERE tc.category = 'species'
             AND (tc.com_name ILIKE $1 OR tc.sci_name ILIKE $1)
-            AND EXISTS (SELECT 1 FROM species_frequency sf
-                         WHERE sf.loc_code = $2 AND sf.species_code = tc.species_code)
+            -- Effective presence (td-7162f6): reported in a week with
+            -- checklists, the rule the Hotspots & data totals and the Field
+            -- Guide use — never a zero-checklist-only weekly row.
+            AND EXISTS (SELECT 1 FROM species_location_membership lm
+                         WHERE lm.loc_code = $2 AND tc.species_code = ANY (lm.species_codes))
           ORDER BY (
             SELECT SUM(COALESCE(sf.freq, 0) * ss.n) / NULLIF(SUM(ss.n), 0)
               FROM frequency_fetch ff

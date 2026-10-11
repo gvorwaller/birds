@@ -19,7 +19,6 @@
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { jobPresentationText } from "$lib/job-presentation";
   import { fmtNextScan } from "$lib/next-scan";
-  import { speciesCountStatus } from "$lib/species-count-status";
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
   import Skeleton from "$components/Skeleton.svelte";
@@ -45,18 +44,6 @@
   import type { HubDiscovery, HubResult, HubSummaryArea } from "$server/hub-discovery";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-
-  // Species totals (td-de2150): how recent the published counts are.
-  const speciesCountState = $derived(
-    speciesCountStatus({
-      hasCounts: data.speciesCounts.counts != null,
-      builtAt: data.speciesCounts.builtAt,
-      failing: data.speciesCounts.failing,
-      sourceChanged: data.speciesCounts.sourceChanged,
-      refreshActive: data.speciesCounts.refreshActive,
-      readAt: data.speciesCounts.readAt,
-    }),
-  );
 
   // Country picker (td-f1d6da): switching countries reloads the loader with
   // the new ?country= so the region select + stored-data labels update —
@@ -846,7 +833,6 @@
     "scan_enrichment",
     "scan_need_alerts",
     "enrich_families",
-    "refresh_species_counts",
   ]);
   let activityOpen = $state<number[]>([]);
   function toggleActivity(jobId: number, open: boolean) {
@@ -1331,11 +1317,14 @@
 {/snippet}
 
 {#snippet speciesTotal(kind: "areas" | "regions" | "world", code: string, name: string = "")}
-  <!-- td-de2150: published by the background worker; never computed per page
-       load. A place missing from the published counts has NO number — only a
-       counted zero says "0 species". -->
+  <!-- td-7162f6: maintained by the database at write time, so always current.
+       Every place with loaded locations has an entry (a real 0 when none of
+       its species count); a place with nothing loaded has none. A broken
+       presence ledger, or totals that could not be read, say so instead of
+       showing a guessed number. -->
   {@const counts = data.speciesCounts.counts}
-  {@const count = counts ? (kind === "world" ? counts.world : counts[kind][code]) : undefined}
+  {@const broken = !counts || data.speciesCounts.unavailable.includes(code)}
+  {@const count = counts && !broken ? (kind === "world" ? counts.world : counts[kind][code]) : undefined}
   <span class="species-total">
     {#if count !== undefined}
       {count.toLocaleString()} species
@@ -1354,8 +1343,10 @@
           >
         {/if}
       {/if}
+    {:else if broken}
+      count unavailable
     {:else}
-      {speciesCountState.rowText}
+      no data loaded
     {/if}
   </span>
 {/snippet}
@@ -1885,10 +1876,11 @@
         Species totals count each species once across loaded historical data—not
         a complete range checklist.
       </p>
-      <p class="notice count-status" data-state={speciesCountState.state}>
-        <strong>{speciesCountState.lead}</strong>
-        {speciesCountState.detail}
-      </p>
+      {#if data.speciesCounts.counts == null}
+        <p class="notice count-status" role="status">
+          <strong>Species totals unavailable</strong> — they couldn't be read just now. Use Reload to try again.
+        </p>
+      {/if}
       {#each geographicAreas as area (area.id)}
         {@render geographicArea(area)}
       {/each}
@@ -2373,10 +2365,6 @@
     color: var(--accent);
   }
   .count-status strong {
-    color: var(--text);
-  }
-  .count-status[data-state="failed"] strong,
-  .count-status[data-state="unavailable"] strong {
     color: var(--danger);
   }
   .jobs {

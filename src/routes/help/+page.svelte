@@ -385,18 +385,14 @@
 						The Loaded data heading also shows a worldwide total, deduplicated
 						across continents and including hotspots without a recorded region.
 						These totals include all loaded years and seasons, not a complete range
-						checklist; missing areas are not evidence of absence. The totals are
-						counted in the background, not each time the page opens, so the page
-						shows them at once. A line under the Loaded data heading says how
-						recent they are: <strong>Updated</strong> with the time they were
-						counted, <strong>Updating…</strong> after newly loaded data while the
-						next count runs (usually within a quarter of an hour of the last load
-						finishing, and about hourly while loads continue), or
-						<strong>Last refresh failed</strong>, which keeps showing the last good
-						totals until a retry succeeds. Before the first count finishes it says
-						<strong>Counts being prepared</strong>, and a place loaded since the
-						last count says <strong>Not yet counted</strong>; neither means zero
-						species. Reload shows the newest totals.
+						checklist; missing areas are not evidence of absence. A species counts
+						when it was reported in a week that had checklists. The totals are kept
+						up to date as each load finishes, so the page shows them at once and
+						they always include everything loaded so far; Reload shows loads that
+						finished while the page was open. If a place's total can't be worked
+						out it says <strong>count unavailable</strong> rather than 0, and if
+						the totals can't be read at all a line under the Loaded data heading
+						says so.
 						Next to a country, state/region, county or hotspot count where
 						the Field guide can identify the same loaded place,
 						<strong>see the species →</strong> opens that list in the

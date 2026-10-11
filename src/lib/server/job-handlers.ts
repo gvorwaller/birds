@@ -63,11 +63,6 @@ import {
 } from '$server/jobs';
 import { claimFencedQuery, QueueWriteUnrecoverableError } from '$server/job-claim';
 import {
-	refreshSpeciesCountSnapshot,
-	SPECIES_COUNT_ENSURE_DELAY_MS,
-	SPECIES_COUNT_FAILURE_BASE_MS
-} from '$server/loaded-species-counts';
-import {
 	AI_STAGE_ENABLED,
 	dedupKeys,
 	jobOutcome,
@@ -657,65 +652,17 @@ export async function ensureNeedAlertScan(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Species-count refresh (td-de2150): Hotspots & data totals
+// Species-count refresh (td-de2150) — retired by td-7162f6
 // ---------------------------------------------------------------------------
 
-function speciesCountParams(adminId: number, runAfterMs: number) {
-	return {
-		type: 'refresh_species_counts' as const,
-		payload: {},
-		dedupKey: dedupKeys.refreshSpeciesCounts(),
-		requestedBy: adminId,
-		label: 'background',
-		runAfterMs
-	};
-}
-
 /**
- * Chain reconciliation — worker startup + idle tick, beside the other scans.
- * A fresh deploy (no snapshot yet) or a lost chain runs within seconds.
+ * The Hotspots & data totals are maintained by the database at write time
+ * (0083), so the recurring recount is gone. A copy the old worker enqueued
+ * during the deploy completes here as a no-op and is never rescheduled.
  */
-export async function ensureSpeciesCountRefresh(): Promise<void> {
-	if (await hasActiveJob(dedupKeys.refreshSpeciesCounts())) return;
-	const adminId = await lowestAdminId();
-	await enqueueJob(speciesCountParams(adminId, SPECIES_COUNT_ENSURE_DELAY_MS));
-}
-
-/**
- * Recurring singleton: one refresh decides, builds and publishes (see
- * refreshSpeciesCountSnapshot) and names its own next run. A failed build is
- * a FAILED run (visible in /admin) whose successor backs off; the last good
- * counts stay published. Single copy: the dedup key plus the single worker.
- */
-async function runSpeciesCountRefresh(job: JobRow): Promise<void> {
-	const attempts = job.attempts;
-	await recordEvent(job.id, 'claimed', { attempt: attempts });
-	try {
-		const outcome = await refreshSpeciesCountSnapshot();
-		const adminId = await lowestAdminId();
-		await terminalizeAndReschedule(
-			job.id,
-			attempts,
-			outcome.outcome === 'failed'
-				? { kind: 'fail', error: outcome.error, result: outcome }
-				: { kind: 'complete', result: outcome },
-			speciesCountParams(adminId, outcome.delayMs)
-		);
-	} catch (err) {
-		if (isStaleClaim(err)) throw err;
-		// Could not even read or record the state (database trouble): fail this
-		// run, keep the chain, look again after the first backoff step.
-		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(
-			0,
-			300
-		);
-		await terminalizeAndReschedule(
-			job.id,
-			attempts,
-			{ kind: 'fail', error: message },
-			speciesCountParams(await lowestAdminId(), SPECIES_COUNT_FAILURE_BASE_MS)
-		);
-	}
+async function runRetiredSpeciesCountRefresh(job: JobRow): Promise<void> {
+	await recordEvent(job.id, 'claimed', { attempt: job.attempts });
+	await completeJob(job.id, job.attempts, { outcome: 'retired' });
 }
 
 /**
@@ -2650,7 +2597,7 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				return;
 			}
 			case 'refresh_species_counts': {
-				await runSpeciesCountRefresh(job);
+				await runRetiredSpeciesCountRefresh(job);
 				return;
 			}
 			case 'enrich_species': {

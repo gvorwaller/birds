@@ -225,8 +225,6 @@ export const dedupKeys = {
   tagGate: (setId: string) => `tag_gate:s${setId}`,
   tagPreview: (proposalId: string) => `tag_preview:${proposalId}`,
   tagFamilyRefs: () => "tag_family_refs",
-  // td-de2150: the one recurring species-count refresh (Hotspots & data).
-  refreshSpeciesCounts: () => "refresh_species_counts:global",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -445,6 +443,7 @@ const TYPE_NAMES: Record<string, string> = {
   tag_gate_report: "Tag gate report",
   tag_preview: "Tag rules preview",
   tag_family_refs: "Family articles for blind tests",
+  // Retired by td-7162f6 (totals maintained at write time); history rows remain.
   refresh_species_counts: "Species count refresh (system)",
 };
 
@@ -472,7 +471,6 @@ const RECURRING_SINGLETONS = new Set([
   "scan_need_alerts",
   "enrich_families",
   "tag_consistency",
-  "refresh_species_counts",
 ]);
 
 /**

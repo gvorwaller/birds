@@ -854,11 +854,12 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     expect(mine.map((r) => r.id).sort()).toEqual([a.jobId, b.jobId].sort());
   });
 
-  it("history omits species-count looks that published nothing; builds and failures still list (td-de2150)", async () => {
+  it("history omits species-count looks that published nothing; builds and failures still list (td-de2150, td-7162f6)", async () => {
     const ids: Record<string, number> = {};
     for (const [name, status, outcome] of [
       ["unchanged", "succeeded", "unchanged"],
       ["deferred", "succeeded", "deferred"],
+      ["retired", "succeeded", "retired"],
       ["published", "succeeded", "published"],
       ["failed", "failed", "failed"],
     ] as const) {
@@ -875,6 +876,7 @@ describe.runIf(dbUp)("listing, health, prune", () => {
     expect(listed.has(ids.failed)).toBe(true);
     expect(listed.has(ids.unchanged)).toBe(false);
     expect(listed.has(ids.deferred)).toBe(false);
+    expect(listed.has(ids.retired)).toBe(false);
   });
 
   it("workerHealth never throws and reports staleness honestly", async () => {
