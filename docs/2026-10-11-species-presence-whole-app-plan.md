@@ -190,7 +190,8 @@ Tests: terminal and progress transitions per route, latch drain on arrival.
 ## Phasing
 1. **Release A — td-7162f6:** D1 (+ audits/CHECK, picker eligibility), D2, D2-ops, D3.
 2. **Release B — D6** (new small ticket) after per-route tests.
-3. **Release C — D4** (new ticket). 4. **Release D — D5** (td-b569b5).
+3. **Release C — D4** (td-3cbf64; deployed 2026-10-11 at 8a4d3f7).
+4. **Release D — D5** (td-b569b5).
 5. **td-fb6948** (region-detail failure state, timeout, retry, country misfiling) — can ship any time; small.
 6. New tickets for `/api/hub-country`, `/api/hotspot-counts`, `hubInventoryData`, home `/` query count.
 Then resume td-47179c (stash).
