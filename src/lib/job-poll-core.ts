@@ -100,6 +100,47 @@ export function classifyPollResponse(
 	return { kind: 'error' };
 }
 
+/**
+ * Which jobs change which page's server data (td-543431). The poller re-runs
+ * a page's load (invalidateAll: /forecast/data is 12 queries, ~270 KB) only
+ * for these; system scans, enrichment and tag jobs never touched these
+ * loaders, yet every one of their completions used to reload them.
+ * Read from each loader (2026-10-11):
+ *  - /forecast          frequency data, taxonomy, the account's seen list
+ *  - /forecast/species  frequency data, taxonomy
+ *  - /forecast/data     frequency data (incl. its own load/analyze jobs), taxonomy
+ *  - /hotspots/<L…>     that location's data (a job covering it), seen list, taxonomy
+ * Client-safe copy of FREQUENCY_JOB_TYPES ($server/job-policy); a test pins equality.
+ */
+export const FREQUENCY_TYPES: ReadonlySet<string> = new Set([
+	'load_hotspots',
+	'load_region',
+	'analyze_counties',
+	'refresh_loc',
+	'retry_loc'
+]);
+const WITH_TAXONOMY = new Set([...FREQUENCY_TYPES, 'sync_taxonomy']);
+const WITH_SEEN = new Set([...WITH_TAXONOMY, 'sync_lifelist']);
+
+/**
+ * Does `job` change the server data of the page at `pathname`? Off the
+ * forecast and hotspot pages it answers for ANY of them, so the owed-refresh
+ * latch still drains on arrival (invalidateStep).
+ */
+export function jobAffectsRoute(
+	pathname: string,
+	job: { type: string },
+	locCodes: readonly string[] = []
+): boolean {
+	const hotspot = pathname.match(/^\/hotspots\/(L\d+)(?:\/|$)/);
+	if (hotspot) {
+		if (job.type === 'sync_lifelist' || job.type === 'sync_taxonomy') return true;
+		return FREQUENCY_TYPES.has(job.type) && locCodes.includes(hotspot[1]);
+	}
+	if (/^\/forecast\/(species|data)(\/|$)/.test(pathname)) return WITH_TAXONOMY.has(job.type);
+	return WITH_SEEN.has(job.type);
+}
+
 /** Jobs that crossed from active to terminal between two polls. */
 export function terminalTransitions(
 	prev: readonly PolledJob[],

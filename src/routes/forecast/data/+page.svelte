@@ -834,6 +834,18 @@
     "scan_need_alerts",
     "enrich_families",
   ]);
+  // Next enrichment scan (td-543431): follows the polled jobs list once a
+  // poll has arrived, so a scan finishing no longer has to reload this page;
+  // the server value covers the first paint. Same rule as the server query:
+  // the parked scan_enrichment singleton's next run.
+  const nextEnrichmentScanAt = $derived(
+    jobsPoll.worker
+      ? (jobsPoll.jobs
+          .filter((j) => j.type === "scan_enrichment" && j.scheduled && j.nextRetryAt)
+          .map((j) => j.nextRetryAt as string)
+          .sort()[0] ?? null)
+      : data.nextEnrichmentScanAt,
+  );
   let activityOpen = $state<number[]>([]);
   function toggleActivity(jobId: number, open: boolean) {
     activityOpen = activityOpen.filter((id) => id !== jobId);
@@ -1628,9 +1640,9 @@
 
   <section class="card" id="background-work">
     <h2>Background loads</h2>
-    {#if data.nextEnrichmentScanAt}
+    {#if nextEnrichmentScanAt}
       <p class="nextscan">
-        Next enrichment scan — {fmtNextScan(data.nextEnrichmentScanAt)}
+        Next enrichment scan — {fmtNextScan(nextEnrichmentScanAt)}
       </p>
     {/if}
     {#if jobsPoll.worker && !jobsPoll.worker.alive}

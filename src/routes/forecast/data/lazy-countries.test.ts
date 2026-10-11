@@ -149,6 +149,12 @@ describe("page wiring", () => {
     expect(page).not.toContain('"refresh_species_counts",');
   });
 
+  it("the next enrichment scan line follows the polled jobs, so a scan finishing never reloads the page (td-543431)", () => {
+    expect(page).toContain('j.type === "scan_enrichment" && j.scheduled && j.nextRetryAt');
+    expect(page).toContain("Next enrichment scan — {fmtNextScan(nextEnrichmentScanAt)}");
+    expect(page).toContain(": data.nextEnrichmentScanAt,");
+  });
+
   it("invalidates fetched country groups with same-route server data", () => {
     expect(page).toContain("if (data === countryGroupsData) return;");
     expect(page).toContain("countryGroupsFetched.clear();");

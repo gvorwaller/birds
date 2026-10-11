@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FREQUENCY_JOB_TYPES } from "$server/job-policy";
 import {
   INVALIDATE_THROTTLE_MS,
   POLL_ACTIVE_MS,
@@ -10,6 +11,8 @@ import {
   isOutstanding,
   isStaleNow,
   isWorkerControlTransitioning,
+  jobAffectsRoute,
+  FREQUENCY_TYPES,
   nextIntervalMs,
   shouldInvalidate,
   terminalTransitions,
@@ -256,5 +259,71 @@ describe("scheduled singletons (td-b7d021 pin a)", () => {
   it("scheduled-only → calm poll (idle chip, due transitions still observed)", () => {
     expect(nextIntervalMs([scheduled] as never)).toBe(POLL_WAITING_MS);
     expect(nextIntervalMs([scheduled, real] as never)).not.toBeNull();
+  });
+});
+
+describe("jobAffectsRoute — reload a page only for jobs that change its data (td-543431)", () => {
+  const typed = (id: number, type: string, status: string, unitsDone?: number) => ({
+    ...job(id, status, unitsDone == null ? {} : { unitsDone }),
+    type,
+  });
+  const SYSTEM = ["scan_need_alerts", "scan_enrichment", "enrich_species", "enrich_species_media",
+    "enrich_species_inat", "enrich_families", "tag_repair", "tag_consistency", "refresh_species_counts"];
+
+  it("its frequency types are exactly the server's FREQUENCY_JOB_TYPES", () => {
+    expect([...FREQUENCY_TYPES].sort()).toEqual([...FREQUENCY_JOB_TYPES].sort());
+  });
+
+  it("each forecast page depends on exactly what its loader reads", () => {
+    for (const t of FREQUENCY_TYPES) {
+      for (const p of ["/forecast", "/forecast/species", "/forecast/data"]) expect(jobAffectsRoute(p, { type: t })).toBe(true);
+    }
+    for (const p of ["/forecast", "/forecast/species", "/forecast/data"])
+      expect(jobAffectsRoute(p, { type: "sync_taxonomy" })).toBe(true);
+    // Only What can I see reads the account's seen list.
+    expect(jobAffectsRoute("/forecast", { type: "sync_lifelist" })).toBe(true);
+    expect(jobAffectsRoute("/forecast/species", { type: "sync_lifelist" })).toBe(false);
+    expect(jobAffectsRoute("/forecast/data", { type: "sync_lifelist" })).toBe(false);
+  });
+
+  it("system scans, enrichment and tag jobs never reload a forecast or hotspot page", () => {
+    for (const t of SYSTEM)
+      for (const p of ["/forecast", "/forecast/species", "/forecast/data", "/hotspots/L123", "/"])
+        expect(jobAffectsRoute(p, { type: t })).toBe(false);
+  });
+
+  it("a hotspot page depends on jobs covering that location, the seen list and taxonomy", () => {
+    expect(jobAffectsRoute("/hotspots/L123", { type: "load_hotspots" }, ["L123", "L9"])).toBe(true);
+    expect(jobAffectsRoute("/hotspots/L123", { type: "load_hotspots" }, ["L9"])).toBe(false);
+    expect(jobAffectsRoute("/hotspots/L123", { type: "sync_lifelist" })).toBe(true);
+    expect(jobAffectsRoute("/hotspots/L123", { type: "sync_taxonomy" })).toBe(true);
+  });
+
+  it("on /forecast/data a finished system scan does not reload; a finished load does", () => {
+    const t0 = 1_000_000;
+    const fresh: InvalidateState = { pending: false, lastInvalidateAt: 0 };
+    const rel = (j: PolledJob) => jobAffectsRoute("/forecast/data", j as unknown as { type: string });
+    const scan = invalidateStep(fresh, [typed(1, "scan_enrichment", "running")], [typed(1, "scan_enrichment", "succeeded")], false, true, t0, rel);
+    expect(scan.fire).toBe(false);
+    expect(scan.state.pending).toBe(false);
+    const load = invalidateStep(fresh, [typed(2, "load_hotspots", "running")], [typed(2, "load_hotspots", "succeeded")], false, true, t0, rel);
+    expect(load.fire).toBe(true);
+  });
+
+  it("progress of a system job never reloads; progress of a load still does (throttled)", () => {
+    const t0 = 1_000_000;
+    const rel = (j: PolledJob) => jobAffectsRoute("/forecast/data", j as unknown as { type: string });
+    expect(shouldInvalidate([typed(1, "enrich_species", "running", 1)], [typed(1, "enrich_species", "running", 5)], 0, t0, rel)).toBe(false);
+    expect(shouldInvalidate([typed(2, "load_hotspots", "running", 1)], [typed(2, "load_hotspots", "running", 5)], 0, t0, rel)).toBe(true);
+  });
+
+  it("off the forecast pages only data-changing jobs are latched for the next arrival", () => {
+    const t0 = 1_000_000;
+    const fresh: InvalidateState = { pending: false, lastInvalidateAt: 0 };
+    const rel = (j: PolledJob) => jobAffectsRoute("/", j as unknown as { type: string });
+    const scan = invalidateStep(fresh, [typed(1, "scan_need_alerts", "running")], [typed(1, "scan_need_alerts", "succeeded")], false, false, t0, rel);
+    expect(scan.state.pending).toBe(false);
+    const sync = invalidateStep(fresh, [typed(2, "sync_lifelist", "running")], [typed(2, "sync_lifelist", "succeeded")], false, false, t0, rel);
+    expect(sync.state.pending).toBe(true);
   });
 });

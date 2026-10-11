@@ -24,6 +24,7 @@ import {
 	invalidateStep,
 	isOutstanding,
 	isStaleNow,
+	jobAffectsRoute,
 	nextIntervalMs,
 	type InvalidateState
 } from '$lib/job-poll-core';
@@ -123,15 +124,13 @@ class JobsPoll {
 		return this.jobs.filter((j) => !isOutstanding(j));
 	}
 
+	/** Only jobs that change this page's server data reload it (td-543431). */
 	#relevantJob(job: JobInfo): boolean {
-		if (/^\/forecast(\/|$)/.test(location.pathname)) return true;
-		const match = location.pathname.match(/^\/hotspots\/(L\d+)(?:\/|$)/);
-		// Outside a forecast or hotspot route, retain the old global latch
-		// behavior so a completion observed elsewhere refreshes the next
-		// forecast arrival.
-		if (!match) return true;
-		const codes = job.locCodes ?? this.#lastLocCodes.get(job.id) ?? [];
-		return codes.includes(match[1]);
+		return jobAffectsRoute(
+			location.pathname,
+			job,
+			job.locCodes ?? this.#lastLocCodes.get(job.id) ?? []
+		);
 	}
 
 	/** Start (or wake) the poller. Safe to call repeatedly; used by layout mount, enqueue results, and track(). */
