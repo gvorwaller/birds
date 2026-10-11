@@ -13,7 +13,8 @@ import { env } from "$env/dynamic/private";
 import { query, withTransaction } from "$lib/db";
 import type { GuideLocationSelection } from "$lib/guide-location";
 import { guideLocationCoverage, resolveGuideLocation, type GuidePlace } from "./guide-location";
-import { searchGuide } from "./species-enrichment";
+import pg from "pg";
+import { placeParams, placeSpeciesSql, searchGuide } from "./species-enrichment";
 
 const tag = randomUUID().replaceAll("-", "").slice(0, 8);
 const REGION = `ZZ-G${tag.slice(0, 5).toUpperCase()}`;
@@ -118,35 +119,88 @@ describe("Field Guide place filter reads the presence layer (td-3cbf64)", () => 
     expect(coverage.locCodes.sort()).toEqual(await likeCoverage(REGION));
     const expected = await monthTableSpecies(coverage.locCodes);
     expect(expected).toEqual([SP[0], SP[1], SP[3], SP[4]].sort());
-    expect(await guideSpecies({ kind: "region", code: REGION })).toEqual(expected);
+    expect(await guideSpecies({ kind: "region", code: REGION, unledgered: [] })).toEqual(expected);
   });
 
   it("fixture county and single hotspot: the location arrays give the month-table set", async () => {
     const county = await guideLocationCoverage(COUNTY);
     expect(county.locCodes.sort()).toEqual([locs[0], locs[3]].sort());
-    expect(await guideSpecies({ kind: "locations", locCodes: county.locCodes })).toEqual(
+    expect(await guideSpecies({ kind: "locations", locCodes: county.locCodes, unledgered: [] })).toEqual(
       await monthTableSpecies(county.locCodes),
     );
-    expect(await guideSpecies({ kind: "locations", locCodes: [locs[2]] })).toEqual([SP[3]]);
+    expect(await guideSpecies({ kind: "locations", locCodes: [locs[2]], unledgered: [] })).toEqual([SP[3]]);
   });
 
   it("a place with no loaded data matches nothing; Anywhere is unfiltered", async () => {
-    expect(await guideSpecies({ kind: "region", code: "ZZ-NODATA" })).toEqual([]);
-    expect(await guideSpecies({ kind: "country", code: "ZY" })).toEqual([]);
-    expect(await guideSpecies({ kind: "locations", locCodes: [] })).toEqual([]);
+    expect(await guideSpecies({ kind: "region", code: "ZZ-NODATA", unledgered: [] })).toEqual([]);
+    expect(await guideSpecies({ kind: "country", code: "ZY", unledgered: [] })).toEqual([]);
+    expect(await guideSpecies({ kind: "locations", locCodes: [], unledgered: [] })).toEqual([]);
     const anywhere = await searchGuide(SP[2], [], 0, null);
     expect(anywhere.rows.map((r) => r.species_code)).toEqual([SP[2]]);
   });
 
   it("the unknown-tags count applies the same place filter", async () => {
     // Fixture taxa have no enrichment, so every present one is "not yet evaluated".
-    const inRegion = await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, { kind: "region", code: REGION });
+    const inRegion = await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, { kind: "region", code: REGION, unledgered: [] });
     expect(inRegion.rows).toEqual([]);
     expect(inRegion.unknownCount).toBe(4);
-    const inHotspot = await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, { kind: "locations", locCodes: [locs[2]] });
+    const inHotspot = await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, { kind: "locations", locCodes: [locs[2]], unledgered: [] });
     expect(inHotspot.unknownCount).toBe(1);
     const anywhere = await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, null);
     expect(anywhere.unknownCount).toBe(5);
+  });
+
+  it("a location in a place's month rows reaches both queries through place.unledgered", async () => {
+    // The ledger is intact here, so this pins only the wiring: a species known
+    // solely through `unledgered` is listed and counted.
+    const place: GuidePlace = { kind: "region", code: "ZZ-NODATA", unledgered: [locs[2]] };
+    expect(await guideSpecies(place)).toEqual([SP[3]]);
+    expect((await searchGuide("Guide place taxon", ["habitat:mudflat"], 0, place)).unknownCount).toBe(1);
+  });
+
+  it("a loaded location missing from the ledger stays covered and its species stay listed (rolled back)", async () => {
+    // A broken ledger, made only inside a transaction that is always rolled
+    // back, on the owner connection (the app role cannot write the ledger).
+    const c = new pg.Client({
+      host: env.PGHOST,
+      port: Number(env.PGPORT),
+      database: env.PGDATABASE,
+      user: env.MIGRATION_PGUSER,
+      password: env.MIGRATION_PGPASSWORD,
+    });
+    await c.connect();
+    const run = ((text: string, params?: unknown[]) => c.query(text, params as never[])) as never;
+    const species = async (place: GuidePlace) => {
+      const [kind, code, locCodes, unledgered] = placeParams(place);
+      const { rows } = await c.query<{ species_code: string }>(
+        `SELECT p.species_code FROM (${placeSpeciesSql("$1", "$2", "$3", "$4")}) p
+           JOIN taxonomy_cache t ON t.species_code = p.species_code AND t.category = 'species'`,
+        [kind, code, locCodes, unledgered],
+      );
+      return rows.map((r) => r.species_code).sort();
+    };
+    try {
+      await c.query("BEGIN");
+      await c.query("DELETE FROM species_location_membership WHERE loc_code = $1", [locs[2]]);
+      // Partial gap: the region keeps its other locations, and its table lost SP[3].
+      const region = await guideLocationCoverage(REGION, run);
+      expect(region.locCodes.sort()).toEqual([...locs].sort());
+      expect(region.unledgered).toEqual([locs[2]]);
+      expect(await species({ kind: "region", code: REGION, unledgered: [] })).not.toContain(SP[3]);
+      expect(await species({ kind: "region", code: REGION, unledgered: region.unledgered })).toEqual(
+        [SP[0], SP[1], SP[3], SP[4]].sort(),
+      );
+      // Whole-place gap: the other county's only location.
+      const county = await guideLocationCoverage(OTHER_COUNTY, run);
+      expect(county).toMatchObject({ locCodes: [locs[2]], unledgered: [locs[2]] });
+      expect(await species({ kind: "locations", locCodes: county.locCodes, unledgered: county.unledgered })).toEqual([SP[3]]);
+      // An intact place reports no gap.
+      expect((await guideLocationCoverage(COUNTY, run)).unledgered).toEqual([]);
+    } finally {
+      await c.query("ROLLBACK");
+      await c.end();
+    }
+    expect((await query("SELECT 1 FROM species_location_membership WHERE loc_code = $1", [locs[2]])).rowCount).toBe(1);
   });
 
   // Real birds_test places (read only): every grain the route resolves.
@@ -182,6 +236,7 @@ describe("Field Guide place filter reads the presence layer (td-3cbf64)", () => 
       const sel = await selection();
       if (!sel) return; // not loaded on this snapshot
       const resolved = (await resolveGuideLocation(sel))!;
+      expect(resolved.unledgered).toEqual([]);
       if (sel.kind === "country" || sel.kind === "region") {
         // The study-coded coverage selects exactly the old LIKE-matched locations.
         expect([...resolved.locCodes].sort()).toEqual(await likeCoverage(sel.kind === "country" ? sel.country : sel.region));

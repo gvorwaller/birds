@@ -153,7 +153,7 @@ it("matches exact banding codes, keeps family and geography intersections, and e
       .rows,
   ).toHaveLength(0);
   expect(
-    (await searchGuide("OSPR", [], owner, { kind: "locations", locCodes: [] }, { page: 1 })).rows,
+    (await searchGuide("OSPR", [], owner, { kind: "locations", locCodes: [], unledgered: [] }, { page: 1 })).rows,
   ).toHaveLength(0);
   expect(
     (await searchGuide("%", [], owner, null, { page: 1 })).rows,

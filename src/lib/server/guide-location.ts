@@ -1,4 +1,5 @@
 import { error } from "@sveltejs/kit";
+import type pg from "pg";
 import { query } from "$lib/db";
 import { haversineKm, MILES_TO_KM } from "$lib/geo";
 import { isHotspotLocId } from "$lib/loc-id";
@@ -9,16 +10,29 @@ import { getRegion, regionLabel, subnational1Of } from "$server/regions";
 import { comparePlaceChoices } from "$lib/place-filter";
 import type { GuideChoicesLevel } from "$lib/guide-location";
 
+type Run = <T extends pg.QueryResultRow = pg.QueryResultRow>(
+  text: string,
+  params?: unknown[],
+) => Promise<pg.QueryResult<T>>;
+
 interface LoadedLocation {
   loc_code: string;
   loc_kind: "region" | "hotspot";
   region_code: string | null;
   begin_year: number;
   end_year: number;
+  /** No presence-ledger row: the ledger is broken for this location. */
+  unledgered: boolean;
 }
 
 export interface GuideCoverage {
   locCodes: string[];
+  /**
+   * Covered locations with no presence-ledger row. Every load writes the row
+   * in its own transaction (0083), so this is empty unless the ledger is
+   * broken; the Field Guide then reads these locations' month rows instead.
+   */
+  unledgered: string[];
   wholeArea: boolean;
   beginYear: number | null;
   endYear: number | null;
@@ -34,9 +48,13 @@ export interface GuideChoice {
  * first-level region by its code (the presence layer keeps one (code,
  * species) table for each), anything finer by its loaded locations.
  */
-export type GuidePlace =
+export type GuidePlace = (
   | { kind: "country" | "region"; code: string }
-  | { kind: "locations"; locCodes: readonly string[] };
+  | { kind: "locations"; locCodes: readonly string[] }
+) & {
+  /** GuideCoverage.unledgered: read from their month rows, so the answer stays whole. */
+  unledgered: readonly string[];
+};
 
 export interface ResolvedGuideLocation extends GuideCoverage {
   kind: "country" | "region" | "county" | "hotspot" | "map";
@@ -64,33 +82,50 @@ export interface ResolvedGuideLocation extends GuideCoverage {
   } | null;
 }
 
+/**
+ * A location the ledger lacks, found without scanning on the normal path:
+ * every ledger row references a loaded location (FK), so a gap exists exactly
+ * when frequency_fetch has more rows. Only then does the anti-join run.
+ */
+const UNLEDGERED_SQL = `SELECT f.loc_code, f.loc_kind, f.region_code, f.begin_year, f.end_year
+	   FROM frequency_fetch f
+	  WHERE (SELECT count(*) FROM frequency_fetch) > (SELECT count(*) FROM species_location_membership)
+	    AND NOT EXISTS (SELECT 1 FROM species_location_membership l WHERE l.loc_code = f.loc_code)
+	 OFFSET 0`;
+
 /** No external calls: membership comes from recorded eBird geography, never
  * from prose, a bounding box, or country-name text matching. A country or
  * first-level region takes its locations from the presence ledger's
  * country_code / region_code (0053, 0083): the very rows its (code, species)
  * table is built from, so the species the Field Guide reads for it come from
- * exactly these locations (td-3cbf64). Finer places match by code prefix. */
-export async function guideLocationCoverage(code: string): Promise<GuideCoverage> {
+ * exactly these locations (td-3cbf64). A loaded location missing from the
+ * ledger is still covered (filed by the same study function the ledger
+ * uses) and reported in `unledgered`. Finer places match by code prefix. */
+export async function guideLocationCoverage(code: string, run: Run = query): Promise<GuideCoverage> {
   const parsed = parseRegionCode(code);
-  const ledgerColumn =
+  const study =
     parsed?.level === "country"
-      ? "country_code"
+      ? { column: "country_code", fn: "study_country_code" }
       : parsed?.level === "subnational1"
-        ? "region_code"
+        ? { column: "region_code", fn: "study_region_code" }
         : null;
-  const { rows } = ledgerColumn
-    ? await query<LoadedLocation>(
-        `SELECT f.loc_code, f.loc_kind, f.region_code, f.begin_year, f.end_year
+  const { rows } = study
+    ? await run<LoadedLocation>(
+        `SELECT f.loc_code, f.loc_kind, f.region_code, f.begin_year, f.end_year, false AS unledgered
 			 FROM species_location_membership l
 			 JOIN frequency_fetch f USING (loc_code)
-			 WHERE l.${ledgerColumn} = $1`,
+			 WHERE l.${study.column} = $1
+			 UNION ALL
+			 SELECT g.*, true FROM (${UNLEDGERED_SQL}) g
+			  WHERE ${study.fn}(g.loc_kind, g.loc_code, g.region_code) = $1`,
         [parsed!.code],
       )
-    : await query<LoadedLocation>(
-        `SELECT loc_code, loc_kind, region_code, begin_year, end_year
-			 FROM frequency_fetch
-			 WHERE (loc_kind = 'region' AND (loc_code = $1 OR loc_code LIKE $2))
-			    OR (loc_kind = 'hotspot' AND (region_code = $1 OR region_code LIKE $2))`,
+    : await run<LoadedLocation>(
+        `SELECT f.loc_code, f.loc_kind, f.region_code, f.begin_year, f.end_year,
+			        NOT EXISTS (SELECT 1 FROM species_location_membership l WHERE l.loc_code = f.loc_code) AS unledgered
+			 FROM frequency_fetch f
+			 WHERE (f.loc_kind = 'region' AND (f.loc_code = $1 OR f.loc_code LIKE $2))
+			    OR (f.loc_kind = 'hotspot' AND (f.region_code = $1 OR f.region_code LIKE $2))`,
         [code, `${code}-%`],
       );
   // Include every recorded source: even a statewide export can omit a taxon
@@ -98,6 +133,7 @@ export async function guideLocationCoverage(code: string): Promise<GuideCoverage
   const sources = rows;
   return {
     locCodes: sources.map((r) => r.loc_code),
+    unledgered: sources.filter((r) => r.unledgered).map((r) => r.loc_code),
     wholeArea: sources.some(
       (r) => r.loc_kind === "region" && r.loc_code === code,
     ),
@@ -208,8 +244,10 @@ async function mapCoverage(
       end_year: number;
       lat: number;
       lng: number;
+      unledgered: boolean;
     }>(
-      `SELECT f.loc_code, f.begin_year, f.end_year, e.lat, e.lng
+      `SELECT f.loc_code, f.begin_year, f.end_year, e.lat, e.lng,
+			        NOT EXISTS (SELECT 1 FROM species_location_membership l WHERE l.loc_code = f.loc_code) AS unledgered
 			   FROM frequency_fetch f
 			   JOIN ebird_locations e ON e.loc_id = f.loc_code
 			  WHERE f.loc_kind = 'hotspot' AND f.loc_code ~ '^L[0-9]+$'
@@ -234,6 +272,7 @@ async function mapCoverage(
   return {
     coverage: {
       locCodes: inside.map((r) => r.loc_code),
+      unledgered: inside.filter((r) => r.unledgered).map((r) => r.loc_code),
       wholeArea: false,
       beginYear: inside.length
         ? Math.min(...inside.map((r) => r.begin_year))
@@ -242,6 +281,19 @@ async function mapCoverage(
     },
     coordinateMissing: missing.rows[0]?.n ?? 0,
   };
+}
+
+/** The species filter for a coverage; a broken ledger is logged, never silent. */
+function placeOf(
+  where: { kind: "country" | "region"; code: string } | { kind: "locations"; locCodes: readonly string[] },
+  coverage: GuideCoverage,
+): GuidePlace {
+  if (coverage.unledgered.length > 0)
+    console.error(
+      "[guide-location] loaded locations without presence-ledger rows; reading their month rows:",
+      coverage.unledgered.join(" "),
+    );
+  return { ...where, unledgered: coverage.unledgered };
 }
 
 /**
@@ -264,7 +316,7 @@ export async function resolveGuideLocation(
     return {
       ...coverage,
       kind: "map",
-      place: { kind: "locations", locCodes: coverage.locCodes },
+      place: placeOf({ kind: "locations", locCodes: coverage.locCodes }, coverage),
       label: selection.place,
       officialCountyName: false,
       ancestry: { country: null, region: null, county: null, hotspot: null },
@@ -300,10 +352,11 @@ export async function resolveGuideLocation(
 
   if (selection.kind === "country" || selection.kind === "region") {
     const code = region ?? country;
+    const coverage = await guideLocationCoverage(code);
     return {
-      ...(await guideLocationCoverage(code)),
+      ...coverage,
       kind: selection.kind,
-      place: { kind: selection.kind, code },
+      place: placeOf({ kind: selection.kind, code }, coverage),
       label: (await regionLabel(code)) ?? code,
       officialCountyName: false,
       ancestry: { country, region, county: null, hotspot: null },
@@ -333,7 +386,7 @@ export async function resolveGuideLocation(
     return {
       ...coverage,
       kind: "county",
-      place: { kind: "locations", locCodes: coverage.locCodes },
+      place: placeOf({ kind: "locations", locCodes: coverage.locCodes }, coverage),
       label: countyLabel,
       officialCountyName: countyMeta(county) != null,
       ancestry: { country, region, county, hotspot: null },
@@ -348,20 +401,27 @@ export async function resolveGuideLocation(
       region_code: string | null;
       begin_year: number;
       end_year: number;
+      unledgered: boolean;
     }>(
-      `SELECT loc_name, region_code, begin_year, end_year FROM frequency_fetch
-			  WHERE loc_kind = 'hotspot' AND loc_code = $1`,
+      `SELECT f.loc_name, f.region_code, f.begin_year, f.end_year,
+			        NOT EXISTS (SELECT 1 FROM species_location_membership l WHERE l.loc_code = f.loc_code) AS unledgered
+			   FROM frequency_fetch f
+			  WHERE f.loc_kind = 'hotspot' AND f.loc_code = $1`,
       [hotspot],
     )
   ).rows[0];
   if (!hotspotRow || !isHotspotLocId(hotspot) || hotspotRow.region_code !== county)
     error(400, "That hotspot has no loaded data in the selected county.");
-  return {
+  const coverage: GuideCoverage = {
     locCodes: [hotspot],
-    place: { kind: "locations", locCodes: [hotspot] },
+    unledgered: hotspotRow.unledgered ? [hotspot] : [],
     wholeArea: false,
     beginYear: hotspotRow.begin_year,
     endYear: hotspotRow.end_year,
+  };
+  return {
+    ...coverage,
+    place: placeOf({ kind: "locations", locCodes: [hotspot] }, coverage),
     kind: "hotspot",
     label: hotspotRow.loc_name,
     officialCountyName: false,

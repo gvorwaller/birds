@@ -163,6 +163,12 @@ functions were rejected at 30–60 ms (not inlinable). Prod read-only check (one
 differences for every location (2.32 M pairs), country (252) and region (3,110); coverage identical for every
 location. US filter 7.65 s → 6 ms; US-FL 1.17 s → 1 ms. Test fixtures that wrote only month rows now also write
 the weekly rows (as `storeFrequencies` does).
+CODEX1 review (FIX FIRST, P2): a loaded location missing from the ledger silently vanished from coverage and its
+species from the answer. Fixed: coverage still files such a location (country/region by the same study function
+the ledger uses, behind a count guard: ledger rows FK to `frequency_fetch`, so a gap exists iff the counts
+differ; +7 ms on prod), reports it as `unledgered`, logs it, and the shared fragment reads its own month rows
+(`num > 0`) — the answer stays whole. Regression: partial-gap and whole-place-gap cases inside an always
+rolled-back owner transaction.
 
 ### D5. Enrichment scope (td-b569b5, separate release)
 One shared SQL predicate `effective_scope(species_code)` used by **all three** readers: `IN_SCOPE_CODES_SQL`

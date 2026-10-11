@@ -155,6 +155,7 @@ describe.runIf(dbUp)("Field Guide location and thumbnail integration", () => {
     const missing = await guideLocationCoverage("ZZ-NO");
     expect(missing).toEqual({
       locCodes: [],
+      unledgered: [],
       wholeArea: false,
       beginYear: null,
       endYear: null,

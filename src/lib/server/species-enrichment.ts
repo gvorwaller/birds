@@ -850,10 +850,13 @@ export interface GuideResult {
  * first-level region is one key range of its (code, species) table; a county,
  * hotspot or map radius is the union of its locations' species arrays. Same
  * set as species_month_freq.num > 0 over the place's locations (effective
- * presence, D1). The arguments are the placeholders carrying placeParams().
- * searchGuide and guideUnknownCount both use it, so their place filters match.
+ * presence, D1). A loaded location the ledger lacks (place.unledgered, empty
+ * unless the ledger is broken) is read from its own month rows instead, so a
+ * gap never shrinks the answer. The arguments are the placeholders carrying
+ * placeParams(). searchGuide and guideUnknownCount both use it, so their
+ * place filters match.
  */
-const placeSpeciesSql = (kind: string, code: string, locs: string): string =>
+export const placeSpeciesSql = (kind: string, code: string, locs: string, unledgered: string): string =>
 	`SELECT species_code FROM species_country_membership
 	  WHERE ${kind}::text = 'country' AND country_code = ${code}::text
 	 UNION
@@ -861,14 +864,20 @@ const placeSpeciesSql = (kind: string, code: string, locs: string): string =>
 	  WHERE ${kind}::text = 'region' AND region_code = ${code}::text
 	 UNION
 	 SELECT unnest(species_codes) FROM species_location_membership
-	  WHERE ${kind}::text = 'locations' AND loc_code = ANY(${locs}::text[])`;
+	  WHERE ${kind}::text = 'locations' AND loc_code = ANY(${locs}::text[])
+	 UNION
+	 SELECT species_code FROM species_month_freq
+	  WHERE loc_code = ANY(${unledgered}::text[]) AND num > 0`;
 
-/** [kind, code, locCodes]; a null kind means Anywhere (no place filter). */
-function placeParams(place: GuidePlace | null): [string | null, string | null, string[] | null] {
-	if (!place) return [null, null, null];
+/** [kind, code, locCodes, unledgered]; a null kind means Anywhere (no place filter). */
+export function placeParams(
+	place: GuidePlace | null
+): [string | null, string | null, string[] | null, string[] | null] {
+	if (!place) return [null, null, null, null];
+	const unledgered = [...place.unledgered];
 	return place.kind === 'locations'
-		? ['locations', null, [...place.locCodes]]
-		: [place.kind, place.code, null];
+		? ['locations', null, [...place.locCodes], unledgered]
+		: [place.kind, place.code, null, unledgered];
 }
 
 /**
@@ -931,10 +940,10 @@ export async function searchGuide(
 			? guideUnknownCount(query_, seenUserId, place, options)
 			: Promise.resolve(0);
 	unknownP.catch(() => {}); // awaited below; never an unhandled rejection
-	const [placeKind, placeCode, placeLocs] = placeParams(place);
+	const [placeKind, placeCode, placeLocs, placeUnledgered] = placeParams(place);
 	const r = await query<Row>(
 		`WITH regional_species AS MATERIALIZED (
-		   ${placeSpeciesSql('$8', '$15', '$16')}
+		   ${placeSpeciesSql('$8', '$15', '$16', '$17')}
 		 )
 		 SELECT matches.*,
 		        CASE WHEN $1::bool THEN
@@ -1031,7 +1040,8 @@ export async function searchGuide(
 			options.list ?? 'all',
 			options.listBrowse === true,
 			placeCode,
-			placeLocs
+			placeLocs,
+			placeUnledgered
 		]
 	);
 	const unknownCount = await unknownP;
@@ -1071,13 +1081,13 @@ async function guideUnknownCount(
 ): Promise<number> {
 	const hasQ = q.length > 0;
 	const escaped = q.replace(/[%_\\]/g, (m) => `\\${m}`);
-	const [placeKind, placeCode, placeLocs] = placeParams(place);
+	const [placeKind, placeCode, placeLocs, placeUnledgered] = placeParams(place);
 	const r = await query<{ n: number }>(
 		// Both membership sets are MATERIALIZED once, exactly like searchGuide's
 		// regional_species: an inline IN-subquery under "$6 IS NULL OR ..." is
 		// re-evaluated per taxonomy row.
 		`WITH regional AS MATERIALIZED (
-		   ${placeSpeciesSql('$6', '$9', '$10')}
+		   ${placeSpeciesSql('$6', '$9', '$10', '$11')}
 		 ), interest AS MATERIALIZED (
 		   SELECT species_code FROM species_special_interest WHERE user_id = $7
 		 )
@@ -1106,7 +1116,8 @@ async function guideUnknownCount(
 			options.interestUserId ?? null,
 			options.list ?? 'all',
 			placeCode,
-			placeLocs
+			placeLocs,
+			placeUnledgered
 		]
 	);
 	return r.rows[0]?.n ?? 0;
@@ -1114,7 +1125,7 @@ async function guideUnknownCount(
 
 /** Complete result access for existing internal callers. UI uses searchGuide pagination. */
 export async function searchEnrichment(q: string, tags: readonly string[], seenUserId: number, locationCodes: readonly string[] | null = null): Promise<GuideResult[]> {
- return (await searchGuide(q, tags, seenUserId, locationCodes && { kind: 'locations', locCodes: locationCodes })).rows;
+ return (await searchGuide(q, tags, seenUserId, locationCodes && { kind: 'locations', locCodes: locationCodes, unledgered: [] })).rows;
 }
 
 /**
