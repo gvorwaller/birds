@@ -201,6 +201,11 @@ BEGIN
 END $$;
 
 -- Deferred: refresh each queued location once at commit, then dequeue it.
+-- "Once per location per transaction" holds in the default INITIALLY
+-- DEFERRED mode, which every app write path uses. Under SET CONSTRAINTS
+-- IMMEDIATE (CODEX1 P2) each statement flushes at once, so a location can be
+-- refreshed (and the version bumped) more than once in one transaction; the
+-- result is still exact (species-presence-db.test.ts pins both modes).
 CREATE FUNCTION flush_species_presence_pending() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM species_presence_pending WHERE loc_code = NEW.loc_code;
@@ -214,11 +219,20 @@ AFTER INSERT ON species_presence_pending
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION flush_species_presence_pending();
 
-CREATE FUNCTION queue_species_presence(locs text[]) RETURNS void LANGUAGE sql AS $$
+-- Lock order (CODEX1 P1): take each location's frequency_fetch row FOR NO KEY
+-- UPDATE, in loc_code order, BEFORE touching its pending key. Otherwise a
+-- writer holding only the FK's KEY SHARE (a direct weekly INSERT) could own
+-- the pending key while a storeFrequencies of the same location (holding the
+-- parent row) waits on that key, and the first one's commit-time refresh then
+-- waits on the parent: a deadlock. With the parent first, the second writer
+-- simply waits. A row this transaction is deleting (cascade) is skipped.
+CREATE FUNCTION queue_species_presence(locs text[]) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM 1 FROM frequency_fetch WHERE loc_code = ANY (locs) ORDER BY loc_code FOR NO KEY UPDATE;
   INSERT INTO species_presence_pending (loc_code)
   SELECT DISTINCT l FROM unnest(locs) l WHERE l IS NOT NULL ORDER BY l
-  ON CONFLICT (loc_code) DO NOTHING
-$$;
+  ON CONFLICT (loc_code) DO NOTHING;
+END $$;
 
 -- Weekly-row statements: queue, don't refresh.
 CREATE OR REPLACE FUNCTION refresh_study_inserted_locations() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -311,4 +325,3 @@ WHEN (OLD.loc_kind IS DISTINCT FROM NEW.loc_kind OR OLD.loc_code IS DISTINCT FRO
       OR OLD.region_code IS DISTINCT FROM NEW.region_code
       OR OLD.sample_sizes IS DISTINCT FROM NEW.sample_sizes)
 EXECUTE FUNCTION queue_species_presence_for_location();
-

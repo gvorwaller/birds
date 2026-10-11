@@ -17,6 +17,7 @@ const REGION2 = `ZZ-Q${tag.slice(0, 5).toUpperCase()}`;
 const REGION3 = `ZZ-R${tag.slice(0, 5).toUpperCase()}`;
 const SP = ["a", "b", "c", "d"].map((x) => `zzp${x}${tag}`);
 const SPUH = `zzpspuh${tag}`;
+const SPX = `zzpx${tag}`; // only ever at an unassigned location
 const locs: string[] = [];
 const newLoc = () => {
   const l = `LZZP${tag}${locs.length}`;
@@ -46,9 +47,21 @@ const countryRows = async () =>
     )).rows.map((r) => [r.species_code, r.source_count]),
   );
 
+const client = async () => {
+  const c = new pg.Client({
+    host: env.PGHOST,
+    port: Number(env.PGPORT),
+    database: env.PGDATABASE,
+    user: env.PGUSER,
+    password: env.PGPASSWORD,
+  });
+  await c.connect();
+  return c;
+};
+
 type Week = [species: string, week: number, freq: number];
 /** storeFrequencies' statement order: upsert metadata, delete weekly rows, insert in small batches. */
-async function store(loc: string, region: string, weeks: Week[], samples?: number[]) {
+async function store(loc: string, region: string | null, weeks: Week[], samples?: number[]) {
   await withTransaction(async (c) => {
     await c.query(
       `INSERT INTO frequency_fetch (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species, region_code)
@@ -71,7 +84,7 @@ async function store(loc: string, region: string, weeks: Week[], samples?: numbe
 beforeAll(async () => {
   if (env.PGHOST !== "127.0.0.1" || env.PGPORT !== "15436" || env.PGDATABASE !== "birds_test")
     throw Error("Requires dedicated birds_test");
-  for (const code of SP)
+  for (const code of [...SP, SPX])
     await query(
       "INSERT INTO taxonomy_cache (species_code, com_name, sci_name, family, category) VALUES ($1, 'Presence taxon', 'Presence taxon', 'Presence family', 'species')",
       [code],
@@ -84,14 +97,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await query("DELETE FROM frequency_fetch WHERE loc_code = ANY($1)", [locs]);
-  await query("DELETE FROM taxonomy_cache WHERE species_code = ANY($1)", [[...SP, SPUH]]);
+  await query("DELETE FROM taxonomy_cache WHERE species_code = ANY($1)", [[...SP, SPUH, SPX]]);
   // Nothing of ours may remain in the derived tables.
   const left = await query<{ n: number }>(
     `SELECT (SELECT count(*) FROM species_region_membership WHERE region_code IN ($1, $2, $5))
-          + (SELECT count(*) FROM species_country_membership WHERE species_code = ANY($3))
+          + (SELECT count(*) FROM species_country_membership WHERE species_code = ANY($3 || $6::text))
           + (SELECT count(*) FROM species_location_membership WHERE loc_code = ANY($4))
           + (SELECT count(*) FROM species_presence_pending WHERE loc_code = ANY($4)) AS n`,
-    [REGION, REGION2, [...SP, SPUH], locs, REGION3],
+    [REGION, REGION2, [...SP, SPUH], locs, REGION3, SPX],
   );
   expect(Number(left.rows[0].n)).toBe(0);
 });
@@ -208,6 +221,76 @@ describe("species presence layer (td-7162f6)", () => {
     const counts = await presenceCounts(query as never);
     expect(counts.regions[REGION3]).toBe(0);
     expect(counts.regions).not.toHaveProperty(`ZZ-NONE${tag.toUpperCase()}`);
+  });
+
+  it("same-location writers serialize on the parent row instead of deadlocking (CODEX1 P1)", async () => {
+    const loc = newLoc();
+    await store(loc, REGION, [[SP[0], 1, 0.1]]);
+    const a = await client();
+    const b = await client();
+    try {
+      // A: a direct weekly insert (holds only the FK's KEY SHARE on the parent
+      // until its statement trigger queues the location).
+      await a.query("BEGIN");
+      await a.query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 7, 0.2)", [loc, SP[3]]);
+      // B: a normal reload of the same location.
+      await b.query("BEGIN");
+      await b.query("SET LOCAL lock_timeout = '20s'");
+      let bUpserted = false;
+      const bUpsert = b
+        .query(
+          `INSERT INTO frequency_fetch (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species, region_code)
+           VALUES ($1, 'hotspot', 'Presence fixture', 2016, 2025, array_fill(10, ARRAY[48]), 0, $2)
+           ON CONFLICT (loc_code) DO UPDATE SET sample_sizes = EXCLUDED.sample_sizes`,
+          [loc, REGION],
+        )
+        .then(() => (bUpserted = true));
+      await new Promise((r) => setTimeout(r, 1500)); // > deadlock_timeout (1 s)
+      expect(bUpserted).toBe(false); // B waits for A: the parent row is taken first
+      await a.query("COMMIT");
+      await bUpsert;
+      await b.query("DELETE FROM species_frequency WHERE loc_code = $1", [loc]);
+      await b.query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 1, 0.1)", [loc, SP[1]]);
+      await b.query("COMMIT");
+    } finally {
+      await a.query("ROLLBACK").catch(() => {});
+      await b.query("ROLLBACK").catch(() => {});
+      await a.end();
+      await b.end();
+    }
+    expect((await ledger(loc)).species_codes).toEqual([SP[1]]);
+  }, 30_000);
+
+  it("SET CONSTRAINTS IMMEDIATE flushes per statement but the result is still exact (CODEX1 P2)", async () => {
+    const loc = newLoc();
+    const before = await version();
+    await withTransaction(async (c) => {
+      await c.query("SET CONSTRAINTS ALL IMMEDIATE");
+      await c.query(
+        `INSERT INTO frequency_fetch (loc_code, loc_kind, loc_name, begin_year, end_year, sample_sizes, n_species, region_code)
+         VALUES ($1, 'hotspot', 'Presence fixture', 2016, 2025, array_fill(10, ARRAY[48]), 0, $2)`,
+        [loc, REGION],
+      );
+      await c.query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 1, 0.1)", [loc, SP[2]]);
+      await c.query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 2, 0.1)", [loc, SP[3]]);
+      await c.query("DELETE FROM species_frequency WHERE loc_code = $1 AND species_code = $2", [loc, SP[3]]);
+    });
+    expect((await ledger(loc)).species_codes).toEqual([SP[2]]);
+    expect(await version()).toBeGreaterThan(before);
+    expect((await regionRows(REGION))[SP[3]] ?? 0).toBe((await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM species_location_membership WHERE region_code = $1 AND $2 = ANY (species_codes)`,
+      [REGION, SP[3]],
+    )).rows[0].n);
+  });
+
+  it("species at a location with no recorded country count in the world total only, never in an area", async () => {
+    const before = await presenceCounts(query as never);
+    const loc = newLoc();
+    await store(loc, null, [[SPX, 1, 0.1]]);
+    expect((await ledger(loc)).country_code).toBeNull();
+    const after = await presenceCounts(query as never);
+    expect(after.world).toBe(before.world + 1);
+    expect(after.areas).toEqual(before.areas);
   });
 
   it("a taxonomy write bumps the version (category decides what counts)", async () => {

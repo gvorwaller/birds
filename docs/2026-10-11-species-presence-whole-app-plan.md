@@ -118,6 +118,14 @@ whole migration; only `/viewed` reads it.
 4. Verify on prod (equivalence check below) at the exact deployed revision; then resume the worker.
 5. On failure: the transaction rolls back (nothing applied); resume worker; investigate. After commit, the
    rollback file + code revert path.
+6. (Code review additions) Preflight before release: the two-client same-location concurrency test passes
+   (species-presence-db.test.ts, proven to fail on the pre-fix queue function). Droplet headroom measured
+   2026-10-11: 53 GB free disk (77 GB, 32% used), DB 7.2 GB, new tables + WAL well under 1 GB, archive_mode off,
+   max_wal_size 1 GB. Budget: the ledger ACCESS EXCLUSIVE hold for the whole migration (~75–105 s; only
+   `/viewed` waits) and a brief ACCESS EXCLUSIVE wait on `frequency_fetch` at the final DDL, which queues new
+   readers behind any in-flight read for its duration. After the migration: exact-revision `/api/health`,
+   read-only totals equivalence on prod (`node .local/verify-species-presence.mjs`), then resume the worker —
+   on success AND after a rollback. Clone parity alone is not proof of live readiness.
 
 ### D3. Hotspots & data totals read the membership tables
 New `src/lib/server/species-presence.ts`, replacing `loaded-species-counts.ts`, the `refresh_species_counts`
@@ -126,8 +134,10 @@ handler/ensure/policy wiring and most of `src/lib/species-count-status.ts`.
   - Hit path: read `version` (1 row); return the cached result for exactly that version.
   - Miss path: in **one REPEATABLE READ transaction**, read `version` and compute counts (regions from
     `species_region_membership`, countries from `species_country_membership`, both ⋈ `taxonomy_cache`
-    `category='species'`; areas and world as `COUNT(DISTINCT)` over country rows **plus unassigned location
-    species** for world/`other` area, `GEOGRAPHIC_AREAS` mapping as today).
+    `category='species'`; areas and world as `COUNT(DISTINCT)` over country rows, `GEOGRAPHIC_AREAS` mapping as
+    today; **unassigned location species count in the world total only, never in an area** — the old exact
+    aggregate's contract and the page's (they render under "Other hotspots", not the `other` area). Code
+    review P2 disposition: plan text corrected, contract pinned by a fixture test).
   - **Race protocol** (CODEX1 P2-1): in-flight promises are keyed by the version read inside the snapshot; a
     result is published to the cache only if its version ≥ the cached version; a request never accepts a result
     for an older version than the one it read. Tests interleave V1/V2 computations and a taxonomy replacement.
@@ -202,7 +212,7 @@ Then resume td-47179c (stash).
 |---|---|
 | P1-1 D6 whitelist misses `sync_lifelist` (/forecast seen set) and `scan_enrichment` (data page's next-scan line) | Accepted — per-route matrix; D6 split into its own release |
 | P1-2 Region ledger/version drift on TRUNCATE | Accepted — guards extended, version bumped once, 0055 preserved, tests |
-| P1-3 World total drops unassigned locations | Accepted — world/`other` include unassigned location species |
+| P1-3 World total drops unassigned locations | Accepted — world includes unassigned location species (areas do not: code-review clarification) |
 | P1-4 D5 leaves two in_scope readers on old semantics | Accepted — one shared predicate for all three |
 | P1-5 Forecast species picker admits zero-sample-only species | Accepted — eligibility uses effective presence, ships in Release A |
 | P1-6 Migration runbook underspecified (lock held for whole txn) | Accepted — clone pre-measure, paused+idle gate, recorded timings, failure path |
@@ -211,3 +221,12 @@ Then resume td-47179c (stash).
 | P2-3 D1 equivalence needs enforced premises | Accepted — CHECK on sample_sizes + parity audit |
 | P2-4 Missing entry ≠ 0 | Accepted — ledger-integrity check, "Count unavailable" state |
 | Phasing ambiguity (D4 "same release if review agrees") | Accepted — D4/D5/D6 explicitly separate releases |
+
+## CODEX1 code review of 16b1f41 (2026-10-11): FIX FIRST → dispositions
+| Finding | Disposition |
+|---|---|
+| P1 Same-location deferred queue deadlock (direct weekly insert vs storeFrequencies) | Fixed — `queue_species_presence` locks parents `FOR NO KEY UPDATE` in loc order before the pending key; deterministic two-client test, proven to fail on the old function |
+| P2 Unassigned species absent from the `other` area | Not a bug — contract is world-only (old exact aggregate + page render them under "Other hotspots"); plan text corrected; fixture test pins it |
+| P2 Once-per-transaction only in deferred mode | Accepted — documented in 0083; test proves exact results under `SET CONSTRAINTS ALL IMMEDIATE` |
+| P3 Blank line at EOF of 0083 | Fixed |
+| Runbook: concurrency preflight, droplet disk/WAL, lock budget, verify + resume on both paths | Added to D2-ops step 6 |
