@@ -29,8 +29,19 @@ export interface GuideChoice {
   name: string;
 }
 
+/**
+ * Where the Field Guide reads a place's species (td-3cbf64): a country or a
+ * first-level region by its code (the presence layer keeps one (code,
+ * species) table for each), anything finer by its loaded locations.
+ */
+export type GuidePlace =
+  | { kind: "country" | "region"; code: string }
+  | { kind: "locations"; locCodes: readonly string[] };
+
 export interface ResolvedGuideLocation extends GuideCoverage {
   kind: "country" | "region" | "county" | "hotspot" | "map";
+  /** The species filter for this selection; covers exactly `locCodes`. */
+  place: GuidePlace;
   /** The label shown for the selection itself. */
   label: string;
   /** County labels come from the official county-equivalent table. */
@@ -54,15 +65,34 @@ export interface ResolvedGuideLocation extends GuideCoverage {
 }
 
 /** No external calls: membership comes from recorded eBird geography, never
- * from prose, a bounding box, or country-name text matching. */
+ * from prose, a bounding box, or country-name text matching. A country or
+ * first-level region takes its locations from the presence ledger's
+ * country_code / region_code (0053, 0083): the very rows its (code, species)
+ * table is built from, so the species the Field Guide reads for it come from
+ * exactly these locations (td-3cbf64). Finer places match by code prefix. */
 export async function guideLocationCoverage(code: string): Promise<GuideCoverage> {
-  const { rows } = await query<LoadedLocation>(
-    `SELECT loc_code, loc_kind, region_code, begin_year, end_year
+  const parsed = parseRegionCode(code);
+  const ledgerColumn =
+    parsed?.level === "country"
+      ? "country_code"
+      : parsed?.level === "subnational1"
+        ? "region_code"
+        : null;
+  const { rows } = ledgerColumn
+    ? await query<LoadedLocation>(
+        `SELECT f.loc_code, f.loc_kind, f.region_code, f.begin_year, f.end_year
+			 FROM species_location_membership l
+			 JOIN frequency_fetch f USING (loc_code)
+			 WHERE l.${ledgerColumn} = $1`,
+        [parsed!.code],
+      )
+    : await query<LoadedLocation>(
+        `SELECT loc_code, loc_kind, region_code, begin_year, end_year
 			 FROM frequency_fetch
 			 WHERE (loc_kind = 'region' AND (loc_code = $1 OR loc_code LIKE $2))
 			    OR (loc_kind = 'hotspot' AND (region_code = $1 OR region_code LIKE $2))`,
-    [code, `${code}-%`],
-  );
+        [code, `${code}-%`],
+      );
   // Include every recorded source: even a statewide export can omit a taxon
   // present in a county or hotspot export covering the same years.
   const sources = rows;
@@ -234,6 +264,7 @@ export async function resolveGuideLocation(
     return {
       ...coverage,
       kind: "map",
+      place: { kind: "locations", locCodes: coverage.locCodes },
       label: selection.place,
       officialCountyName: false,
       ancestry: { country: null, region: null, county: null, hotspot: null },
@@ -272,6 +303,7 @@ export async function resolveGuideLocation(
     return {
       ...(await guideLocationCoverage(code)),
       kind: selection.kind,
+      place: { kind: selection.kind, code },
       label: (await regionLabel(code)) ?? code,
       officialCountyName: false,
       ancestry: { country, region, county: null, hotspot: null },
@@ -297,9 +329,11 @@ export async function resolveGuideLocation(
   const countyLabel = countyName(county, countyRow.loc_name);
 
   if (selection.kind === "county") {
+    const coverage = await guideLocationCoverage(county);
     return {
-      ...(await guideLocationCoverage(county)),
+      ...coverage,
       kind: "county",
+      place: { kind: "locations", locCodes: coverage.locCodes },
       label: countyLabel,
       officialCountyName: countyMeta(county) != null,
       ancestry: { country, region, county, hotspot: null },
@@ -324,6 +358,7 @@ export async function resolveGuideLocation(
     error(400, "That hotspot has no loaded data in the selected county.");
   return {
     locCodes: [hotspot],
+    place: { kind: "locations", locCodes: [hotspot] },
     wholeArea: false,
     beginYear: hotspotRow.begin_year,
     endYear: hotspotRow.end_year,

@@ -37,6 +37,7 @@ import { withTagWriteTx, type TagWriteTx } from '$server/tag-engine/runtime';
 import { materializeSpecies } from '$server/tag-engine/materialize';
 import { MAX_SIMILAR } from '$server/ai-enrichment';
 import type { WikidataSpeciesRow } from '$server/wikidata';
+import type { GuidePlace } from '$server/guide-location';
 import {
 	fetchWikidataBatch,
 	fetchWikidataBySciName,
@@ -843,6 +844,34 @@ export interface GuideResult {
 }
 
 /**
+ * The species effectively present in a Field Guide place (td-3cbf64, plan D4),
+ * read from the presence layer the database maintains at write time (0083),
+ * never from the month rows of every location under the place: a country or
+ * first-level region is one key range of its (code, species) table; a county,
+ * hotspot or map radius is the union of its locations' species arrays. Same
+ * set as species_month_freq.num > 0 over the place's locations (effective
+ * presence, D1). The arguments are the placeholders carrying placeParams().
+ * searchGuide and guideUnknownCount both use it, so their place filters match.
+ */
+const placeSpeciesSql = (kind: string, code: string, locs: string): string =>
+	`SELECT species_code FROM species_country_membership
+	  WHERE ${kind}::text = 'country' AND country_code = ${code}::text
+	 UNION
+	 SELECT species_code FROM species_region_membership
+	  WHERE ${kind}::text = 'region' AND region_code = ${code}::text
+	 UNION
+	 SELECT unnest(species_codes) FROM species_location_membership
+	  WHERE ${kind}::text = 'locations' AND loc_code = ANY(${locs}::text[])`;
+
+/** [kind, code, locCodes]; a null kind means Anywhere (no place filter). */
+function placeParams(place: GuidePlace | null): [string | null, string | null, string[] | null] {
+	if (!place) return [null, null, null];
+	return place.kind === 'locations'
+		? ['locations', null, [...place.locCodes]]
+		: [place.kind, place.code, null];
+}
+
+/**
  * Field-guide search (td-0753d0 taxonomy-first rewrite). Two legs UNIONed:
  *
  * 1. Taxonomy name/code leg — searches ALL ~11k species in taxonomy_cache
@@ -861,7 +890,7 @@ export async function searchGuide(
 	q: string,
 	tags: readonly string[],
 	seenUserId: number,
-	locationCodes: readonly string[] | null = null,
+	place: GuidePlace | null = null,
 	options: {
 		family?: string;
 		sort?: 'relevance' | 'name' | 'taxonomic';
@@ -880,8 +909,9 @@ export async function searchGuide(
 	const substr = `%${escaped}%`;
 	const lowerQ = query_.toLowerCase();
 
-	// $8=null means anywhere; [] means selected geography has no loaded data.
-	// Intersect before LIMIT so out-of-area hits cannot displace valid matches.
+	// $8 (place kind) null means anywhere; a place with no loaded data has no
+	// species. Intersect before LIMIT so out-of-area hits cannot displace valid
+	// matches.
 	const orderBy =
 		options.sort === 'taxonomic'
 			? 'taxon_order NULLS LAST, com_name, species_code'
@@ -894,18 +924,17 @@ export async function searchGuide(
 		total_matches: number;
 		taxon_order: string | null;
 	};
-	// td-894144: the unknown-tags count runs IN PARALLEL on its own connection.
-	// It repeats the regional CTE (≈0.6 s for a whole-country filter on the
-	// snapshot), so running it after the main query would double wall time.
+	// td-894144: the unknown-tags count runs IN PARALLEL on its own connection,
+	// so it never adds its own wall time to the main query.
 	const unknownP =
 		tags.length > 0
-			? guideUnknownCount(query_, seenUserId, locationCodes, options)
+			? guideUnknownCount(query_, seenUserId, place, options)
 			: Promise.resolve(0);
 	unknownP.catch(() => {}); // awaited below; never an unhandled rejection
+	const [placeKind, placeCode, placeLocs] = placeParams(place);
 	const r = await query<Row>(
 		`WITH regional_species AS MATERIALIZED (
-		   SELECT DISTINCT species_code FROM species_month_freq
-		   WHERE loc_code = ANY($8::text[]) AND num > 0
+		   ${placeSpeciesSql('$8', '$15', '$16')}
 		 )
 		 SELECT matches.*,
 		        CASE WHEN $1::bool THEN
@@ -941,7 +970,7 @@ export async function searchGuide(
 		       LEFT JOIN seen_species ss
 		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
 		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
-		        AND ($1::bool OR (($8::text[] IS NOT NULL OR $9::text IS NOT NULL OR $12::int IS NOT NULL OR $14::bool) AND $4::text[] = '{}'))
+		        AND ($1::bool OR (($8::text IS NOT NULL OR $9::text IS NOT NULL OR $12::int IS NOT NULL OR $14::bool) AND $4::text[] = '{}'))
 		        AND (NOT $1::bool OR tc.species_code = $5
 		             OR tc.banding_codes @> ARRAY[upper($5)] OR tc.com_name ILIKE $7 OR tc.sci_name ILIKE $7)
 		        AND ($4::text[] = '{}' OR (se.legacy_tags IS NOT NULL AND se.tags @> $4::text[]))
@@ -970,7 +999,7 @@ export async function searchGuide(
 		   ) combined
 		   ORDER BY species_code, name_tier, rank DESC
 		 ) deduped
-		 WHERE ($8::text[] IS NULL OR species_code IN (SELECT species_code FROM regional_species))
+		 WHERE ($8::text IS NULL OR species_code IN (SELECT species_code FROM regional_species))
            AND ($12::int IS NULL OR species_code IN (SELECT species_code FROM species_special_interest WHERE user_id=$12))
            /* Phase 9A list scope: the SAME candidate set, split by the display-scope life list. Applied here so
               count(*) OVER(), ordering, LIMIT and OFFSET all see it. Need is exactly the complement of Seen. */
@@ -994,13 +1023,15 @@ export async function searchGuide(
 			lowerQ,
 			prefix,
 			substr,
-			locationCodes,
+			placeKind,
 			options.family || null,
 			options.page == null ? null : 100,
 			options.page == null ? 0 : (options.page - 1) * 100,
 			options.interestUserId ?? null,
 			options.list ?? 'all',
-			options.listBrowse === true
+			options.listBrowse === true,
+			placeCode,
+			placeLocs
 		]
 	);
 	const unknownCount = await unknownP;
@@ -1031,7 +1062,7 @@ export async function searchGuide(
 async function guideUnknownCount(
 	q: string,
 	seenUserId: number,
-	locationCodes: readonly string[] | null,
+	place: GuidePlace | null,
 	options: {
 		family?: string;
 		interestUserId?: number;
@@ -1040,13 +1071,13 @@ async function guideUnknownCount(
 ): Promise<number> {
 	const hasQ = q.length > 0;
 	const escaped = q.replace(/[%_\\]/g, (m) => `\\${m}`);
+	const [placeKind, placeCode, placeLocs] = placeParams(place);
 	const r = await query<{ n: number }>(
 		// Both membership sets are MATERIALIZED once, exactly like searchGuide's
 		// regional_species: an inline IN-subquery under "$6 IS NULL OR ..." is
-		// re-evaluated per taxonomy row and never finishes on a real region.
+		// re-evaluated per taxonomy row.
 		`WITH regional AS MATERIALIZED (
-		   SELECT DISTINCT species_code FROM species_month_freq
-		    WHERE loc_code = ANY($6::text[]) AND num > 0
+		   ${placeSpeciesSql('$6', '$9', '$10')}
 		 ), interest AS MATERIALIZED (
 		   SELECT species_code FROM species_special_interest WHERE user_id = $7
 		 )
@@ -1061,7 +1092,7 @@ async function guideUnknownCount(
 		         OR tc.species_code = lower($2) OR tc.banding_codes @> ARRAY[upper($2)]
 		         OR tc.com_name ILIKE $4 OR tc.sci_name ILIKE $4
 		         OR se.search_tsv @@ websearch_to_tsquery('english', $2))
-		    AND ($6::text[] IS NULL OR tc.species_code IN (SELECT species_code FROM regional))
+		    AND ($6::text IS NULL OR tc.species_code IN (SELECT species_code FROM regional))
 		    AND ($7::int IS NULL OR tc.species_code IN (SELECT species_code FROM interest))
 		    AND ($8::text = 'all' OR ($8::text = 'need' AND ss.species_code IS NULL)
 		         OR ($8::text = 'seen' AND ss.species_code IS NOT NULL))`,
@@ -1071,9 +1102,11 @@ async function guideUnknownCount(
 			seenUserId,
 			`%${escaped}%`,
 			options.family || null,
-			locationCodes,
+			placeKind,
 			options.interestUserId ?? null,
-			options.list ?? 'all'
+			options.list ?? 'all',
+			placeCode,
+			placeLocs
 		]
 	);
 	return r.rows[0]?.n ?? 0;
@@ -1081,7 +1114,7 @@ async function guideUnknownCount(
 
 /** Complete result access for existing internal callers. UI uses searchGuide pagination. */
 export async function searchEnrichment(q: string, tags: readonly string[], seenUserId: number, locationCodes: readonly string[] | null = null): Promise<GuideResult[]> {
- return (await searchGuide(q, tags, seenUserId, locationCodes)).rows;
+ return (await searchGuide(q, tags, seenUserId, locationCodes && { kind: 'locations', locCodes: locationCodes })).rows;
 }
 
 /**

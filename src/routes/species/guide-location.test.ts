@@ -71,9 +71,18 @@ describe.runIf(dbUp)("Field Guide location and thumbnail integration", () => {
         `INSERT INTO frequency_fetch
 			 (loc_code,loc_kind,loc_name,begin_year,end_year,sample_sizes,n_species,region_code)
 			 VALUES ($1,'hotspot','Location test fixture',2016,2025,$2,3,$3)`,
-        [loc, Array(48).fill(10), region],
+        // HERE has no checklists in week 21, the only week C is reported there.
+        [loc, Array.from({ length: 48 }, (_, i) => (loc === HERE && i === 20 ? 0 : 10)), region],
       );
     }
+    // Weekly rows drive the presence layer the Field Guide reads (td-3cbf64);
+    // the month rows are their rollup, as storeFrequencies writes both.
+    await query(
+      `INSERT INTO species_frequency (loc_code,species_code,week,freq)
+		 VALUES ($1,$3,1,0.1),($1,$3,2,0.1),($1,$3,5,0.1),($1,$3,6,0.1),($1,$3,7,0.1),
+		        ($1,$4,45,0.1),($1,$4,46,0.1),($1,$5,21,0.1),($2,$5,22,0.1),($2,$5,23,0.1)`,
+      [HERE, THERE, A, B, C],
+    );
     await query(
       `INSERT INTO species_month_freq (loc_code,species_code,month,num)
 		 VALUES ($1,$3,1,2),($1,$3,2,3),($1,$4,12,2),($1,$5,6,0),($2,$5,6,2)`,

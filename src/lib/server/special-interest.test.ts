@@ -128,7 +128,7 @@ it("returns the whole collection and intersects before guide pagination, includi
     new Set([...one.rows, ...two.rows].map((r) => r.species_code)),
   ).toEqual(new Set(codes));
   expect(
-    (await searchGuide("", [], owner, [], { interestUserId: viewer, page: 1 }))
+    (await searchGuide("", [], owner, { kind: "locations", locCodes: [] }, { interestUserId: viewer, page: 1 }))
       .rows,
   ).toEqual([]);
   expect(
@@ -221,13 +221,13 @@ it("combines personal interest with actual family, tag and loaded-region data", 
     "OSPR",
     [sample.tags[0]],
     owner,
-    [sample.loc_code],
+    { kind: "locations", locCodes: [sample.loc_code] },
     options,
   );
   expect(found.rows.map((r) => r.species_code)).toEqual(["osprey"]);
   expect(
     (
-      await searchGuide("OSPR", [sample.tags[0]], owner, [sample.loc_code], {
+      await searchGuide("OSPR", [sample.tags[0]], owner, { kind: "locations", locCodes: [sample.loc_code] }, {
         ...options,
         family: "anatid1",
       })
@@ -239,7 +239,7 @@ it("combines personal interest with actual family, tag and loaded-region data", 
         "OSPR",
         ["habitat:interest-test-no-match"],
         owner,
-        [sample.loc_code],
+        { kind: "locations", locCodes: [sample.loc_code] },
         options,
       )
     ).rows,

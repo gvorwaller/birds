@@ -79,7 +79,7 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   let total = 0;
   let unknownCount = 0;
   if (active) {
-    const found = await searchGuide(q, tags, locals.scopeId!, location?.locCodes ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit});
+    const found = await searchGuide(q, tags, locals.scopeId!, location?.place ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit});
     results = found.rows; total = found.total; unknownCount = found.unknownCount;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }

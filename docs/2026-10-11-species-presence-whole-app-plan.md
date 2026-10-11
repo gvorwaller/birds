@@ -155,6 +155,15 @@ handler/ensure/policy wiring and most of `src/lib/species-count-status.ts`.
 first-level region → region table, county / hotspot / map radius → location arrays. Identical sets by D1;
 old-vs-new equality test on fixtures and a prod sample.
 
+**Release C as built (td-3cbf64, 2026-10-11).** `searchGuide` and `guideUnknownCount` share one SQL fragment
+(`placeSpeciesSql`); the route passes a `GuidePlace` (`country`/`region` code, or `locations`). Country/region
+coverage (source count, years) now selects locations by the ledger's `country_code`/`region_code` (the rows the
+aggregate tables are built from) instead of a code-prefix match — 14–25 ms warm on prod vs 9 ms; the study
+functions were rejected at 30–60 ms (not inlinable). Prod read-only check (one REPEATABLE READ snapshot): 0
+differences for every location (2.32 M pairs), country (252) and region (3,110); coverage identical for every
+location. US filter 7.65 s → 6 ms; US-FL 1.17 s → 1 ms. Test fixtures that wrote only month rows now also write
+the weekly rows (as `storeFrequencies` does).
+
 ### D5. Enrichment scope (td-b569b5, separate release)
 One shared SQL predicate `effective_scope(species_code)` used by **all three** readers: `IN_SCOPE_CODES_SQL`
 (`species-enrichment.ts:525`), `loadResolvedEdges` in_scope (`:1610-1615`) and `getSimilarSpecies` in_scope

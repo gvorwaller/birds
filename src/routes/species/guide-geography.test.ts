@@ -96,11 +96,19 @@ async function fetchRow(
   );
 }
 async function freq(loc: string, ...codes: string[]) {
-  for (const code of codes)
+  for (const code of codes) {
+    // Weekly rows feed the presence layer the Field Guide reads (td-3cbf64);
+    // the month row is their rollup, as storeFrequencies writes both.
+    await query(
+      `INSERT INTO species_frequency (loc_code,species_code,week,freq)
+       SELECT $1, $2, w, 0.1 FROM generate_series(21, 23) w`,
+      [loc, code],
+    );
     await query(
       `INSERT INTO species_month_freq (loc_code,species_code,month,num) VALUES ($1,$2,6,3)`,
       [loc, code],
     );
+  }
 }
 
 describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () => {

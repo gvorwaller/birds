@@ -112,12 +112,20 @@ describe("Field Guide All / Need / Seen list scope", () => {
     await row(H_BARE, "hotspot", "Zqlist Bare Marsh", COUNTY_BARE);
     for (const [id, lat, lng] of [[H_WEST, 12, -179.9], [H_EAST, 12, 179.0]] as const)
       await query(`INSERT INTO ebird_locations (loc_id,loc_name,lat,lng) VALUES ($1,'Zqlist map',$2,$3)`, [id, lat, lng]);
-    const freq = (loc: string, list: string[]) =>
-      query(
+    // Weekly rows feed the presence layer the Field Guide reads (td-3cbf64);
+    // the month rows are their rollup, as storeFrequencies writes both.
+    const freq = async (loc: string, list: string[]) => {
+      await query(
+        `INSERT INTO species_frequency (loc_code,species_code,week,freq)
+         SELECT $1, s, w, 0.1 FROM unnest($2::text[]) s, generate_series(21, 23) w`,
+        [loc, list],
+      );
+      await query(
         `INSERT INTO species_month_freq (loc_code,species_code,month,num)
          SELECT $1, unnest($2::text[]), 6, 3`,
         [loc, list],
       );
+    };
     await freq(H_MAIN, species);
     await freq(H_WEST, species.slice(0, 40));
     await freq(H_EAST, species.slice(40, 80));
