@@ -261,6 +261,39 @@ describe("species presence layer (td-7162f6)", () => {
     expect((await ledger(loc)).species_codes).toEqual([SP[1]]);
   }, 30_000);
 
+  it("two direct weekly inserts that both hold the FK's KEY SHARE first still serialize (CODEX1 P1 re-review)", async () => {
+    // NO KEY UPDATE does not conflict with KEY SHARE (0054's reason for it),
+    // so the first queue upgrades and the second waits — no deadlock.
+    const loc = newLoc();
+    await store(loc, REGION, [[SP[0], 1, 0.1]]);
+    const a = await client();
+    const b = await client();
+    try {
+      for (const c of [a, b]) {
+        await c.query("BEGIN");
+        await c.query("SET LOCAL lock_timeout = '20s'");
+        // The exact lock the FK check takes before the statement trigger runs.
+        await c.query("SELECT 1 FROM frequency_fetch WHERE loc_code = $1 FOR KEY SHARE", [loc]);
+      }
+      await a.query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 8, 0.2)", [loc, SP[1]]);
+      let bDone = false;
+      const bInsert = b
+        .query("INSERT INTO species_frequency (loc_code, species_code, week, freq) VALUES ($1, $2, 9, 0.2)", [loc, SP[2]])
+        .then(() => (bDone = true));
+      await new Promise((r) => setTimeout(r, 1500)); // > deadlock_timeout
+      expect(bDone).toBe(false); // B's queue waits for A's parent lock
+      await a.query("COMMIT");
+      await bInsert;
+      await b.query("COMMIT");
+    } finally {
+      await a.query("ROLLBACK").catch(() => {});
+      await b.query("ROLLBACK").catch(() => {});
+      await a.end();
+      await b.end();
+    }
+    expect((await ledger(loc)).species_codes).toEqual([SP[0], SP[1], SP[2]].sort());
+  }, 30_000);
+
   it("SET CONSTRAINTS IMMEDIATE flushes per statement but the result is still exact (CODEX1 P2)", async () => {
     const loc = newLoc();
     const before = await version();
