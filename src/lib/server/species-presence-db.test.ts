@@ -101,7 +101,7 @@ afterAll(async () => {
   // Nothing of ours may remain in the derived tables.
   const left = await query<{ n: number }>(
     `SELECT (SELECT count(*) FROM species_region_membership WHERE region_code IN ($1, $2, $5))
-          + (SELECT count(*) FROM species_country_membership WHERE species_code = ANY($3 || $6::text))
+          + (SELECT count(*) FROM species_country_membership WHERE species_code = ANY($3::text[] || $6::text))
           + (SELECT count(*) FROM species_location_membership WHERE loc_code = ANY($4))
           + (SELECT count(*) FROM species_presence_pending WHERE loc_code = ANY($4)) AS n`,
     [REGION, REGION2, [...SP, SPUH], locs, REGION3, SPX],
