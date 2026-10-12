@@ -1,3 +1,4 @@
+import { usageReport } from "$server/user-activity";
 import { serverHealth } from "$server/process-health";
 import { hotspotCoordinateStatus } from "$server/hotspot-coordinate-repair";
 import { ensureTagRepairJob, runTagConsistencyNow, tagsHealth, tagsOverview } from "$server/tag-admin";
@@ -137,14 +138,17 @@ export const load: PageServerLoad = async ({ locals }) => {
   const health = await serverHealth().catch(() => null);
   // Tags tab (td-894144 B3). Like server health, a failure here must not
   // break the rest of the admin page.
-  const [tagOverview, tagHealth, hotspotCoordinates] = await Promise.all([
+  const [tagOverview, tagHealth, hotspotCoordinates, accountUsage] = await Promise.all([
     tagsOverview().catch(() => null),
     tagsHealth().catch(() => null),
     // td-c2f2b2: downloaded hotspots without official coordinates.
     hotspotCoordinateStatus().catch(() => null),
+    // Users tab (td-c8e6a3); a failure shows "unavailable" in that tab only.
+    usageReport().catch(() => null),
   ]);
   return {
     health,
+    accountUsage,
     tagOverview,
     tagHealth,
     hotspotCoordinates,

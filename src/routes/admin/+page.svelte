@@ -12,6 +12,7 @@
   import type { AdminLiveStatus } from "$server/admin-status";
   import CollapsibleCard from "$components/CollapsibleCard.svelte";
   import TagsPanel from "$components/admin/TagsPanel.svelte";
+  import UsagePanel from "$components/admin/UsagePanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -33,7 +34,7 @@
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
   type Surface = "enrichment" | "familyEnrichment" | "guidance" | "tagDraft";
-  const ADMIN_TABS = ["status", "ai", "tags", "health"] as const;
+  const ADMIN_TABS = ["status", "ai", "tags", "users", "health"] as const;
   type AdminTab = (typeof ADMIN_TABS)[number];
   // ?tab=tags lets a tag page's back link land on the Tags tab.
   const requestedTab = page.url.searchParams.get("tab");
@@ -348,6 +349,19 @@
       onkeydown={onAdminTabKeydown}
     >
       Tags
+    </button>
+    <button
+      type="button"
+      role="tab"
+      id="admin-tab-users"
+      aria-controls="admin-panel-users"
+      aria-selected={activeTab === "users"}
+      tabindex={activeTab === "users" ? 0 : -1}
+      class:active={activeTab === "users"}
+      onclick={() => (activeTab = "users")}
+      onkeydown={onAdminTabKeydown}
+    >
+      Users
     </button>
     <button
       type="button"
@@ -1012,6 +1026,14 @@
       />
     {:else}
       <p class="error" role="alert">Tag data is unavailable right now.</p>
+    {/if}
+  </div>
+  {:else if activeTab === "users"}
+  <div id="admin-panel-users" role="tabpanel" aria-labelledby="admin-tab-users">
+    {#if data.accountUsage}
+      <UsagePanel report={data.accountUsage} />
+    {:else}
+      <p class="error" role="alert">Account usage is unavailable right now.</p>
     {/if}
   </div>
   {:else}

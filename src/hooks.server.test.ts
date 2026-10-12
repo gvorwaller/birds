@@ -8,8 +8,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("$server/session", () => ({ validateSession: vi.fn(), SESSION_COOKIE_NAME: "s" }));
 vi.mock("$server/access", () => ({ scopeOwnerId: vi.fn() }));
 vi.mock("$env/dynamic/private", () => ({ env: {} }));
+vi.mock("$server/user-activity", () => ({ recordActivity: vi.fn() }));
 
 import { handle, isPublicPath } from "./hooks.server";
+import { recordActivity } from "$server/user-activity";
 
 describe("isPublicPath", () => {
   it("share links are public by prefix — the token is the credential", () => {
@@ -91,4 +93,27 @@ it("lets a viewer check off a stop on a trip (td-40a1b5) but make no other trip 
     await response.text();
     expect(resolve).toHaveBeenCalledTimes(expected===200 ? 1:0);
   }
+});
+
+it("counts a signed-in page load toward its section, and nothing else (td-c8e6a3)", async () => {
+  const run = async (
+    path: string,
+    { method = "GET", routeId = path, type = "text/html", status = 200, isDataRequest = false, user = { id: 7, role: "user" } as object | null } = {},
+  ) => {
+    vi.mocked(recordActivity).mockClear();
+    const url = new URL("http://localhost" + path);
+    const resolve = vi.fn(async () => new Response("x", { status, headers: { "content-type": type } }));
+    const event = { url, request: new Request(url, { method }), route: { id: routeId }, isDataRequest, locals: user ? { user, scopeId: 7 } : {}, cookies: { get: () => undefined } };
+    const response = await handle({ event, resolve } as unknown as Parameters<typeof handle>[0]);
+    await response.text();
+    return vi.mocked(recordActivity).mock.calls;
+  };
+  expect(await run("/species/[code]")).toEqual([[7, "field_guide"]]);
+  expect(await run("/forecast/data", { type: "application/json", isDataRequest: true })).toEqual([[7, "hotspots_data"]]);
+  expect(await run("/", { user: { id: 9, role: "viewer" } })).toEqual([[9, "home"]]); // the viewer's own account
+  expect(await run("/api/jobs", { type: "application/json" })).toEqual([]);
+  expect(await run("/trips/[id]/export", { type: "text/csv" })).toEqual([]);
+  expect(await run("/settings", { method: "POST" })).toEqual([]);
+  expect(await run("/species/[code]", { status: 404 })).toEqual([]);
+  expect(await run("/login", { user: null })).toEqual([]);
 });

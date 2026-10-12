@@ -732,6 +732,15 @@
 						Viewed species, Special interest, appearance, and sign-in remain the
 						viewer's own. Viewers cannot choose or change this relationship.
 					</li>
+					<li>
+						<strong>Account usage (admin)</strong> — the app records which days each
+						account opened a page and which sections it used that day (Home, Field
+						guide, Forecast, Trips and so on). That record holds only the day and the
+						section, never what you searched, which birds you opened, or where. An
+						administrator sees, per account,
+						the last active day, days active in the last 30, whether the account came
+						back after its first day, and the sections used, in Admin → Users.
+					</li>
 				</ul>
 			</div>
 		{/if}
