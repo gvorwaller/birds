@@ -37,7 +37,8 @@ export interface CoordinateRow {
 export const COORDINATE_CHUNK = 2_000;
 const OFFICIAL_ID = /^L[0-9]+$/;
 
-function usable(row: CoordinateRow, source: CoordinateSource): boolean {
+/** A row the writer can store: a valid id for its source, a name, in-range coordinates. */
+export function usable(row: CoordinateRow, source: CoordinateSource): boolean {
   const id = typeof row.locId === "string" ? row.locId.trim() : "";
   if (!id || (source === "official" && !OFFICIAL_ID.test(id))) return false;
   return (

@@ -6,10 +6,10 @@
  *    run at the end of each hotspot load that has no official coordinate
  *    (map pick, refresh, retry: their jobs carry none), and by the repair.
  *  - repairHotspotCoordinates: the bounded `repair_hotspot_coords` job body —
- *    the WORLD CATALOG first (td-79261e: every region in the regions table,
- *    each country's full hotspot list, refreshed every 30 days), then for any
- *    downloaded hotspot still without official coordinates: cached eBird
- *    responses (no calls), one hotspot list per region, hotspot info (capped).
+ *    first every downloaded hotspot still without official coordinates:
+ *    cached eBird responses (no calls), one hotspot list per region, hotspot
+ *    info (capped); then the WORLD CATALOG (td-79261e: every region in the
+ *    regions table, each country's full hotspot list, refreshed every 30 days).
  *
  * eBird calls go through a dedicated pacer that keeps the hourly reserve for
  * the rest of the app; a deferral ends the run (the next daily check resumes).
@@ -28,6 +28,7 @@ import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import {
   coordinateGaps,
   acceptedCoordinateRows,
+  usable,
   coordinatesFromCache,
   needsOfficialCoordinates,
   recordCoordinateMiss,
@@ -441,7 +442,8 @@ async function loadCatalog(
       failuresInARow = 0;
       const accepted = acceptedCoordinateRows(list.data, "official");
       await upsertLocationCoordinates(accepted, "official", list.startedAt);
-      const rejected = list.data.length - accepted.length;
+      // A repeated id is stored once, not "unusable" (CODEX1 re-review).
+      const rejected = list.data.filter((r) => !usable(r, "official")).length;
       // Rows eBird listed that cannot be stored (CODEX1 review): kept visible
       // and retried after a day instead of a clean 30-day 'ok'.
       if (rejected > 0) {

@@ -485,6 +485,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
         fetchCatalog: async () => ({
           data: [
             { locId: good, locName: "Good", lat: 1, lng: 1 },
+            { locId: good, locName: "Good, listed twice", lat: 1, lng: 1 },
             { locId: "zznotahotspot", locName: "Bad id", lat: 1, lng: 1 },
             { locId: newId(), locName: "Bad latitude", lat: 95, lng: 1 },
           ],
@@ -496,7 +497,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(await catalogRow(C("BAD"))).toMatchObject({
         status: "error",
         hotspots: 1,
-        error: "2 of 3 listed hotspots had an unusable id, name or coordinates.",
+        error: "2 of 4 listed hotspots had an unusable id, name or coordinates.",
       });
     });
 
