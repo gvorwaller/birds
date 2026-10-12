@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("$server/user-activity", () => ({ recordActivity: vi.fn(async () => {}) }));
+vi.mock("$server/user-activity", () => ({ recordActivity: vi.fn(async () => true) }));
 
 import { POST } from "./+server";
 import { recordActivity } from "$server/user-activity";
@@ -17,6 +17,11 @@ describe("POST /api/activity (td-c8e6a3)", () => {
   it("records the section of a counted route for the signed-in account", async () => {
     expect((await call(JSON.stringify({ routeId: "/forecast/data" }))).status).toBe(204);
     expect(recordActivity).toHaveBeenCalledWith(7, "hotspots_data");
+  });
+
+  it("answers 503 when the write failed, so the browser reports the section again", async () => {
+    vi.mocked(recordActivity).mockResolvedValueOnce(false);
+    expect((await call(JSON.stringify({ routeId: "/" }))).status).toBe(503);
   });
 
   it("accepts and ignores uncounted or bogus routes; rejects bad bodies and signed-out calls", async () => {

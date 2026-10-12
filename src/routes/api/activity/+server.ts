@@ -18,6 +18,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return new Response(null, { status: 400 });
   }
   const feature = typeof routeId === "string" ? usageFeatureFor(routeId) : null;
-  if (feature) await recordActivity(locals.user.id, feature);
+  // 503 when the write failed, so the browser reports this section again.
+  if (feature && !(await recordActivity(locals.user.id, feature))) return new Response(null, { status: 503 });
   return new Response(null, { status: 204 });
 };

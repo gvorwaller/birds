@@ -46,9 +46,10 @@
 		viewed is kept. <strong>Came back</strong> means signs of use on two or more days: pages opened,
 		sign-ins, or species pages viewed.
 		{#if report.trackingSince}
-			Recorded since {fmtDay(report.trackingSince)}; before that only each account's last login is known.
+			Page use is recorded since {fmtDay(report.trackingSince)}; before that only sign-ins and species
+			pages viewed are known.
 		{:else}
-			Nothing recorded yet; until then only each account's last login is known.
+			No page use recorded yet; until then only sign-ins and species pages viewed are known.
 		{/if}
 	</p>
 	<ul class="accounts">

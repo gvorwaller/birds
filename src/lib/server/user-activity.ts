@@ -12,17 +12,20 @@ export function utcDay(now = new Date()): string {
 }
 
 // Each web process writes a given (day, account, section) once: a repeat
-// report that day is a set lookup, not a query. A restart forgets the set and
-// costs one more insert that the primary key turns into a no-op.
+// report that day shares the first write's result instead of querying. A
+// restart forgets them and costs one more insert that the primary key turns
+// into a no-op.
 let recordedDay = "";
-const recorded = new Set<string>();
+const recorded = new Map<string, Promise<boolean>>();
 
 /**
- * Record that an account used a section today (td-c8e6a3). Never rejects: a
- * failed write is logged and forgotten, so a later report retries (usage is a
- * report, not data a page depends on).
+ * Record that an account used a section today (td-c8e6a3). Resolves true once
+ * the row is stored (or already was), false when the write failed — never
+ * rejects. A failure is forgotten, so the next report retries; a report that
+ * arrives while the first write is pending shares its outcome, so it can never
+ * be acknowledged for a write that then fails.
  */
-export async function recordActivity(userId: number, feature: UsageFeature, now = new Date()): Promise<void> {
+export function recordActivity(userId: number, feature: UsageFeature, now = new Date()): Promise<boolean> {
   const day = utcDay(now);
   if (day !== recordedDay) {
     recorded.clear();
@@ -31,18 +34,22 @@ export async function recordActivity(userId: number, feature: UsageFeature, now 
   // Day-qualified, so a failed write from before midnight can never clear
   // the next day's entry.
   const key = `${day}|${userId}|${feature}`;
-  if (recorded.has(key)) return;
-  recorded.add(key);
-  try {
-    await query(
-      `INSERT INTO user_activity_day (user_id, day, feature) VALUES ($1, $2, $3)
-       ON CONFLICT DO NOTHING`,
-      [userId, day, feature],
-    );
-  } catch (err) {
-    recorded.delete(key);
-    console.warn("[user-activity] record failed:", err instanceof Error ? err.message : err);
-  }
+  const known = recorded.get(key);
+  if (known) return known;
+  const write = query(
+    `INSERT INTO user_activity_day (user_id, day, feature) VALUES ($1, $2, $3)
+     ON CONFLICT DO NOTHING`,
+    [userId, day, feature],
+  ).then(
+    () => true,
+    (err) => {
+      if (recorded.get(key) === write) recorded.delete(key);
+      console.warn("[user-activity] record failed:", err instanceof Error ? err.message : err);
+      return false;
+    },
+  );
+  recorded.set(key, write);
+  return write;
 }
 
 /** Test hook: forget what this process has recorded. */

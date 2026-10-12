@@ -63,16 +63,24 @@ describe("usage recording (td-c8e6a3)", () => {
     expect((await rows(id)).length).toBe(3);
   });
 
-  it("a failed write never rejects and is retried on the next report", async () => {
+  it("a failed write resolves false, shares that outcome with a concurrent report, and is retried", async () => {
     resetRecordedActivity();
-    const missing = -Math.floor(Math.random() * 1e9) - 1; // no such account: the FK rejects the insert
-    await expect(recordActivity(missing, "home")).resolves.toBeUndefined();
-    const before = await query<{ n: number }>("SELECT count(*)::int AS n FROM user_activity_day WHERE user_id = $1", [missing]);
-    expect(before.rows[0].n).toBe(0);
-    // Retried (not remembered as written): a real account with the same key shape writes.
-    const id = await account("retry", 1, 0);
-    await recordActivity(id, "home");
-    expect((await rows(id)).length).toBe(1);
+    // An account id that does not exist yet: the FK rejects the insert.
+    const id = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
+    const [first, concurrent] = await Promise.all([recordActivity(id, "home"), recordActivity(id, "home")]);
+    expect([first, concurrent]).toEqual([false, false]);
+    // The same key is not remembered: once the account exists, the next report writes.
+    await query(
+      "INSERT INTO users (id, username, display_name, password_hash, role) VALUES ($1, $2, 'Usage retry', '!unset', 'user')",
+      [id, `zzusage-retry-${tag}`],
+    );
+    ids.push(id);
+    expect(await recordActivity(id, "home")).toBe(true);
+    expect(await rows(id)).toEqual([{ day: day(0), feature: "home" }]);
+    // A report while a good write is pending shares it: one row, both true.
+    const [a, b] = await Promise.all([recordActivity(id, "trips"), recordActivity(id, "trips")]);
+    expect([a, b]).toEqual([true, true]);
+    expect((await rows(id)).length).toBe(2);
   });
 
   it("reports last active, days active in 30, sections, and whether the account came back", async () => {
