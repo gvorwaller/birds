@@ -27,6 +27,7 @@ import { EbirdPacer, PaceDeferred } from "$server/ebird-rate";
 import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import {
   coordinateGaps,
+  DOWNLOADED_HOTSPOT_IDS,
   acceptedCoordinateRows,
   usable,
   coordinatesFromCache,
@@ -528,7 +529,9 @@ export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
               count(*) FILTER (WHERE e.coord_source IS DISTINCT FROM 'official')::int AS missing,
               count(*) FILTER (WHERE e.loc_id IS NULL)::int AS no_coordinates,
               (SELECT count(*)::int FROM hotspot_coord_misses) AS misses
-         FROM frequency_fetch f LEFT JOIN ebird_locations e ON e.loc_id = f.loc_code
+         FROM frequency_fetch f
+         LEFT JOIN (SELECT loc_id, coord_source FROM ebird_locations
+                     WHERE loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS})) e ON e.loc_id = f.loc_code
         WHERE f.loc_kind = 'hotspot'`,
     ),
     query<{ locCode: string; locName: string | null; reason: string; checkedAt: Date }>(

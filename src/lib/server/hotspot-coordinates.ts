@@ -35,6 +35,15 @@ export interface CoordinateRow {
 
 /** Rows per statement: 5 arrays, well under the 65,535-parameter limit. */
 export const COORDINATE_CHUNK = 2_000;
+
+/**
+ * The downloaded hotspots' ids as one array, for `e.loc_id = ANY (…)`: Postgres
+ * then probes ebird_locations' primary key for just those rows. Since the world
+ * catalog (td-79261e) that table holds every eBird hotspot (~517 k rows), and a
+ * join or EXISTS from frequency_fetch is planned as a whole-table scan
+ * (prod 2026-10-12: 131-214 ms; with this, 45-62 ms).
+ */
+export const DOWNLOADED_HOTSPOT_IDS = `ARRAY(SELECT loc_code FROM frequency_fetch WHERE loc_kind = 'hotspot')`;
 const OFFICIAL_ID = /^L[0-9]+$/;
 
 /** A row the writer can store: a valid id for its source, a name, in-range coordinates. */

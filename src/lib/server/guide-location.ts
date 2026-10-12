@@ -6,6 +6,7 @@ import { isHotspotLocId } from "$lib/loc-id";
 import { parseRegionCode } from "$lib/region-code";
 import type { GuideLocationSelection } from "$lib/guide-location";
 import { countyMeta } from "$server/county-meta";
+import { DOWNLOADED_HOTSPOT_IDS } from "$server/hotspot-coordinates";
 import { getRegion, regionLabel, subnational1Of } from "$server/regions";
 import { comparePlaceChoices } from "$lib/place-filter";
 import type { GuideChoicesLevel } from "$lib/guide-location";
@@ -251,16 +252,17 @@ async function mapCoverage(
 			   FROM frequency_fetch f
 			   JOIN ebird_locations e ON e.loc_id = f.loc_code
 			  WHERE f.loc_kind = 'hotspot' AND f.loc_code ~ '^L[0-9]+$'
+			    AND e.loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS})
 			    AND e.lat BETWEEN $1 AND $2`,
       [lat - pad, lat + pad],
     ),
     query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM frequency_fetch f
-			  WHERE f.loc_kind = 'hotspot'
-			    AND NOT EXISTS (
-			      SELECT 1 FROM ebird_locations e
-			       WHERE e.loc_id = f.loc_code
-			         AND e.lat <> 'NaN'::float8 AND e.lng <> 'NaN'::float8)`,
+      // Downloaded hotspots minus those with usable coordinates (loc_code is
+      // unique, so the difference is exact).
+      `SELECT ((SELECT count(*) FROM frequency_fetch WHERE loc_kind = 'hotspot')
+			        - (SELECT count(*) FROM ebird_locations e
+			            WHERE e.loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS})
+			              AND e.lat <> 'NaN'::float8 AND e.lng <> 'NaN'::float8))::int AS n`,
     ),
   ]);
   const inside = inBand.rows.filter(

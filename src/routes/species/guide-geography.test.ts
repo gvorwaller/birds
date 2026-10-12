@@ -374,6 +374,29 @@ describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () 
       expect(resolved?.locCodes.every((c) => /^L\d+$/.test(c))).toBe(true);
     });
 
+    it("counts unevaluated hotspots exactly as the original NOT EXISTS form (td-79261e)", async () => {
+      const original = async () =>
+        (
+          await query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM frequency_fetch f
+              WHERE f.loc_kind = 'hotspot'
+                AND NOT EXISTS (SELECT 1 FROM ebird_locations e
+                                 WHERE e.loc_id = f.loc_code
+                                   AND e.lat <> 'NaN'::float8 AND e.lng <> 'NaN'::float8)`,
+          )
+        ).rows[0].n;
+      // The test database is shared: compare only when no other file changed
+      // the count during the request.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const before = await original();
+        const data = await run(q(CENTER.lat, CENTER.lng, 200));
+        if ((await original()) !== before) continue;
+        expect(data.map.coordinateMissing).toBe(before);
+        return;
+      }
+      throw new Error("the shared test database kept changing; no stable comparison");
+    });
+
     it("measures great-circle distance in both directions across 180 degrees", async () => {
       const west = await resolveGuideLocation({ kind: "map", place: "P", lat: 10, lng: -179.9, dist: 100 });
       expect(west?.locCodes).toEqual(expect.arrayContaining([M_IN, M_NEAR]));

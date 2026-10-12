@@ -24,6 +24,7 @@ import { parentOf, parseRegionCode } from "$lib/region-code";
 import { HUB_FIND_MIN, HUB_PAGE_SIZE, type HubDiscoveryState, type HubTarget } from "$lib/hub-discovery";
 import { lastCompleteYear } from "$server/barchart";
 import { countyMeta } from "$server/county-meta";
+import { DOWNLOADED_HOTSPOT_IDS } from "$server/hotspot-coordinates";
 import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import { allReferenceRegions } from "$server/regions";
 
@@ -289,8 +290,7 @@ async function loadEvidence() {
     query<{ loc_id: string; lat: number; lng: number }>(
       `SELECT e.loc_id, e.lat, e.lng
          FROM ebird_locations e
-        WHERE EXISTS (SELECT 1 FROM frequency_fetch f
-                       WHERE f.loc_code = e.loc_id AND f.loc_kind = 'hotspot')`,
+        WHERE e.loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS})`,
     ),
     allReferenceRegions(),
   ]);
