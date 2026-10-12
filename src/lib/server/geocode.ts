@@ -21,11 +21,31 @@ interface GoogleGeocodeResponse {
     geometry: { location: { lat: number; lng: number }; viewport?: unknown };
     formatted_address?: string;
     place_id?: string;
+    types?: string[];
   }[];
+}
+
+type GeocodeResult = NonNullable<GoogleGeocodeResponse["results"]>[number];
+
+const SKIPPED_REVERSE_TYPES = new Set(["plus_code", "postal_code", "postal_town"]);
+
+/**
+ * The result a reverse lookup names a point by (td-a54f8c). Where Google has
+ * no address — open water, wilderness — it lists a plus_code result first
+ * ("9FQHVGX2+X2"), and postal_code / postal_town results lead with a postcode
+ * ("8984 Vega, Norway"); all are skipped, so the label is the nearest address,
+ * road, locality, municipality or region. Nothing else (open ocean) → null,
+ * and the caller labels the point by its coordinates.
+ */
+function reverseLabelResult(results: readonly GeocodeResult[]): GeocodeResult | null {
+  return (
+    results.find((r) => !(r.types ?? []).some((t) => SKIPPED_REVERSE_TYPES.has(t))) ?? null
+  );
 }
 
 async function geocodeCall(
   params: Record<string, string>,
+  pick: (results: readonly GeocodeResult[]) => GeocodeResult | null = (results) => results[0],
 ): Promise<GeoResult | null> {
   if (!env.GOOGLE_GEOCODING_KEY) return null;
   const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
@@ -43,7 +63,8 @@ async function geocodeCall(
   if (!res.ok) return null;
   const data = (await res.json()) as GoogleGeocodeResponse;
   if (data.status !== "OK" || !data.results?.length) return null;
-  const top = data.results[0];
+  const top = pick(data.results);
+  if (!top) return null;
   return {
     lat: top.geometry.location.lat,
     lng: top.geometry.location.lng,
@@ -114,7 +135,7 @@ export async function reverseGeocodeLocation(
   lat: number,
   lng: number,
 ): Promise<GeoResult | null> {
-  return geocodeCall({ latlng: `${lat},${lng}` });
+  return geocodeCall({ latlng: `${lat},${lng}` }, reverseLabelResult);
 }
 
 export async function reverseGeocode(

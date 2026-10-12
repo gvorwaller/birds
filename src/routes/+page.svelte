@@ -15,6 +15,7 @@
   import { afterNavigate, goto } from "$app/navigation";
   import { enhance } from "$app/forms";
   import { formatDistance, type DistanceUnit } from "$lib/geo";
+  import { quietAreaMessage, reportDay } from "$lib/home-quiet-area";
   import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
   import {
     buildPlaceIndex,
@@ -576,10 +577,7 @@
   });
   /** "eBird hotspot · last report Sep 9, 2026 · 30 species · seasonal data". */
   function hotspotSummary(h: NonNullable<typeof data.hotspots>[number]): string {
-    const day = h.latestObsDt?.slice(0, 10);
-    const last = day && /^\d{4}-\d{2}-\d{2}$/.test(day)
-      ? new Date(`${day}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
-      : null;
+    const last = reportDay(h.latestObsDt);
     return [
       "eBird hotspot",
       last ? `last report ${last}` : "no reports yet",
@@ -589,6 +587,10 @@
       .filter(Boolean)
       .join(" · ");
   }
+  // An area with no reports at all in range (td-a54f8c).
+  let quietAreaText = $derived(
+    quietAreaMessage(formatDistance(data.dist, distanceUnit), windowPhrase(data.back), data.hotspots ?? []),
+  );
   let notableShownCodes = $derived(
     new Set(notableShown.map((n) => n.speciesCode)),
   );
@@ -1281,6 +1283,8 @@
             No {listNoun(2)} match “{q}”.
           {/if}
         </p>
+      {:else if !searching && listCounts.all === 0}
+        <p class="muted" id="home-quiet-area">{quietAreaText}</p>
       {:else if list === "seen" && listAll.length === 0 && data.lifeListSyncedAt && data.seenCount > 0}
         <p class="muted">
           No species on your life list were reported here in this window.
