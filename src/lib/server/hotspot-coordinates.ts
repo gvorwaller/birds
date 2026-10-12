@@ -56,10 +56,11 @@ function usable(row: CoordinateRow, source: CoordinateSource): boolean {
 
 // A newer official answer always records its request time (CODEX1 review
 // P2-2: an identical T30 answer left at T10 would let a delayed, different
-// T20 answer win). The rest of the row moves only when the values changed:
-// a daily re-fetch of an unchanged 4,000-hotspot list advances one
-// unindexed timestamp per row (HOT) and leaves updated_at alone. `n` counts
-// inserted or changed rows, read against the pre-statement snapshot (`old`).
+// T20 answer win). Everything else — including last_seen_at, which the
+// google-place partial index covers — moves only when the values changed, so
+// an unchanged refresh (the world catalog's 30-day re-fetch) touches one
+// unindexed column and can be a HOT update. `n` counts inserted or changed
+// rows, read against the pre-statement snapshot (`old`).
 const OFFICIAL_SQL = `
   WITH old AS MATERIALIZED (
     SELECT loc_id, loc_name, lat, lng, coord_source
@@ -72,7 +73,10 @@ const OFFICIAL_SQL = `
     ON CONFLICT (loc_id) DO UPDATE
        SET loc_name = EXCLUDED.loc_name, lat = EXCLUDED.lat, lng = EXCLUDED.lng,
            coord_source = 'official', coord_fetched_at = EXCLUDED.coord_fetched_at,
-           last_seen_at = NOW(),
+           last_seen_at = CASE
+             WHEN (e.loc_name, e.lat, e.lng, e.coord_source)
+                  IS DISTINCT FROM (EXCLUDED.loc_name, EXCLUDED.lat, EXCLUDED.lng, 'official')
+             THEN NOW() ELSE e.last_seen_at END,
            updated_at = CASE
              WHEN (e.loc_name, e.lat, e.lng, e.coord_source)
                   IS DISTINCT FROM (EXCLUDED.loc_name, EXCLUDED.lat, EXCLUDED.lng, 'official')
@@ -108,6 +112,20 @@ const OBSERVATION_SQL = `
  * must not fail use rememberOfficialHotspots). Returns rows inserted or
  * changed (a newer identical official answer only records its time).
  */
+/** The rows the writer would store: usable, one per id (first wins). */
+export function acceptedCoordinateRows(
+  rows: readonly CoordinateRow[],
+  source: CoordinateSource,
+): CoordinateRow[] {
+  const byId = new Map<string, CoordinateRow>();
+  for (const row of rows) {
+    if (!usable(row, source)) continue;
+    const id = row.locId!.trim();
+    if (!byId.has(id)) byId.set(id, { ...row, locId: id });
+  }
+  return [...byId.values()];
+}
+
 export async function upsertLocationCoordinates(
   rows: readonly CoordinateRow[],
   source: CoordinateSource,
@@ -115,13 +133,7 @@ export async function upsertLocationCoordinates(
 ): Promise<number> {
   if (source === "official" && !startedAt && rows.some((r) => !r.fetchedAt))
     throw new Error("official coordinates need the request start time");
-  const byId = new Map<string, CoordinateRow>();
-  for (const row of rows) {
-    if (!usable(row, source)) continue;
-    const id = row.locId!.trim();
-    if (!byId.has(id)) byId.set(id, row);
-  }
-  const unique = [...byId.entries()];
+  const unique = acceptedCoordinateRows(rows, source).map((r) => [r.locId!, r] as const);
   let written = 0;
   for (let i = 0; i < unique.length; i += COORDINATE_CHUNK) {
     const chunk = unique.slice(i, i + COORDINATE_CHUNK);

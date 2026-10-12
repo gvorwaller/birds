@@ -210,6 +210,8 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(await official(loc, 2, "Official", t(50))).toBe(0);
       const after = await row(loc);
       expect(after.updated_at.toISOString()).toBe(before.updated_at.toISOString());
+      // last_seen_at is in the google-place partial index: an unchanged refresh must not move it.
+      expect(after.last_seen_at.toISOString()).toBe(before.last_seen_at.toISOString());
       expect(after.coord_fetched_at?.toISOString()).toBe(t(50).toISOString());
     });
 
@@ -460,6 +462,86 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
         }),
       ).rejects.toThrow();
       expect(await catalogRow(C("E4"))).toBeUndefined();
+    });
+
+    it("a plain 5xx on a country is an outage (retried in a day), never a split", async () => {
+      const result = await repairHotspotCoordinates("zz-key", {
+        onlyLocCodes: [],
+        catalogUnits: async () => [{ code: C("T503"), level: "country" }],
+        hasSubregions: async () => true,
+        fetchCatalog: async () => {
+          throw new EbirdError("eBird API error 503", 503);
+        },
+      });
+      expect(result).toMatchObject({ outcome: "complete", catalogSplit: 0, catalogErrors: 1 });
+      expect(await catalogRow(C("T503"))).toMatchObject({ status: "error", error: "eBird API error 503" });
+    });
+
+    it("rows eBird lists that cannot be stored are counted, and the unit is retried instead of 'ok'", async () => {
+      const good = newId();
+      const result = await repairHotspotCoordinates("zz-key", {
+        onlyLocCodes: [],
+        catalogUnits: async () => [{ code: C("BAD"), level: "subnational1" }],
+        fetchCatalog: async () => ({
+          data: [
+            { locId: good, locName: "Good", lat: 1, lng: 1 },
+            { locId: "zznotahotspot", locName: "Bad id", lat: 1, lng: 1 },
+            { locId: newId(), locName: "Bad latitude", lat: 95, lng: 1 },
+          ],
+          startedAt: new Date(),
+        }),
+      });
+      expect(result).toMatchObject({ catalogUnits: 1, catalogHotspots: 1, catalogErrors: 1 });
+      expect(await row(good)).toMatchObject({ coord_source: "official" });
+      expect(await catalogRow(C("BAD"))).toMatchObject({
+        status: "error",
+        hotspots: 1,
+        error: "2 of 3 listed hotspots had an unusable id, name or coordinates.",
+      });
+    });
+
+    it("a deferred catalog never holds back the gap repair: gaps are filled first", async () => {
+      const gap = newId();
+      await downloaded(gap);
+      const result = await repairHotspotCoordinates("zz-key", {
+        onlyLocCodes: [gap],
+        fetchRegion: async () => listResult([{ locId: gap, locName: "Gap first", lat: 41, lng: 42 }]),
+        catalogUnits: async () => [{ code: C("DEF"), level: "country" }],
+        fetchCatalog: async () => {
+          throw new EbirdError("eBird API rate limit hit", 429);
+        },
+      });
+      expect(result).toMatchObject({ outcome: "deferred", regionsFetched: 1, gapsAfter: 0 });
+      expect(await row(gap)).toMatchObject({ lat: 41, coord_source: "official" });
+    });
+
+    it("a recent split stands in for its country by its states; a split older than 30 days is tried whole again", async () => {
+      const country = (
+        await query<{ code: string }>(
+          `SELECT c.code FROM regions c
+            WHERE c.level = 'country'
+              AND EXISTS (SELECT 1 FROM regions s WHERE s.parent_code = c.code AND s.level = 'subnational1')
+              AND NOT EXISTS (SELECT 1 FROM hotspot_catalog h WHERE h.region_code = c.code)
+            ORDER BY c.code LIMIT 1`,
+        )
+      ).rows[0].code;
+      try {
+        await query(
+          `INSERT INTO hotspot_catalog (region_code, status, hotspots, fetched_at) VALUES ($1, 'split', 0, NOW())`,
+          [country],
+        );
+        let codes = (await catalogUnitsDue()).map((u) => u.code);
+        expect(codes).not.toContain(country);
+        expect(codes.some((c) => c.startsWith(`${country}-`))).toBe(true);
+        await query(`UPDATE hotspot_catalog SET fetched_at = NOW() - interval '31 days' WHERE region_code = $1`, [
+          country,
+        ]);
+        codes = (await catalogUnitsDue()).map((u) => u.code);
+        expect(codes).toContain(country);
+        expect(codes.some((c) => c.startsWith(`${country}-`))).toBe(false);
+      } finally {
+        await query("DELETE FROM hotspot_catalog WHERE region_code = $1 AND status = 'split'", [country]);
+      }
     });
 
     it("a lost claim stops the catalog and records nothing", async () => {

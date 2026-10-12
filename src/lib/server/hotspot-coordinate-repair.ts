@@ -27,6 +27,7 @@ import { EbirdPacer, PaceDeferred } from "$server/ebird-rate";
 import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import {
   coordinateGaps,
+  acceptedCoordinateRows,
   coordinatesFromCache,
   needsOfficialCoordinates,
   recordCoordinateMiss,
@@ -138,19 +139,20 @@ export const CATALOG_ERROR_RETRY_HOURS = 24;
 const CATALOG_OUTAGE_RUN = 3;
 
 /**
- * Every catalog unit: each country in the regions table, except a country
- * marked 'split', whose first-level regions stand in for it.
+ * Every catalog unit ($1 = CATALOG_REFRESH_DAYS): each country in the
+ * regions table, except a country split in the last $1 days, whose
+ * first-level regions stand in for it. An older split is tried whole again.
  */
 const CATALOG_UNITS = `
-  WITH units AS (
+  WITH split AS (
+    SELECT region_code FROM hotspot_catalog
+     WHERE status = 'split' AND fetched_at > NOW() - make_interval(days => $1)
+  ), units AS (
     SELECT r.code, r.level FROM regions r
-     WHERE r.level = 'country'
-       AND NOT EXISTS (SELECT 1 FROM hotspot_catalog c
-                        WHERE c.region_code = r.code AND c.status = 'split')
+     WHERE r.level = 'country' AND r.code NOT IN (SELECT region_code FROM split)
     UNION ALL
     SELECT s.code, s.level FROM regions s
-      JOIN hotspot_catalog c ON c.region_code = s.parent_code AND c.status = 'split'
-     WHERE s.level = 'subnational1'
+     WHERE s.level = 'subnational1' AND s.parent_code IN (SELECT region_code FROM split)
   )`;
 const CATALOG_DUE = `
   NOT EXISTS (SELECT 1 FROM hotspot_catalog c
@@ -212,12 +214,13 @@ async function recordCatalogUnit(
 }
 
 /**
- * eBird could not serve a whole country's list in one response (a server
- * error, its deadline, or a body that was not whole JSON) — its first-level
- * regions are fetched instead.
+ * Evidence that eBird could not serve a whole country's list in one response:
+ * its deadline (504 — ours or eBird's gateway) or a body that was not whole
+ * JSON. A plain 5xx is an outage, not size (CODEX1 review): it is an error,
+ * retried after a day. A split is re-tested whole after CATALOG_REFRESH_DAYS.
  */
 const tooBigForOneList = (err: unknown) =>
-  (err instanceof EbirdError && (err.status ?? 0) >= 500) || err instanceof SyntaxError;
+  (err instanceof EbirdError && err.status === 504) || err instanceof SyntaxError;
 
 export interface RepairProgress {
   stage: "catalog" | "cache" | "regions" | "info";
@@ -265,21 +268,22 @@ export interface RepairOptions {
 /** eBird or its payload failed — not the database, not our code. */
 const isUpstream = (err: unknown) => err instanceof EbirdError || err instanceof UpstreamSchemaError;
 
+type Stage = "complete" | "stopped" | "deferred" | "upstream";
+type Stop = { stop: Exclude<Stage, "complete">; error?: string };
+
 /**
- * One bounded repair run. A 401/403 throws (the job fails, the next daily
- * check re-selects the credential); other eBird trouble ends the run as
- * 'upstream' with what it already stored kept. A failed database write
- * throws: the run must not report coordinates it did not store.
+ * One bounded repair run: the downloaded-hotspot gaps FIRST, then the world
+ * catalog (CODEX1 review: a deferred or failing catalog must never hold back
+ * the gap repair). A 401/403 throws (the job fails, the next daily check
+ * re-selects the credential); other eBird trouble ends the run as 'upstream'
+ * with what it already stored kept. A failed database write throws: the run
+ * must not report coordinates it did not store.
  */
 export async function repairHotspotCoordinates(
   apiKey: string,
   opts: RepairOptions = {},
 ): Promise<RepairResult> {
   const onProgress = opts.onProgress ?? (async () => false);
-  const fetchRegion =
-    opts.fetchRegion ??
-    ((key: string, region: string) => hotspotsInRegion(key, region, { remember: false }));
-  const infoCap = opts.infoCap ?? REPAIR_INFO_CAP;
   const gaps = () => coordinateGaps(opts.onlyLocCodes);
   const initial = await gaps();
   const result: RepairResult = {
@@ -302,8 +306,98 @@ export async function repairHotspotCoordinates(
     return result;
   };
 
-  // 0. The world catalog: every due unit's full hotspot list. A second pass
-  //    picks up the first-level regions of a country split in the first.
+  const gapStop = initial.length > 0 ? await repairGaps(apiKey, opts, onProgress, gaps, result) : null;
+  if (gapStop) return finish(gapStop.stop, gapStop.error);
+  const catalogStop = await loadCatalog(apiKey, opts, onProgress, result);
+  if (catalogStop) return finish(catalogStop.stop, catalogStop.error);
+  // Every gap within the info cap is stored or a miss; what is left is the cap's.
+  const left = (await gaps()).length;
+  return finish(left > 0 ? "capped" : "complete");
+}
+
+/** Stages 1–3: downloaded hotspots without official coordinates. */
+async function repairGaps(
+  apiKey: string,
+  opts: RepairOptions,
+  onProgress: (p: RepairProgress) => Promise<boolean>,
+  gaps: () => ReturnType<typeof coordinateGaps>,
+  result: RepairResult,
+): Promise<Stop | null> {
+  const fetchRegion =
+    opts.fetchRegion ??
+    ((key: string, region: string) => hotspotsInRegion(key, region, { remember: false }));
+  const infoCap = opts.infoCap ?? REPAIR_INFO_CAP;
+
+  // 1. Cached eBird responses — no eBird calls.
+  if (await onProgress({ stage: "cache", done: 0, total: 1 })) return { stop: "stopped" };
+  result.fromCache = await coordinatesFromCache((await gaps()).map((g) => g.locCode));
+
+  // 2. One hotspot list per region that still has gaps.
+  const afterCache = await gaps();
+  const regions = [
+    ...new Set(afterCache.map((g) => g.regionCode).filter((r): r is string => !!r)),
+  ].sort();
+  for (let i = 0; i < regions.length; i++) {
+    if (await onProgress({ stage: "regions", done: i, total: regions.length })) return { stop: "stopped" };
+    let list: Awaited<ReturnType<typeof fetchRegion>>;
+    try {
+      await coordinatePacer.acquire(apiKey, undefined, PACE);
+      list = await fetchRegion(apiKey, regions[i]);
+    } catch (err) {
+      if (isStaleClaim(err)) throw err;
+      if (err instanceof PaceDeferred) return { stop: "deferred" };
+      if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
+      // A region eBird no longer lists: its hotspots fall through to info.
+      if (err instanceof EbirdError && err.status === 404) continue;
+      if (isUpstream(err)) return { stop: "upstream", error: err instanceof Error ? err.message : String(err) };
+      throw err;
+    }
+    // A failed refresh served from an old cached copy (CODEX1 review P2-4):
+    // that copy was already read in stage 1; the failure decides the run.
+    if (list.stale) {
+      const status = list.refreshErrorStatus;
+      if (status === 401 || status === 403)
+        throw new EbirdError("eBird API key is missing or invalid — check Settings.", status);
+      if (status === 429) return { stop: "deferred" };
+      if (status === 404) continue;
+      return {
+        stop: "upstream",
+        error: `eBird hotspot list for ${regions[i]} could not be refreshed (${status ?? "error"}).`,
+      };
+    }
+    await upsertLocationCoordinates(list.data, "official", list.live?.startedAt ?? list.fetchedAt);
+    result.regionsFetched++;
+  }
+
+  // 3. Hotspot info for whatever is still missing (renamed, merged, hidden).
+  const remaining = (await gaps()).slice(0, infoCap);
+  for (let i = 0; i < remaining.length; i++) {
+    if (await onProgress({ stage: "info", done: i, total: remaining.length })) return { stop: "stopped" };
+    try {
+      const outcome = await lookupOfficialCoordinates(remaining[i].locCode, apiKey, opts.fetchInfo);
+      result.infoLookups++;
+      if (outcome !== "stored") result.misses++;
+    } catch (err) {
+      if (isStaleClaim(err)) throw err;
+      if (err instanceof PaceDeferred) return { stop: "deferred" };
+      if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
+      if (isUpstream(err)) return { stop: "upstream", error: err instanceof Error ? err.message : String(err) };
+      throw err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Stage 4: the world catalog — every due unit's full hotspot list. A second
+ * pass picks up the first-level regions of a country split in the first.
+ */
+async function loadCatalog(
+  apiKey: string,
+  opts: RepairOptions,
+  onProgress: (p: RepairProgress) => Promise<boolean>,
+  result: RepairResult,
+): Promise<Stop | null> {
   const listUnits = opts.catalogUnits ?? catalogUnitsDue;
   const fetchCatalog = opts.fetchCatalog ?? hotspotListUncached;
   const splittable = opts.hasSubregions ?? hasSubregions;
@@ -313,106 +407,61 @@ export async function repairHotspotCoordinates(
     const splitBefore = result.catalogSplit;
     for (let i = 0; i < units.length; i++) {
       const unit = units[i];
-      if (await onProgress({ stage: "catalog", done: i, total: units.length })) return finish("stopped");
+      if (await onProgress({ stage: "catalog", done: i, total: units.length })) return { stop: "stopped" };
       let list: { data: CoordinateRow[]; startedAt: Date };
       try {
         await coordinatePacer.acquire(apiKey, undefined, PACE);
         list = await fetchCatalog(apiKey, unit.code);
       } catch (err) {
         if (isStaleClaim(err)) throw err;
-        if (err instanceof PaceDeferred) return finish("deferred");
+        if (err instanceof PaceDeferred) return { stop: "deferred" };
         if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
-        if (err instanceof EbirdError && err.status === 429) return finish("deferred");
+        if (err instanceof EbirdError && err.status === 429) return { stop: "deferred" };
         // eBird has no list for this region: nothing to store until the refresh.
         if (err instanceof EbirdError && err.status === 404) {
           await recordCatalogUnit(unit.code, "ok", 0, new Date(), null);
           continue;
         }
+        const message = err instanceof Error ? err.message : String(err);
         if (unit.level === "country" && tooBigForOneList(err) && (await splittable(unit.code))) {
           await recordCatalogUnit(unit.code, "split", 0, new Date(), null);
           result.catalogSplit++;
+          // A provider that stalls every request looks like a run of splits.
+          if (++failuresInARow >= CATALOG_OUTAGE_RUN) return { stop: "upstream", error: message };
           continue;
         }
         if (isUpstream(err) || err instanceof SyntaxError) {
-          const message = err instanceof Error ? err.message : String(err);
           await recordCatalogUnit(unit.code, "error", 0, new Date(), message);
           result.catalogErrors++;
-          if (++failuresInARow >= CATALOG_OUTAGE_RUN) return finish("upstream", message);
+          if (++failuresInARow >= CATALOG_OUTAGE_RUN) return { stop: "upstream", error: message };
           continue;
         }
         throw err;
       }
       failuresInARow = 0;
-      await upsertLocationCoordinates(list.data, "official", list.startedAt);
-      await recordCatalogUnit(unit.code, "ok", list.data.length, list.startedAt, null);
+      const accepted = acceptedCoordinateRows(list.data, "official");
+      await upsertLocationCoordinates(accepted, "official", list.startedAt);
+      const rejected = list.data.length - accepted.length;
+      // Rows eBird listed that cannot be stored (CODEX1 review): kept visible
+      // and retried after a day instead of a clean 30-day 'ok'.
+      if (rejected > 0) {
+        await recordCatalogUnit(
+          unit.code,
+          "error",
+          accepted.length,
+          list.startedAt,
+          `${rejected} of ${list.data.length} listed hotspots had an unusable id, name or coordinates.`,
+        );
+        result.catalogErrors++;
+      } else {
+        await recordCatalogUnit(unit.code, "ok", accepted.length, list.startedAt, null);
+      }
       result.catalogUnits++;
-      result.catalogHotspots += list.data.length;
+      result.catalogHotspots += accepted.length;
     }
     if (result.catalogSplit === splitBefore) break;
   }
-
-  const afterCatalog = await gaps();
-  if (afterCatalog.length === 0) return finish("complete");
-
-  // 1. Cached eBird responses — no eBird calls.
-  if (await onProgress({ stage: "cache", done: 0, total: 1 })) return finish("stopped");
-  result.fromCache = await coordinatesFromCache(afterCatalog.map((g) => g.locCode));
-
-  // 2. One hotspot list per region that still has gaps.
-  const afterCache = await gaps();
-  const regions = [
-    ...new Set(afterCache.map((g) => g.regionCode).filter((r): r is string => !!r)),
-  ].sort();
-  for (let i = 0; i < regions.length; i++) {
-    if (await onProgress({ stage: "regions", done: i, total: regions.length }))
-      return finish("stopped");
-    let list: Awaited<ReturnType<typeof fetchRegion>>;
-    try {
-      await coordinatePacer.acquire(apiKey, undefined, PACE);
-      list = await fetchRegion(apiKey, regions[i]);
-    } catch (err) {
-      if (isStaleClaim(err)) throw err;
-      if (err instanceof PaceDeferred) return finish("deferred");
-      if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
-      // A region eBird no longer lists: its hotspots fall through to info.
-      if (err instanceof EbirdError && err.status === 404) continue;
-      if (isUpstream(err)) return finish("upstream", err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-    // A failed refresh served from an old cached copy (CODEX1 review P2-4):
-    // that copy was already read in stage 1; the failure decides the run.
-    if (list.stale) {
-      const status = list.refreshErrorStatus;
-      if (status === 401 || status === 403)
-        throw new EbirdError("eBird API key is missing or invalid — check Settings.", status);
-      if (status === 429) return finish("deferred");
-      if (status === 404) continue;
-      return finish("upstream", `eBird hotspot list for ${regions[i]} could not be refreshed (${status ?? "error"}).`);
-    }
-    await upsertLocationCoordinates(list.data, "official", list.live?.startedAt ?? list.fetchedAt);
-    result.regionsFetched++;
-  }
-
-  // 3. Hotspot info for whatever is still missing (renamed, merged, hidden).
-  const remaining = (await gaps()).slice(0, infoCap);
-  for (let i = 0; i < remaining.length; i++) {
-    if (await onProgress({ stage: "info", done: i, total: remaining.length }))
-      return finish("stopped");
-    try {
-      const outcome = await lookupOfficialCoordinates(remaining[i].locCode, apiKey, opts.fetchInfo);
-      result.infoLookups++;
-      if (outcome !== "stored") result.misses++;
-    } catch (err) {
-      if (isStaleClaim(err)) throw err;
-      if (err instanceof PaceDeferred) return finish("deferred");
-      if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
-      if (isUpstream(err)) return finish("upstream", err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-  }
-  // Every gap within the cap is now stored or a miss; what is left is the cap's.
-  const left = (await gaps()).length;
-  return finish(left > 0 ? "capped" : "complete");
+  return null;
 }
 
 /**
@@ -502,10 +551,11 @@ export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
        SELECT count(*)::int AS units,
               count(*) FILTER (WHERE c.status = 'ok')::int AS loaded,
               count(*) FILTER (WHERE c.status = 'error')::int AS errors,
-              (SELECT count(*)::int FROM hotspot_catalog WHERE status = 'split') AS split,
+              (SELECT count(*)::int FROM split) AS split,
               coalesce(sum(c.hotspots) FILTER (WHERE c.status = 'ok'), 0)::int AS hotspots,
               min(c.fetched_at) FILTER (WHERE c.status = 'ok') AS oldest
          FROM units u LEFT JOIN hotspot_catalog c ON c.region_code = u.code`,
+      [CATALOG_REFRESH_DAYS],
     ),
     query<{ n: number }>(`SELECT count(*)::int AS n FROM ebird_locations WHERE coord_source = 'official'`),
   ]);

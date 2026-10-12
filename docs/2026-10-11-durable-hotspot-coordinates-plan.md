@@ -192,8 +192,8 @@ running a load.
 fetched 14 region lists. The `regions` table already holds every eBird country (252) and first-level region (3,369);
 the owner: all hotspots in the world should therefore be loaded by design.
 
-- **Stage 0 of every repair run: the catalog.** Units = every country in `regions`; a country eBird cannot serve in
-  one response (5xx, its 120 s deadline, or a body that is not whole JSON) and that has first-level regions is marked
+- **The catalog runs after the gap repair in every run** (CODEX1 review: originally stage 0). Units = every country in `regions`; a country eBird cannot serve in
+  one response (a 504 — our 120 s deadline or eBird's gateway — or a body that is not whole JSON; a plain 5xx is an outage) and that has first-level regions is marked
   `split` and its regions become units (second pass in the same run). 56 countries have no first-level regions and
   are always fetched whole. Each unit's full list is stored as official coordinates (the throwing writer); the unit's
   outcome goes to **`hotspot_catalog`** (0085: region_code, status ok/split/error, hotspots, fetched_at, error).
@@ -210,4 +210,12 @@ the owner: all hotspots in the world should therefore be loaded by design.
 - **Watch after deploy:** `hub-discovery` loads coordinates for downloaded hotspots with
   `ebird_locations … WHERE EXISTS (frequency_fetch …)` and `mapCoverage` joins the two — confirm with EXPLAIN on prod
   that both still drive from `frequency_fetch` (7.4 k rows) by primary key once `ebird_locations` is large.
+
+### CODEX1 review of 3c82e72 (td-79261e): dispositions
+| Finding | Disposition |
+|---|---|
+| P1 Catalog ran before the gap repair, so a deferral/outage/stall delayed it | Fixed — gaps (cache, region lists, info) first, then the catalog; test: catalog 429 with a known gap → gap filled, outcome deferred |
+| P2 Any 5xx made a permanent split | Fixed — only a 504 or a truncated body is size evidence; a plain 5xx is an error retried in a day; a split is re-tested whole after 30 days; splits count toward the three-in-a-row outage guard; tests for both |
+| P2 Identical refreshes moved last_seen_at, which the google-place partial index covers | Fixed — last_seen_at moves only when values change; an unchanged refresh writes only the unindexed coord_fetched_at |
+| P2 Unusable rows were silently skipped and the unit marked ok with the response count | Fixed — accepted rows counted; any rejected row records the unit as an error (retried in a day) with "N of M listed hotspots had an unusable …" |
 
