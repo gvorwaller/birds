@@ -6,8 +6,10 @@
  *    run at the end of each hotspot load that has no official coordinate
  *    (map pick, refresh, retry: their jobs carry none), and by the repair.
  *  - repairHotspotCoordinates: the bounded `repair_hotspot_coords` job body —
- *    cached eBird responses first (no calls), then one hotspot list per
- *    region, then hotspot info for what is left (capped).
+ *    the WORLD CATALOG first (td-79261e: every region in the regions table,
+ *    each country's full hotspot list, refreshed every 30 days), then for any
+ *    downloaded hotspot still without official coordinates: cached eBird
+ *    responses (no calls), one hotspot list per region, hotspot info (capped).
  *
  * eBird calls go through a dedicated pacer that keeps the hourly reserve for
  * the rest of the app; a deferral ends the run (the next daily check resumes).
@@ -17,6 +19,7 @@ import {
   EbirdError,
   ebirdFetchOrNull,
   getEbirdApiKey,
+  hotspotListUncached,
   hotspotsInRegion,
   type CachedResult,
 } from "$server/ebird";
@@ -30,7 +33,7 @@ import {
   upsertLocationCoordinates,
   type CoordinateRow,
 } from "$server/hotspot-coordinates";
-import { isStaleClaim } from "$server/job-claim";
+import { claimFencedQuery, isStaleClaim } from "$server/job-claim";
 import {
   reportSchemaDrift,
   UpstreamSchemaError,
@@ -123,8 +126,101 @@ export async function ensureLoadedHotspotCoordinates(
   }
 }
 
+// ---------------------------------------------------------------------------
+// World hotspot catalog (td-79261e)
+// ---------------------------------------------------------------------------
+
+/** An 'ok' catalog unit is re-fetched after this many days… */
+export const CATALOG_REFRESH_DAYS = 30;
+/** …a failed one after this many hours. */
+export const CATALOG_ERROR_RETRY_HOURS = 24;
+/** This many failures in a row means eBird is down: end the run. */
+const CATALOG_OUTAGE_RUN = 3;
+
+/**
+ * Every catalog unit: each country in the regions table, except a country
+ * marked 'split', whose first-level regions stand in for it.
+ */
+const CATALOG_UNITS = `
+  WITH units AS (
+    SELECT r.code, r.level FROM regions r
+     WHERE r.level = 'country'
+       AND NOT EXISTS (SELECT 1 FROM hotspot_catalog c
+                        WHERE c.region_code = r.code AND c.status = 'split')
+    UNION ALL
+    SELECT s.code, s.level FROM regions s
+      JOIN hotspot_catalog c ON c.region_code = s.parent_code AND c.status = 'split'
+     WHERE s.level = 'subnational1'
+  )`;
+const CATALOG_DUE = `
+  NOT EXISTS (SELECT 1 FROM hotspot_catalog c
+               WHERE c.region_code = u.code
+                 AND ((c.status = 'ok' AND c.fetched_at > NOW() - make_interval(days => $1))
+                   OR (c.status = 'error' AND c.fetched_at > NOW() - make_interval(hours => $2))))`;
+
+export interface CatalogUnit {
+  code: string;
+  level: "country" | "subnational1";
+}
+
+/** Catalog units due a fetch: never fetched, stale, or failed a day ago. */
+export async function catalogUnitsDue(): Promise<CatalogUnit[]> {
+  return (
+    await query<CatalogUnit>(
+      `${CATALOG_UNITS}
+       SELECT u.code, u.level FROM units u WHERE ${CATALOG_DUE}
+        ORDER BY (SELECT c.fetched_at FROM hotspot_catalog c WHERE c.region_code = u.code) NULLS FIRST, u.code`,
+      [CATALOG_REFRESH_DAYS, CATALOG_ERROR_RETRY_HOURS],
+    )
+  ).rows;
+}
+
+/** Is any catalog unit due? (The repair scheduler's cheap check.) */
+export async function catalogDue(): Promise<boolean> {
+  const r = await query<{ due: boolean }>(
+    `${CATALOG_UNITS} SELECT EXISTS (SELECT 1 FROM units u WHERE ${CATALOG_DUE}) AS due`,
+    [CATALOG_REFRESH_DAYS, CATALOG_ERROR_RETRY_HOURS],
+  );
+  return r.rows[0]?.due ?? false;
+}
+
+async function hasSubregions(country: string): Promise<boolean> {
+  const r = await query<{ any: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM regions WHERE parent_code = $1 AND level = 'subnational1') AS any`,
+    [country],
+  );
+  return r.rows[0]?.any ?? false;
+}
+
+/** One catalog unit's outcome; fenced under the repair's claim. */
+async function recordCatalogUnit(
+  code: string,
+  status: "ok" | "split" | "error",
+  hotspots: number,
+  at: Date,
+  error: string | null,
+): Promise<void> {
+  await claimFencedQuery(
+    `INSERT INTO hotspot_catalog (region_code, status, hotspots, fetched_at, error)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (region_code) DO UPDATE
+        SET status = EXCLUDED.status, hotspots = EXCLUDED.hotspots,
+            fetched_at = EXCLUDED.fetched_at, error = EXCLUDED.error`,
+    [code, status, hotspots, at, error ? error.slice(0, 300) : null],
+    "hotspot catalog",
+  );
+}
+
+/**
+ * eBird could not serve a whole country's list in one response (a server
+ * error, its deadline, or a body that was not whole JSON) — its first-level
+ * regions are fetched instead.
+ */
+const tooBigForOneList = (err: unknown) =>
+  (err instanceof EbirdError && (err.status ?? 0) >= 500) || err instanceof SyntaxError;
+
 export interface RepairProgress {
-  stage: "cache" | "regions" | "info";
+  stage: "catalog" | "cache" | "regions" | "info";
   done: number;
   total: number;
 }
@@ -134,6 +230,11 @@ export interface RepairResult {
    * reached; upstream: eBird failed. The scheduler re-runs those three
    * within the hour (CODEX1 review P2-6). */
   outcome: "complete" | "capped" | "stopped" | "deferred" | "upstream";
+  /** World catalog: units stored, hotspots in them, countries split, failures. */
+  catalogUnits: number;
+  catalogHotspots: number;
+  catalogSplit: number;
+  catalogErrors: number;
   gapsBefore: number;
   fromCache: number;
   regionsFetched: number;
@@ -155,6 +256,10 @@ export interface RepairOptions {
   infoCap?: number;
   /** Test-only: repair only these downloaded hotspots. */
   onlyLocCodes?: readonly string[];
+  /** Test seams for the catalog stage (default: the regions table, eBird). */
+  catalogUnits?: () => Promise<CatalogUnit[]>;
+  fetchCatalog?: (apiKey: string, regionCode: string) => Promise<{ data: CoordinateRow[]; startedAt: Date }>;
+  hasSubregions?: (country: string) => Promise<boolean>;
 }
 
 /** eBird or its payload failed — not the database, not our code. */
@@ -179,6 +284,10 @@ export async function repairHotspotCoordinates(
   const initial = await gaps();
   const result: RepairResult = {
     outcome: "complete",
+    catalogUnits: 0,
+    catalogHotspots: 0,
+    catalogSplit: 0,
+    catalogErrors: 0,
     gapsBefore: initial.length,
     fromCache: 0,
     regionsFetched: 0,
@@ -192,11 +301,62 @@ export async function repairHotspotCoordinates(
     result.gapsAfter = (await gaps()).length;
     return result;
   };
-  if (initial.length === 0) return result;
+
+  // 0. The world catalog: every due unit's full hotspot list. A second pass
+  //    picks up the first-level regions of a country split in the first.
+  const listUnits = opts.catalogUnits ?? catalogUnitsDue;
+  const fetchCatalog = opts.fetchCatalog ?? hotspotListUncached;
+  const splittable = opts.hasSubregions ?? hasSubregions;
+  let failuresInARow = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const units = await listUnits();
+    const splitBefore = result.catalogSplit;
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i];
+      if (await onProgress({ stage: "catalog", done: i, total: units.length })) return finish("stopped");
+      let list: { data: CoordinateRow[]; startedAt: Date };
+      try {
+        await coordinatePacer.acquire(apiKey, undefined, PACE);
+        list = await fetchCatalog(apiKey, unit.code);
+      } catch (err) {
+        if (isStaleClaim(err)) throw err;
+        if (err instanceof PaceDeferred) return finish("deferred");
+        if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
+        if (err instanceof EbirdError && err.status === 429) return finish("deferred");
+        // eBird has no list for this region: nothing to store until the refresh.
+        if (err instanceof EbirdError && err.status === 404) {
+          await recordCatalogUnit(unit.code, "ok", 0, new Date(), null);
+          continue;
+        }
+        if (unit.level === "country" && tooBigForOneList(err) && (await splittable(unit.code))) {
+          await recordCatalogUnit(unit.code, "split", 0, new Date(), null);
+          result.catalogSplit++;
+          continue;
+        }
+        if (isUpstream(err) || err instanceof SyntaxError) {
+          const message = err instanceof Error ? err.message : String(err);
+          await recordCatalogUnit(unit.code, "error", 0, new Date(), message);
+          result.catalogErrors++;
+          if (++failuresInARow >= CATALOG_OUTAGE_RUN) return finish("upstream", message);
+          continue;
+        }
+        throw err;
+      }
+      failuresInARow = 0;
+      await upsertLocationCoordinates(list.data, "official", list.startedAt);
+      await recordCatalogUnit(unit.code, "ok", list.data.length, list.startedAt, null);
+      result.catalogUnits++;
+      result.catalogHotspots += list.data.length;
+    }
+    if (result.catalogSplit === splitBefore) break;
+  }
+
+  const afterCatalog = await gaps();
+  if (afterCatalog.length === 0) return finish("complete");
 
   // 1. Cached eBird responses — no eBird calls.
   if (await onProgress({ stage: "cache", done: 0, total: 1 })) return finish("stopped");
-  result.fromCache = await coordinatesFromCache(initial.map((g) => g.locCode));
+  result.fromCache = await coordinatesFromCache(afterCatalog.map((g) => g.locCode));
 
   // 2. One hotspot list per region that still has gaps.
   const afterCache = await gaps();
@@ -295,11 +455,23 @@ export interface CoordinateStatus {
   } | null;
   repairQueued: boolean;
   hasCredential: boolean;
+  /** td-79261e: the world catalog's progress. */
+  catalog: {
+    units: number;
+    loaded: number;
+    errors: number;
+    split: number;
+    /** Hotspots in the loaded units' last lists. */
+    hotspots: number;
+    oldestLoadedAt: string | null;
+  };
+  /** Every hotspot with official coordinates stored (downloaded or not). */
+  officialStored: number;
 }
 
 /** Admin's integrity line (C4). */
 export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
-  const [counts, misses, last, queued, credential] = await Promise.all([
+  const [counts, misses, last, queued, credential, catalog, official] = await Promise.all([
     query<{ downloaded: number; missing: number; no_coordinates: number; misses: number }>(
       `SELECT count(*)::int AS downloaded,
               count(*) FILTER (WHERE e.coord_source IS DISTINCT FROM 'official')::int AS missing,
@@ -325,7 +497,19 @@ export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
         WHERE type = 'repair_hotspot_coords' AND status IN ('pending', 'running')`,
     ),
     repairCredentialUser(),
+    query<{ units: number; loaded: number; errors: number; split: number; hotspots: number; oldest: Date | null }>(
+      `${CATALOG_UNITS}
+       SELECT count(*)::int AS units,
+              count(*) FILTER (WHERE c.status = 'ok')::int AS loaded,
+              count(*) FILTER (WHERE c.status = 'error')::int AS errors,
+              (SELECT count(*)::int FROM hotspot_catalog WHERE status = 'split') AS split,
+              coalesce(sum(c.hotspots) FILTER (WHERE c.status = 'ok'), 0)::int AS hotspots,
+              min(c.fetched_at) FILTER (WHERE c.status = 'ok') AS oldest
+         FROM units u LEFT JOIN hotspot_catalog c ON c.region_code = u.code`,
+    ),
+    query<{ n: number }>(`SELECT count(*)::int AS n FROM ebird_locations WHERE coord_source = 'official'`),
   ]);
+  const cat = catalog.rows[0];
   const lastRow = last.rows[0];
   return {
     downloaded: counts.rows[0]?.downloaded ?? 0,
@@ -342,5 +526,14 @@ export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
       : null,
     repairQueued: (queued.rows[0]?.n ?? 0) > 0,
     hasCredential: credential != null,
+    catalog: {
+      units: cat?.units ?? 0,
+      loaded: cat?.loaded ?? 0,
+      errors: cat?.errors ?? 0,
+      split: cat?.split ?? 0,
+      hotspots: cat?.hotspots ?? 0,
+      oldestLoadedAt: cat?.oldest ? new Date(cat.oldest).toISOString() : null,
+    },
+    officialStored: official.rows[0]?.n ?? 0,
   };
 }

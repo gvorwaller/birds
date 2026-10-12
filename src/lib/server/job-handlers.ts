@@ -64,6 +64,7 @@ import {
 import { claimFencedQuery, QueueWriteUnrecoverableError } from '$server/job-claim';
 import { hasCoordinateGaps } from '$server/hotspot-coordinates';
 import {
+	catalogDue,
 	ensureLoadedHotspotCoordinates,
 	repairCredentialUser,
 	repairHotspotCoordinates
@@ -712,7 +713,7 @@ export async function recentHotspotCoordinateRepair(labelForTests?: string): Pro
 
 /**
  * Queue one bounded repair when downloaded hotspots lack official coordinates
- * and no repair is outstanding or finished in the last 24 h (1 h after a
+ * or a world-catalog region is due (td-79261e), and no repair is outstanding or finished in the last 24 h (1 h after a
  * capped, deferred or eBird-failed run). One-shot and cancellable (CODEX1
  * P2-5): a cancel stops it until the next daily check. Called at worker
  * startup and on every loop pass, busy or idle (CODEX1 review P2-3).
@@ -724,7 +725,9 @@ export async function ensureHotspotCoordinateRepair(now = Date.now()): Promise<b
 	hotspotCoordCheckedAt = now;
 	if (await hasActiveJob(dedupKeys.repairHotspotCoords())) return false;
 	if (await recentHotspotCoordinateRepair()) return false;
-	if (!(await hasCoordinateGaps())) return false;
+	// td-79261e: the world catalog is due (first fill, 30-day refresh) even
+	// when every downloaded hotspot already has coordinates.
+	if (!(await hasCoordinateGaps()) && !(await catalogDue())) return false;
 	const userId = await repairCredentialUser();
 	if (userId == null) return false;
 	await enqueueJob({
@@ -744,6 +747,7 @@ export function __resetHotspotCoordinateCheckForTests(): void {
 }
 
 const REPAIR_STAGE_NAMES = {
+	catalog: 'World hotspot catalog',
 	cache: 'Saved eBird lists',
 	regions: 'eBird hotspot lists by region',
 	info: 'eBird hotspot details'

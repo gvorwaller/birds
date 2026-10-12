@@ -627,11 +627,24 @@
           searches can't find them yet.
         {/if}
       </p>
+      <p>
+        World hotspot catalog: <strong>{hc.catalog.loaded}</strong> of {hc.catalog.units}
+        regions loaded ({hc.catalog.hotspots.toLocaleString()} hotspots){hc.catalog.split > 0
+          ? `; ${hc.catalog.split} large ${hc.catalog.split === 1 ? "country is" : "countries are"} loaded state by state`
+          : ""}.
+        {#if hc.catalog.errors > 0}
+          <span class="error">{hc.catalog.errors} {hc.catalog.errors === 1 ? "region" : "regions"} failed and will be retried after a day.</span>
+        {/if}
+        {#if hc.catalog.oldestLoadedAt}
+          Each region is refreshed every 30 days (oldest {ago(hc.catalog.oldestLoadedAt)}).
+        {/if}
+        {hc.officialStored.toLocaleString()} hotspots have official coordinates saved.
+      </p>
       <p class="muted">
         The Field Guide and Hotspots &amp; data map searches can only find
-        hotspots whose coordinates are saved. Each hotspot load saves eBird's
-        official coordinates; a daily background check fetches any that are
-        missing.
+        hotspots whose coordinates are saved. A background check loads every
+        eBird hotspot in every region, and each hotspot load saves its own
+        official coordinates.
       </p>
       <p>
         {#if hc.repairQueued}

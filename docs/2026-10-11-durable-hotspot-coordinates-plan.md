@@ -186,3 +186,28 @@ running a load.
 | P2 Admin miss list silently capped at 100; "without eBird coordinates" inaccurate | Fixed — total shown, "the first 100 by name"; wording says official coordinates, plus how many have none at all |
 | P2 Info cap reported "complete" and waited 24 h | Fixed — outcome `capped`; capped, deferred and upstream runs are due again after 1 h (`recentHotspotCoordinateRepair`) |
 | Re-review P2: any recent row matched, so an older complete run held back a newer capped one | Fixed — the latest finished run alone decides; two-row fixture test |
+
+## Revision 3 — the world hotspot catalog (td-79261e, 2026-10-12)
+**Design miss in rev 1–2:** scope came from the gaps (downloaded hotspots without coordinates), so the first prod run
+fetched 14 region lists. The `regions` table already holds every eBird country (252) and first-level region (3,369);
+the owner: all hotspots in the world should therefore be loaded by design.
+
+- **Stage 0 of every repair run: the catalog.** Units = every country in `regions`; a country eBird cannot serve in
+  one response (5xx, its 120 s deadline, or a body that is not whole JSON) and that has first-level regions is marked
+  `split` and its regions become units (second pass in the same run). 56 countries have no first-level regions and
+  are always fetched whole. Each unit's full list is stored as official coordinates (the throwing writer); the unit's
+  outcome goes to **`hotspot_catalog`** (0085: region_code, status ok/split/error, hotspots, fetched_at, error).
+- Due: never fetched, `ok` older than 30 days, `error` older than 24 h. 404 = eBird has no list → `ok`, 0 hotspots.
+  401/403 throws (job fails); 429 or the hourly reserve → `deferred` (continues after an hour); three failures in a
+  row → `upstream`. A lost claim stops the run with nothing recorded.
+- **Not through `ebird_cache`** (`hotspotListUncached`): hub-discovery parses every cached hotspot list on each load;
+  whole-country lists for the world would swamp it.
+- Scheduler: a due catalog unit queues a repair even with no coordinate gaps.
+- Admin card: catalog progress (units loaded of total, hotspots, split countries, failures, oldest refresh) and the
+  total of hotspots with official coordinates.
+- First prod run: ~252 country requests (+ states of any split country), paced at 2/s inside the hourly reserve;
+  `ebird_locations` grows from 14,426 rows to every eBird hotspot (world total unknown until it runs).
+- **Watch after deploy:** `hub-discovery` loads coordinates for downloaded hotspots with
+  `ebird_locations … WHERE EXISTS (frequency_fetch …)` and `mapCoverage` joins the two — confirm with EXPLAIN on prod
+  that both still drive from `frequency_fetch` (7.4 k rows) by primary key once `ebird_locations` is large.
+

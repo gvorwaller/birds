@@ -542,6 +542,27 @@ export async function hotspotsInRegion(
 }
 
 /**
+ * The world hotspot catalog's read (td-79261e): one region's full hotspot
+ * list, straight from eBird and NOT through ebird_cache — hub-discovery
+ * parses every cached hotspot list on each load, and whole-country lists for
+ * the world would swamp it. The caller stores the coordinates. A country
+ * list can be large (tens of thousands of hotspots), so the deadline is
+ * longer than a page fetch's.
+ */
+export const HOTSPOT_CATALOG_DEADLINE_MS = 120_000;
+
+export async function hotspotListUncached(
+	apiKey: string,
+	regionCode: string
+): Promise<{ data: EbirdHotspot[]; startedAt: Date }> {
+	const region = regionCode.trim();
+	const path = `/ref/hotspot/${encodeURIComponent(region)}?fmt=json`;
+	const startedAt = new Date();
+	const raw = await ebirdFetch<unknown>(path, apiKey, { deadlineMs: HOTSPOT_CATALOG_DEADLINE_MS });
+	return { data: validateEbirdHotspots(raw, path) as EbirdHotspot[], startedAt };
+}
+
+/**
  * Recent observations at a single location (data/obs/{locId}/recent) — the
  * Hotspot Workspace Phase-1 feed (plan: docs/2026-08-18-hotspot-workspace-
  * plan-CC1.md). back is whitelisted by the caller to 7|14|30 (GROK pin).

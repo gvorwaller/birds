@@ -21,6 +21,8 @@ import {
   upsertLocationCoordinates,
 } from "./hotspot-coordinates";
 import {
+  catalogDue,
+  catalogUnitsDue,
   ensureLoadedHotspotCoordinates,
   hotspotCoordinateStatus,
   lookupOfficialCoordinates,
@@ -113,6 +115,8 @@ async function staleAndLive(): Promise<{ a: JobRow; b: JobRow }> {
   return { a, b: await claim(id) };
 }
 
+/** Gap-stage tests skip the world catalog (it would read the real regions table). */
+const noCatalog = async () => [];
 const listResult = (data: Array<{ locId: string; locName: string; lat: number; lng: number }>) => ({
   data,
   fetchedAt: new Date(),
@@ -155,6 +159,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
     await query("DELETE FROM frequency_fetch WHERE loc_code = ANY($1)", [ids]);
     await query("DELETE FROM ebird_locations WHERE loc_id = ANY($1)", [ids]);
     await query("DELETE FROM ebird_cache WHERE cache_key = ANY($1)", [cacheKeys]);
+    await query("DELETE FROM hotspot_catalog WHERE region_code LIKE $1", [`ZZC${tag}%`]);
     await query("DELETE FROM jobs WHERE label = $1", [LABEL]);
     await query("DELETE FROM users WHERE id = $1", [userId]);
     const left = await query<{ n: number }>(
@@ -358,6 +363,122 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
     });
   });
 
+  describe("world catalog (td-79261e)", () => {
+    const C = (n: string) => `ZZC${tag}${n}`;
+    const catalogRow = async (code: string) =>
+      (
+        await query<{ status: string; hotspots: number; error: string | null }>(
+          "SELECT status, hotspots, error FROM hotspot_catalog WHERE region_code = $1",
+          [code],
+        )
+      ).rows[0];
+
+    it("the real unit list is every country in the regions table (a split one by its states), all due when never fetched", async () => {
+      const units = await catalogUnitsDue();
+      const countries = await query<{ n: number }>("SELECT count(*)::int AS n FROM regions WHERE level = 'country'");
+      expect(units.length).toBeGreaterThanOrEqual(countries.rows[0].n - 5);
+      const known = await query<{ n: number }>("SELECT count(*)::int AS n FROM regions WHERE code = ANY($1)", [
+        units.map((u) => u.code),
+      ]);
+      expect(known.rows[0].n).toBe(units.length);
+      expect(await catalogDue()).toBe(true);
+    });
+
+    it("stores every unit's full list and records it; splits a country eBird can't serve whole into its states", async () => {
+      const [h1, h2, h3] = [newId(), newId(), newId()];
+      let pass = 0;
+      const fetched: string[] = [];
+      const result = await repairHotspotCoordinates("zz-key", {
+        onlyLocCodes: [],
+        catalogUnits: async () =>
+          pass++ === 0
+            ? [
+                { code: C("A"), level: "country" },
+                { code: C("BIG"), level: "country" },
+                { code: C("NONE"), level: "country" },
+              ]
+            : [{ code: C("BIG-01"), level: "subnational1" }],
+        hasSubregions: async (code) => code === C("BIG"),
+        fetchCatalog: async (_key, code) => {
+          fetched.push(code);
+          if (code === C("BIG")) throw new EbirdError("eBird did not respond within 120s.", 504);
+          if (code === C("NONE")) throw new EbirdError("eBird API error 404", 404);
+          return {
+            data:
+              code === C("A")
+                ? [
+                    { locId: h1, locName: "Catalog one", lat: 31, lng: 32 },
+                    { locId: h2, locName: "Catalog two", lat: 33, lng: 34 },
+                  ]
+                : [{ locId: h3, locName: "Catalog state", lat: 35, lng: 36 }],
+            startedAt: new Date(),
+          };
+        },
+      });
+      expect(fetched).toEqual([C("A"), C("BIG"), C("NONE"), C("BIG-01")]);
+      expect(result).toMatchObject({ outcome: "complete", catalogUnits: 2, catalogHotspots: 3, catalogSplit: 1 });
+      expect(await row(h1)).toMatchObject({ lat: 31, coord_source: "official" });
+      expect(await row(h3)).toMatchObject({ lat: 35, coord_source: "official" });
+      expect(await catalogRow(C("A"))).toMatchObject({ status: "ok", hotspots: 2 });
+      expect(await catalogRow(C("BIG"))).toMatchObject({ status: "split" });
+      expect(await catalogRow(C("BIG-01"))).toMatchObject({ status: "ok", hotspots: 1 });
+      expect(await catalogRow(C("NONE"))).toMatchObject({ status: "ok", hotspots: 0 });
+    });
+
+    it("a failure is recorded and retried later; three in a row end the run; 401 throws; 429 defers; a failed write fails the run", async () => {
+      const units = ["E1", "E2", "E3", "E4"].map((n) => ({ code: C(n), level: "subnational1" as const }));
+      const down = await repairHotspotCoordinates("zz-key", {
+        onlyLocCodes: [],
+        catalogUnits: async () => units,
+        fetchCatalog: async () => {
+          throw new EbirdError("eBird API error 503", 503);
+        },
+      });
+      expect(down).toMatchObject({ outcome: "upstream", catalogErrors: 3 });
+      expect(await catalogRow(C("E1"))).toMatchObject({ status: "error", error: "eBird API error 503" });
+      expect(await catalogRow(C("E4"))).toBeUndefined();
+
+      const once = (status: number) =>
+        repairHotspotCoordinates("zz-key", {
+          onlyLocCodes: [],
+          catalogUnits: async () => [units[3]],
+          fetchCatalog: async () => {
+            throw new EbirdError(`eBird API error ${status}`, status);
+          },
+        });
+      await expect(once(401)).rejects.toMatchObject({ status: 401 });
+      expect(await once(429)).toMatchObject({ outcome: "deferred", catalogUnits: 0 });
+
+      await expect(
+        repairHotspotCoordinates("zz-key", {
+          onlyLocCodes: [],
+          catalogUnits: async () => [units[3]],
+          fetchCatalog: async () => ({
+            data: [{ locId: newId(), locName: "bad\u0000name", lat: 1, lng: 1 }],
+            startedAt: new Date(),
+          }),
+        }),
+      ).rejects.toThrow();
+      expect(await catalogRow(C("E4"))).toBeUndefined();
+    });
+
+    it("a lost claim stops the catalog and records nothing", async () => {
+      const { a } = await staleAndLive();
+      const h = newId();
+      await expect(
+        runWithClaim(a, () =>
+          repairHotspotCoordinates("zz-key", {
+            onlyLocCodes: [],
+            catalogUnits: async () => [{ code: C("CL"), level: "country" }],
+            fetchCatalog: async () => ({ data: [{ locId: h, locName: "Claimed", lat: 1, lng: 1 }], startedAt: new Date() }),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StaleClaimError);
+      expect(await row(h)).toBeUndefined();
+      expect(await catalogRow(C("CL"))).toBeUndefined();
+    });
+  });
+
   describe("repair (C2/C3)", () => {
     it("fills gaps from the cache, then region lists, then hotspot info; records misses; a second run is a no-op", async () => {
       const [cached, cachedInfo, listed, viaInfo, gone, notHotspot] = [
@@ -390,6 +511,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       const infoCalls: string[] = [];
       const mine = [cached, cachedInfo, listed, viaInfo, gone, notHotspot, otherGone];
       const result = await repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
         onlyLocCodes: mine,
         fetchRegion: async (_key, region) => {
           regionCalls.push(region);
@@ -423,6 +545,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(await row(notHotspot)).toBeUndefined();
 
       const again = await repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
         onlyLocCodes: mine,
         fetchRegion: async () => {
           throw new Error("must not be called");
@@ -440,12 +563,14 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       await downloaded(viaInfo, OTHER_REGION);
       await expect(
         repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
           onlyLocCodes: [viaList],
           fetchRegion: async () => listResult([{ locId: viaList, locName: "bad\u0000name", lat: 1, lng: 1 }]),
         }),
       ).rejects.toThrow();
       await expect(
         repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
           onlyLocCodes: [viaInfo],
           fetchRegion: async () => {
             throw new EbirdError("eBird API error 404", 404);
@@ -463,6 +588,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       await downloaded(loc);
       const run = (status: number) =>
         repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
           onlyLocCodes: [loc],
           fetchRegion: async () => staleList(status),
           fetchInfo: async () => {
@@ -529,6 +655,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
         throw new EbirdError("eBird API error 404", 404);
       };
       const stopped = await repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
         onlyLocCodes: locs,
         fetchRegion: noRegion,
         onProgress: async (p) => p.stage === "info",
@@ -536,6 +663,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(stopped).toMatchObject({ outcome: "stopped", infoLookups: 0, gapsAfter: 3 });
 
       const capped = await repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
         onlyLocCodes: locs,
         fetchRegion: noRegion,
         infoCap: 1,
@@ -545,6 +673,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
 
       await expect(
         repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
           onlyLocCodes: locs,
           fetchRegion: async () => {
             throw new EbirdError("eBird API key is missing or invalid — check Settings.", 403);
@@ -553,6 +682,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       ).rejects.toMatchObject({ status: 403 });
 
       const upstream = await repairHotspotCoordinates("zz-key", {
+        catalogUnits: noCatalog,
         onlyLocCodes: locs,
         fetchRegion: noRegion,
         fetchInfo: async () => {
@@ -583,6 +713,9 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(status.downloaded).toBeGreaterThanOrEqual(status.missing);
       expect(status.missing).toBeGreaterThanOrEqual(status.noCoordinates);
       expect(status.missesTotal).toBeGreaterThanOrEqual(status.misses.length);
+      expect(status.catalog.units).toBeGreaterThan(200);
+      expect(status.catalog.loaded).toBeLessThanOrEqual(status.catalog.units);
+      expect(status.officialStored).toBeGreaterThanOrEqual(1);
       const m = status.misses.find((x) => x.locCode === loc);
       expect(m).toMatchObject({ reason: "not_hotspot", locName: `Coordinate fixture ${loc}` });
       expect(m!.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);

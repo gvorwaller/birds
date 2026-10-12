@@ -221,11 +221,13 @@ const coordMocks = vi.hoisted(() => ({
   repairHotspotCoordinates: vi.fn(),
   repairCredentialUser: vi.fn(async () => 7 as number | null),
   hasCoordinateGaps: vi.fn(async () => true),
+  catalogDue: vi.fn(async () => false),
 }));
 vi.mock("$server/hotspot-coordinate-repair", () => ({
   ensureLoadedHotspotCoordinates: coordMocks.ensureLoadedHotspotCoordinates,
   repairHotspotCoordinates: coordMocks.repairHotspotCoordinates,
   repairCredentialUser: coordMocks.repairCredentialUser,
+  catalogDue: coordMocks.catalogDue,
 }));
 vi.mock("$server/hotspot-coordinates", () => ({
   hasCoordinateGaps: coordMocks.hasCoordinateGaps,
@@ -3911,6 +3913,13 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     db.handler = null;
     coordMocks.hasCoordinateGaps.mockImplementation(async () => false);
     expect(await ensureHotspotCoordinateRepair()).toBe(false);
+
+    // td-79261e: a due world-catalog region queues a repair with no gaps at all.
+    __resetHotspotCoordinateCheckForTests();
+    coordMocks.catalogDue.mockImplementation(async () => true);
+    expect(await ensureHotspotCoordinateRepair()).toBe(true);
+    coordMocks.catalogDue.mockImplementation(async () => false);
+    mocks.enqueueJob.mockClear();
 
     __resetHotspotCoordinateCheckForTests();
     coordMocks.hasCoordinateGaps.mockImplementation(async () => true);
