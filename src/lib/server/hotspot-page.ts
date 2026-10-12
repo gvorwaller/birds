@@ -14,6 +14,7 @@ import {
 	type EbirdObs
 } from '$server/ebird';
 import { reportSchemaDrift, validateEbirdHotspotInfo } from '$server/upstream-schema';
+import { rememberOfficialHotspots } from '$server/hotspot-coordinates';
 import {
 	FREQ_LIKELY,
 	FREQ_POSSIBLE,
@@ -162,6 +163,7 @@ export async function resolveOfficialHotspot(
 	let request = officialInfoInFlight.get(locId);
 	if (!request) {
 		request = (async () => {
+			const startedAt = new Date();
 			const path = `/ref/hotspot/info/${encodeURIComponent(locId)}`;
 			const raw = await ebirdFetchOrNull<unknown>(
 				path,
@@ -179,6 +181,12 @@ export async function resolveOfficialHotspot(
 				 VALUES ($1, $2, NOW())
 				 ON CONFLICT (cache_key) DO UPDATE SET payload = $2, fetched_at = NOW()`,
 				[OFFICIAL_INFO_KEY(locId), JSON.stringify(meta)]
+			);
+			// The cached info is pruned like any other row; its coordinates are
+			// the official ones (td-c2f2b2).
+			await rememberOfficialHotspots(
+				[{ locId, locName: meta.locName, lat: meta.lat, lng: meta.lng }],
+				startedAt
 			);
 			return meta;
 		})().finally(() => officialInfoInFlight.delete(locId));

@@ -616,6 +616,53 @@
     </div>
   </CollapsibleCard>
 
+  {#if data.hotspotCoordinates}
+    {@const hc = data.hotspotCoordinates}
+    <CollapsibleCard id="hotspot-coordinates" title="Hotspot coordinates" badge={hc.missing}>
+      <p>
+        Downloaded hotspots without eBird coordinates: <strong>{hc.missing}</strong>
+        of {hc.downloaded}.
+      </p>
+      <p class="muted">
+        The Field Guide and Hotspots &amp; data map searches can only find
+        hotspots whose coordinates are saved. Each hotspot load saves them; a
+        daily background check fetches any that are missing.
+      </p>
+      <p>
+        {#if hc.repairQueued}
+          The daily check is queued or running now.
+        {:else if hc.lastRepair}
+          Last check {ago(hc.lastRepair.finishedAt)}: {hc.lastRepair.status}{hc.lastRepair.outcome ? ` (${hc.lastRepair.outcome})` : ""}.
+          {#if hc.lastRepair.status === "cancelled"}It runs again at the next daily check.{/if}
+        {:else}
+          No check has run yet.
+        {/if}
+        {#if !hc.hasCredential}
+          <span class="error">It needs an admin account with an eBird API key (Settings) before it can run.</span>
+        {/if}
+      </p>
+      {#if hc.misses.length > 0}
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Hotspot</th><th>Why</th><th>Checked</th></tr></thead>
+            <tbody>
+              {#each hc.misses as m (m.locCode)}
+                <tr>
+                  <td>
+                    <strong>{m.locName ?? m.locCode}</strong>
+                    <span class="code">{m.locCode}</span>
+                  </td>
+                  <td>{m.reason === "gone" ? "eBird no longer has this hotspot" : "eBird no longer lists this as a hotspot"}</td>
+                  <td class="nowrap">{ago(m.checkedAt)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </CollapsibleCard>
+  {/if}
+
   <CollapsibleCard id="caches" title="Caches">
     <div class="tablewrap">
       <table>

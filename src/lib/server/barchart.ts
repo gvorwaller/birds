@@ -722,6 +722,12 @@ interface EnsureOptions {
 	 */
 	onUnit?: (loc: LocToEnsure, outcome: UnitOutcome) => Promise<void>;
 	/**
+	 * After a HOTSPOT's data is stored, before its onUnit (td-c2f2b2 C2): the
+	 * worker fetches official coordinates for a hotspot that has none. Outside
+	 * the fetch try/catch like onUnit; it must not throw except a lost claim.
+	 */
+	afterHotspotStore?: (loc: LocToEnsure) => Promise<void>;
+	/**
 	 * Cooperative stop — checked between units AND around the 5xx retry sleep
 	 * (GROK #6). 'cancel', 'drain', and 'pause' route remaining locs to
 	 * notAttempted and return normally; the CALLER decides the job's fate.
@@ -923,6 +929,9 @@ export async function ensureFrequencies(
 			result.failed.push({ code: loc.code, error: message, kind });
 			await recordFailedAttempt(loc, message);
 			outcome = { status: 'failed', kind, error: message };
+		}
+		if (outcome.status === 'ok' && loc.kind === 'hotspot' && opts.afterHotspotStore) {
+			await opts.afterHotspotStore(loc);
 		}
 		// onUnit runs OUTSIDE the fetch/parse try/catch (CODEX1 #6): a failing
 		// progress write must never convert a stored row into a barchart

@@ -56,7 +56,8 @@ export type JobType =
 	| 'tag_gate_report'
 	| 'tag_preview'
 	| 'tag_family_refs'
-	| 'refresh_species_counts';
+	| 'refresh_species_counts'
+	| 'repair_hotspot_coords';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id

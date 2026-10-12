@@ -138,6 +138,33 @@ running a load.
    Leirfjord, Tjøtta, Hestøya, Stokkvågen, Lovund, Onøy ferge (8 downloaded).
 4. Then td-a54f8c (P2) builds on it.
 
+## As built (2026-10-12, td-c2f2b2)
+- `src/lib/server/hotspot-coordinates.ts` — the one coordinate writer (`upsertLocationCoordinates`), the best-effort
+  `rememberOfficialHotspots`, gaps, misses, cache copy. The observation upsert (`location-placeids.ts`) and the
+  life-list hotspot lookup (`lifer-locations.ts`: info with `isHotspot: true` → official, else observation) now go
+  through it; no other code writes `ebird_locations` coordinates.
+- **Claim mode is chosen inside the writer** (`heldClaim()` → `claimFencedQuery`, else plain) instead of a
+  `remember: 'plain' | 'caller'` option: same guarantee — fenced under any claim, `StaleClaimError` always propagates,
+  and the write runs after `cachedFetch` returns (never inside its stale-fallback catch). `CachedResult.live` marks a
+  live response; `hotspotsInRegion` / `hotspotsNear` store it; official info on the hotspot page stores it.
+- Observation rows: no time ordering among themselves (last write wins, as before); `coord_fetched_at` is NULL for
+  them (the 0084 CHECK pins official ⇔ non-NULL). An official re-fetch with identical values does not advance
+  `coord_fetched_at` (no rewrite); an older request could then only win if eBird had moved the hotspot and moved it
+  back between the two requests.
+- `src/lib/server/hotspot-coordinate-repair.ts` — per-load lookup (`ensureLoadedHotspotCoordinates`, wired through
+  `ensureFrequencies`' new `afterHotspotStore`, outside the unit try/catch, before `onUnit`), the repair run, the
+  credential choice, Admin status. Dedicated pacer (2/s, burst 4, keeps the hourly reserve, ≤30 s wait).
+- Scheduler: the worker idle tick, at most every 10 min; queues only when gaps exist, nothing is outstanding and no
+  repair finished in 24 h. The cache stage orders each copied row by its cache row's `fetched_at`.
+- Admin → Status tab → "Hotspot coordinates" card (count, last check, credential state, misses).
+- Migration 0084 applied to `birds_test` in ~2.5 s end to end (script included). Not measured under a concurrent
+  load (no local worker with eBird credentials); the 5 s `lock_timeout` bounds the risk.
+- First prod run expectation: every downloaded hotspot is a gap (existing rows are `observation`), ~5.6 k fill from
+  the cache, ≤65 region lists, ≤200 info lookups, the rest the next day.
+- Tests: `hotspot-coordinates-db.test.ts` (18, real SQL: precedence matrix, claims, live/cache/stale list fetch,
+  repair stages/misses/cap/cancel/401/upstream, Admin status, Field Guide map), `job-handlers.test.ts` (+7: load
+  hook, repair handler, scheduler), `barchart.test.ts` (+1: hook order).
+
 ## CODEX1 review of rev 1 (2026-10-12): revise before implementation → dispositions
 | Finding | Disposition |
 |---|---|

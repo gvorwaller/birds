@@ -1,4 +1,5 @@
 import { serverHealth } from "$server/process-health";
+import { hotspotCoordinateStatus } from "$server/hotspot-coordinate-repair";
 import { ensureTagRepairJob, runTagConsistencyNow, tagsHealth, tagsOverview } from "$server/tag-admin";
 import { setFamilyPaused, retryFamilyGaps, FamilyRetrySelectionError } from '$server/family-enrichment';
 import { error, fail } from "@sveltejs/kit";
@@ -136,14 +137,17 @@ export const load: PageServerLoad = async ({ locals }) => {
   const health = await serverHealth().catch(() => null);
   // Tags tab (td-894144 B3). Like server health, a failure here must not
   // break the rest of the admin page.
-  const [tagOverview, tagHealth] = await Promise.all([
+  const [tagOverview, tagHealth, hotspotCoordinates] = await Promise.all([
     tagsOverview().catch(() => null),
     tagsHealth().catch(() => null),
+    // td-c2f2b2: downloaded hotspots without official coordinates.
+    hotspotCoordinateStatus().catch(() => null),
   ]);
   return {
     health,
     tagOverview,
     tagHealth,
+    hotspotCoordinates,
     families: liveStatus.families,
     now: liveStatus.now,
     worker: liveStatus.worker,

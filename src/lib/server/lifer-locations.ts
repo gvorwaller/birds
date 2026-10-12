@@ -18,6 +18,7 @@ import { query } from '$lib/db';
 import { EbirdError, ebirdFetchOrNull, getEbirdApiKey } from '$server/ebird';
 import { fetchAuthenticatedEbird, EbirdLoginError, EbirdUpstreamError } from '$server/ebird-account';
 import { reportSchemaDrift, validateEbirdHotspotCoordinates } from '$server/upstream-schema';
+import { upsertLocationCoordinates } from '$server/hotspot-coordinates';
 
 export const LIFER_LOC_TOTAL_CAP = 40;
 export const LIFER_LOC_CAS_CAP = 25;
@@ -74,7 +75,7 @@ async function lookupHotspot(
 	locId: string,
 	apiKey: string,
 	opts?: { fetcher?: Fetcher; deadlineAt?: number }
-): Promise<{ name: string | null; lat: number; lng: number } | null> {
+): Promise<{ name: string | null; lat: number; lng: number; isHotspot: boolean } | null> {
 	const t = callTimeout(opts?.deadlineAt);
 	const signal = t != null ? AbortSignal.timeout(t) : undefined;
 	const path = `/ref/hotspot/info/${encodeURIComponent(locId)}`;
@@ -86,7 +87,12 @@ async function lookupHotspot(
 	if (raw == null) return null;
 	try {
 		const hs = validateEbirdHotspotCoordinates(raw, path);
-		return { name: hs.name ?? null, lat: hs.latitude, lng: hs.longitude };
+		return {
+			name: hs.name ?? null,
+			lat: hs.latitude,
+			lng: hs.longitude,
+			isHotspot: (raw as { isHotspot?: unknown }).isHotspot === true
+		};
 	} catch (err) { // stale-safe: reports schema drift and rethrows
 		reportSchemaDrift(err, `fetch lifer hotspotInfo:${locId}`);
 		throw err;
@@ -207,16 +213,18 @@ export async function resolveLiferLocations(
 		if (apiKey) {
 			httpBudget--;
 			try {
+				const startedAt = new Date();
 				const loc = await lookupHotspot(locId, apiKey, {
 					fetcher: opts.fetcher,
 					deadlineAt: opts.deadlineAt
 				});
 				if (loc) {
-					await query(
-						`INSERT INTO ebird_locations (loc_id, loc_name, lat, lng)
-						 VALUES ($1, $2, $3, $4)
-						 ON CONFLICT (loc_id) DO NOTHING`,
-						[locId, loc.name ?? locId, loc.lat, loc.lng]
+					// The one coordinate writer (td-c2f2b2): fenced under the
+					// life-list sync's claim; an official hotspot is 'official'.
+					await upsertLocationCoordinates(
+						[{ locId, locName: loc.name ?? locId, lat: loc.lat, lng: loc.lng }],
+						loc.isHotspot ? 'official' : 'observation',
+						startedAt
 					);
 					out.resolved++;
 					hotspotHit = true;

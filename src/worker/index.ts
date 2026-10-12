@@ -18,7 +18,7 @@ process.env.BIRDS_DB_APP_NAME = 'birds-worker';
 import pg from 'pg';
 import { recordMemorySample, startMemorySampler } from '$server/process-health';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
-import { runJob, ensureNeedAlertScan, ensureEnrichmentScan } from '$server/job-handlers';
+import { runJob, ensureNeedAlertScan, ensureEnrichmentScan, ensureHotspotCoordinateRepair } from '$server/job-handlers';
 import { ensureTagConsistency } from '$server/tag-jobs';
 
 declare const __GIT_SHA__: string;
@@ -203,6 +203,14 @@ async function main(): Promise<void> {
 			await ensureTagConsistency().catch((err) => {
 				console.error(
 					'[birds-worker] tag consistency reconciliation failed:',
+					err instanceof Error ? err.message : err
+				);
+			});
+			// td-c2f2b2: at most every 10 min, queues the daily coordinate repair
+			// when downloaded hotspots lack official coordinates.
+			await ensureHotspotCoordinateRepair().catch((err) => {
+				console.error(
+					'[birds-worker] hotspot coordinate check failed:',
 					err instanceof Error ? err.message : err
 				);
 			});

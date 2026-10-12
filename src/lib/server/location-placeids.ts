@@ -2,6 +2,7 @@ import { env } from "$env/dynamic/private";
 import { timed } from "$server/request-timing";
 import { query } from "$lib/db";
 import { placeNameScore } from "$lib/place-name";
+import { upsertLocationCoordinates } from "$server/hotspot-coordinates";
 
 export interface EbirdLocationRef {
   locId?: string | null;
@@ -62,31 +63,17 @@ function uniqueLocations(locations: EbirdLocationRef[]): EbirdLocationPlace[] {
   return [...byId.values()];
 }
 
+/**
+ * Observation-feed coordinates. Written through the one coordinate writer
+ * (td-c2f2b2): an observation never replaces an official eBird hotspot
+ * coordinate, but still marks the row seen.
+ */
 export async function upsertEbirdLocations(
   locations: EbirdLocationRef[],
 ): Promise<void> {
   const unique = uniqueLocations(locations);
   if (unique.length === 0) return;
-
-  const values: string[] = [];
-  const params: unknown[] = [];
-  unique.forEach((loc, i) => {
-    const o = i * 4;
-    values.push(`($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4})`);
-    params.push(loc.locId, loc.locName, loc.lat, loc.lng);
-  });
-
-  await query(
-    `INSERT INTO ebird_locations (loc_id, loc_name, lat, lng)
-     VALUES ${values.join(", ")}
-     ON CONFLICT (loc_id) DO UPDATE
-       SET loc_name = EXCLUDED.loc_name,
-           lat = EXCLUDED.lat,
-           lng = EXCLUDED.lng,
-           last_seen_at = NOW(),
-           updated_at = NOW()`,
-    params,
-  );
+  await upsertLocationCoordinates(unique, "observation", null);
 }
 
 export async function googlePlaceIdsForLocIds(

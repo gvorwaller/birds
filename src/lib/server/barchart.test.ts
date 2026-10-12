@@ -387,6 +387,28 @@ describe("ensureFrequencies", () => {
     expect(attempt?.text).toContain("'ok'");
   });
 
+  it("runs afterHotspotStore once per stored HOTSPOT, before its onUnit, never for regions or failures (td-c2f2b2)", async () => {
+    queryHandler = taxonomyHandler;
+    const order: string[] = [];
+    const fetcher = vi.fn(async (_u: number, code: string) => {
+      if (code === "L2") throw new Error("provider down");
+      return makeValidTsv([["Great Blue Heron", 0.25]]);
+    });
+    const hotspot = (code: string) => ({ code, kind: "hotspot" as const, name: `Hotspot ${code}` });
+    const result = await ensureFrequencies(1, [hotspot("L1"), hotspot("L2"), loc("US-FL")], {
+      fetcher,
+      sleep: noSleep,
+      afterHotspotStore: async (l) => {
+        order.push(`after ${l.code}`);
+      },
+      onUnit: async (l, outcome) => {
+        order.push(`unit ${l.code} ${outcome.status}`);
+      },
+    });
+    expect(result.refreshed).toEqual(["L1", "US-FL"]);
+    expect(order).toEqual(["after L1", "unit L1 ok", "unit L2 failed", "unit US-FL ok"]);
+  });
+
   it("stores a bounded frequency plus its source correction instead of failing the location", async () => {
     queryHandler = taxonomyHandler;
     const samples = Array(WEEKS).fill("100.0");

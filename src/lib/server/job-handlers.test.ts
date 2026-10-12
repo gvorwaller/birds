@@ -216,6 +216,20 @@ const syncMocks = vi.hoisted(() => {
   };
 });
 
+const coordMocks = vi.hoisted(() => ({
+  ensureLoadedHotspotCoordinates: vi.fn(async (_u: number, _code: string) => "present" as string),
+  repairHotspotCoordinates: vi.fn(),
+  repairCredentialUser: vi.fn(async () => 7 as number | null),
+  hasCoordinateGaps: vi.fn(async () => true),
+}));
+vi.mock("$server/hotspot-coordinate-repair", () => ({
+  ensureLoadedHotspotCoordinates: coordMocks.ensureLoadedHotspotCoordinates,
+  repairHotspotCoordinates: coordMocks.repairHotspotCoordinates,
+  repairCredentialUser: coordMocks.repairCredentialUser,
+}));
+vi.mock("$server/hotspot-coordinates", () => ({
+  hasCoordinateGaps: coordMocks.hasCoordinateGaps,
+}));
 vi.mock("$server/ebird-account", () => ({
   EbirdLoginError: syncMocks.FakeEbirdLoginError,
   EbirdUpstreamError: syncMocks.FakeEbirdUpstreamError,
@@ -337,6 +351,8 @@ vi.mock("$server/crypto", () => ({
 
 const {
   runJob,
+  ensureHotspotCoordinateRepair,
+  __resetHotspotCoordinateCheckForTests,
   ensureNeedAlertScan,
   nudgeEnrichmentScan,
   ENRICH_SCAN_DRAIN_MS,
@@ -3762,5 +3778,134 @@ describe("runJob never resolves while its row is stuck running (td-b99b6d §4.3)
     expect(src).toMatch(/main\(\)\.catch\(\(err\) => \{[\s\S]*?process\.exit\(1\);/);
     // Startup reclaim runs before the loop.
     expect(src.indexOf("reclaimStartupJobs(")).toBeLessThan(src.indexOf("for (;;)"));
+  });
+});
+
+describe("hotspot coordinates (td-c2f2b2)", () => {
+  const repairJob = (overrides: Record<string, unknown> = {}) =>
+    jobRow({ type: "repair_hotspot_coords", payload: {}, label: "daily check", ...overrides });
+  const result = (outcome: string) => ({
+    outcome,
+    gapsBefore: 3,
+    fromCache: 1,
+    regionsFetched: 1,
+    infoLookups: 1,
+    misses: 0,
+    gapsAfter: 0,
+  });
+
+  beforeEach(() => {
+    coordMocks.repairHotspotCoordinates.mockReset();
+    coordMocks.ensureLoadedHotspotCoordinates.mockClear();
+    coordMocks.repairCredentialUser.mockReset();
+    coordMocks.repairCredentialUser.mockImplementation(async () => 7);
+    coordMocks.hasCoordinateGaps.mockReset();
+    coordMocks.hasCoordinateGaps.mockImplementation(async () => true);
+    mocks.hasActiveJob.mockReset();
+    mocks.hasActiveJob.mockImplementation(async () => false);
+    __resetHotspotCoordinateCheckForTests();
+  });
+
+  it("a frequency job asks for official coordinates after each stored hotspot, as the requester", async () => {
+    mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {
+      for (const loc of locs) {
+        await opts.afterHotspotStore(loc);
+        await opts.onUnit(loc, { status: "ok" });
+      }
+      return ensureResult({ refreshed: locs.map((l: Loc) => l.code) });
+    });
+    await runJob(jobRow(), ctx);
+    expect(coordMocks.ensureLoadedHotspotCoordinates.mock.calls).toEqual([
+      [7, "L1"],
+      [7, "L2"],
+      [7, "L3"],
+    ]);
+    expect(mocks.completeJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("a repair run reports its stages as progress and completes with its result", async () => {
+    coordMocks.repairHotspotCoordinates.mockImplementation(async (key, opts) => {
+      expect(key).toBe("key");
+      expect(await opts.onProgress({ stage: "regions", done: 1, total: 4 })).toBe(false);
+      return result("complete");
+    });
+    await runJob(repairJob(), ctx);
+    expect(syncMocks.getEbirdApiKey).toHaveBeenCalledWith(7);
+    expect(mocks.updateProgress.mock.calls[0][1]).toMatchObject({
+      unitsTotal: 4,
+      unitsDone: 1,
+      currentUnit: { code: "regions", name: "eBird hotspot lists by region" },
+    });
+    expect(mocks.completeJob).toHaveBeenCalledWith(42, 1, result("complete"));
+  });
+
+  it("a cancel seen between units ends the run as cancelled with what it stored", async () => {
+    mocks.updateProgress.mockImplementationOnce(async () => ({ cancelRequested: true }));
+    coordMocks.repairHotspotCoordinates.mockImplementation(async (_key, opts) => {
+      expect(await opts.onProgress({ stage: "cache", done: 0, total: 1 })).toBe(true);
+      return result("stopped");
+    });
+    await runJob(repairJob(), ctx);
+    expect(mocks.cancelRunningJob).toHaveBeenCalledWith(42, 1, result("stopped"));
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("a failure (bad key, database) fails the run without a retry; no key fails before any work", async () => {
+    coordMocks.repairHotspotCoordinates.mockRejectedValue(new Error("eBird API key is missing or invalid"));
+    await runJob(repairJob(), ctx);
+    expect(mocks.failJob).toHaveBeenCalledWith(42, 1, "eBird API key is missing or invalid");
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    syncMocks.getEbirdApiKey.mockImplementation(async () => null);
+    await runJob(repairJob(), ctx);
+    expect(coordMocks.repairHotspotCoordinates).not.toHaveBeenCalled();
+    expect(mocks.failJob.mock.calls[0][2]).toMatch(/eBird API key is required/);
+  });
+
+  it("a lost claim during the repair is abandoned, never failed", async () => {
+    coordMocks.repairHotspotCoordinates.mockRejectedValue(new Error("stale claim: job 42 is gone"));
+    await runJob(repairJob(), ctx);
+    expect(mocks.failJob).not.toHaveBeenCalled();
+    expect(mocks.completeJob).not.toHaveBeenCalled();
+  });
+
+  it("the daily check queues one repair for the first admin with a key, 60 s out", async () => {
+    expect(await ensureHotspotCoordinateRepair(1_000_000)).toBe(true);
+    expect(mocks.enqueueJob).toHaveBeenCalledWith({
+      type: "repair_hotspot_coords",
+      payload: {},
+      dedupKey: "repair_hotspot_coords:global",
+      requestedBy: 7,
+      label: "daily check",
+      runAfterMs: 60_000,
+    });
+    // Looks at most every 10 minutes.
+    expect(await ensureHotspotCoordinateRepair(1_000_000 + 9 * 60_000)).toBe(false);
+    expect(mocks.hasActiveJob).toHaveBeenCalledTimes(1);
+    expect(await ensureHotspotCoordinateRepair(1_000_000 + 10 * 60_000)).toBe(true);
+  });
+
+  it("the daily check queues nothing while one is outstanding, after a recent run, with no gaps or no key", async () => {
+    mocks.hasActiveJob.mockImplementation(async () => true);
+    expect(await ensureHotspotCoordinateRepair()).toBe(false);
+
+    __resetHotspotCoordinateCheckForTests();
+    mocks.hasActiveJob.mockImplementation(async () => false);
+    db.handler = (text) =>
+      text.includes("type = 'repair_hotspot_coords'") ? { rows: [{}], rowCount: 1 } as never : undefined;
+    expect(await ensureHotspotCoordinateRepair()).toBe(false);
+    expect(db.calls.at(-1)?.params).toEqual([86_400]);
+
+    __resetHotspotCoordinateCheckForTests();
+    db.handler = null;
+    coordMocks.hasCoordinateGaps.mockImplementation(async () => false);
+    expect(await ensureHotspotCoordinateRepair()).toBe(false);
+
+    __resetHotspotCoordinateCheckForTests();
+    coordMocks.hasCoordinateGaps.mockImplementation(async () => true);
+    coordMocks.repairCredentialUser.mockImplementation(async () => null);
+    expect(await ensureHotspotCoordinateRepair()).toBe(false);
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
   });
 });

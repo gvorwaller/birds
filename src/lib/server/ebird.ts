@@ -10,6 +10,7 @@ import { query, withTransaction } from '$lib/db';
 import { timed } from '$server/request-timing';
 import { noteEbirdResponse, PaceAborted, PaceDeferred } from '$server/ebird-rate';
 import { decryptSecret } from '$server/crypto';
+import { rememberOfficialHotspots } from '$server/hotspot-coordinates';
 import {
 	reportSchemaDrift,
 	validateEbirdHotspots,
@@ -82,6 +83,9 @@ export interface CachedResult<T> {
 	stale: boolean;
 	/** Status from a failed refresh when a stale payload was returned. */
 	refreshErrorStatus?: number;
+	/** Set only when THIS call received a live eBird response (not a cache
+	 * hit, not a stale fallback): when its request started (td-c2f2b2). */
+	live?: { startedAt: Date };
 }
 
 export async function getEbirdApiKey(userId: number): Promise<string | null> {
@@ -330,7 +334,7 @@ async function cachedFetchUncoalesced<T>(
 			 WHERE ebird_cache.fetched_at < $3`,
 			[cacheKey, JSON.stringify(data), startedAt]
 		);
-		return { data, fetchedAt: new Date(), stale: false };
+		return { data, fetchedAt: new Date(), stale: false, live: { startedAt } };
 	} catch (err) { // stale-safe: fetch fallback; no claim checkpoint may live inside this try (see above)
 		// A cancelled pacing owner must not turn a valid stale row into a
 		// provider-refresh failure for every caller coalesced onto its promise.
@@ -514,6 +518,11 @@ export interface EbirdHotspot {
 
 const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely
 
+// Hotspot lists are the official source of hotspot coordinates (td-c2f2b2):
+// every LIVE response is stored durably in ebird_locations, since the cached
+// list itself is pruned after 48 h. Coalesced callers share the response and
+// each store it; the second store finds nothing changed and writes nothing.
+
 /** All eBird hotspots in a region (ref/hotspot/{regionCode}) — e.g. one county. */
 export async function hotspotsInRegion(
 	apiKey: string,
@@ -521,9 +530,11 @@ export async function hotspotsInRegion(
 ): Promise<CachedResult<EbirdHotspot[]>> {
 	const region = regionCode.trim();
 	const path = `/ref/hotspot/${encodeURIComponent(region)}?fmt=json`;
-	return cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN,
+	const result = await cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
+	if (result.live) await rememberOfficialHotspots(result.data, result.live.startedAt);
+	return result;
 }
 
 /**
@@ -652,9 +663,11 @@ export async function hotspotsNear(
 	const ln = lng.toFixed(2);
 	const dist = Math.min(Math.max(distKm, 1), 50);
 	const path = `/ref/hotspot/geo?lat=${la}&lng=${ln}&dist=${dist}&fmt=json`;
-	return pacedCachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, opts,
+	const result = await pacedCachedFetch(`hotspots:${la}:${ln}:${dist}`, HOTSPOT_TTL_MIN, opts,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
+	if (result.live) await rememberOfficialHotspots(result.data, result.live.startedAt);
+	return result;
 }
 
 export interface EbirdRegion {

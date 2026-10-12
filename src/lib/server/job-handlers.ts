@@ -62,6 +62,12 @@ import {
 	yieldRemainder
 } from '$server/jobs';
 import { claimFencedQuery, QueueWriteUnrecoverableError } from '$server/job-claim';
+import { hasCoordinateGaps } from '$server/hotspot-coordinates';
+import {
+	ensureLoadedHotspotCoordinates,
+	repairCredentialUser,
+	repairHotspotCoordinates
+} from '$server/hotspot-coordinate-repair';
 import {
 	AI_STAGE_ENABLED,
 	dedupKeys,
@@ -264,7 +270,12 @@ async function runFrequencyJob(
 		maxFetches: Infinity,
 		timeBudgetMs: Infinity,
 		onUnit,
-		shouldStop
+		shouldStop,
+		// td-c2f2b2 C2: a loaded hotspot ends with official coordinates (or a
+		// recorded miss); never fails the load, a lost claim stops it.
+		afterHotspotStore: async (loc) => {
+			await ensureLoadedHotspotCoordinates(job.requested_by, loc.code);
+		}
 	});
 	// Ready locs (made current by jobs that ran ahead of this one — the
 	// fairness interleaving creates exactly this) never pass through onUnit.
@@ -663,6 +674,95 @@ export async function ensureNeedAlertScan(): Promise<void> {
 async function runRetiredSpeciesCountRefresh(job: JobRow): Promise<void> {
 	await recordEvent(job.id, 'claimed', { attempt: job.attempts });
 	await completeJob(job.id, job.attempts, { outcome: 'retired' });
+}
+
+// ---------------------------------------------------------------------------
+// Hotspot coordinate repair (td-c2f2b2 C3)
+// ---------------------------------------------------------------------------
+
+/** A finished repair (any outcome, a cancel included) is not re-queued sooner. */
+export const HOTSPOT_COORD_REPAIR_INTERVAL_MS = 24 * 60 * 60_000;
+/** The idle tick runs every 2 s; the scheduler looks at most this often. */
+const HOTSPOT_COORD_CHECK_EVERY_MS = 10 * 60_000;
+let hotspotCoordCheckedAt = 0;
+
+/**
+ * Queue one bounded repair when downloaded hotspots lack official coordinates
+ * and no repair is outstanding or finished in the last 24 h. One-shot and
+ * cancellable (CODEX1 P2-5): a cancel stops it until the next daily check.
+ * The key belongs to the first admin with a usable one (CODEX1 P2-4); none →
+ * nothing is queued and Admin says so.
+ */
+export async function ensureHotspotCoordinateRepair(now = Date.now()): Promise<boolean> {
+	if (now - hotspotCoordCheckedAt < HOTSPOT_COORD_CHECK_EVERY_MS) return false;
+	hotspotCoordCheckedAt = now;
+	if (await hasActiveJob(dedupKeys.repairHotspotCoords())) return false;
+	const recent = await query(
+		`SELECT 1 FROM jobs
+		  WHERE type = 'repair_hotspot_coords'
+		    AND finished_at > NOW() - make_interval(secs => $1) LIMIT 1`,
+		[HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000]
+	);
+	if (recent.rowCount) return false;
+	if (!(await hasCoordinateGaps())) return false;
+	const userId = await repairCredentialUser();
+	if (userId == null) return false;
+	await enqueueJob({
+		type: 'repair_hotspot_coords',
+		payload: {},
+		dedupKey: dedupKeys.repairHotspotCoords(),
+		requestedBy: userId,
+		label: 'daily check',
+		runAfterMs: 60_000
+	});
+	return true;
+}
+
+/** Tests only: let the next ensure look immediately. */
+export function __resetHotspotCoordinateCheckForTests(): void {
+	hotspotCoordCheckedAt = 0;
+}
+
+const REPAIR_STAGE_NAMES = {
+	cache: 'Saved eBird lists',
+	regions: 'eBird hotspot lists by region',
+	info: 'eBird hotspot details'
+} as const;
+
+async function runHotspotCoordinateRepair(job: JobRow): Promise<void> {
+	const attempts = job.attempts;
+	await recordEvent(job.id, 'claimed', { attempt: attempts });
+	const apiKey = await getEbirdApiKey(job.requested_by);
+	if (!apiKey) {
+		await failJob(job.id, attempts, 'An eBird API key is required — add one in Settings.');
+		return;
+	}
+	try {
+		const result = await repairHotspotCoordinates(apiKey, {
+			onProgress: async (p) =>
+				(
+					await updateProgress(job.id, {
+						phase: 'fetching',
+						unitsTotal: p.total,
+						unitsDone: p.done,
+						unitsFailed: 0,
+						unitsSkipped: 0,
+						currentUnit: { code: p.stage, name: REPAIR_STAGE_NAMES[p.stage] },
+						round: attempts
+					})
+				).cancelRequested
+		});
+		if (result.outcome === 'stopped') {
+			await cancelRunningJob(job.id, attempts, result);
+			return;
+		}
+		await completeJob(job.id, attempts, result);
+	} catch (err) {
+		if (isStaleClaim(err)) throw err;
+		// No retry: a bad key or database trouble waits for the next daily check.
+		const message = sanitizeErrorText(err instanceof Error ? err.message : String(err)).slice(0, 300);
+		await failJob(job.id, attempts, message);
+	}
 }
 
 /**
@@ -2598,6 +2698,10 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'refresh_species_counts': {
 				await runRetiredSpeciesCountRefresh(job);
+				return;
+			}
+			case 'repair_hotspot_coords': {
+				await runHotspotCoordinateRepair(job);
 				return;
 			}
 			case 'enrich_species': {

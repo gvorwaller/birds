@@ -268,7 +268,8 @@ describe("jobAffectsRoute — reload a page only for jobs that change its data (
     type,
   });
   const SYSTEM = ["scan_need_alerts", "scan_enrichment", "enrich_species", "enrich_species_media",
-    "enrich_species_inat", "enrich_families", "tag_repair", "tag_consistency", "refresh_species_counts"];
+    "enrich_species_inat", "enrich_families", "tag_repair", "tag_consistency", "refresh_species_counts",
+    "repair_hotspot_coords"];
 
   it("its frequency types are exactly the server's FREQUENCY_JOB_TYPES", () => {
     expect([...FREQUENCY_TYPES].sort()).toEqual([...FREQUENCY_JOB_TYPES].sort());
