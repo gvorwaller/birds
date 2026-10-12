@@ -526,15 +526,26 @@ export async function markAiError(
  * the species arrays of any location with no country — never from the ~39 M
  * weekly rows (27–41 s on prod, 2026-10-12; this form 0.2 s). Effective
  * presence (plan D1) leaves out a species whose only weekly values fall in
- * weeks with no checklists. The scanner, the coverage count and both similar-
- * species readers share this one predicate.
+ * weeks with no checklists. A loaded location the ledger lacks (none unless
+ * the ledger is broken) is read from its own month rows (num > 0), as the
+ * Field Guide does (guide-location.ts UNLEDGERED_SQL): every ledger row
+ * references a loaded location, so the anti-join runs only when the counts
+ * differ. The scanner, the coverage count and both similar-species readers
+ * share this one predicate.
  */
-const inScopeSql = (col: string): string => `(
+export const inScopeSql = (col: string): string => `(
 	   EXISTS (SELECT 1 FROM seen_species scope_s WHERE scope_s.species_code = ${col})
 	OR EXISTS (SELECT 1 FROM photo_links scope_p WHERE scope_p.species_code = ${col})
 	OR EXISTS (SELECT 1 FROM species_country_membership scope_c WHERE scope_c.species_code = ${col})
 	OR ${col} IN (SELECT unnest(scope_l.species_codes) FROM species_location_membership scope_l
-	               WHERE scope_l.country_code IS NULL))`;
+	               WHERE scope_l.country_code IS NULL)
+	OR ${col} IN (SELECT scope_m.species_code FROM species_month_freq scope_m
+	               WHERE scope_m.num > 0
+	                 AND scope_m.loc_code IN (
+	                   SELECT scope_f.loc_code FROM frequency_fetch scope_f
+	                    WHERE (SELECT count(*) FROM frequency_fetch) > (SELECT count(*) FROM species_location_membership)
+	                      AND NOT EXISTS (SELECT 1 FROM species_location_membership scope_g
+	                                       WHERE scope_g.loc_code = scope_f.loc_code))))`;
 
 /** In-scope codes, category='species' applied once via taxonomy. */
 const SCOPE_SQL = `
