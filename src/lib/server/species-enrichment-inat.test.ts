@@ -19,10 +19,6 @@ const dbUp = await query('SELECT 1')
 	.then(() => true)
 	.catch(() => false);
 
-// The restored prod-scale cluster makes the scope UNION cost ~2.4s per call
-// (td-c41126), so every test calling inatDueCodes gets an explicit budget.
-const T = 60_000;
-
 const FOCAL = 'zzitst1';
 const PARTNER = 'zzitst2';
 const CODES = [FOCAL, PARTNER];
@@ -83,7 +79,7 @@ const EDGE_A = { taxonId: 777, misidCount: 40, sciName: 'Testus partneris', comN
 const EDGE_B = { taxonId: 888, misidCount: 10, sciName: 'Testus tertius', comName: null };
 
 describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', () => {
-	it('Wikidata no_mapping clears a removed P3151 and invalidates affected partners', { timeout: T }, async () => {
+	it('Wikidata no_mapping clears a removed P3151 and invalidates affected partners', async () => {
 		await seed();
 		try {
 			await query(
@@ -104,7 +100,6 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 
 	it(
 		'upsertInatSimilar stores ranked edges, stamps ok, and preserves declined_at across refetches',
-		{ timeout: T },
 		async () => {
 			await seed();
 			try {
@@ -158,7 +153,6 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 
 	it(
 		'edge diff stamps partners stale on ADD and on DROP; no_mapping deletes edges and stamps too',
-		{ timeout: T },
 		async () => {
 			await seed();
 			try {
@@ -225,7 +219,6 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 
 	it(
 		'markInatError preserves edges (last-good) and does not advance fetched_at',
-		{ timeout: T },
 		async () => {
 			await seed();
 			try {
@@ -248,7 +241,6 @@ describe.runIf(dbUp)('iNat sourcing writers + due scanner (td-460b1c Phase A)', 
 
 	it(
 		'inatDueCodes lifecycle: null due; error backs off 7d (even with cross_ids present — R3); ok honors mapping-mismatch and P3151-removal clauses',
-		{ timeout: T },
 		async () => {
 			await seed();
 			try {

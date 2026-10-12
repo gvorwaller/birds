@@ -519,23 +519,29 @@ export async function markAiError(
 }
 
 /**
- * The in-scope species universe (CODEX1 #9 contract): DISTINCT codes from
- * seen ∪ frequency ∪ photos (NULLs removed), category='species' applied ONCE
- * via taxonomy.
+ * Whether the species code in `col` is in the enrichment universe (CODEX1 #9
+ * contract; td-b569b5, plan D5): someone has seen it, a photo is linked to it,
+ * or it is effectively present at a loaded location. Presence comes from the
+ * layer the database maintains at write time (0083) — the country table, plus
+ * the species arrays of any location with no country — never from the ~39 M
+ * weekly rows (27–41 s on prod, 2026-10-12; this form 0.2 s). Effective
+ * presence (plan D1) leaves out a species whose only weekly values fall in
+ * weeks with no checklists. The scanner, the coverage count and both similar-
+ * species readers share this one predicate.
  */
-const IN_SCOPE_CODES_SQL = `
-           SELECT species_code FROM seen_species
-           UNION
-           SELECT species_code FROM species_frequency
-           UNION
-           SELECT species_code FROM photo_links WHERE species_code IS NOT NULL`;
+const inScopeSql = (col: string): string => `(
+	   EXISTS (SELECT 1 FROM seen_species scope_s WHERE scope_s.species_code = ${col})
+	OR EXISTS (SELECT 1 FROM photo_links scope_p WHERE scope_p.species_code = ${col})
+	OR EXISTS (SELECT 1 FROM species_country_membership scope_c WHERE scope_c.species_code = ${col})
+	OR ${col} IN (SELECT unnest(scope_l.species_codes) FROM species_location_membership scope_l
+	               WHERE scope_l.country_code IS NULL))`;
 
+/** In-scope codes, category='species' applied once via taxonomy. */
 const SCOPE_SQL = `
-  SELECT DISTINCT tc.species_code
+  SELECT tc.species_code
     FROM taxonomy_cache tc
    WHERE tc.category = 'species'
-     AND tc.species_code IN (${IN_SCOPE_CODES_SQL}
-         )`;
+     AND ${inScopeSql('tc.species_code')}`;
 
 export interface EnrichmentCoverage {
 	eligible: number;
@@ -1652,9 +1658,7 @@ async function loadResolvedEdges(code: string, exec: Exec = query): Promise<Reso
 			in_scope: boolean;
 		}>(
 			`SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family,
-			        (EXISTS (SELECT 1 FROM seen_species s WHERE s.species_code = tc.species_code)
-			      OR EXISTS (SELECT 1 FROM species_frequency f WHERE f.species_code = tc.species_code)
-			      OR EXISTS (SELECT 1 FROM photo_links p WHERE p.species_code = tc.species_code)) AS in_scope
+			        ${inScopeSql('tc.species_code')} AS in_scope
 			   FROM taxonomy_cache tc
 			  WHERE tc.category = 'species' AND tc.species_code = ANY($1::text[])`,
 			[codes]
@@ -2059,9 +2063,7 @@ export async function getSimilarSpecies(code: string, userId: number): Promise<S
 			        sim.note,
 			        sm.thumbnail_url, sm.source_url, sm.creator,
 			        sm.license_code, sm.license_url, sm.width, sm.height,
-			        (EXISTS (SELECT 1 FROM seen_species s2 WHERE s2.species_code = d.resolved_code)
-			      OR EXISTS (SELECT 1 FROM species_frequency f2 WHERE f2.species_code = d.resolved_code)
-			      OR EXISTS (SELECT 1 FROM photo_links p2 WHERE p2.species_code = d.resolved_code)) AS in_scope
+			        ${inScopeSql('d.resolved_code')} AS in_scope
 			   FROM species_similar_display d
 			   LEFT JOIN taxonomy_cache tc
 			          ON tc.species_code = d.resolved_code AND tc.category = 'species'
