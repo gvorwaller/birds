@@ -95,6 +95,10 @@
   let markerLib: any = null;
   let info: any = null;
   let markers: any[] = [];
+  // Hotspot pins merge into numbered circles until zoomed in (td-7a4721): a
+  // dense area has hundreds, which would bury the bird pins. Bird pins are
+  // never clustered.
+  let clusterer: any = null;
   /* eslint-enable @typescript-eslint/no-explicit-any */
   let satellite = $state(false);
   let mapReady = $state(false);
@@ -127,6 +131,8 @@
     if (!map) return;
     for (const m of markers) m.map = null;
     markers = [];
+    clusterer?.clearMarkers(true);
+    const hotspotMarkers: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
     const pts = points.filter(
       (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng),
@@ -140,11 +146,15 @@
         ...(p.glyph ? { glyph: p.glyph, scale: 1.15 } : {}),
         ...(p.kind === "hotspot" ? { scale: 0.8 } : {}),
       });
+      const clustered = p.kind === "hotspot" && clusterer;
       const m = new markerLib.AdvancedMarkerElement({
-        map,
+        // The clusterer decides when a clustered pin is on the map.
+        map: clustered ? null : map,
         position: { lat: p.lat, lng: p.lng },
         title: p.title,
         content: pin.element,
+        // Bird pins always draw over hotspot pins and circles.
+        zIndex: p.kind === "hotspot" ? 1 : 10,
       });
       m.addListener("click", () => {
         const img = p.img
@@ -167,9 +177,12 @@
         info.setContent(`${body}${maps}`);
         info.open({ map, anchor: m });
       });
-      markers.push(m);
+      if (clustered) hotspotMarkers.push(m);
+      else markers.push(m);
       bounds.extend({ lat: p.lat, lng: p.lng });
     }
+
+    clusterer?.addMarkers(hotspotMarkers);
 
     const start = center ?? pts[0] ?? { lat: 39.5, lng: -98.35 };
     const total = pts.length + (center ? 1 : 0);
@@ -186,6 +199,26 @@
       map.setCenter({ lat: start.lat, lng: start.lng });
       map.setZoom(pts.length ? 11 : 6);
     }
+  }
+
+  // A merged group of hotspots: an amber circle (the hotspot pin colour) with
+  // the count; clicking it zooms to the group (the library's default).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function renderCluster({ count, position }: { count: number; position: any }) {
+    const size = Math.round(28 + Math.min(16, Math.log10(count) * 8));
+    const el = document.createElement("div");
+    el.textContent = String(count);
+    el.style.cssText =
+      `width:${size}px;height:${size}px;border-radius:50%;` +
+      `background:${COLORS.hotspot.background};border:2px solid ${COLORS.hotspot.borderColor};` +
+      "color:#fff;font:600 12px/1 system-ui,sans-serif;display:flex;" +
+      "align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.35)";
+    return new markerLib.AdvancedMarkerElement({
+      position,
+      content: el,
+      title: `${count} eBird hotspots — click to zoom in`,
+      zIndex: 2,
+    });
   }
 
   onMount(async () => {
@@ -218,6 +251,16 @@
         fullscreenControl: false,
       });
       info = new gmaps.InfoWindow({ maxWidth: 260 });
+      try {
+        const { MarkerClusterer } = await import("@googlemaps/markerclusterer");
+        clusterer = new MarkerClusterer({
+          map,
+          renderer: { render: renderCluster },
+        });
+      } catch (err) {
+        // Without the clusterer every hotspot is still drawn as its own pin.
+        console.warn("[ObsMap] hotspot clustering unavailable:", err);
+      }
       mapReady = true; // triggers the $effect below to draw the markers
 
       // WebGL vector maps can render blank until composited — nudge on first visibility.
