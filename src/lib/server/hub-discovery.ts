@@ -406,8 +406,7 @@ async function evidenceRevision(): Promise<string> {
        (SELECT md5(string_agg(jsonb_build_array(e.loc_id, e.lat, e.lng, e.updated_at)::text,
                  ',' ORDER BY e.loc_id COLLATE "C"))
           FROM ebird_locations e
-         WHERE EXISTS (SELECT 1 FROM frequency_fetch f
-                        WHERE f.loc_code = e.loc_id AND f.loc_kind = 'hotspot'))
+         WHERE e.loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS}))
      ) AS revision`,
   );
   return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
