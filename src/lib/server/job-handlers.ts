@@ -693,12 +693,21 @@ let hotspotCoordCheckedAt = 0;
 /**
  * The LATEST finished repair decides whether none is due yet: an older
  * complete run must not hold back a newer capped one (CODEX1 re-review).
- * `labelForTests` limits it to a test's rows.
+ * A complete run also waits only an hour when world-catalog regions are due
+ * (`catalogIsDue`): a run that finished before the catalog existed, or before
+ * a region's 30-day refresh, must not hold the catalog back a whole day
+ * (td-79261e deploy: the catalog waited on the previous gap repair). A
+ * cancelled or failed run still waits the day. `labelForTests` limits it to
+ * a test's rows.
  */
-export async function recentHotspotCoordinateRepair(labelForTests?: string): Promise<boolean> {
+export async function recentHotspotCoordinateRepair(
+	opts: { catalogIsDue?: boolean; labelForTests?: string } = {}
+): Promise<boolean> {
 	const r = await query<{ recent: boolean }>(
 		`SELECT finished_at > NOW() - CASE
 		          WHEN status = 'succeeded' AND result ->> 'outcome' IN ('capped', 'deferred', 'upstream')
+		          THEN make_interval(secs => $2)
+		          WHEN $4::boolean AND status = 'succeeded' AND result ->> 'outcome' = 'complete'
 		          THEN make_interval(secs => $2)
 		          ELSE make_interval(secs => $1) END AS recent
 		   FROM jobs
@@ -706,15 +715,21 @@ export async function recentHotspotCoordinateRepair(labelForTests?: string): Pro
 		    AND ($3::text IS NULL OR label = $3)
 		  ORDER BY finished_at DESC
 		  LIMIT 1`,
-		[HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000, HOTSPOT_COORD_CONTINUE_MS / 1000, labelForTests ?? null]
+		[
+			HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000,
+			HOTSPOT_COORD_CONTINUE_MS / 1000,
+			opts.labelForTests ?? null,
+			opts.catalogIsDue === true
+		]
 	);
 	return r.rows[0]?.recent === true;
 }
 
 /**
  * Queue one bounded repair when downloaded hotspots lack official coordinates
- * or a world-catalog region is due (td-79261e), and no repair is outstanding or finished in the last 24 h (1 h after a
- * capped, deferred or eBird-failed run). One-shot and cancellable (CODEX1
+ * or a world-catalog region is due (td-79261e), and no repair is outstanding
+ * or finished in the last 24 h (1 h after a capped, deferred or eBird-failed
+ * run, or a complete one while the catalog is due). One-shot and cancellable (CODEX1
  * P2-5): a cancel stops it until the next daily check. Called at worker
  * startup and on every loop pass, busy or idle (CODEX1 review P2-3).
  * The key belongs to the first admin with a usable one (CODEX1 P2-4); none →
@@ -724,10 +739,11 @@ export async function ensureHotspotCoordinateRepair(now = Date.now()): Promise<b
 	if (now - hotspotCoordCheckedAt < HOTSPOT_COORD_CHECK_EVERY_MS) return false;
 	hotspotCoordCheckedAt = now;
 	if (await hasActiveJob(dedupKeys.repairHotspotCoords())) return false;
-	if (await recentHotspotCoordinateRepair()) return false;
 	// td-79261e: the world catalog is due (first fill, 30-day refresh) even
 	// when every downloaded hotspot already has coordinates.
-	if (!(await hasCoordinateGaps()) && !(await catalogDue())) return false;
+	const catalogIsDue = await catalogDue();
+	if (!catalogIsDue && !(await hasCoordinateGaps())) return false;
+	if (await recentHotspotCoordinateRepair({ catalogIsDue })) return false;
 	const userId = await repairCredentialUser();
 	if (userId == null) return false;
 	await enqueueJob({

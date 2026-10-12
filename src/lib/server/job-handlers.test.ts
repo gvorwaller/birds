@@ -3907,7 +3907,7 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     db.handler = (text) =>
       text.includes("type = 'repair_hotspot_coords'") ? ({ rows: [{ recent: true }], rowCount: 1 } as never) : undefined;
     expect(await ensureHotspotCoordinateRepair()).toBe(false);
-    expect(db.calls.at(-1)?.params).toEqual([86_400, 3_600, null]);
+    expect(db.calls.at(-1)?.params).toEqual([86_400, 3_600, null, false]);
 
     __resetHotspotCoordinateCheckForTests();
     db.handler = null;
@@ -3918,6 +3918,13 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     __resetHotspotCoordinateCheckForTests();
     coordMocks.catalogDue.mockImplementation(async () => true);
     expect(await ensureHotspotCoordinateRepair()).toBe(true);
+    // A due catalog shortens the wait after a complete run (the SQL decides).
+    expect(db.calls.filter((c) => c.text.includes("type = 'repair_hotspot_coords'")).at(-1)?.params).toEqual([
+      86_400,
+      3_600,
+      null,
+      true,
+    ]);
     coordMocks.catalogDue.mockImplementation(async () => false);
     mocks.enqueueJob.mockClear();
 

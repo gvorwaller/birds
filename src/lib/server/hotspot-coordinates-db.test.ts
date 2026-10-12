@@ -694,7 +694,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
            VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, $3, $4, NOW() - $5::interval)`,
           [userId, label, status, JSON.stringify({ outcome }), ago],
         );
-        return recentHotspotCoordinateRepair(label);
+        return recentHotspotCoordinateRepair({ labelForTests: label });
       };
       expect(await finished("capped", "succeeded", "30 minutes")).toBe(true);
       expect(await finished("capped", "succeeded", "2 hours")).toBe(false);
@@ -711,13 +711,34 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
          VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, 'succeeded', '{"outcome":"capped"}', NOW() - interval '2 hours')`,
         [userId, label],
       );
-      expect(await recentHotspotCoordinateRepair(label)).toBe(false);
+      expect(await recentHotspotCoordinateRepair({ labelForTests: label })).toBe(false);
       await query(
         `INSERT INTO jobs (type, payload, requested_by, label, max_attempts, status, result, finished_at)
          VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, 'succeeded', '{"outcome":"complete"}', NOW() - interval '1 hour')`,
         [userId, label],
       );
-      expect(await recentHotspotCoordinateRepair(label)).toBe(true);
+      expect(await recentHotspotCoordinateRepair({ labelForTests: label })).toBe(true);
+      await query("DELETE FROM jobs WHERE label = $1", [label]);
+    });
+
+    it("a due world catalog waits an hour after a complete run, not a day; a cancel or failure still waits the day", async () => {
+      const label = `${LABEL} catalog-due`;
+      const finished = async (outcome: string, status: string, ago: string) => {
+        await query("DELETE FROM jobs WHERE label = $1", [label]);
+        await query(
+          `INSERT INTO jobs (type, payload, requested_by, label, max_attempts, status, result, finished_at)
+           VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, $3, $4, NOW() - $5::interval)`,
+          [userId, label, status, JSON.stringify({ outcome }), ago],
+        );
+        return recentHotspotCoordinateRepair({ catalogIsDue: true, labelForTests: label });
+      };
+      // td-79261e deploy: the gap repair finished complete 2 h before the
+      // catalog shipped; the due catalog must not wait out the rest of the day.
+      expect(await finished("complete", "succeeded", "2 hours")).toBe(false);
+      expect(await finished("complete", "succeeded", "30 minutes")).toBe(true);
+      expect(await finished("stopped", "cancelled", "2 hours")).toBe(true);
+      expect(await finished("boom", "failed", "2 hours")).toBe(true);
+      expect(await finished("capped", "succeeded", "2 hours")).toBe(false);
       await query("DELETE FROM jobs WHERE label = $1", [label]);
     });
 
