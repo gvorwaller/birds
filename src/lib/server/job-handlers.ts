@@ -689,20 +689,25 @@ export const HOTSPOT_COORD_CONTINUE_MS = 60 * 60_000;
 const HOTSPOT_COORD_CHECK_EVERY_MS = 10 * 60_000;
 let hotspotCoordCheckedAt = 0;
 
-/** A repair finished recently enough that none is due. `labelForTests` limits it to a test's rows. */
+/**
+ * The LATEST finished repair decides whether none is due yet: an older
+ * complete run must not hold back a newer capped one (CODEX1 re-review).
+ * `labelForTests` limits it to a test's rows.
+ */
 export async function recentHotspotCoordinateRepair(labelForTests?: string): Promise<boolean> {
-	const r = await query(
-		`SELECT 1 FROM jobs
-		  WHERE type = 'repair_hotspot_coords'
-		    AND ($3::text IS NULL OR label = $3)
-		    AND finished_at > NOW() - CASE
+	const r = await query<{ recent: boolean }>(
+		`SELECT finished_at > NOW() - CASE
 		          WHEN status = 'succeeded' AND result ->> 'outcome' IN ('capped', 'deferred', 'upstream')
 		          THEN make_interval(secs => $2)
-		          ELSE make_interval(secs => $1) END
+		          ELSE make_interval(secs => $1) END AS recent
+		   FROM jobs
+		  WHERE type = 'repair_hotspot_coords' AND finished_at IS NOT NULL
+		    AND ($3::text IS NULL OR label = $3)
+		  ORDER BY finished_at DESC
 		  LIMIT 1`,
 		[HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000, HOTSPOT_COORD_CONTINUE_MS / 1000, labelForTests ?? null]
 	);
-	return (r.rowCount ?? 0) > 0;
+	return r.rows[0]?.recent === true;
 }
 
 /**

@@ -185,4 +185,4 @@ running a load.
 | P2 A stale cached region list hid a 401/403 | Fixed — stale list: 401/403 throws, 429 defers, other statuses end as `upstream` |
 | P2 Admin miss list silently capped at 100; "without eBird coordinates" inaccurate | Fixed — total shown, "the first 100 by name"; wording says official coordinates, plus how many have none at all |
 | P2 Info cap reported "complete" and waited 24 h | Fixed — outcome `capped`; capped, deferred and upstream runs are due again after 1 h (`recentHotspotCoordinateRepair`) |
-
+| Re-review P2: any recent row matched, so an older complete run held back a newer capped one | Fixed — the latest finished run alone decides; two-row fixture test |

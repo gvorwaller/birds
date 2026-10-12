@@ -494,6 +494,21 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(await finished("complete", "succeeded", "2 hours")).toBe(true);
       expect(await finished("stopped", "cancelled", "2 hours")).toBe(true);
       expect(await finished("complete", "succeeded", "25 hours")).toBe(false);
+      // Only the LATEST run decides: an older complete run (3 h ago) must not
+      // hold back a newer capped one (2 h ago), and vice versa.
+      await finished("complete", "succeeded", "3 hours");
+      await query(
+        `INSERT INTO jobs (type, payload, requested_by, label, max_attempts, status, result, finished_at)
+         VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, 'succeeded', '{"outcome":"capped"}', NOW() - interval '2 hours')`,
+        [userId, label],
+      );
+      expect(await recentHotspotCoordinateRepair(label)).toBe(false);
+      await query(
+        `INSERT INTO jobs (type, payload, requested_by, label, max_attempts, status, result, finished_at)
+         VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, 'succeeded', '{"outcome":"complete"}', NOW() - interval '1 hour')`,
+        [userId, label],
+      );
+      expect(await recentHotspotCoordinateRepair(label)).toBe(true);
       await query("DELETE FROM jobs WHERE label = $1", [label]);
     });
 

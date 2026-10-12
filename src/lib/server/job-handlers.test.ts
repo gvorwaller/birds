@@ -3903,7 +3903,7 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     __resetHotspotCoordinateCheckForTests();
     mocks.hasActiveJob.mockImplementation(async () => false);
     db.handler = (text) =>
-      text.includes("type = 'repair_hotspot_coords'") ? { rows: [{}], rowCount: 1 } as never : undefined;
+      text.includes("type = 'repair_hotspot_coords'") ? ({ rows: [{ recent: true }], rowCount: 1 } as never) : undefined;
     expect(await ensureHotspotCoordinateRepair()).toBe(false);
     expect(db.calls.at(-1)?.params).toEqual([86_400, 3_600, null]);
 
