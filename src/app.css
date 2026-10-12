@@ -73,6 +73,33 @@ textarea {
 	background-color: var(--card);
 }
 
+/* Native single selects (td-47179c). WebKit ignores min-height on the native
+   control and draws it ~23-26px tall, so drop the native look and redraw the
+   arrow; that reaches 48px in every engine. Pages add only layout and font
+   size, never their own box, padding or arrow. */
+select:where(:not([multiple], [size])) {
+	appearance: none;
+	-webkit-appearance: none;
+	min-height: 48px;
+	padding: 8px 36px 8px 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background-color: var(--card);
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+		linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+	background-position:
+		calc(100% - 19px) 50%,
+		calc(100% - 14px) 50%;
+	background-size: 5px 5px;
+	background-repeat: no-repeat;
+}
+select:where(:not([multiple], [size])):disabled {
+	color: var(--muted);
+	background-color: var(--bg);
+	cursor: not-allowed;
+}
+
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 

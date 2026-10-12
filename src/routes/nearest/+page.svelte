@@ -304,22 +304,14 @@
     gap: 3px;
     font-size: 0.82rem;
   }
-  .searchcard select {
-    appearance: none;
-    height: 48px;
-    padding: 8px 32px 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-    background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
-    background-size: 5px 5px;
-    background-repeat: no-repeat;
-  }
   .searchcard select,
   .searchcard input,
   .searchcard button {
-    min-height: 48px;
     font-size: 16px;
+  }
+  .searchcard input,
+  .searchcard button {
+    min-height: 48px;
   }
   .searchcard input {
     flex: 1 1 240px;

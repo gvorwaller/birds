@@ -2319,12 +2319,6 @@
     flex: 1;
     min-width: 200px;
     font-size: 16px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
-    min-height: 48px;
   }
   .loadstate {
     display: flex;
@@ -2336,12 +2330,6 @@
     flex: 1;
     min-width: 200px;
     font-size: 16px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
-    min-height: 48px;
   }
   .loadstate button {
     min-height: 48px;

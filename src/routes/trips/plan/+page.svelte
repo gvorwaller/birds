@@ -679,12 +679,6 @@
   }
   .filters input,
   .filters select {
-    min-height: 48px;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
     font-family: inherit;
     font-size: 16px;
   }

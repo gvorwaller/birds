@@ -812,28 +812,8 @@
     min-width: 0;
   }
   .location-fields select {
-    appearance: none;
     width: 100%;
     min-width: 0;
-    min-height: 48px;
-    padding: 8px 32px 8px 12px;
-    font-size: 1rem;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .location-field::after {
-    content: "";
-    position: absolute;
-    right: 16px;
-    bottom: 21px;
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid var(--muted);
-    border-bottom: 2px solid var(--muted);
-    transform: rotate(45deg);
-    pointer-events: none;
   }
   .location-hint {
     font-size: 0.89rem;

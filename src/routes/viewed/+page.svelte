@@ -291,6 +291,8 @@
   input,
   select {
     width: 100%;
+  }
+  input {
     min-height: 48px;
     font-size: 1rem;
     padding: 8px 12px;
@@ -299,24 +301,6 @@
     background: var(--bg);
     color: var(--text);
     appearance: none;
-  }
-  .sort {
-    position: relative;
-  }
-  select {
-    padding-right: 32px;
-  }
-  .sort::after {
-    content: "";
-    position: absolute;
-    right: 16px;
-    bottom: 21px;
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid var(--muted);
-    border-bottom: 2px solid var(--muted);
-    transform: rotate(45deg);
-    pointer-events: none;
   }
   button,
   .page-head > a,

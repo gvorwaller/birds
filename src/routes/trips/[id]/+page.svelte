@@ -1634,7 +1634,6 @@
   }
   .anchor-choices select {
     font-size: 16px;
-    min-height: 48px;
     max-width: 100%;
   }
   .secondary-btn {

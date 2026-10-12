@@ -1653,12 +1653,6 @@
     white-space: nowrap;
   }
   .sort-control select {
-    min-height: 48px;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
     font-size: 16px;
   }
   .filters {
@@ -1680,8 +1674,7 @@
     flex: 1;
     min-width: 220px;
   }
-  .filters input,
-  .filters select {
+  .filters input {
     min-height: 48px;
     padding: 8px 12px;
     border: 1px solid var(--border);

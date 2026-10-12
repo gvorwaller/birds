@@ -564,9 +564,7 @@
   .list-picker label { font-weight: 600; }
   .picker-controls { display: flex; gap: 0.6rem; align-items: stretch; }
   .picker-controls select {
-    flex: 1; min-width: 0; min-height: 48px; font: inherit;
-    color: var(--text); background: var(--bg); border: 1px solid var(--border);
-    border-radius: 8px; padding: 0.5rem;
+    flex: 1; min-width: 0; font: inherit;
   }
   .picker-controls button {
     min-height: 48px; font: inherit; font-weight: 600; padding: 0.5rem 0.8rem;

@@ -1163,7 +1163,7 @@
   .family-enrichment summary { min-height:48px; padding-block:12px; cursor:pointer; }
   .family-enrichment form { display:flex; flex-wrap:wrap; gap:0.75rem; }
   .nudge-model { display:grid; gap:4px; width:100%; max-width:420px; }
-  .nudge-model select { min-height:48px; font-size:1rem; width:100%; }
+  .nudge-model select { width:100%; }
   .approval { width:100%; border:2px solid var(--accent); border-radius:8px; padding:16px; margin-top:12px; }
   .approval h3 { margin-top:0; }
 

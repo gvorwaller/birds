@@ -138,8 +138,11 @@
     gap: 6px;
     min-width: 0;
   }
+  select {
+    min-width: 48px;
+    font: inherit;
+  }
   input,
-  select,
   button {
     min-height: 48px;
     min-width: 48px;
@@ -153,20 +156,6 @@
   input {
     width: 100%;
     box-sizing: border-box;
-  }
-  select {
-    appearance: none;
-    padding-right: 36px;
-  }
-  .sort-field {
-    position: relative;
-  }
-  .sort-field::after {
-    content: "▾";
-    position: absolute;
-    right: 12px;
-    bottom: 12px;
-    pointer-events: none;
   }
   button {
     cursor: pointer;

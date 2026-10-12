@@ -1133,13 +1133,6 @@
   input[type="search"],
   select {
     font-size: 16px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--text);
-    min-height: 48px;
-    height: 48px;
   }
   button {
     min-height: 48px;
