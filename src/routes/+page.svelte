@@ -22,6 +22,7 @@
     speciesAtPlace,
   } from "$lib/place-search";
   import { homeUrlWithQuery } from "$lib/return-link";
+  import { withReturnTo } from "$lib/navigation-context";
   import { nearestDistanceKm, sortNeedsByNearest } from "$lib/needs-sort";
   import {
     HOME_LISTS,
@@ -533,6 +534,20 @@
       }
       return pts;
     }
+    // Every eBird hotspot in range, reported in the window or not (td-7a4721):
+    // drawn first, so the bird pins sit on top.
+    for (const h of data.hotspots ?? []) {
+      pts.push({
+        lat: h.lat,
+        lng: h.lng,
+        title: h.locName,
+        sub: hotspotSummary(h),
+        placeName: h.locName,
+        href: withReturnTo(`/hotspots/${encodeURIComponent(h.locId)}`, page.url.pathname + page.url.search + page.url.hash, undefined, "Home"),
+        linkText: "Hotspot page →",
+        kind: "hotspot",
+      });
+    }
     for (const n of notableShown) {
       pts.push({
         lat: n.lastLat,
@@ -559,6 +574,21 @@
     }
     return pts;
   });
+  /** "eBird hotspot · last report Sep 9, 2026 · 30 species · seasonal data". */
+  function hotspotSummary(h: NonNullable<typeof data.hotspots>[number]): string {
+    const day = h.latestObsDt?.slice(0, 10);
+    const last = day && /^\d{4}-\d{2}-\d{2}$/.test(day)
+      ? new Date(`${day}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+      : null;
+    return [
+      "eBird hotspot",
+      last ? `last report ${last}` : "no reports yet",
+      h.numSpeciesAllTime != null ? `${h.numSpeciesAllTime} species` : "",
+      h.downloaded ? "seasonal data" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
   let notableShownCodes = $derived(
     new Set(notableShown.map((n) => n.speciesCode)),
   );
@@ -828,6 +858,7 @@
           <span class="dot need"></span> need
           <span class="dot notable"></span> notable
           {#if mapHasSeen}<span class="dot seen"></span> seen{/if}
+          {#if !searching && (data.hotspots ?? []).length > 0}<span class="dot hotspot"></span> hotspot{/if}
           <span class="dot home"></span> selected location
         {/if}
       </p>
@@ -1396,7 +1427,9 @@
 
   {#if data.location}
       <HotspotComparison
-        filters={{ lat: data.location.lat, lng: data.location.lng, radiusKm: data.dist, daysBack: data.back, seenStatus: "needs", rareOnly: false, anchorLabel: data.location.label }}
+        filters={{ lat: data.location.lat, lng: data.location.lng, radiusKm: data.dist, daysBack: data.back, seenStatus: "all", rareOnly: false, anchorLabel: data.location.label }}
+        lens={list}
+        lensHref={(l) => homeListHref(page.url, l)}
         {distanceUnit}
         accountId={data.user?.id}
         sourceHref={page.url.pathname + page.url.search + page.url.hash}
@@ -1564,6 +1597,10 @@
   }
   .dot.seen {
     background: #41464b;
+  }
+  /* Matches ObsMap's hotspot pin. */
+  .dot.hotspot {
+    background: #b45309;
   }
   /* Same pills as the Field Guide's All / Need / Seen scope (species page). */
   .list-scope {

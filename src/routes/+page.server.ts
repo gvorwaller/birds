@@ -1,7 +1,7 @@
 import { redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
-import { decodeEbirdApiKey, EbirdError } from "$server/ebird";
+import { decodeEbirdApiKey, EbirdError, hotspotsNear } from "$server/ebird";
 import {
   geoTargetsBase,
   seenSet,
@@ -28,6 +28,56 @@ import {
   radiusSelectOptionsKm,
   selectEffectiveRadiusKm,
 } from "$lib/near-me-radius";
+
+/** An eBird hotspot inside the search radius, for the map (td-7a4721). */
+export interface HomeHotspot {
+  locId: string;
+  locName: string;
+  lat: number;
+  lng: number;
+  latestObsDt: string | null;
+  numSpeciesAllTime: number | null;
+  /** Seasonal (bar-chart) data is downloaded for it. */
+  downloaded: boolean;
+}
+
+/**
+ * Every eBird hotspot within the radius, whether or not anything was reported
+ * there in the window: a quiet area (Sandnessjøen, 0 reports in 30 days)
+ * otherwise shows an empty map. Cached a day; a failure only drops the pins.
+ */
+async function hotspotsInRange(
+  apiKey: string,
+  lat: number,
+  lng: number,
+  distKm: number,
+): Promise<HomeHotspot[]> {
+  try {
+    const { data } = await hotspotsNear(apiKey, lat, lng, distKm);
+    const ids = data.map((h) => h.locId);
+    const loaded = ids.length
+      ? await query<{ loc_code: string }>(
+          "SELECT loc_code FROM frequency_fetch WHERE loc_code = ANY($1::text[])",
+          [ids],
+        )
+      : { rows: [] };
+    const downloaded = new Set(loaded.rows.map((r) => r.loc_code));
+    return data
+      .filter((h) => Number.isFinite(h.lat) && Number.isFinite(h.lng))
+      .map((h) => ({
+        locId: h.locId,
+        locName: h.locName,
+        lat: h.lat,
+        lng: h.lng,
+        latestObsDt: h.latestObsDt ?? null,
+        numSpeciesAllTime: h.numSpeciesAllTime ?? null,
+        downloaded: downloaded.has(h.locId),
+      }));
+  } catch (err) {
+    console.error("[home] hotspots in range unavailable:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
 
 /** The params that make up a Home search. With none of them, `/` reopens the
  * account's remembered search (td-9304cd). `loc` and `list` are deliberately
@@ -193,7 +243,10 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
   // nothing rendered at first paint waits on it.
   let view: TargetsView | null = null;
   let enrichment: Promise<Streamed<GeoEnrichment>> | null = null;
+  let hotspots: HomeHotspot[] = [];
   if (location && apiKey) {
+    // Alongside the area feed, not after it; never rejects.
+    const hotspotsWork = hotspotsInRange(apiKey, location.lat, location.lng, distKm);
     try {
       const base = await geoTargetsBase(
         seen,
@@ -231,6 +284,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
           ? err.message
           : `Could not load data for ${location.label}.`;
     }
+    hotspots = await hotspotsWork;
   }
 
   // No searched or reopened place, and the saved radius.
@@ -267,6 +321,7 @@ export const load: PageServerLoad = async ({ locals, url, request }) => {
     suggestions: PLACE_SUGGESTIONS,
     view,
     enrichment,
+    hotspots,
     error,
     needsLocation: !location,
     hasApiKey: !!apiKey,

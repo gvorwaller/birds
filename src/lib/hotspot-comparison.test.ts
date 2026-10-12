@@ -8,7 +8,9 @@ import {
   comparisonStopMessage,
   parsePersistedComparison,
   progressForRows,
+  rowForLens,
   sortedComparisonRows,
+  type HotspotComparisonRow,
 } from "./hotspot-comparison";
 
 const row = (code: string, locId = "L1", obsDt = "2026-09-19 12:00") => ({
@@ -90,6 +92,84 @@ describe("hotspot comparison", () => {
       "needs",
     );
     expect(needs).toMatchObject({ ok: true, count: 1 });
+  });
+
+  it("marks each species seen or not, so Home's lens can narrow one all-species run (td-7a4721)", () => {
+    const all = aggregateComparisonObservations(
+      [row("a", "L1", "2026-09-19 13:00"), row("b", "L1", "2026-09-20 08:00"), row("c")],
+      "L1",
+      new Set(["b"]),
+      "all",
+    );
+    if (!all.ok) throw new Error(all.error);
+    expect(all.species.map((s) => [s.code, s.seen])).toEqual([
+      ["b", true],
+      ["a", false],
+      ["c", false],
+    ]);
+    const base: HotspotComparisonRow = {
+      locId: "L1",
+      locName: "Marsh",
+      lat: 30,
+      lng: -81,
+      distanceKm: 1,
+      googlePlaceId: null,
+      state: "fresh",
+      count: all.count,
+      species: all.species,
+      latestObsDt: all.latestObsDt,
+      fetchedAt: "2026-09-28T12:00:00.000Z",
+      stale: false,
+      error: null,
+      token: "token",
+    };
+    expect(rowForLens(base, "all")).toBe(base);
+    const need = rowForLens(base, "need");
+    expect([need.count, need.species.map((s) => s.code), need.latestObsDt]).toEqual([
+      2,
+      ["a", "c"],
+      "2026-09-19 13:00",
+    ]);
+    const seen = rowForLens(base, "seen");
+    expect([seen.count, seen.species.map((s) => s.code), seen.latestObsDt]).toEqual([
+      1,
+      ["b"],
+      "2026-09-20 08:00",
+    ]);
+    // An unchecked row has no count to narrow.
+    const unchecked = { ...base, state: "unqueried" as const, count: null, species: [] };
+    expect(rowForLens(unchecked, "seen")).toBe(unchecked);
+    // A zero stays zero in every lens.
+    expect(rowForLens({ ...base, count: 0, species: [], latestObsDt: null }, "need").count).toBe(0);
+  });
+
+  it("restores a saved row whose species carry the seen mark", () => {
+    const queryKey = "k";
+    const reference = { locId: "L1", locName: "Marsh", lat: 30, lng: -81, distanceKm: 1, googlePlaceId: null };
+    const saved = (seen: unknown) =>
+      JSON.stringify({
+        version: 1,
+        queryKey,
+        savedAt: "2026-09-28T12:00:00.000Z",
+        identity: "id",
+        references: [reference],
+        rows: [
+          {
+            ...reference,
+            state: "fresh",
+            count: 1,
+            species: [{ code: "a", comName: "A", sciName: "A a", obsDt: "2026-09-19", seen }],
+            latestObsDt: "2026-09-19",
+            fetchedAt: "2026-09-28T12:00:00.000Z",
+            stale: false,
+            error: null,
+            token: null,
+          },
+        ],
+        referenceStale: false,
+      });
+    expect(parsePersistedComparison(saved(true), queryKey)?.rows[0]?.species[0]?.seen).toBe(true);
+    expect(parsePersistedComparison(saved("yes"), queryKey)).toBeNull();
   });
 
   it("distinguishes reported zero from malformed responses", () => {

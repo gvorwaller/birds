@@ -18,6 +18,9 @@ export interface ComparisonSpecies {
   sciName: string;
   obsDt: string;
   obsValid?: boolean;
+  /** On the scope owner's life list — lets Home's All / Need / Seen lens
+   * filter one all-species comparison without another eBird pass. */
+  seen?: boolean;
 }
 
 export interface HotspotComparisonRow extends HotspotReference {
@@ -102,7 +105,8 @@ function isComparisonRow(value: unknown): value is HotspotComparisonRow {
         typeof item.comName === "string" &&
         typeof item.sciName === "string" &&
         typeof item.obsDt === "string" &&
-        (item.obsValid === undefined || typeof item.obsValid === "boolean")
+        (item.obsValid === undefined || typeof item.obsValid === "boolean") &&
+        (item.seen === undefined || typeof item.seen === "boolean")
       );
     }) &&
     (row.latestObsDt === null || typeof row.latestObsDt === "string") &&
@@ -355,6 +359,7 @@ export function aggregateComparisonObservations(
         ...(typeof row.obsValid === "boolean"
           ? { obsValid: row.obsValid }
           : {}),
+        seen: seen.has(row.speciesCode),
       });
     }
   }
@@ -374,4 +379,28 @@ export function chunkIds(ids: string[], size = 4): string[][] {
   for (let i = 0; i < ids.length; i += size)
     chunks.push(ids.slice(i, i + size));
   return chunks;
+}
+
+/** Home's species lens, applied to an all-species comparison. */
+export type ComparisonLens = "all" | "need" | "seen";
+
+/**
+ * One row as the lens shows it: its species, count and latest report narrowed
+ * to needs (not on the life list) or seen species. "all" and unchecked rows
+ * are returned unchanged.
+ */
+export function rowForLens(
+  row: HotspotComparisonRow,
+  lens: ComparisonLens,
+): HotspotComparisonRow {
+  if (lens === "all" || row.count == null) return row;
+  const species = row.species.filter((s) =>
+    lens === "seen" ? s.seen === true : s.seen !== true,
+  );
+  return {
+    ...row,
+    species,
+    count: species.length,
+    latestObsDt: species[0]?.obsDt ?? null,
+  };
 }

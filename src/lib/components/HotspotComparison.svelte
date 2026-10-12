@@ -9,8 +9,10 @@
     comparisonStorageKey,
     parsePersistedComparison,
     progressForRows,
+    rowForLens,
     sortedComparisonRows,
     type ComparisonFilters,
+    type ComparisonLens,
     type HotspotComparisonRow,
     type HotspotReference,
   } from "$lib/hotspot-comparison";
@@ -30,6 +32,8 @@
     accountId = null,
     sourceHref = "/",
     sourceLabel = "Home",
+    lens = null,
+    lensHref = null,
   }: {
     filters: ComparisonFilters;
     distanceUnit?: DistanceUnit;
@@ -38,7 +42,19 @@
     accountId?: number | null;
     sourceHref?: string;
     sourceLabel?: string;
+    /** Home's All / Need / Seen lens over an all-species comparison
+     * (`filters.seenStatus` "all"): narrows the shown counts and species
+     * without another eBird pass. Null keeps the filters' own scope. */
+    lens?: ComparisonLens | null;
+    /** Where each lens pill links (Home's `?list=` URL). */
+    lensHref?: ((lens: ComparisonLens) => string) | null;
   } = $props();
+
+  const LENSES: { value: ComparisonLens; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "need", label: "Need" },
+    { value: "seen", label: "Seen" },
+  ];
 
   let refs = $state<HotspotReference[]>([]);
   let rows = $state<HotspotComparisonRow[]>([]);
@@ -66,7 +82,24 @@
   const storageKey = $derived(comparisonStorageKey(accountId, key));
   const progress = $derived(progressForRows(rows));
   const complete = $derived(comparisonComplete(rows, referenceStale));
-  const ranked = $derived(sortedComparisonRows(rows));
+  const lensed = $derived(lens ? rows.map((row) => rowForLens(row, lens)) : rows);
+  const ranked = $derived(sortedComparisonRows(lensed));
+  const scopeLabel = $derived(
+    lens
+      ? lens === "need"
+        ? "My needs"
+        : lens === "seen"
+          ? "Species I've seen"
+          : "All species"
+      : filters.seenStatus === "needs"
+        ? "My needs"
+        : "All species",
+  );
+  function countNoun(count: number): string {
+    if (lens ? lens === "need" : filters.seenStatus === "needs")
+      return count === 1 ? "need" : "needs";
+    return lens === "seen" ? "seen" : "species";
+  }
   const shown = $derived(showAll ? ranked : ranked.slice(0, 5));
 
   $effect(() => {
@@ -463,8 +496,27 @@
       <button type="button" onclick={start}>Refresh</button>
     {/if}
   </div>
+  {#if lens && lensHref}
+    <!-- The same lens as the species list above: plain links, so switching
+         re-reads nothing from eBird. -->
+    <nav class="lens" aria-label="Compare: All, Need or Seen">
+      {#each LENSES as l (l.value)}
+        <a
+          id={`compare-lens-${l.value}`}
+          class:current={lens === l.value}
+          href={lensHref(l.value)}
+          aria-current={lens === l.value ? "true" : undefined}
+          data-sveltekit-preload-data="tap"
+          data-sveltekit-noscroll
+          data-sveltekit-keepfocus
+          ><span aria-hidden="true">{lens === l.value ? "●" : "○"}</span
+          >{l.label}</a
+        >
+      {/each}
+    </nav>
+  {/if}
   <p class="muted scope">
-    {filters.seenStatus === "needs" ? "My needs" : "All species"} · last {filters.daysBack}
+    {scopeLabel} · last {filters.daysBack}
     days · within {formatDistance(filters.radiusKm, distanceUnit)} · includes unconfirmed
     reports{filters.rareOnly ? " · notable reports" : ""}
   </p>
@@ -507,11 +559,7 @@
               >
               <div class="meta">
                 {#if row.count != null}{row.count}
-                  {filters.seenStatus === "needs"
-                    ? row.count === 1
-                      ? "need"
-                      : "needs"
-                    : "species"}{:else}{row.state}{/if} · {formatDistance(
+                  {countNoun(row.count)}{:else}{row.state}{/if} · {formatDistance(
                   row.distanceKm,
                   distanceUnit,
                 )}
@@ -617,6 +665,35 @@
   .muted {
     color: var(--muted);
     font-size: 0.84rem;
+  }
+  /* Same pills as Home's All / Need / Seen species lens. */
+  .lens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+  }
+  .lens a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .lens a.current {
+    border: 2px solid var(--accent);
+    background: var(--card);
+    color: var(--accent);
+  }
+  .lens a:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
   }
   .scope,
   .progress {

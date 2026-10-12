@@ -7,7 +7,10 @@
     href?: string;
     linkText?: string;
     img?: string;
-    kind?: "need" | "notable" | "seen" | "home" | "photo" | "pending";
+    kind?: "need" | "notable" | "seen" | "home" | "photo" | "pending" | "hotspot";
+    /** The place name for the Map / Directions links when `sub` is not one
+     * (a hotspot pin's `sub` is its report summary). */
+    placeName?: string;
     /** Short text rendered inside the pin (e.g. a lifer count). */
     glyph?: string;
     /** Pre-built (already-escaped) info-window body — the multi-item path
@@ -72,6 +75,13 @@
       borderColor: "#4d2d89",
       glyphColor: "#fff",
     },
+    // An eBird hotspot in range (Home, td-7a4721): amber, and drawn smaller so
+    // the bird pins stay the first thing the eye finds.
+    hotspot: {
+      background: "#b45309",
+      borderColor: "#78350f",
+      glyphColor: "#fff",
+    },
   };
 
   let mapEl: HTMLDivElement;
@@ -128,6 +138,7 @@
       const pin = new markerLib.PinElement({
         ...COLORS[p.kind ?? "need"],
         ...(p.glyph ? { glyph: p.glyph, scale: 1.15 } : {}),
+        ...(p.kind === "hotspot" ? { scale: 0.8 } : {}),
       });
       const m = new markerLib.AdvancedMarkerElement({
         map,
@@ -147,8 +158,8 @@
           p.kind === "home"
             ? ""
             : `<div style="margin-top:6px;display:flex;gap:14px;font-weight:600">` +
-              `<a href="${mapsPlaceUrl({ name: p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
-              `<a href="${mapsDirectionsUrl({ name: p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
+              `<a href="${mapsPlaceUrl({ name: p.placeName ?? p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#0a5c43">📍 Map ↗</a>` +
+              `<a href="${mapsDirectionsUrl({ name: p.placeName ?? p.sub ?? p.title, lat: p.lat, lng: p.lng })}" target="_blank" rel="noopener" style="color:#084298">Directions ↗</a>` +
               `</div>`;
         const body = p.html
           ? `<div style="max-height:240px;overflow:auto">${p.html}</div>`
