@@ -680,16 +680,37 @@ async function runRetiredSpeciesCountRefresh(job: JobRow): Promise<void> {
 // Hotspot coordinate repair (td-c2f2b2 C3)
 // ---------------------------------------------------------------------------
 
-/** A finished repair (any outcome, a cancel included) is not re-queued sooner. */
+/** A finished repair (a cancel or a failure included) is not re-queued sooner… */
 export const HOTSPOT_COORD_REPAIR_INTERVAL_MS = 24 * 60 * 60_000;
+/** …except one that stopped short on the info cap, the hourly reserve or an
+ * eBird failure: it continues after an hour (CODEX1 review P2-6). */
+export const HOTSPOT_COORD_CONTINUE_MS = 60 * 60_000;
 /** The idle tick runs every 2 s; the scheduler looks at most this often. */
 const HOTSPOT_COORD_CHECK_EVERY_MS = 10 * 60_000;
 let hotspotCoordCheckedAt = 0;
 
+/** A repair finished recently enough that none is due. `labelForTests` limits it to a test's rows. */
+export async function recentHotspotCoordinateRepair(labelForTests?: string): Promise<boolean> {
+	const r = await query(
+		`SELECT 1 FROM jobs
+		  WHERE type = 'repair_hotspot_coords'
+		    AND ($3::text IS NULL OR label = $3)
+		    AND finished_at > NOW() - CASE
+		          WHEN status = 'succeeded' AND result ->> 'outcome' IN ('capped', 'deferred', 'upstream')
+		          THEN make_interval(secs => $2)
+		          ELSE make_interval(secs => $1) END
+		  LIMIT 1`,
+		[HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000, HOTSPOT_COORD_CONTINUE_MS / 1000, labelForTests ?? null]
+	);
+	return (r.rowCount ?? 0) > 0;
+}
+
 /**
  * Queue one bounded repair when downloaded hotspots lack official coordinates
- * and no repair is outstanding or finished in the last 24 h. One-shot and
- * cancellable (CODEX1 P2-5): a cancel stops it until the next daily check.
+ * and no repair is outstanding or finished in the last 24 h (1 h after a
+ * capped, deferred or eBird-failed run). One-shot and cancellable (CODEX1
+ * P2-5): a cancel stops it until the next daily check. Called at worker
+ * startup and on every loop pass, busy or idle (CODEX1 review P2-3).
  * The key belongs to the first admin with a usable one (CODEX1 P2-4); none →
  * nothing is queued and Admin says so.
  */
@@ -697,13 +718,7 @@ export async function ensureHotspotCoordinateRepair(now = Date.now()): Promise<b
 	if (now - hotspotCoordCheckedAt < HOTSPOT_COORD_CHECK_EVERY_MS) return false;
 	hotspotCoordCheckedAt = now;
 	if (await hasActiveJob(dedupKeys.repairHotspotCoords())) return false;
-	const recent = await query(
-		`SELECT 1 FROM jobs
-		  WHERE type = 'repair_hotspot_coords'
-		    AND finished_at > NOW() - make_interval(secs => $1) LIMIT 1`,
-		[HOTSPOT_COORD_REPAIR_INTERVAL_MS / 1000]
-	);
-	if (recent.rowCount) return false;
+	if (await recentHotspotCoordinateRepair()) return false;
 	if (!(await hasCoordinateGaps())) return false;
 	const userId = await repairCredentialUser();
 	if (userId == null) return false;

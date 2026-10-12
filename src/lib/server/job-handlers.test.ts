@@ -3886,6 +3886,16 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     expect(await ensureHotspotCoordinateRepair(1_000_000 + 10 * 60_000)).toBe(true);
   });
 
+  it("the worker checks at startup and on every loop pass, busy or idle", () => {
+    const src = readFileSync(new URL("../../worker/index.ts", import.meta.url), "utf8");
+    const main = src.slice(src.indexOf("async function main("));
+    expect(main.indexOf("checkHotspotCoordinates('startup')")).toBeGreaterThan(-1);
+    expect(main.indexOf("checkHotspotCoordinates('startup')")).toBeLessThan(main.indexOf("for (;;)"));
+    const loop = main.slice(main.indexOf("for (;;)"));
+    expect(loop.indexOf("checkHotspotCoordinates('loop')")).toBeGreaterThan(-1);
+    expect(loop.indexOf("checkHotspotCoordinates('loop')")).toBeLessThan(loop.indexOf("claimNextJob()"));
+  });
+
   it("the daily check queues nothing while one is outstanding, after a recent run, with no gaps or no key", async () => {
     mocks.hasActiveJob.mockImplementation(async () => true);
     expect(await ensureHotspotCoordinateRepair()).toBe(false);
@@ -3895,7 +3905,7 @@ describe("hotspot coordinates (td-c2f2b2)", () => {
     db.handler = (text) =>
       text.includes("type = 'repair_hotspot_coords'") ? { rows: [{}], rowCount: 1 } as never : undefined;
     expect(await ensureHotspotCoordinateRepair()).toBe(false);
-    expect(db.calls.at(-1)?.params).toEqual([86_400]);
+    expect(db.calls.at(-1)?.params).toEqual([86_400, 3_600, null]);
 
     __resetHotspotCoordinateCheckForTests();
     db.handler = null;

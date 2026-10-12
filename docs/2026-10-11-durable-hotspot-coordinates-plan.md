@@ -148,9 +148,8 @@ running a load.
   and the write runs after `cachedFetch` returns (never inside its stale-fallback catch). `CachedResult.live` marks a
   live response; `hotspotsInRegion` / `hotspotsNear` store it; official info on the hotspot page stores it.
 - Observation rows: no time ordering among themselves (last write wins, as before); `coord_fetched_at` is NULL for
-  them (the 0084 CHECK pins official ⇔ non-NULL). An official re-fetch with identical values does not advance
-  `coord_fetched_at` (no rewrite); an older request could then only win if eBird had moved the hotspot and moved it
-  back between the two requests.
+  them (the 0084 CHECK pins official ⇔ non-NULL). A newer official answer always records its request time; the rest
+  of the row (and `updated_at`) moves only when the values changed.
 - `src/lib/server/hotspot-coordinate-repair.ts` — per-load lookup (`ensureLoadedHotspotCoordinates`, wired through
   `ensureFrequencies`' new `afterHotspotStore`, outside the unit try/catch, before `onUnit`), the repair run, the
   credential choice, Admin status. Dedicated pacer (2/s, burst 4, keeps the hourly reserve, ≤30 s wait).
@@ -176,3 +175,14 @@ running a load.
 | P2-6 Coordinate buckets overlapped (sum 8,214 ≠ 7,428) | Accepted — recomputed disjoint on prod: 1,669 / 4,879 / 880 |
 | P2-7 0084 constraint swap needs a bounded lock plan | Accepted — C5 lock_timeout, abort-and-retry, measured on birds_test under load |
 | Scope: store all listed hotspots | Kept — CODEX1: coherent for sweep timing, not identity evidence, no Places sweep; owner endorsed |
+
+## CODEX1 code review of 958b91e (2026-10-12): revise → dispositions
+| Finding | Disposition |
+|---|---|
+| P1 Repair counted coordinates whose write had failed (best-effort writer swallowed DB errors) and could finish "complete" | Fixed — the repair fetches lists with `remember: false` and writes with the throwing writer; hotspot-info lookups write with it too; a DB error fails the run; only eBird/payload errors end it as `upstream` |
+| P2 An identical newer answer left `coord_fetched_at` old, so a delayed different answer could win | Fixed — every newer official answer records its request time; values/`updated_at` move only on change; T10/T30/T20 test |
+| P2 Scheduler only on idle ticks, not at startup | Fixed — worker startup and every loop pass (busy or idle), throttled to 10 min |
+| P2 A stale cached region list hid a 401/403 | Fixed — stale list: 401/403 throws, 429 defers, other statuses end as `upstream` |
+| P2 Admin miss list silently capped at 100; "without eBird coordinates" inaccurate | Fixed — total shown, "the first 100 by name"; wording says official coordinates, plus how many have none at all |
+| P2 Info cap reported "complete" and waited 24 h | Fixed — outcome `capped`; capped, deferred and upstream runs are due again after 1 h (`recentHotspotCoordinateRepair`) |
+

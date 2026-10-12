@@ -13,7 +13,13 @@
  * the rest of the app; a deferral ends the run (the next daily check resumes).
  */
 import { query } from "$lib/db";
-import { EbirdError, ebirdFetchOrNull, getEbirdApiKey, hotspotsInRegion } from "$server/ebird";
+import {
+  EbirdError,
+  ebirdFetchOrNull,
+  getEbirdApiKey,
+  hotspotsInRegion,
+  type CachedResult,
+} from "$server/ebird";
 import { EbirdPacer, PaceDeferred } from "$server/ebird-rate";
 import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import {
@@ -21,10 +27,15 @@ import {
   coordinatesFromCache,
   needsOfficialCoordinates,
   recordCoordinateMiss,
-  rememberOfficialHotspots,
+  upsertLocationCoordinates,
+  type CoordinateRow,
 } from "$server/hotspot-coordinates";
 import { isStaleClaim } from "$server/job-claim";
-import { reportSchemaDrift, validateEbirdHotspotInfo } from "$server/upstream-schema";
+import {
+  reportSchemaDrift,
+  UpstreamSchemaError,
+  validateEbirdHotspotInfo,
+} from "$server/upstream-schema";
 
 /** At most 2 per second after a burst of 4; never into the hourly reserve. */
 const coordinatePacer = new EbirdPacer({ ratePerSec: 2, burst: 4 });
@@ -57,7 +68,8 @@ const defaultInfoFetcher: InfoFetcher = async (locCode, apiKey) => {
 
 /**
  * One hotspot-info request → official coordinates or a recorded miss. Paced;
- * throws PaceDeferred / EbirdError / StaleClaimError for the caller to judge.
+ * throws PaceDeferred / EbirdError / StaleClaimError — and a failed write
+ * (CODEX1 review P1: "stored" means stored) — for the caller to judge.
  */
 export async function lookupOfficialCoordinates(
   locCode: string,
@@ -76,8 +88,9 @@ export async function lookupOfficialCoordinates(
     await recordCoordinateMiss(locCode, "not_hotspot");
     return "not_hotspot";
   }
-  await rememberOfficialHotspots(
+  await upsertLocationCoordinates(
     [{ locId: locCode, locName: meta.locName, lat: meta.lat, lng: meta.lng }],
+    "official",
     startedAt,
   );
   return "stored";
@@ -117,7 +130,10 @@ export interface RepairProgress {
 }
 
 export interface RepairResult {
-  outcome: "complete" | "stopped" | "deferred" | "upstream";
+  /** capped: the info cap left gaps; deferred: the hourly reserve was
+   * reached; upstream: eBird failed. The scheduler re-runs those three
+   * within the hour (CODEX1 review P2-6). */
+  outcome: "complete" | "capped" | "stopped" | "deferred" | "upstream";
   gapsBefore: number;
   fromCache: number;
   regionsFetched: number;
@@ -131,17 +147,24 @@ export interface RepairOptions {
   /** Progress write + cancel check; true = stop now. */
   onProgress?: (p: RepairProgress) => Promise<boolean>;
   fetchInfo?: InfoFetcher;
-  /** Test seam: one hotspot list (stores its coordinates as it arrives). */
-  fetchRegion?: (apiKey: string, regionCode: string) => Promise<unknown>;
+  /** Test seam: one hotspot list, as hotspotsInRegion returns it. */
+  fetchRegion?: (
+    apiKey: string,
+    regionCode: string,
+  ) => Promise<Pick<CachedResult<CoordinateRow[]>, "data" | "fetchedAt" | "stale" | "live" | "refreshErrorStatus">>;
   infoCap?: number;
   /** Test-only: repair only these downloaded hotspots. */
   onlyLocCodes?: readonly string[];
 }
 
+/** eBird or its payload failed — not the database, not our code. */
+const isUpstream = (err: unknown) => err instanceof EbirdError || err instanceof UpstreamSchemaError;
+
 /**
  * One bounded repair run. A 401/403 throws (the job fails, the next daily
  * check re-selects the credential); other eBird trouble ends the run as
- * 'upstream' with what it already stored kept.
+ * 'upstream' with what it already stored kept. A failed database write
+ * throws: the run must not report coordinates it did not store.
  */
 export async function repairHotspotCoordinates(
   apiKey: string,
@@ -149,7 +172,8 @@ export async function repairHotspotCoordinates(
 ): Promise<RepairResult> {
   const onProgress = opts.onProgress ?? (async () => false);
   const fetchRegion =
-    opts.fetchRegion ?? ((key: string, region: string) => hotspotsInRegion(key, region));
+    opts.fetchRegion ??
+    ((key: string, region: string) => hotspotsInRegion(key, region, { remember: false }));
   const infoCap = opts.infoCap ?? REPAIR_INFO_CAP;
   const gaps = () => coordinateGaps(opts.onlyLocCodes);
   const initial = await gaps();
@@ -182,18 +206,31 @@ export async function repairHotspotCoordinates(
   for (let i = 0; i < regions.length; i++) {
     if (await onProgress({ stage: "regions", done: i, total: regions.length }))
       return finish("stopped");
+    let list: Awaited<ReturnType<typeof fetchRegion>>;
     try {
       await coordinatePacer.acquire(apiKey, undefined, PACE);
-      await fetchRegion(apiKey, regions[i]);
-      result.regionsFetched++;
+      list = await fetchRegion(apiKey, regions[i]);
     } catch (err) {
       if (isStaleClaim(err)) throw err;
       if (err instanceof PaceDeferred) return finish("deferred");
       if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
       // A region eBird no longer lists: its hotspots fall through to info.
       if (err instanceof EbirdError && err.status === 404) continue;
-      return finish("upstream", err instanceof Error ? err.message : String(err));
+      if (isUpstream(err)) return finish("upstream", err instanceof Error ? err.message : String(err));
+      throw err;
     }
+    // A failed refresh served from an old cached copy (CODEX1 review P2-4):
+    // that copy was already read in stage 1; the failure decides the run.
+    if (list.stale) {
+      const status = list.refreshErrorStatus;
+      if (status === 401 || status === 403)
+        throw new EbirdError("eBird API key is missing or invalid — check Settings.", status);
+      if (status === 429) return finish("deferred");
+      if (status === 404) continue;
+      return finish("upstream", `eBird hotspot list for ${regions[i]} could not be refreshed (${status ?? "error"}).`);
+    }
+    await upsertLocationCoordinates(list.data, "official", list.live?.startedAt ?? list.fetchedAt);
+    result.regionsFetched++;
   }
 
   // 3. Hotspot info for whatever is still missing (renamed, merged, hidden).
@@ -209,10 +246,13 @@ export async function repairHotspotCoordinates(
       if (isStaleClaim(err)) throw err;
       if (err instanceof PaceDeferred) return finish("deferred");
       if (err instanceof EbirdError && (err.status === 401 || err.status === 403)) throw err;
-      return finish("upstream", err instanceof Error ? err.message : String(err));
+      if (isUpstream(err)) return finish("upstream", err instanceof Error ? err.message : String(err));
+      throw err;
     }
   }
-  return finish("complete");
+  // Every gap within the cap is now stored or a miss; what is left is the cap's.
+  const left = (await gaps()).length;
+  return finish(left > 0 ? "capped" : "complete");
 }
 
 /**
@@ -236,10 +276,17 @@ export async function repairCredentialUser(): Promise<number | null> {
   return null;
 }
 
+/** The Admin miss list shows this many; the total is always shown. */
+export const STATUS_MISS_LIMIT = 100;
+
 export interface CoordinateStatus {
-  /** Downloaded hotspots without official coordinates (misses included). */
-  missing: number;
   downloaded: number;
+  /** Downloaded hotspots without OFFICIAL eBird coordinates (misses included). */
+  missing: number;
+  /** Of those, how many have no coordinates at all — the map searches can't place them. */
+  noCoordinates: number;
+  missesTotal: number;
+  /** The first STATUS_MISS_LIMIT misses by name. */
   misses: Array<{ locCode: string; locName: string | null; reason: string; checkedAt: string }>;
   lastRepair: {
     status: string;
@@ -253,18 +300,20 @@ export interface CoordinateStatus {
 /** Admin's integrity line (C4). */
 export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
   const [counts, misses, last, queued, credential] = await Promise.all([
-    query<{ downloaded: number; missing: number }>(
+    query<{ downloaded: number; missing: number; no_coordinates: number; misses: number }>(
       `SELECT count(*)::int AS downloaded,
-              count(*) FILTER (WHERE NOT EXISTS (
-                SELECT 1 FROM ebird_locations e
-                 WHERE e.loc_id = f.loc_code AND e.coord_source = 'official'))::int AS missing
-         FROM frequency_fetch f WHERE f.loc_kind = 'hotspot'`,
+              count(*) FILTER (WHERE e.coord_source IS DISTINCT FROM 'official')::int AS missing,
+              count(*) FILTER (WHERE e.loc_id IS NULL)::int AS no_coordinates,
+              (SELECT count(*)::int FROM hotspot_coord_misses) AS misses
+         FROM frequency_fetch f LEFT JOIN ebird_locations e ON e.loc_id = f.loc_code
+        WHERE f.loc_kind = 'hotspot'`,
     ),
     query<{ locCode: string; locName: string | null; reason: string; checkedAt: Date }>(
       `SELECT m.loc_code AS "locCode", f.loc_name AS "locName", m.reason,
               m.checked_at AS "checkedAt"
          FROM hotspot_coord_misses m JOIN frequency_fetch f ON f.loc_code = m.loc_code
-        ORDER BY f.loc_name, m.loc_code LIMIT 100`,
+        ORDER BY f.loc_name, m.loc_code LIMIT $1`,
+      [STATUS_MISS_LIMIT],
     ),
     query<{ status: string; finished_at: Date | null; outcome: string | null }>(
       `SELECT status, finished_at, result ->> 'outcome' AS outcome
@@ -279,8 +328,10 @@ export async function hotspotCoordinateStatus(): Promise<CoordinateStatus> {
   ]);
   const lastRow = last.rows[0];
   return {
-    missing: counts.rows[0]?.missing ?? 0,
     downloaded: counts.rows[0]?.downloaded ?? 0,
+    missing: counts.rows[0]?.missing ?? 0,
+    noCoordinates: counts.rows[0]?.no_coordinates ?? 0,
+    missesTotal: counts.rows[0]?.misses ?? 0,
     misses: misses.rows.map((m) => ({ ...m, checkedAt: new Date(m.checkedAt).toISOString() })),
     lastRepair: lastRow
       ? {

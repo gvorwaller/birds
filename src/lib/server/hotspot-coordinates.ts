@@ -54,8 +54,17 @@ function usable(row: CoordinateRow, source: CoordinateSource): boolean {
   );
 }
 
+// A newer official answer always records its request time (CODEX1 review
+// P2-2: an identical T30 answer left at T10 would let a delayed, different
+// T20 answer win). The rest of the row moves only when the values changed:
+// a daily re-fetch of an unchanged 4,000-hotspot list advances one
+// unindexed timestamp per row (HOT) and leaves updated_at alone. `n` counts
+// inserted or changed rows, read against the pre-statement snapshot (`old`).
 const OFFICIAL_SQL = `
-  WITH up AS (
+  WITH old AS MATERIALIZED (
+    SELECT loc_id, loc_name, lat, lng, coord_source
+      FROM ebird_locations WHERE loc_id = ANY($1::text[])
+  ), up AS (
     INSERT INTO ebird_locations AS e (loc_id, loc_name, lat, lng, coord_source, coord_fetched_at)
     SELECT t.loc_id, t.loc_name, t.lat, t.lng, 'official', t.fetched_at
       FROM unnest($1::text[], $2::text[], $3::float8[], $4::float8[], $5::timestamptz[])
@@ -63,17 +72,21 @@ const OFFICIAL_SQL = `
     ON CONFLICT (loc_id) DO UPDATE
        SET loc_name = EXCLUDED.loc_name, lat = EXCLUDED.lat, lng = EXCLUDED.lng,
            coord_source = 'official', coord_fetched_at = EXCLUDED.coord_fetched_at,
-           last_seen_at = NOW(), updated_at = NOW()
-     WHERE (e.coord_source = 'observation' OR EXCLUDED.coord_fetched_at > e.coord_fetched_at)
-       -- An unchanged official row is not rewritten: a daily re-fetch of a
-       -- 4,000-hotspot list touches nothing.
-       AND (e.loc_name, e.lat, e.lng, e.coord_source)
-           IS DISTINCT FROM (EXCLUDED.loc_name, EXCLUDED.lat, EXCLUDED.lng, 'official')
-    RETURNING 1
+           last_seen_at = NOW(),
+           updated_at = CASE
+             WHEN (e.loc_name, e.lat, e.lng, e.coord_source)
+                  IS DISTINCT FROM (EXCLUDED.loc_name, EXCLUDED.lat, EXCLUDED.lng, 'official')
+             THEN NOW() ELSE e.updated_at END
+     WHERE e.coord_source = 'observation' OR EXCLUDED.coord_fetched_at > e.coord_fetched_at
+    RETURNING e.loc_id, e.loc_name, e.lat, e.lng
   ), found AS (
     DELETE FROM hotspot_coord_misses m WHERE m.loc_code = ANY($1::text[])
   )
-  SELECT count(*)::int AS n FROM up`;
+  SELECT count(*)::int AS n
+    FROM up LEFT JOIN old ON old.loc_id = up.loc_id
+   WHERE old.loc_id IS NULL
+      OR (old.loc_name, old.lat, old.lng, old.coord_source)
+         IS DISTINCT FROM (up.loc_name, up.lat, up.lng, 'official')`;
 
 const OBSERVATION_SQL = `
   WITH up AS (
@@ -92,7 +105,8 @@ const OBSERVATION_SQL = `
 /**
  * Store coordinates under the precedence rules. Under a held claim the write
  * is fenced and a lost claim throws; every error propagates (callers that
- * must not fail use rememberOfficialHotspots). Returns rows written.
+ * must not fail use rememberOfficialHotspots). Returns rows inserted or
+ * changed (a newer identical official answer only records its time).
  */
 export async function upsertLocationCoordinates(
   rows: readonly CoordinateRow[],

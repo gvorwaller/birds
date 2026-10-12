@@ -620,20 +620,29 @@
     {@const hc = data.hotspotCoordinates}
     <CollapsibleCard id="hotspot-coordinates" title="Hotspot coordinates" badge={hc.missing}>
       <p>
-        Downloaded hotspots without eBird coordinates: <strong>{hc.missing}</strong>
-        of {hc.downloaded}.
+        Downloaded hotspots without eBird's official hotspot coordinates:
+        <strong>{hc.missing}</strong> of {hc.downloaded}.
+        {#if hc.noCoordinates > 0}
+          {hc.noCoordinates} of them have no coordinates at all, so the map
+          searches can't find them yet.
+        {/if}
       </p>
       <p class="muted">
         The Field Guide and Hotspots &amp; data map searches can only find
-        hotspots whose coordinates are saved. Each hotspot load saves them; a
-        daily background check fetches any that are missing.
+        hotspots whose coordinates are saved. Each hotspot load saves eBird's
+        official coordinates; a daily background check fetches any that are
+        missing.
       </p>
       <p>
         {#if hc.repairQueued}
           The daily check is queued or running now.
         {:else if hc.lastRepair}
           Last check {ago(hc.lastRepair.finishedAt)}: {hc.lastRepair.status}{hc.lastRepair.outcome ? ` (${hc.lastRepair.outcome})` : ""}.
-          {#if hc.lastRepair.status === "cancelled"}It runs again at the next daily check.{/if}
+          {#if hc.lastRepair.status === "cancelled"}
+            It runs again at the next daily check.
+          {:else if hc.lastRepair.status === "succeeded" && ["capped", "deferred", "upstream"].includes(hc.lastRepair.outcome ?? "")}
+            It stopped before finishing and continues within the hour.
+          {/if}
         {:else}
           No check has run yet.
         {/if}
@@ -641,7 +650,13 @@
           <span class="error">It needs an admin account with an eBird API key (Settings) before it can run.</span>
         {/if}
       </p>
-      {#if hc.misses.length > 0}
+      {#if hc.missesTotal > 0}
+        <p>
+          eBird no longer has {hc.missesTotal} downloaded {hc.missesTotal === 1 ? "hotspot" : "hotspots"}
+          (checked again after 30 days){hc.missesTotal > hc.misses.length
+            ? ` — the first ${hc.misses.length} by name:`
+            : ":"}
+        </p>
         <div class="tablewrap">
           <table>
             <thead><tr><th>Hotspot</th><th>Why</th><th>Checked</th></tr></thead>

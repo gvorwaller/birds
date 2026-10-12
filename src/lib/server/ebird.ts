@@ -526,14 +526,18 @@ const HOTSPOT_TTL_MIN = 1440; // hotspots change rarely
 /** All eBird hotspots in a region (ref/hotspot/{regionCode}) — e.g. one county. */
 export async function hotspotsInRegion(
 	apiKey: string,
-	regionCode: string
+	regionCode: string,
+	/** remember: false — the caller stores the coordinates itself and must
+	 * see a failed write (the coordinate repair, td-c2f2b2). */
+	opts: { remember?: boolean } = {}
 ): Promise<CachedResult<EbirdHotspot[]>> {
 	const region = regionCode.trim();
 	const path = `/ref/hotspot/${encodeURIComponent(region)}?fmt=json`;
 	const result = await cachedFetch(`hotspotsRegion:${region}`, HOTSPOT_TTL_MIN,
 		() => ebirdFetch<unknown>(path, apiKey),
 		(value) => validateEbirdHotspots(value, path) as EbirdHotspot[]);
-	if (result.live) await rememberOfficialHotspots(result.data, result.live.startedAt);
+	if (result.live && opts.remember !== false)
+		await rememberOfficialHotspots(result.data, result.live.startedAt);
 	return result;
 }
 

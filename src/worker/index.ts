@@ -55,6 +55,16 @@ function assertEnvironment(): void {
 	}
 }
 
+/** Queue the coordinate repair when due (td-c2f2b2); never stops the loop. */
+async function checkHotspotCoordinates(when: 'startup' | 'loop'): Promise<void> {
+	await ensureHotspotCoordinateRepair().catch((err) => {
+		console.error(
+			`[birds-worker] hotspot coordinate check failed (${when}):`,
+			err instanceof Error ? err.message : err
+		);
+	});
+}
+
 async function main(): Promise<void> {
 	assertEnvironment();
 
@@ -101,6 +111,7 @@ async function main(): Promise<void> {
 			err instanceof Error ? err.message : err
 		);
 	});
+	await checkHotspotCoordinates('startup');
 	await markWorkerStarted(process.pid, VERSION);
 	// Server health (td-7739c2): the admin page reads the worker's samples.
 	startMemorySampler('worker');
@@ -177,6 +188,9 @@ async function main(): Promise<void> {
 			);
 			console.log('[birds-worker] resumed by admin');
 		}
+		// td-c2f2b2: busy or idle — a queue that is never empty must not
+		// starve the coordinate repair. Throttled inside to every 10 min.
+		await checkHotspotCoordinates('loop');
 		let job = null;
 		try {
 			job = await claimNextJob();
@@ -203,14 +217,6 @@ async function main(): Promise<void> {
 			await ensureTagConsistency().catch((err) => {
 				console.error(
 					'[birds-worker] tag consistency reconciliation failed:',
-					err instanceof Error ? err.message : err
-				);
-			});
-			// td-c2f2b2: at most every 10 min, queues the daily coordinate repair
-			// when downloaded hotspots lack official coordinates.
-			await ensureHotspotCoordinateRepair().catch((err) => {
-				console.error(
-					'[birds-worker] hotspot coordinate check failed:',
 					err instanceof Error ? err.message : err
 				);
 			});

@@ -27,6 +27,7 @@ import {
   repairHotspotCoordinates,
 } from "./hotspot-coordinate-repair";
 import { EbirdError, hotspotsInRegion } from "./ebird";
+import { recentHotspotCoordinateRepair } from "./job-handlers";
 import { resolveGuideLocation } from "./guide-location";
 
 const dbUp = await query("SELECT 1")
@@ -112,6 +113,19 @@ async function staleAndLive(): Promise<{ a: JobRow; b: JobRow }> {
   return { a, b: await claim(id) };
 }
 
+const listResult = (data: Array<{ locId: string; locName: string; lat: number; lng: number }>) => ({
+  data,
+  fetchedAt: new Date(),
+  stale: false,
+  live: { startedAt: new Date() },
+});
+const staleList = (refreshErrorStatus: number) => ({
+  data: [] as Array<{ locId: string; locName: string; lat: number; lng: number }>,
+  fetchedAt: t(1),
+  stale: true,
+  refreshErrorStatus,
+});
+
 const info = (loc: string, lat: number, extra: Record<string, unknown> = {}) => ({
   locId: loc,
   name: `Info ${loc}`,
@@ -184,12 +198,22 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(await row(loc)).toMatchObject({ lat: 4, loc_name: "Moved" });
     });
 
-    it("an unchanged official row is not rewritten (a daily list re-fetch touches nothing)", async () => {
+    it("an unchanged newer answer only records its request time (updated_at stays)", async () => {
       const loc = newId();
       await official(loc, 2, "Official", t(10));
       const before = await row(loc);
       expect(await official(loc, 2, "Official", t(50))).toBe(0);
-      expect((await row(loc)).updated_at.toISOString()).toBe(before.updated_at.toISOString());
+      const after = await row(loc);
+      expect(after.updated_at.toISOString()).toBe(before.updated_at.toISOString());
+      expect(after.coord_fetched_at?.toISOString()).toBe(t(50).toISOString());
+    });
+
+    it("a delayed older answer never replaces a newer identical one (T10, T30 same, then T20 different)", async () => {
+      const loc = newId();
+      await official(loc, 2, "Official", t(10));
+      await official(loc, 2, "Official", t(30));
+      expect(await official(loc, 7, "Stale move", t(20))).toBe(0);
+      expect(await row(loc)).toMatchObject({ lat: 2, loc_name: "Official" });
     });
 
     it("a Google result written mid-fetch does not block the official write; Google columns are preserved", async () => {
@@ -370,8 +394,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
         fetchRegion: async (_key, region) => {
           regionCalls.push(region);
           if (region === OTHER_REGION) throw new EbirdError("eBird API error 404", 404);
-          await rememberOfficialHotspots([{ locId: listed, locName: "From region list", lat: 25, lng: 26 }], new Date());
-          return [];
+          return listResult([{ locId: listed, locName: "From region list", lat: 25, lng: 26 }]);
         },
         fetchInfo: async (loc) => {
           infoCalls.push(loc);
@@ -411,6 +434,69 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       expect(again).toMatchObject({ outcome: "complete", gapsBefore: 0, gapsAfter: 0 });
     });
 
+    it("a failed write fails the run instead of counting coordinates it did not store (CODEX1 review P1)", async () => {
+      const [viaList, viaInfo] = [newId(), newId()];
+      await downloaded(viaList);
+      await downloaded(viaInfo, OTHER_REGION);
+      await expect(
+        repairHotspotCoordinates("zz-key", {
+          onlyLocCodes: [viaList],
+          fetchRegion: async () => listResult([{ locId: viaList, locName: "bad\u0000name", lat: 1, lng: 1 }]),
+        }),
+      ).rejects.toThrow();
+      await expect(
+        repairHotspotCoordinates("zz-key", {
+          onlyLocCodes: [viaInfo],
+          fetchRegion: async () => {
+            throw new EbirdError("eBird API error 404", 404);
+          },
+          fetchInfo: async (loc) => info(loc, 1, { name: "bad\u0000name" }),
+        }),
+      ).rejects.toThrow();
+      expect(await row(viaList)).toBeUndefined();
+      expect(await row(viaInfo)).toBeUndefined();
+      expect(await miss(viaInfo)).toBeNull();
+    });
+
+    it("a stale region list decides the run: 401/403 throws, 429 defers, other failures end it as upstream", async () => {
+      const loc = newId();
+      await downloaded(loc);
+      const run = (status: number) =>
+        repairHotspotCoordinates("zz-key", {
+          onlyLocCodes: [loc],
+          fetchRegion: async () => staleList(status),
+          fetchInfo: async () => {
+            throw new Error("must not be called");
+          },
+        });
+      await expect(run(401)).rejects.toMatchObject({ status: 401 });
+      await expect(run(403)).rejects.toMatchObject({ status: 403 });
+      expect(await run(429)).toMatchObject({ outcome: "deferred", regionsFetched: 0, gapsAfter: 1 });
+      expect(await run(503)).toMatchObject({ outcome: "upstream", regionsFetched: 0, gapsAfter: 1 });
+      await official(loc, 3);
+    });
+
+    it("a capped, deferred or eBird-failed run is due again after an hour; others after a day", async () => {
+      const label = `${LABEL} recent`;
+      const finished = async (outcome: string, status: string, ago: string) => {
+        await query("DELETE FROM jobs WHERE label = $1", [label]);
+        await query(
+          `INSERT INTO jobs (type, payload, requested_by, label, max_attempts, status, result, finished_at)
+           VALUES ('repair_hotspot_coords', '{}', $1, $2, 1, $3, $4, NOW() - $5::interval)`,
+          [userId, label, status, JSON.stringify({ outcome }), ago],
+        );
+        return recentHotspotCoordinateRepair(label);
+      };
+      expect(await finished("capped", "succeeded", "30 minutes")).toBe(true);
+      expect(await finished("capped", "succeeded", "2 hours")).toBe(false);
+      expect(await finished("deferred", "succeeded", "2 hours")).toBe(false);
+      expect(await finished("upstream", "succeeded", "2 hours")).toBe(false);
+      expect(await finished("complete", "succeeded", "2 hours")).toBe(true);
+      expect(await finished("stopped", "cancelled", "2 hours")).toBe(true);
+      expect(await finished("complete", "succeeded", "25 hours")).toBe(false);
+      await query("DELETE FROM jobs WHERE label = $1", [label]);
+    });
+
     it("a recent miss is not retried; an old one is", async () => {
       const loc = newId();
       await downloaded(loc);
@@ -440,7 +526,7 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
         infoCap: 1,
         fetchInfo: async (loc) => info(loc, 30),
       });
-      expect(capped).toMatchObject({ outcome: "complete", infoLookups: 1, gapsAfter: 2 });
+      expect(capped).toMatchObject({ outcome: "capped", infoLookups: 1, gapsAfter: 2 });
 
       await expect(
         repairHotspotCoordinates("zz-key", {
@@ -480,6 +566,8 @@ describe.skipIf(!dbUp)("durable hotspot coordinates (td-c2f2b2)", () => {
       const status = await hotspotCoordinateStatus();
       expect(status.missing).toBeGreaterThanOrEqual(1);
       expect(status.downloaded).toBeGreaterThanOrEqual(status.missing);
+      expect(status.missing).toBeGreaterThanOrEqual(status.noCoordinates);
+      expect(status.missesTotal).toBeGreaterThanOrEqual(status.misses.length);
       const m = status.misses.find((x) => x.locCode === loc);
       expect(m).toMatchObject({ reason: "not_hotspot", locName: `Coordinate fixture ${loc}` });
       expect(m!.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
