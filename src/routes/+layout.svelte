@@ -11,6 +11,7 @@
 	import type { LayoutData } from './$types';
 	import { DEFAULT_THEME, themeDefinition } from '$lib/themes';
 	import { navigationAfterNavigate } from '$lib/navigation-context.svelte';
+	import { reportPageUse } from '$lib/usage-report';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -46,6 +47,8 @@
 	afterNavigate((navigation) => {
 		queueMicrotask(() => navigationAfterNavigate(data.user?.id, navigation.type));
 		if (data.user) jobsPoll.onNavigated();
+		// Account usage (td-c8e6a3): a page shown without an error counts.
+		reportPageUse(data.user?.id, $page.route.id, $page.status, $page.error != null);
 	});
 	const activeJob = $derived.by(() => {
 		const visible = jobsPoll.active.filter((j) =>

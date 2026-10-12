@@ -57,8 +57,8 @@ const ROUTE_FEATURES: [prefix: string, feature: UsageFeature][] = [
 ];
 
 /** Pages that are not a use of the app: signing in and the old /targets
- * redirect. Endpoints (+server.ts, /api/*) are never counted: the hook counts
- * only page loads. */
+ * redirect. Only pages count: the browser reports a page it finished showing
+ * (src/lib/usage-report.ts), never an endpoint. */
 const UNCOUNTED_ROUTES = new Set(["/login", "/targets"]);
 
 /** The section a page route belongs to, or null for an uncounted route. */
@@ -72,3 +72,8 @@ export function usageFeatureFor(routeId: string | null): UsageFeature | null {
 
 /** Exported for the coverage test: routes deliberately not counted. */
 export const UNCOUNTED_PAGE_ROUTES: ReadonlySet<string> = UNCOUNTED_ROUTES;
+
+/** The usage report a viewer may send (hooks.server.ts allows it). */
+export function isActivityRequest(path: string, method: string): boolean {
+  return method === "POST" && path === "/api/activity";
+}

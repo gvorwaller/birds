@@ -739,7 +739,8 @@
 						section, never what you searched, which birds you opened, or where. An
 						administrator sees, per account,
 						the last active day, days active in the last 30, whether the account came
-						back after its first day, and the sections used, in Admin → Users.
+						back on a later day (judged from pages opened, sign-ins and species pages
+						viewed), and the sections used, in Admin → Users.
 					</li>
 				</ul>
 			</div>

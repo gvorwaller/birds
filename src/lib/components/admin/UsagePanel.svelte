@@ -41,8 +41,10 @@
 <section class="card" aria-labelledby="usage-heading">
 	<h2 id="usage-heading">Users</h2>
 	<p class="muted">
-		A day counts when the account opens any page (days are UTC). Sections show how many of the last 30
-		days each was used; nothing about what was searched or viewed is kept.
+		A day counts when the account opens any page and it shows without an error (days are UTC).
+		Sections show how many of the last 30 days each was used; nothing about what was searched or
+		viewed is kept. <strong>Came back</strong> means signs of use on two or more days: pages opened,
+		sign-ins, or species pages viewed.
 		{#if report.trackingSince}
 			Recorded since {fmtDay(report.trackingSince)}; before that only each account's last login is known.
 		{:else}
@@ -78,10 +80,12 @@
 					<div>
 						<dt>Came back</dt>
 						<dd>
-							{#if a.returned}
+							{#if a.returned === 'yes'}
 								<AdminBadge tone="ok" label="Yes" />
-							{:else if a.lastActiveDay || a.lastLoginAt}
+							{:else if a.returned === 'not_yet'}
 								<AdminBadge tone="warn" label="Not yet" />
+							{:else if a.returned === 'unknown'}
+								<span class="muted">Unknown — one day on record, before tracking</span>
 							{:else}
 								—
 							{/if}

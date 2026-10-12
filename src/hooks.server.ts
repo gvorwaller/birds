@@ -8,8 +8,7 @@ import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
 import { building, dev } from '$app/environment';
 import { startMemorySampler } from '$server/process-health';
-import { recordActivity } from '$server/user-activity';
-import { usageFeatureFor } from '$lib/usage-features';
+import { isActivityRequest } from '$lib/usage-features';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
 	newTimingBag,
@@ -101,7 +100,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
 		// Keep private settings/actions blocked; appearance changes only this user.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method) && !isHomeSearchRequest(path, method, firstAction) && !isTripVisitedRequest(path, method, firstAction)) {
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method) && !isHomeSearchRequest(path, method, firstAction) && !isTripVisitedRequest(path, method, firstAction) && !isActivityRequest(path, method)) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// The separate appearance page never loads the credential-bearing page.
@@ -128,19 +127,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// long-lived caching. Routes that explicitly set a policy win.
 	if (!response.headers.has('cache-control')) {
 		response.headers.set('cache-control', 'private, no-store');
-	}
-	// Usage (td-c8e6a3): a signed-in account loaded a page — the HTML or its
-	// client-side data — so its section counts as used today. Endpoints, form
-	// posts, failures and the login page never count. Not awaited.
-	const user = event.locals.user;
-	if (
-		user &&
-		event.request.method === 'GET' &&
-		response.status < 400 &&
-		(event.isDataRequest || response.headers.get('content-type')?.startsWith('text/html'))
-	) {
-		const feature = usageFeatureFor(event.route?.id ?? null);
-		if (feature) recordActivity(user.id, feature);
 	}
 	// Server-Timing measures the SHELL: resolve() returns when the shell is
 	// ready, but a streamed page's deferred chunks drain into the body
