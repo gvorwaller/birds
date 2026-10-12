@@ -202,7 +202,11 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     expect(rule(".map-chooser button.secondary,\n  .chooser-actions button")).toContain("min-height: 48px;");
     expect(rule(".clear-filters")).toContain("min-height: 48px;");
     expect(rule(".coverage a")).toContain("min-height: 48px;");
-    expect(rule(".location-fields select")).toContain("min-height: 48px;");
+    // Place selects take their 48px box from the shared native-select rule
+    // (app.css, td-47179c); the page adds only layout and never its own box.
+    const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+    expect(appCss).toMatch(/select:where\(:not\(\[multiple\], \[size\]\)\) \{[^}]*min-height: 48px;/);
+    expect(rule(".location-fields select")).not.toMatch(/height|padding|border|appearance|background/);
     expect(mapPicker).toMatch(/\.search input[\s\S]*?min-height: 48px;[\s\S]*?font-size: 16px;/);
     // No horizontal overflow: long place names wrap and the groups shrink.
     expect(rule(".chooser {")).toContain("min-width: 0;");
