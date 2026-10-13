@@ -115,7 +115,7 @@ export async function deleteAccount(
     });
     invalidateEbirdSession(targetId);
     return result;
-  } catch (err) {
+  } catch (err) { // stale-safe: an admin web request, never under a job claim; maps refusals and lock/race codes, rethrows the rest
     if (err instanceof Refused) return { ok: false, ...err.refusal };
     const code = (err as { code?: string }).code;
     if (code && BUSY_CODES.has(code)) return { ok: false, reason: "busy" };
