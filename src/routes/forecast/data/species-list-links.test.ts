@@ -22,10 +22,9 @@ describe("Hotspots & data species-count links", () => {
   it("links row counts: a hotspot inside its loaded county, or directly under its state (td-327dd6)", () => {
     expect(hub).toContain('speciesListHref(r.locCode, r.locKind === "hotspot" ? parent : null)');
     expect(hub).toContain("{@render dataRowCells(h, true, b.county ? b.countyCode : null)}");
-    // Hotspots recorded directly under a state link through that state…
-    expect(hub).toContain('{@render dataTable("Hotspot", detail.stateHotspots, g.stateCode)}');
-    // …and ones under a country have no Field Guide place: no link.
-    expect(hub).toContain('{@render dataTable("Hotspot", cdetail.stateHotspots)}');
+    // A state-hotspot row links through its own guideParent (set by
+    // regionDetail only for an exact state-direct row: region-detail-db.test).
+    expect(hub).toContain("{@render dataRowCells(r, false, r.guideParent ?? null)}");
   });
 
   it("links discovery results through the hotspot's loaded county or its state", () => {

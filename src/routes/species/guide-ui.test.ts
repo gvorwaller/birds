@@ -72,6 +72,10 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     // state's own (td-327dd6); it is disabled only when there are none.
     expect(route).toContain('<select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={data.hotspots.length === 0}>');
     expect(loader).toContain("hotspots: county ? await guideHotspots(county) : region ? await guideHotspots(region) : [],");
+    // The server's lists seed the choice memo at start (keyed county || state),
+    // so a first choice never re-fetches a list the page already has.
+    expect(route).toContain('loader.seed("hotspot", data.county || data.region, data.hotspots);');
+    expect(route).toContain("untrack(seedLists);");
     expect(route).toContain("{#each data.counties as c (c.code)}");
     expect(route).toContain("{#each data.hotspots as h (h.code)}");
     // Every option is rendered: no slice, sample or cap on either list.

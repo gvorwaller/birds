@@ -29,6 +29,11 @@ export interface DetailRow {
 	nUnmatched: number;
 	fetchedAt: string;
 	current: boolean;
+	/** A hotspot recorded exactly under this state or region with no county:
+	 * the state, through which the Field Guide finds it (td-327dd6). Absent on
+	 * every other row, including a residual one under some other recorded code,
+	 * which keeps its plain count and gets no list link (CODEX1). */
+	guideParent?: string;
 }
 
 export interface DetailBlock {
@@ -125,6 +130,8 @@ export async function regionDetail(regionCode: string, stateName: string): Promi
 			const rc = x.region_code ? parseRegionCode(x.region_code) : null;
 			if (rc && rc.code !== code && parentOf(rc.code) === code) {
 				blockFor(rc.code).hotspots.push(row);
+			} else if (x.region_code === code && parsed?.level === 'subnational1') {
+				stateHotspots.push({ ...row, guideParent: code });
 			} else {
 				stateHotspots.push(row);
 			}

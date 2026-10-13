@@ -123,6 +123,10 @@
     loader.seed("county", data.region, data.counties);
     loader.seed("hotspot", data.county || data.region, data.hotspots);
   }
+  // The server's lists are real answers, empty ones included: seed them now,
+  // not only on the next applied change, so a first choice never re-asks for
+  // a list the page already has (CODEX1).
+  untrack(seedLists);
 
   /** Discard the draft and every transient edit state. */
   function resetToApplied() {

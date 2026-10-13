@@ -1065,10 +1065,10 @@
   </tr>
 {/snippet}
 
-<!-- `parent`: the state or region these hotspots are filed under with no
-     county, so each links to its Field Guide list (td-327dd6); a country code
-     or none gives no link. -->
-{#snippet dataTable(label: string, rows: PageData["stateGroups"][number]["stateHotspots"], parent: string | null = null)}
+<!-- A hotspot row carrying `guideParent` (recorded exactly under its state or
+     region, with no county) links to its Field Guide list through that state
+     (td-327dd6); every other row keeps a plain count. -->
+{#snippet dataTable(label: string, rows: (PageData["stateGroups"][number]["stateHotspots"][number] & { guideParent?: string })[])}
   <div class="tablewrap">
     <table>
       <thead>
@@ -1082,7 +1082,7 @@
       </thead>
       <tbody>
         {#each rows as r (r.locCode)}
-          {@render dataRowCells(r, false, parent)}
+          {@render dataRowCells(r, false, r.guideParent ?? null)}
         {/each}
       </tbody>
     </table>
@@ -1232,7 +1232,7 @@
             specific {g.countryCode === "US" ? "county" : "subdivision"} assignment.
           </p>
         {/if}
-        {@render dataTable("Hotspot", detail.stateHotspots, g.stateCode)}
+        {@render dataTable("Hotspot", detail.stateHotspots)}
       {/if}
     {/if}
   </details>
