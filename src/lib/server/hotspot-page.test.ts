@@ -42,6 +42,7 @@ describe.runIf(dbUp)("hotspot-page gateway (test cluster)", () => {
             subnational1Code: "US-FL",
             subnational2Code: "US-FL-103",
             numSpeciesAllTime: 217,
+            numChecklistsAllTime: 2140,
             latestObsDt: "2026-08-18 07:55",
           },
         ]),
@@ -63,6 +64,7 @@ describe.runIf(dbUp)("hotspot-page gateway (test cluster)", () => {
         countyCode: "US-FL-103",
         stateCode: "US-FL",
         numSpeciesAllTime: 217,
+        numChecklistsAllTime: 2140,
         isHotspot: true,
       });
       expect(await hotspotFromCache("L999999999")).toBeNull();

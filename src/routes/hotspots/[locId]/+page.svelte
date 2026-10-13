@@ -155,6 +155,9 @@
           >
         {/if}
       {/if}
+      {#if data.numChecklistsAllTime != null}
+        · {data.numChecklistsAllTime.toLocaleString()} checklists all-time
+      {/if}
     </p>
     {#if data.verified && data.venueTypes.length > 0}
       <p class="venues">
@@ -217,7 +220,11 @@
         <span class="muted forecast-choice">This location has no verified coordinates for a forecast. <a href={forecastHref}>Choose location for forecast</a>.</span>
       {/if}
       {#if tripHref}<a class="act" href={tripHref}>🧭 Add to trip</a>{/if}
-      <a class="act" href={`https://ebird.org/hotspot/${data.locId}`} target="_blank" rel="noopener">eBird ↗</a>
+      <!-- A hotspot's eBird page has the birder-written About section (how to
+           bird here, parking, fees); eBird's API doesn't carry it (td-39d567). -->
+      <a class="act" href={`https://ebird.org/hotspot/${data.locId}`} target="_blank" rel="noopener"
+        >{data.verified ? "About this hotspot on eBird ↗" : "eBird ↗"}</a
+      >
     </section>
 
     <section class="card">

@@ -81,6 +81,7 @@ beforeEach(() => {
       countyCode: "US-FL-115",
       stateCode: "US-FL",
       numSpeciesAllTime: null,
+      numChecklistsAllTime: null,
       latestObsDt: null,
       isHotspot: true,
     },
@@ -148,17 +149,19 @@ describe("hotspot load action recovery", () => {
     mocks.hotspotFromCache.mockResolvedValue({
       locId: "L234146", locName: "The Celery Fields", lat: 27, lng: -82,
       countyCode: "US-FL-115", stateCode: "US-FL", numSpeciesAllTime: 1,
-      latestObsDt: null, isHotspot: true,
+      numChecklistsAllTime: 2140, latestObsDt: null, isHotspot: true,
     });
     mocks.frequencyMeta.mockResolvedValue(new Map([["L234146", {
       locName: "The Celery Fields", beginYear: 2016, endYear: 2025, nSpecies: 1,
       sampleSizes: Array.from({ length: 48 }, () => 1),
     }]]));
-    await load({
+    const data = await load({
       locals: owner,
       params: { locId: "L234146" },
       url: new URL("https://birds.test/hotspots/L234146?tab=monthly&month=6"),
     } as never);
+    // td-39d567: eBird's all-time checklist count comes from the hotspot list.
+    expect(data).toMatchObject({ numSpeciesAllTime: 1, numChecklistsAllTime: 2140 });
     expect(mocks.recentHotspotObs).not.toHaveBeenCalled();
     expect(mocks.hotspotMonthly).toHaveBeenCalled();
   });

@@ -142,6 +142,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     venueTypes: place.venueTypes,
     googlePlaceId: place.googlePlaceId,
     numSpeciesAllTime: meta?.numSpeciesAllTime ?? null,
+    numChecklistsAllTime: meta?.numChecklistsAllTime ?? null,
     latestObsDt: meta?.latestObsDt ?? null,
     distanceKm,
     speciesListHref: freq ? guidePlaceListHref(

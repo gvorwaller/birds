@@ -37,6 +37,8 @@ export interface HotspotMeta {
 	countyCode: string | null;
 	stateCode: string | null;
 	numSpeciesAllTime: number | null;
+	/** eBird's all-time checklist count; only the hotspot lists carry it. */
+	numChecklistsAllTime: number | null;
 	latestObsDt: string | null;
 	/** Found in any cached hotspot payload → it's a verified eBird hotspot. */
 	isHotspot: boolean;
@@ -103,6 +105,7 @@ export function parseOfficialHotspotInfo(raw: unknown, requestedLocId: string): 
 		countyCode,
 		stateCode,
 		numSpeciesAllTime: null,
+		numChecklistsAllTime: null,
 		latestObsDt: null,
 		isHotspot: true
 	};
@@ -225,6 +228,7 @@ export async function hotspotFromCache(locId: string): Promise<HotspotMeta | nul
 		subnational1: string | null;
 		subnational2: string | null;
 		num_species: number | null;
+		num_checklists: number | null;
 		latest_obs: string | null;
 	}>(
 		`SELECT h->>'locName' AS loc_name,
@@ -233,6 +237,7 @@ export async function hotspotFromCache(locId: string): Promise<HotspotMeta | nul
 		        h->>'subnational1Code' AS subnational1,
 		        h->>'subnational2Code' AS subnational2,
 		        (h->>'numSpeciesAllTime')::int AS num_species,
+		        (h->>'numChecklistsAllTime')::int AS num_checklists,
 		        h->>'latestObsDt' AS latest_obs
 		   FROM (SELECT payload
 		           FROM ebird_cache
@@ -261,6 +266,7 @@ export async function hotspotFromCache(locId: string): Promise<HotspotMeta | nul
 		countyCode: row.subnational2,
 		stateCode: row.subnational1,
 		numSpeciesAllTime: row.num_species,
+		numChecklistsAllTime: row.num_checklists,
 		latestObsDt: row.latest_obs,
 		isHotspot: true
 	};

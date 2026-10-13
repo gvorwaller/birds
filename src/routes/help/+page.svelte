@@ -310,6 +310,14 @@
 						<strong>Monthly</strong> tab showing what's likely there each
 						month. The <em>eBird ↗</em> badge still opens eBird itself.
 					</li>
+					<li>
+						Under the name, eBird's all-time species and checklist counts give
+						a sense of how heavily the place is birded.
+						<strong>About this hotspot on eBird ↗</strong> opens the hotspot's
+						eBird page, whose About section has birders' descriptions: how to
+						bird there, plus parking, restrooms and fees. eBird doesn't share
+						those descriptions with other apps, so they aren't copied here.
+					</li>
 				</ul>
 				<h3>Where can I find this bird? (species + region)</h3>
 				<ul>
