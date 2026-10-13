@@ -328,10 +328,38 @@ open -a Simulator
 xcrun simctl openurl booted http://127.0.0.1:5178/species
 ```
 
-Drive taps and typing with XcodeBuildMCP UI automation when it is available,
-otherwise with Appium's XCUITest driver. Save evidence with
-`xcrun simctl io booted screenshot <file>`. Report that run as an iOS Simulator
-result. A check on Gaylon's physical iPhone remains the final gate.
+Drive taps and typing with the **`axe` CLI** (`/opt/homebrew/bin/axe`, AXe
+1.7+, the engine XcodeBuildMCP uses). It needs only a shell: no MCP server, no
+Xcode project, no macOS permission prompt. "XcodeBuildMCP is not connected" or
+"simctl cannot tap" is never a reason to skip the pass. Proven 2026-10-13
+(td-327dd6, CC1):
+
+```sh
+U=$(xcrun simctl list devices | awk -F'[()]' '/iPhone 16 Pro \(/{print $2; exit}')
+xcrun simctl boot "$U"; xcrun simctl bootstatus "$U" -b
+xcrun simctl openurl "$U" "http://localhost:5178/login"
+axe screenshot --udid "$U" --output /tmp/ios-1.png      # look before every tap
+axe batch --udid "$U" --step "tap -x 201 -y 416" --step "type 'username'" --step "sleep 1"
+```
+
+- **Web content is not in `axe describe-ui`** (it shows Safari's own chrome
+  only), so tap by coordinates read from the latest screenshot. Coordinates are
+  in points: screenshot pixels ÷ 3 on an iPhone 16 Pro (1206×2622 px = 402×874
+  pt). If a viewer shows the image downscaled, scale back first.
+- Take a new screenshot after anything that moves the page (the keyboard opening,
+  a list opening or closing, a navigation); a stale coordinate misses.
+- Wait inside `axe batch` with `--step "sleep N"` (a plain shell `sleep` may be
+  blocked by the agent harness).
+- Signing in: create a throwaway test-cluster user with a known password (the
+  app verifies argon2id; hash it with the repo's `argon2` package), type the
+  credentials into /login, and delete the user (and its sessions) afterwards.
+  Typing works with `axe type '…'` after tapping the field.
+- `xcrun simctl shutdown "$U"` when done.
+
+XcodeBuildMCP's `ui_*` tools do the same when that MCP server is connected to
+the agent; Appium's XCUITest driver is a heavier fallback. Report the run as an
+iOS Simulator result. A check on Gaylon's physical iPhone remains the final
+gate.
 
 Do not claim Safari, physical iPhone, PWA, or installed-app verification from a
 desktop WebKit run or from the simulator. List physical-device checks as
