@@ -223,7 +223,8 @@ async function hubInventoryData(
               n_unmatched, fetched_at, region_code,
               (end_year >= $1) AS current
          FROM frequency_fetch
-        ORDER BY loc_kind, loc_name`,
+        ORDER BY loc_kind, loc_name, loc_code -- loc_code: a stable order for detailVersion
+      `,
       [lastCompleteYear()],
     ),
     // Locations whose LAST attempt failed and that have no stored data at all.
