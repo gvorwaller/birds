@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { env } from "$env/dynamic/private";
-import { query } from "$lib/db";
+import { query, withTransaction } from "$lib/db";
 import { deleteAccount } from "./account-delete";
 import { listJobs } from "./jobs";
 
@@ -66,6 +66,24 @@ afterAll(async () => {
   );
   expect(Number(left.rows[0].n)).toBe(0);
 });
+
+/** Hold row locks in another transaction until the returned release() runs. */
+const holdLock = async (sql: string, params: unknown[]) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let locked!: () => void;
+  const lockedNow = new Promise<void>((resolve) => (locked = resolve));
+  const tx = withTransaction(async (c) => {
+    await c.query(sql, params);
+    locked();
+    await gate;
+  });
+  await lockedNow;
+  return async () => {
+    release();
+    await tx;
+  };
+};
 
 describe("deleteAccount (td-12bd33)", () => {
   it("deletes the account and what it owns, cancels its queued jobs and keeps finished ones as history", async () => {
@@ -155,6 +173,28 @@ describe("deleteAccount (td-12bd33)", () => {
     expect(await deleteAccount(admin.id, target.id, target.username)).toEqual({ ok: false, reason: "system_jobs" });
     expect(await exists(target.id)).toBe(true);
     expect(await jobRow(recurring)).toEqual({ status: "pending", requested_by: target.id });
+  });
+
+  it.each([
+    ["a row its delete cascades to", "SELECT 1 FROM user_activity_day WHERE user_id = $1 FOR UPDATE"],
+    ["a finished job it keeps as history", "SELECT 1 FROM jobs WHERE requested_by = $1 AND status = 'succeeded' FOR UPDATE"],
+  ])("gives up quickly as busy, changing nothing, when %s is locked elsewhere", async (_what, lockSql) => {
+    const admin = await account(`admin6${_what.length}`, "admin");
+    const target = await account(`locked${_what.length}`);
+    await query("INSERT INTO user_activity_day (user_id, day, feature) VALUES ($1, current_date, 'home')", [target.id]);
+    await job(target.id, "load_hotspots", "succeeded");
+    const queued = await job(target.id, "sync_lifelist", "pending");
+    const release = await holdLock(lockSql, [target.id]);
+    try {
+      const t0 = Date.now();
+      const r = await deleteAccount(admin.id, target.id, target.username, { lockTimeoutMs: 300, txTimeoutMs: 5_000 });
+      expect(r).toEqual({ ok: false, reason: "busy" });
+      expect(Date.now() - t0).toBeLessThan(4_000);
+    } finally {
+      await release();
+    }
+    expect(await exists(target.id)).toBe(true);
+    expect(await jobRow(queued)).toEqual({ status: "pending", requested_by: target.id });
   });
 
   it("the database itself refuses to leave a live job without its requester (0087)", async () => {

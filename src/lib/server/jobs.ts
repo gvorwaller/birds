@@ -1052,7 +1052,8 @@ export async function jobEvents(jobId: number, limit = 200): Promise<{
 	};
 }
 
-export async function getJob(jobId: number): Promise<JobRow | null> {
-	const r = await query<JobRow>(`SELECT * FROM jobs WHERE id = $1`, [jobId]);
+/** Any job, finished ones included — a finished job may have no requester (0087). */
+export async function getJob(jobId: number): Promise<ListedJobRow | null> {
+	const r = await query<ListedJobRow>(`SELECT * FROM jobs WHERE id = $1`, [jobId]);
 	return r.rows[0] ?? null;
 }

@@ -293,6 +293,20 @@ const SESSION_MEMO_MS = 15 * 60_000;
 const sessionMemo = new Map<number, { jar: CookieJar; at: number }>();
 // Single-flight: concurrent callers share one CAS login instead of stacking them.
 const sessionInFlight = new Map<number, Promise<CookieJar>>();
+// Bumped by invalidateEbirdSession: a login that started before an
+// invalidation (credentials cleared or changed, account deleted) must not
+// install its jar afterwards (td-12bd33, CODEX1).
+const sessionGeneration = new Map<number, number>();
+
+/** Drop expired jars, so a session nobody asks for again does not linger. */
+function sweepExpiredSessions(now = Date.now()): void {
+	for (const [userId, memo] of sessionMemo) {
+		if (now - memo.at >= SESSION_MEMO_MS) sessionMemo.delete(userId);
+	}
+}
+// Each process (web and worker) keeps its own memo; the sweep bounds how long
+// an unused jar stays in either. unref: never keeps a process alive.
+setInterval(sweepExpiredSessions, SESSION_MEMO_MS).unref?.();
 
 const AUTH_FETCH_ALLOWED_HOSTS = new Set(['ebird.org', 'www.ebird.org']);
 
@@ -312,24 +326,34 @@ function getSession(userId: number, forceFresh = false): Promise<CookieJar> {
 	if (!forceFresh) {
 		const memo = sessionMemo.get(userId);
 		if (memo && Date.now() - memo.at < SESSION_MEMO_MS) return Promise.resolve(memo.jar);
+		if (memo) sessionMemo.delete(userId);
 		const inFlight = sessionInFlight.get(userId);
 		if (inFlight) return inFlight;
 	}
+	const generation = sessionGeneration.get(userId) ?? 0;
 	const p = loginFromStoredCreds(userId)
 		.then((jar) => {
-			sessionMemo.set(userId, { jar, at: Date.now() });
+			if ((sessionGeneration.get(userId) ?? 0) === generation) {
+				sessionMemo.set(userId, { jar, at: Date.now() });
+			}
 			return jar;
 		})
 		.finally(() => {
-			sessionInFlight.delete(userId);
+			if (sessionInFlight.get(userId) === p) sessionInFlight.delete(userId);
 		});
 	sessionInFlight.set(userId, p);
 	return p;
 }
 
-/** Drop the memoized session. Call on auth failure and when credentials change. */
+/**
+ * Drop the memoized session, and stop a login already under way from
+ * installing one. Call on auth failure, when credentials change, and when the
+ * account is deleted.
+ */
 export function invalidateEbirdSession(userId: number): void {
 	sessionMemo.delete(userId);
+	sessionInFlight.delete(userId);
+	sessionGeneration.set(userId, (sessionGeneration.get(userId) ?? 0) + 1);
 }
 
 /**

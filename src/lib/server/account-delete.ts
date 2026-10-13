@@ -14,9 +14,16 @@
  * are locked first, so the worker's SKIP LOCKED claim cannot start one
  * between the check and the delete; any job that slips past still fails the
  * 0087 CHECK and rolls the whole delete back.
+ *
+ * It holds job rows, so it is capped like every other job-row holder below
+ * the queue's H = 120 s (job-claim.ts CLAIM_BOUNDS): a short lock wait and a
+ * 30 s transaction cap. A lock it cannot get (a running cascade, a job row
+ * another writer holds) rolls everything back as "busy, try again". After the
+ * commit, this process's eBird web session for the account is dropped.
  */
 import { withTransaction } from "$lib/db";
 import { RECURRING_TYPES } from "$server/jobs";
+import { invalidateEbirdSession } from "$server/ebird-account";
 
 export type DeleteAccountRefusal =
   | { reason: "self" }
@@ -38,20 +45,27 @@ class Refused extends Error {
   }
 }
 
-const LIVE_JOB_RACE = new Set([
+const BUSY_CODES = new Set([
   "23514", // check_violation: a job became live under the account (0087)
   "23503", // foreign_key_violation
   "40P01", // deadlock_detected
+  "55P03", // lock_not_available: lock_timeout
+  "25P04", // transaction_timeout: Postgres ended the transaction, nothing committed
 ]);
+
+export const DELETE_BOUNDS = Object.freeze({ lockTimeoutMs: 5_000, txTimeoutMs: 30_000 });
 
 export async function deleteAccount(
   actorId: number,
   targetId: number,
   typedUsername: string,
+  bounds: { lockTimeoutMs: number; txTimeoutMs: number } = DELETE_BOUNDS,
 ): Promise<DeleteAccountResult> {
   if (targetId === actorId) return { ok: false, reason: "self" };
   try {
-    return await withTransaction(async (client) => {
+    const result = await withTransaction(async (client) => {
+      await client.query(`SET LOCAL lock_timeout = '${Math.round(bounds.lockTimeoutMs)}ms'`);
+      await client.query(`SET LOCAL transaction_timeout = '${Math.round(bounds.txTimeoutMs)}ms'`);
       const target = await client.query<{ username: string; display_name: string }>(
         "SELECT username, display_name FROM users WHERE id = $1 FOR UPDATE",
         [targetId],
@@ -99,10 +113,12 @@ export async function deleteAccount(
         cancelledJobs: pendingIds.length,
       };
     });
+    invalidateEbirdSession(targetId);
+    return result;
   } catch (err) {
     if (err instanceof Refused) return { ok: false, ...err.refusal };
     const code = (err as { code?: string }).code;
-    if (code && LIVE_JOB_RACE.has(code)) return { ok: false, reason: "busy" };
+    if (code && BUSY_CODES.has(code)) return { ok: false, reason: "busy" };
     throw err;
   }
 }

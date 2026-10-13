@@ -327,6 +327,46 @@ describe("fetchAuthenticatedEbird CAS gateway bounce", () => {
   });
 });
 
+describe("eBird session memo invalidation (td-12bd33, CODEX1)", () => {
+  const page = (path: string) =>
+    withUrl(new Response('<html>"lat":1,"lng":2</html>', { status: 200 }), `https://ebird.org${path}`);
+  const login = (): (Response | Error)[] => [
+    html(CAS_FORM_HTML),
+    redirect("https://ebird.org/home"),
+    html("<h1>home</h1>"),
+  ];
+
+  it("reuses the memoized session until it is invalidated", async () => {
+    invalidateEbirdSession(95);
+    fetchQueue = [...login(), page("/checklist/S1"), page("/checklist/S2")];
+    await fetchAuthenticatedEbird(95, "https://ebird.org/checklist/S1");
+    await fetchAuthenticatedEbird(95, "https://ebird.org/checklist/S2");
+    expect(fetchQueue.length).toBe(0);
+
+    invalidateEbirdSession(95);
+    fetchQueue = [...login(), page("/checklist/S3")];
+    await fetchAuthenticatedEbird(95, "https://ebird.org/checklist/S3");
+    expect(fetchQueue.length).toBe(0); // a fresh login, not the dropped jar
+  });
+
+  it("a login under way when the session is invalidated does not install its jar", async () => {
+    invalidateEbirdSession(96);
+    let release!: (r: Response) => void;
+    const gate = new Promise<Response>((resolve) => (release = resolve));
+    fetchQueue = [gate as unknown as Response, redirect("https://ebird.org/home"), html("<h1>home</h1>"), page("/checklist/S1")];
+    const first = fetchAuthenticatedEbird(96, "https://ebird.org/checklist/S1");
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    invalidateEbirdSession(96); // e.g. the account was deleted mid-login
+    release(html(CAS_FORM_HTML));
+    await first; // the caller that started it is still answered
+
+    // Nothing was memoized: the next request must sign in again.
+    fetchQueue = [...login(), page("/checklist/S2")];
+    await fetchAuthenticatedEbird(96, "https://ebird.org/checklist/S2");
+    expect(fetchQueue.length).toBe(0);
+  });
+});
+
 describe("life-list CSV export classification (GROK Phase-3 P2)", () => {
   // A full successful CAS login, then the export response under test.
   function loginOkThen(...rest: (Response | Error)[]): (Response | Error)[] {
