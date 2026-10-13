@@ -98,7 +98,9 @@ describe("Field Guide Place fields", () => {
   });
 
   it("resets every transient edit state when the applied filters change", () => {
-    expect(route).toMatch(/function resetToApplied\(\) \{[\s\S]*?loader\.invalidate\(\);[\s\S]*?mapOpen = false;[\s\S]*?seedLists\(\);[\s\S]*?draft = copyDraft\(applied\);/);
+    // placeLists.cancel() invalidates the loader and clears every list's
+    // loading and failure state (PlaceListsController, guide-draft.test.ts).
+    expect(route).toMatch(/function resetToApplied\(\) \{[\s\S]*?placeLists\.cancel\(\);[\s\S]*?mapOpen = false;[\s\S]*?seedLists\(\);[\s\S]*?draft = copyDraft\(applied\);/);
     expect(route).toContain("$effect.pre(() => {");
   });
 });

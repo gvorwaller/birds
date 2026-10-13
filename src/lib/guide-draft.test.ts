@@ -338,6 +338,17 @@ describe("PlaceListsController (td-327dd6, CODEX1)", () => {
     expect(t.pending).toHaveLength(1);
   });
 
+  it("cancel() aborts requests in flight and clears every loading and failure mark", async () => {
+    const t = setup("country=US");
+    void t.choose("region", "US-FL");
+    await t.flush();
+    expect(t.state.loading.county).toBe(true);
+    t.lists.cancel();
+    expect(t.pending[0].signal.aborted).toBe(true);
+    expect(t.state.loading).toEqual(NO_LOADING);
+    expect(t.state.errors).toEqual({});
+  });
+
   it("a country switch while lists load drops them, and loads nothing for the old state", async () => {
     const t = setup("country=US");
     const done = t.choose("region", "US-FL");
