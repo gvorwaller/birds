@@ -393,6 +393,8 @@
   // Groups whose detail request failed: they count as "settled" for return
   // focus, so a failure never blocks restoring the person's place.
   let detailFailed = $state<string[]>([]);
+  /** A detail request that takes longer than this fails visibly (Retry). */
+  const DETAIL_TIMEOUT_MS = 30_000;
   async function loadGroupDetail(code: string, name: string) {
     if (!browser || detailFetched.has(code) || data.focusDetail[code]) return;
     detailFetched.add(code);
@@ -400,15 +402,17 @@
     try {
       const res = await fetch(
         `/api/region-detail?region=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
+        { signal: AbortSignal.timeout(DETAIL_TIMEOUT_MS) },
       );
-      if (!res.ok) {
-        detailFetched.delete(code); // transient — allow a retry on reopen
-        detailFailed = [...detailFailed, code];
-        return;
-      }
-      groupDetail = { ...groupDetail, [code]: (await res.json()) as GroupDetail };
+      if (!res.ok) throw new Error(String(res.status));
+      // Read the body BEFORE touching groupDetail: `{ ...groupDetail, [code]:
+      // await … }` copies groupDetail first and writes that stale copy back
+      // after the await, wiping every group that arrived meanwhile — with many
+      // groups open at once they stayed "Loading …" forever (td-fb6948).
+      const detail = (await res.json()) as GroupDetail;
+      groupDetail = { ...groupDetail, [code]: detail };
     } catch {
-      detailFetched.delete(code);
+      detailFetched.delete(code); // transient: Retry (or reopening) asks again
       detailFailed = [...detailFailed, code];
     }
   }
@@ -1111,7 +1115,14 @@
     {#if stateOpen(g.stateCode)}
       {@const detail = detailOf(g.stateCode)}
       {#if !hasDetail(g.stateCode)}
-        <Skeleton minHeight="120px" label="Loading {g.stateName}…" />
+        {#if detailFailed.includes(g.stateCode)}
+          <p class="notice err" role="alert">
+            Couldn't load {g.stateName}'s rows.
+            <button type="button" class="secondary" onclick={() => loadGroupDetail(g.stateCode, g.stateName)}>Retry</button>
+          </p>
+        {:else}
+          <Skeleton minHeight="120px" label="Loading {g.stateName}…" />
+        {/if}
       {/if}
       {#if !data.isViewer && (g.countyRemaining ?? 0) > 0}
         {@const missing = g.countyRemaining ?? 0}
@@ -1285,6 +1296,12 @@
       {/if}
       {#if s.countrywide}
         {@render dataTable("Countrywide", [s.countrywide])}
+      {/if}
+      {#if detailFailed.includes(s.countryCode) && !hasDetail(s.countryCode)}
+        <p class="notice err" role="alert">
+          Couldn't load {s.countryName}'s countrywide rows.
+          <button type="button" class="secondary" onclick={() => loadGroupDetail(s.countryCode, s.countryName)}>Retry</button>
+        </p>
       {/if}
       {#if cdetail.stateHotspots.length > 0}
         {#if s.regionTotal !== null && s.regionTotal > 0}
