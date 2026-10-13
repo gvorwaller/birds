@@ -41,9 +41,10 @@ describe("Hotspots & data species-count links", () => {
 });
 
 describe("region rows never stay 'Loading …' forever (td-fb6948)", () => {
-  it("reads the body before merging, times out, and shows a failure with Retry", () => {
-    expect(hub).toContain("const detail = (await res.json()) as GroupDetail;\n      groupDetail = { ...groupDetail, [code]: detail };");
-    expect(hub).toContain("{ signal: AbortSignal.timeout(DETAIL_TIMEOUT_MS) }");
+  it("loads through RegionDetailLoader keyed to the loaded-data version, and shows a failure with Retry", () => {
+    // Behavior (concurrency, staleness, failure, timeout): region-detail-loader.test.ts.
+    expect(hub).toContain("const detailLoader = new RegionDetailLoader<GroupDetail>(");
+    expect(hub).toContain("detailLoader.setVersion(data.detailVersion);");
     expect(hub).toContain("Couldn't load {g.stateName}'s rows.");
     expect(hub).toContain("onclick={() => loadGroupDetail(g.stateCode, g.stateName)}>Retry</button>");
     expect(hub).toContain("Couldn't load {s.countryName}'s countrywide rows.");
@@ -57,9 +58,8 @@ describe("return focus to a lazily loaded row (GROK)", () => {
     // td-b6be76: an open country also waits for its lazily loaded groups.
     expect(hub).toContain("if (sec && countryGroupsPending(sec)) return false;");
     // A failed detail request settles the wait instead of blocking it.
-    // (td-fb6948: an HTTP failure now throws into the same catch, so one site.)
-    expect(hub.match(/detailFailed = \[\.\.\.detailFailed, code\];/g)).toHaveLength(1);
-    expect(hub).toContain('if (!res.ok) throw new Error(String(res.status));');
+    // A failed detail request settles the wait (RegionDetailLoader records it).
+    expect(hub).toContain("return !groupCodes.has(code) || hasDetail(code) || detailFailed.includes(code);");
     // Landing on a ?show= section yields to a return-to-row restore.
     expect(hub).toContain("const node = trailFor(data.accountId).nodes.at(-1);");
     expect(hub).toContain("if (shouldRestoreNavigationOrigin() && (node?.focusId || node?.originId)) return;");

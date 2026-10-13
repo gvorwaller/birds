@@ -253,6 +253,16 @@ async function hubInventoryData(
     ),
     getEbirdApiKey(userId),
   ]);
+  // td-fb6948: a fingerprint of everything a region's detail rows are built
+  // from. The page keeps fetched region rows across navigations (a Find search
+  // must not re-download every open group) and drops them only when this
+  // changes: a load, refresh, region reassignment or removal.
+  let detailHash = 0x811c9dc5;
+  for (const r of loadedRes.rows) {
+    const key = `${r.loc_code}|${r.fetched_at}|${r.region_code ?? ""}|${r.n_species}|${r.end_year};`;
+    for (let i = 0; i < key.length; i++) detailHash = Math.imul(detailHash ^ key.charCodeAt(i), 0x01000193);
+  }
+  const detailVersion = `${loadedRes.rows.length}:${(detailHash >>> 0).toString(36)}`;
   // Next scheduled enrichment scan (td-b7d021): the parked singleton no
   // longer renders as "queued" anywhere — this SSR value feeds the hub's
   // dedicated line instead.
@@ -745,6 +755,7 @@ async function hubInventoryData(
     offlineView,
     focus,
     focusDetail,
+    detailVersion,
     preselectRegion,
     hasHome: home != null,
     stateGroups: stateGroups.map(stripDetail),

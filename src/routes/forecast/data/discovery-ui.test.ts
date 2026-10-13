@@ -143,7 +143,8 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
     expect(page).toContain("const stateOpen = (code: string) =>");
     expect(page).toContain("open={stateOpen(g.stateCode)}");
     expect(page).toContain("open={areaOpen(area.id)}");
-    expect(page).toContain("const hasDetail = (code: string) => !!(groupDetail[code] ?? data.focusDetail[code]);");
+    // A ?show= landing's server rows win over any cached fetch (td-fb6948).
+    expect(page).toContain("const hasDetail = (code: string) => !!(data.focusDetail[code] ?? groupDetail[code]);");
     expect(page).toContain('<summary id={hubNodeId(g.stateCode)} class="hub-target">');
     expect(page).toContain('<summary id={hubNodeId(s.countryCode)} class="hub-target">');
     expect(page).toContain('<td id={hubNodeId(b.countyCode)} class="hub-target" tabindex="-1">');

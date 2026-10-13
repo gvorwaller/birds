@@ -16,6 +16,7 @@
     type GeographicAreaGroup,
   } from "$lib/geographic-areas";
   import { mapsPlaceUrl } from "$lib/geo";
+  import { RegionDetailLoader } from "$lib/region-detail-loader";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { jobPresentationText } from "$lib/job-presentation";
   import { fmtNextScan } from "$lib/next-scan";
@@ -389,41 +390,44 @@
     stateHotspots: PageData["stateGroups"][number]["stateHotspots"];
   };
   let groupDetail = $state<Record<string, GroupDetail>>({});
-  const detailFetched = new Set<string>();
   // Groups whose detail request failed: they count as "settled" for return
-  // focus, so a failure never blocks restoring the person's place.
+  // focus, so a failure never blocks restoring the person's place, and they
+  // show "Couldn't load …" with Retry instead of an endless skeleton.
   let detailFailed = $state<string[]>([]);
-  /** A detail request that takes longer than this fails visibly (Retry). */
-  const DETAIL_TIMEOUT_MS = 30_000;
-  async function loadGroupDetail(code: string, name: string) {
-    if (!browser || detailFetched.has(code) || data.focusDetail[code]) return;
-    detailFetched.add(code);
-    detailFailed = detailFailed.filter((c) => c !== code);
-    try {
+  // Concurrency, staleness and failure rules: RegionDetailLoader (td-fb6948).
+  // Rows survive navigations until the loaded data changes (detailVersion).
+  const detailLoader = new RegionDetailLoader<GroupDetail>(
+    untrack(() => data.detailVersion),
+    () => ({ details: groupDetail, failed: detailFailed }),
+    (patch) => {
+      if (patch.details) groupDetail = patch.details;
+      if (patch.failed) detailFailed = patch.failed;
+    },
+    async (code, name, signal) => {
       const res = await fetch(
         `/api/region-detail?region=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
-        { signal: AbortSignal.timeout(DETAIL_TIMEOUT_MS) },
+        { signal },
       );
       if (!res.ok) throw new Error(String(res.status));
-      // Read the body BEFORE touching groupDetail: `{ ...groupDetail, [code]:
-      // await … }` copies groupDetail first and writes that stale copy back
-      // after the await, wiping every group that arrived meanwhile — with many
-      // groups open at once they stayed "Loading …" forever (td-fb6948).
-      const detail = (await res.json()) as GroupDetail;
-      groupDetail = { ...groupDetail, [code]: detail };
-    } catch {
-      detailFetched.delete(code); // transient: Retry (or reopening) asks again
-      detailFailed = [...detailFailed, code];
-    }
+      return (await res.json()) as GroupDetail;
+    },
+  );
+  $effect.pre(() => {
+    detailLoader.setVersion(data.detailVersion);
+  });
+  function loadGroupDetail(code: string, name: string) {
+    if (!browser || data.focusDetail[code]) return;
+    void detailLoader.load(code, name);
   }
   /** Blocks for a group once fetched; empty until then. */
   function detailOf(code: string): GroupDetail {
+    // The server's own rows for a ?show= landing are always the freshest.
     return (
-      groupDetail[code] ??
-      data.focusDetail[code] ?? { countyBlocks: [], stateHotspots: [] }
+      data.focusDetail[code] ??
+      groupDetail[code] ?? { countyBlocks: [], stateHotspots: [] }
     );
   }
-  const hasDetail = (code: string) => !!(groupDetail[code] ?? data.focusDetail[code]);
+  const hasDetail = (code: string) => !!(data.focusDetail[code] ?? groupDetail[code]);
   // Return focus (Back from a species list or hotspot) must wait until every
   // open group's rows have arrived: they're fetched after the page loads, so
   // restoring earlier finds no row and drops focus on the page (td-c52c37).
