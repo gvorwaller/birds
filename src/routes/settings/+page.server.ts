@@ -26,6 +26,7 @@ import {
 import { createHash } from "node:crypto";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
+import { deleteAccount, type DeleteAccountRefusal } from "$server/account-delete";
 import {
   normalizeNearMeRadiusKm,
   radiusSelectOptionsKm,
@@ -223,6 +224,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     tripStopCount: Number(tripStats.rows[0]?.stops ?? 0),
     hasGallery,
     isAdmin,
+    selfId: userId,
     viewerOwners,
     users: users.map((u) => ({
       id: u.id,
@@ -243,6 +245,32 @@ async function ensureEbirdRow(userId: number): Promise<void> {
     `INSERT INTO user_ebird (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
     [userId],
   );
+}
+
+/** Settings → User admin refusal copy for `deleteAccount` (td-12bd33). */
+function deleteRefusal(r: DeleteAccountRefusal) {
+  switch (r.reason) {
+    case "self":
+      return fail(400, { error: "You can't delete your own account." });
+    case "not_found":
+      return fail(404, { error: "That account no longer exists." });
+    case "confirm":
+      return fail(400, { error: "Type the account's username exactly to confirm. Nothing was deleted." });
+    case "viewers":
+      return fail(409, {
+        error: `${r.viewers.join(", ")} ${r.viewers.length === 1 ? "shows" : "show"} this account's life list. Choose another owner for ${r.viewers.length === 1 ? "that viewer" : "those viewers"}, or delete ${r.viewers.length === 1 ? "it" : "them"}, first. Nothing was deleted.`,
+      });
+    case "running":
+      return fail(409, {
+        error: "One of this account's jobs is running. Try again when it finishes (Hotspots & data shows it). Nothing was deleted.",
+      });
+    case "system_jobs":
+      return fail(409, {
+        error: "This account runs the app's scheduled background jobs (species data, alerts, tag checks), so it can't be deleted.",
+      });
+    case "busy":
+      return fail(409, { error: "A job for this account started while deleting. Nothing was deleted; try again." });
+  }
 }
 
 export const actions: Actions = {
@@ -763,6 +791,29 @@ export const actions: Actions = {
     return {
       ok: true as const,
       message: `${updated.rows[0].display_name}'s displayed life list was updated.`,
+    };
+  },
+
+  delete_user: async ({ locals, request }) => {
+    if (locals.user!.role !== "admin")
+      return fail(403, { error: "Admins only." });
+    const form = await request.formData();
+    const targetId = Number(form.get("user_id"));
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return fail(400, { error: "Pick an account to delete." });
+    }
+    const r = await deleteAccount(
+      locals.user!.id,
+      targetId,
+      (form.get("confirm_username") ?? "").toString(),
+    );
+    if (!r.ok) return deleteRefusal(r);
+    const cancelled = r.cancelledJobs
+      ? ` ${r.cancelledJobs} queued ${r.cancelledJobs === 1 ? "job was" : "jobs were"} cancelled.`
+      : "";
+    return {
+      ok: true as const,
+      message: `Deleted ${r.displayName}'s account (@${r.username}).${cancelled}`,
     };
   },
 

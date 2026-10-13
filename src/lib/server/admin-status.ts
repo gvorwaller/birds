@@ -6,7 +6,7 @@ import {
   isScheduledSingleton,
   jobTarget,
   statusColor,
-  type JobRow,
+  type ListedJobRow,
 } from "$server/job-policy";
 
 export interface AdminJob {
@@ -20,7 +20,7 @@ export interface AdminJob {
   nextRetryAt: string | null;
   scheduled: boolean;
   cancelRequested: boolean;
-  progress: JobRow["progress"];
+  progress: ListedJobRow["progress"];
   result: unknown;
   error: string | null;
   requestedByName: string | null;
@@ -48,7 +48,7 @@ export interface AdminLiveStatus {
   jobs: AdminJob[];
 }
 
-export function decorateAdminJob(job: JobRow, now: Date): AdminJob {
+export function decorateAdminJob(job: ListedJobRow, now: Date): AdminJob {
   return {
     id: Number(job.id),
     type: job.type,

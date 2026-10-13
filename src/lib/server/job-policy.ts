@@ -418,6 +418,12 @@ export interface JobRow {
   heartbeat_at: string | Date | null;
 }
 
+/**
+ * A row from `listJobs`: a finished job whose account was deleted has no
+ * requester (td-12bd33, 0087). A claimed or live job always has one.
+ */
+export type ListedJobRow = Omit<JobRow, "requested_by"> & { requested_by: number | null };
+
 const TYPE_NAMES: Record<string, string> = {
   load_hotspots: "Load hotspots",
   load_region: "Load state data",

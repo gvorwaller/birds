@@ -10,7 +10,8 @@ import {
 	jobTarget,
 	presentJob,
 	statusColor,
-	type JobRow
+	type JobRow,
+	type ListedJobRow
 } from '$server/job-policy';
 
 export interface DecoratedJob {
@@ -28,7 +29,8 @@ export interface DecoratedJob {
 	cancelRequested: boolean;
 	progress: JobRow['progress'];
 	error: string | null;
-	requestedBy: number;
+	/** Null on a finished job whose account was deleted (td-12bd33). */
+	requestedBy: number | null;
 	requestedByName: string | null;
 	enqueuedAt: string;
 	startedAt: string | null;
@@ -44,7 +46,7 @@ export interface DecoratedJob {
 const ACTIVE = new Set(['pending', 'running']);
 
 function decorate(
-	job: JobRow,
+	job: ListedJobRow,
 	now: Date,
 	worker: Awaited<ReturnType<typeof workerHealth>>,
 	family: Awaited<ReturnType<typeof familyControl>>

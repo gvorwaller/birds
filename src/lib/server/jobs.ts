@@ -27,7 +27,7 @@ import {
 	StaleClaimError,
 	withClaimTx
 } from './job-claim';
-import { scrubStoredValue, type JobProgress, type JobRow } from '$server/job-policy';
+import { scrubStoredValue, type JobProgress, type JobRow, type ListedJobRow } from '$server/job-policy';
 
 export type JobType =
 	| 'load_hotspots'
@@ -1003,16 +1003,17 @@ export async function workerHealth(): Promise<WorkerHealth> {
 // Listing
 // ---------------------------------------------------------------------------
 
-export async function listJobs(limit = 15): Promise<JobRow[]> {
+export async function listJobs(limit = 15): Promise<ListedJobRow[]> {
 	// display_name rides along so the hub can say WHO queued a communal job
-	// (GROK #14 — cancellations must not be mysterious).
-	const r = await query<JobRow>(
+	// (GROK #14 — cancellations must not be mysterious). A finished job whose
+	// account was deleted keeps no requester (td-12bd33, 0087).
+	const r = await query<ListedJobRow>(
 		`(SELECT j.*, u.display_name AS requested_by_name FROM jobs j
 		   JOIN users u ON u.id = j.requested_by
 		  WHERE j.status IN ('pending','running') ORDER BY j.enqueued_at)
 		 UNION ALL
-		 (SELECT j.*, u.display_name AS requested_by_name FROM jobs j
-		   JOIN users u ON u.id = j.requested_by
+		 (SELECT j.*, COALESCE(u.display_name, 'a deleted account') AS requested_by_name FROM jobs j
+		   LEFT JOIN users u ON u.id = j.requested_by
 		  WHERE j.status NOT IN ('pending','running')
 		    -- td-de2150's species-count refresh (retired by td-7162f6) looked
 		    -- every 10 minutes; its no-op runs would push real loads out of the

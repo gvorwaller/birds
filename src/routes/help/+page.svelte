@@ -733,6 +733,16 @@
 						viewer's own. Viewers cannot choose or change this relationship.
 					</li>
 					<li>
+						<strong>Delete an account (admin)</strong> — in Settings → User admin, open
+						"Delete account…" under the account and type its username to confirm. Its
+						life list, trips, eBird sign-in, alerts, Viewed and Special interest lists
+						go with it and cannot be restored; its queued jobs are cancelled, and jobs it
+						already ran stay in the job history as "a deleted account". An administrator
+						cannot delete their own account, an account a viewer displays (choose another
+						owner for the viewer first), an account whose job is running, or the account
+						that runs the scheduled background jobs.
+					</li>
+					<li>
 						<strong>Account usage (admin)</strong> — the app records which days each
 						account opened a page and which sections it used that day (Home, Field
 						guide, Forecast, Trips and so on). That record holds only the day and the

@@ -715,6 +715,7 @@
         viewer.
       </p>
       {#each data.users as u (u.id)}
+        {@const viewers = data.users.filter((v) => v.views_user_id === u.id)}
         <div class="obs user-row">
           <div class="grow">
             <div class="name">
@@ -768,6 +769,54 @@
               </label>
               <button type="submit" disabled={busy === `owner-${u.id}`}>Save owner</button>
             </form>
+          {/if}
+          {#if u.id !== data.selfId}
+            <details class="delete-user" id={`delete-user-${u.id}`}>
+              <summary>Delete account…</summary>
+              {#if viewers.length}
+                <p class="delete-note">
+                  {viewers.map((v) => v.display_name).join(", ")}
+                  {viewers.length === 1 ? "shows" : "show"} this account's life list. Choose another
+                  owner for {viewers.length === 1 ? "that viewer" : "those viewers"} above, or delete
+                  {viewers.length === 1 ? "it" : "them"}, first.
+                </p>
+              {:else}
+                <p class="delete-note">
+                  {#if u.role === "viewer"}
+                    Deletes {u.display_name}'s sign-in and its Viewed and Special interest lists. The
+                    life list it displays is not touched.
+                  {:else}
+                    Deletes {u.display_name}'s account and everything in it: its life list ({u.seen_count.toLocaleString()}
+                    species), {u.trip_count.toLocaleString()}
+                    {u.trip_count === 1 ? "trip" : "trips"}, eBird sign-in, alerts, and Viewed and Special
+                    interest lists. Jobs it ran stay in the job history as "a deleted account".
+                  {/if}
+                  This can't be undone.
+                </p>
+                <form
+                  method="POST"
+                  action="?tab=users&/delete_user"
+                  use:enhance={track(`del-${u.id}`)}
+                  class="delete-form"
+                >
+                  <input type="hidden" name="user_id" value={u.id} />
+                  <label>
+                    <span>Type <strong>{u.username}</strong> to confirm</span>
+                    <input
+                      type="text"
+                      name="confirm_username"
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck="false"
+                      required
+                    />
+                  </label>
+                  <button type="submit" class="delete-button" disabled={busy === `del-${u.id}`}
+                    >Delete account</button
+                  >
+                </form>
+              {/if}
+            </details>
           {/if}
         </div>
       {/each}
@@ -995,6 +1044,37 @@
     background: var(--card);
     color: var(--text);
     font-size: 16px;
+  }
+  .delete-user {
+    width: 100%;
+    margin-top: 0;
+  }
+  .delete-note {
+    margin: 4px 0 0;
+    font-size: 0.89rem;
+  }
+  .delete-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  .delete-form label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    font-size: 0.89rem;
+  }
+  .delete-form input {
+    width: 100%;
+    min-width: 0;
+    font-size: 16px;
+  }
+  .delete-button {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--on-danger);
   }
   .add-user {
     margin-top: 12px;

@@ -62,7 +62,7 @@ export interface JobInfo {
 		lastError?: string;
 	};
 	error: string | null;
-	requestedBy: number;
+	requestedBy: number | null;
 	requestedByName: string | null;
 	enqueuedAt: string;
 	/** Set once running; absolute ISO — safe for elapsed math (Tier-1). */
