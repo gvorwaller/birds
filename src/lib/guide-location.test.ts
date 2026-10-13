@@ -8,6 +8,7 @@ import {
   clearGuideLocation,
   descendantsOf,
   guideCoverage,
+  guideHotspotParent,
   guideLocationPairs,
   guideMapHref,
   guideMapSelection,
@@ -156,8 +157,10 @@ describe("parseGuideLocation: strict rejection", () => {
     expect(bad("country=CA&county=US-FL-115")).toBe("That county is not in the selected country.");
     expect(bad("county=US-FL-115&hotspot=P123")).toBe("Choose a recognized eBird hotspot.");
     expect(bad("county=US-FL-115&hotspot=L12x")).toBe("Choose a recognized eBird hotspot.");
-    expect(bad("region=US-FL&hotspot=L299291")).toBe("Choose the county before choosing a hotspot.");
-    expect(bad("hotspot=L299291")).toBe("Choose the county before choosing a hotspot.");
+    // A hotspot code names no ancestry: the URL must name at least its state.
+    expect(bad("hotspot=L299291")).toBe("Choose the state or region before choosing a hotspot.");
+    expect(bad("country=NO&hotspot=L299291")).toBe("Choose the state or region before choosing a hotspot.");
+    expect(bad("region=NO-18&hotspot=P1")).toBe("Choose a recognized eBird hotspot.");
   });
 
   it("rejects a repeated geography parameter instead of picking one", () => {
@@ -530,8 +533,12 @@ describe("parseGuideChoicesRequest (td-daff98)", () => {
       expect(parse(q).ok, q).toBe(false);
   });
   it("rejects an unknown level and a parent of the wrong level", () => {
-    for (const q of ["level=country&parent=US", "level=region&parent=US-FL", "level=county&parent=US", "level=hotspot&parent=US-FL", "level=hotspot&parent=L123"])
+    for (const q of ["level=country&parent=US", "level=region&parent=US-FL", "level=county&parent=US", "level=hotspot&parent=US", "level=hotspot&parent=L123"])
       expect(parse(q).ok, q).toBe(false);
+  });
+  it("lists hotspots under a state or region too: those eBird records there with no county (td-327dd6)", () => {
+    expect(parse("level=hotspot&parent=no-18")).toEqual({ ok: true, level: "hotspot", parent: "NO-18" });
+    expect(parse("level=hotspot&parent=US-FL")).toEqual({ ok: true, level: "hotspot", parent: "US-FL" });
   });
 });
 
@@ -565,9 +572,81 @@ describe("guidePlaceListHref (td-c52c37)", () => {
       hotspot: "L127348",
     });
   });
+  it("opens a hotspot eBird records directly under a state, with no county (td-327dd6)", () => {
+    expect(selectionOf(guidePlaceListHref("L3499263", "US-FL"))).toEqual({
+      kind: "hotspot",
+      country: "US",
+      region: "US-FL",
+      county: null,
+      hotspot: "L3499263",
+    });
+    const href = guidePlaceListHref("L1", "NO-18")!;
+    expect(new URL(href, "http://x").searchParams.has("county")).toBe(false);
+  });
   it("gives no link where the Field Guide can't select the place", () => {
     expect(guidePlaceListHref("L127348")).toBeNull();
-    expect(guidePlaceListHref("L127348", "US-FL")).toBeNull();
+    expect(guidePlaceListHref("L127348", "US")).toBeNull(); // filed under a country
+    expect(guidePlaceListHref("L127348", "nonsense")).toBeNull();
     expect(guidePlaceListHref("not a place")).toBeNull();
+  });
+});
+
+describe("guideHotspotParent (td-327dd6)", () => {
+  it("is the loaded county, or the state a hotspot is filed under with no county", () => {
+    expect(guideHotspotParent("US-FL-115", true)).toBe("US-FL-115");
+    expect(guideHotspotParent("US-FL-115", false)).toBeNull();
+    expect(guideHotspotParent("NO-18", false)).toBe("NO-18");
+    expect(guideHotspotParent("US-FL", true)).toBe("US-FL");
+    expect(guideHotspotParent("US", true)).toBeNull();
+    expect(guideHotspotParent(null, false)).toBeNull();
+  });
+});
+
+describe("a hotspot recorded directly under a state (td-327dd6)", () => {
+  it("parses country + state + hotspot with no county, and writes the URL back the same way", () => {
+    const sel = ok("region=no-18&hotspot=l1");
+    expect(sel).toEqual({ kind: "hotspot", country: "NO", region: "NO-18", county: null, hotspot: "L1" });
+    expect(guideLocationPairs(sel)).toEqual([["country", "NO"], ["region", "NO-18"], ["hotspot", "L1"]]);
+    expect(ok("country=NO&region=NO-18&county=&hotspot=L1")).toEqual(sel);
+    expect(guideWasPairs(sel)).toEqual([["was_country", "NO"], ["was_region", "NO-18"], ["was_county", ""], ["was_hotspot", "L1"]]);
+  });
+
+  /** A native submission: "was" values plus the selects a browser submits
+   * (a disabled select, e.g. a county field with no counties, is absent). */
+  const native = (wasGeo: string, selects: Record<string, string>) => {
+    const p = new URLSearchParams("q=owl&future=kept");
+    for (const [k, v] of guideWasPairs(ok(wasGeo))) p.append(k, v);
+    for (const [k, v] of Object.entries(selects)) p.append(k, v);
+    const r = canonicalizeGuideLevelChange(p);
+    if (!r || !r.ok) throw new Error("expected a canonical change");
+    return Object.fromEntries(["country", "region", "county", "hotspot", "q", "future"].filter((k) => r.params.has(k)).map((k) => [k, r.params.get(k)]));
+  };
+
+  it("a state page → choosing one of its own hotspots keeps it (no county submitted)", () => {
+    expect(native("country=NO&region=NO-18", { country: "NO", region: "NO-18", hotspot: "L1" })).toEqual({
+      country: "NO", region: "NO-18", hotspot: "L1", q: "owl", future: "kept",
+    });
+    // A state with counties too (US-FL): the empty county select is submitted.
+    expect(native("country=US&region=US-FL", { country: "US", region: "US-FL", county: "", hotspot: "L3499263" })).toEqual({
+      country: "US", region: "US-FL", hotspot: "L3499263", q: "owl", future: "kept",
+    });
+  });
+  it("a state-direct hotspot → choosing a county drops the hotspot", () => {
+    expect(native("country=US&region=US-FL&hotspot=L3499263", { country: "US", region: "US-FL", county: "US-FL-115", hotspot: "L3499263" })).toEqual({
+      country: "US", region: "US-FL", county: "US-FL-115", q: "owl", future: "kept",
+    });
+  });
+  it("a county hotspot → clearing the county drops the hotspot too", () => {
+    expect(native("country=US&region=US-FL&county=US-FL-115&hotspot=L299291", { country: "US", region: "US-FL", county: "", hotspot: "L299291" })).toEqual({
+      country: "US", region: "US-FL", q: "owl", future: "kept",
+    });
+  });
+  it("a state-direct hotspot → clearing it, or changing the state, clears it", () => {
+    expect(native("country=NO&region=NO-18&hotspot=L1", { country: "NO", region: "NO-18", hotspot: "" })).toEqual({
+      country: "NO", region: "NO-18", q: "owl", future: "kept",
+    });
+    expect(native("country=NO&region=NO-18&hotspot=L1", { country: "NO", region: "NO-03", hotspot: "L1" })).toEqual({
+      country: "NO", region: "NO-03", q: "owl", future: "kept",
+    });
   });
 });

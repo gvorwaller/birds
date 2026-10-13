@@ -184,6 +184,13 @@ export async function guideChoicesFor(
     if ((await getRegion(parent))?.level !== "subnational1") return null;
     return guideCounties(parent);
   }
+  // Under a state or region: the hotspots eBird records there with no county
+  // (td-327dd6). The region's identity comes from the reference, exactly as
+  // resolveGuideLocation checks it; it needs no loaded row of its own.
+  if (parseRegionCode(parent)?.level === "subnational1") {
+    if ((await getRegion(parent))?.level !== "subnational1") return null;
+    return guideHotspots(parent);
+  }
   // A hotspot list needs the exact loaded county row, as the loader requires
   // before it accepts a county selection (resolveGuideLocation).
   const { rows } = await query<{ n: number }>(
@@ -210,12 +217,14 @@ export async function guideCounties(region: string): Promise<GuideChoice[]> {
     .sort(byNameThenCode);
 }
 
-/** Every loaded hotspot recorded under `county`, name-sorted. */
-export async function guideHotspots(county: string): Promise<GuideChoice[]> {
+/** Every loaded hotspot recorded exactly under `parent`, name-sorted: a
+ * county's hotspots, or a state's or region's hotspots that have no county
+ * (td-327dd6). Never a state's county hotspots. */
+export async function guideHotspots(parent: string): Promise<GuideChoice[]> {
   const { rows } = await query<{ loc_code: string; loc_name: string }>(
     `SELECT loc_code, loc_name FROM frequency_fetch
 		  WHERE loc_kind = 'hotspot' AND region_code = $1`,
-    [county],
+    [parent],
   );
   return rows
     .filter((r) => isHotspotLocId(r.loc_code))
@@ -335,7 +344,6 @@ export async function resolveGuideLocation(
   let country: string | null = selection.country;
   let region: string | null = null;
   let county: string | null = null;
-  let hotspot: string | null = null;
 
   if ("region" in selection) {
     const selectedRegion = await getRegion(selection.region);
@@ -366,7 +374,11 @@ export async function resolveGuideLocation(
     };
   }
 
-  county = selection.county;
+  if (selection.kind === "hotspot" && selection.county === null) {
+    // A hotspot eBird records directly under the state or region (td-327dd6).
+    return resolveHotspot(selection.hotspot, region!, { country, region, county: null });
+  }
+  county = selection.county as string;
   const countyRow = (
     await query<{ loc_name: string; begin_year: number; end_year: number }>(
       `SELECT loc_name, begin_year, end_year FROM frequency_fetch
@@ -396,7 +408,19 @@ export async function resolveGuideLocation(
     };
   }
 
-  hotspot = selection.hotspot;
+  return resolveHotspot(selection.hotspot, county, { country, region, county });
+}
+
+/**
+ * A verified hotspot: its loaded row must be filed exactly under `parent`,
+ * the selected county or, for a hotspot eBird records with no county, the
+ * selected state or region (td-327dd6). No county is ever guessed.
+ */
+async function resolveHotspot(
+  hotspot: string,
+  parent: string,
+  ancestry: { country: string | null; region: string | null; county: string | null },
+): Promise<ResolvedGuideLocation> {
   const hotspotRow = (
     await query<{
       loc_name: string;
@@ -412,8 +436,13 @@ export async function resolveGuideLocation(
       [hotspot],
     )
   ).rows[0];
-  if (!hotspotRow || !isHotspotLocId(hotspot) || hotspotRow.region_code !== county)
-    error(400, "That hotspot has no loaded data in the selected county.");
+  if (!hotspotRow || !isHotspotLocId(hotspot) || hotspotRow.region_code !== parent)
+    error(
+      400,
+      ancestry.county
+        ? "That hotspot has no loaded data in the selected county."
+        : "That hotspot has no loaded data recorded directly under the selected state or region.",
+    );
   const coverage: GuideCoverage = {
     locCodes: [hotspot],
     unledgered: hotspotRow.unledgered ? [hotspot] : [],
@@ -427,7 +456,7 @@ export async function resolveGuideLocation(
     kind: "hotspot",
     label: hotspotRow.loc_name,
     officialCountyName: false,
-    ancestry: { country, region, county, hotspot },
+    ancestry: { ...ancestry, hotspot },
     map: null,
   };
 }

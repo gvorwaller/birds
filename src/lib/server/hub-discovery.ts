@@ -19,6 +19,7 @@
 import { error } from "@sveltejs/kit";
 import { query } from "$lib/db";
 import { haversineKm, MILES_TO_KM } from "$lib/geo";
+import { guideHotspotParent } from "$lib/guide-location";
 import { isHotspotLocId } from "$lib/loc-id";
 import { parentOf, parseRegionCode } from "$lib/region-code";
 import { HUB_FIND_MIN, HUB_PAGE_SIZE, type HubDiscoveryState, type HubTarget } from "$lib/hub-discovery";
@@ -54,9 +55,11 @@ export interface HubResult {
   distanceMiles: number | null;
   error: string | null;
   target: HubTarget;
-  /** For a loaded hotspot: its loaded county, so the species count can open
-   * the Field Guide list for it (td-c52c37). Null when there isn't one. */
-  guideCounty?: string | null;
+  /** For a loaded hotspot: the place the Field Guide finds it under, so the
+   * species count can open its list (td-c52c37): its loaded county, or the
+   * state or region eBird records it under with no county (td-327dd6). Null
+   * when there isn't one. */
+  guideParent?: string | null;
 }
 
 export interface HubSummaryArea {
@@ -587,12 +590,10 @@ function hotspotCandidate(ev: Evidence, i: number, helpers: CandidateHelpers): C
     evidence: [EVIDENCE_LABEL.hotspot, ...sources],
     loadState: loadStateOf(loadedRow, !!failed, helpers.completeYear),
     row: loadedRow ? { beginYear: Number(loadedRow.begin_year), endYear: Number(loadedRow.end_year), nSpecies: Number(loadedRow.n_species) } : null,
-    guideCounty:
-      loadedRow?.region_code &&
-      parseRegionCode(loadedRow.region_code)?.level === "subnational2" &&
-      ev.loaded.get(loadedRow.region_code)?.loc_kind === "region"
-        ? loadedRow.region_code
-        : null,
+    guideParent: guideHotspotParent(
+      loadedRow?.region_code ?? null,
+      !!loadedRow?.region_code && ev.loaded.get(loadedRow.region_code)?.loc_kind === "region",
+    ),
     loadedBeneath: 0,
     lat: store.lat[i],
     lng: store.lng[i],
@@ -757,7 +758,7 @@ function strip(c: Candidate): HubResult {
     id: c.id, type: c.type, name: c.name, context: c.context, evidence: c.evidence,
     loadState: c.loadState, row: c.row, loadedBeneath: c.loadedBeneath, lat: c.lat, lng: c.lng,
     distanceMiles: c.distanceMiles, error: c.error, target: c.target,
-    guideCounty: c.guideCounty ?? null,
+    guideParent: c.guideParent ?? null,
   };
 }
 

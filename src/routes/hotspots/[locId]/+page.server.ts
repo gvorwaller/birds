@@ -3,7 +3,7 @@ import type { Actions, PageServerLoad } from "./$types";
 import { query } from "$lib/db";
 import { getEbirdApiKey, recentHotspotObs, EbirdError } from "$server/ebird";
 import { frequencyMeta, lastCompleteYear } from "$server/barchart";
-import { guidePlaceListHref } from "$lib/guide-location";
+import { guideHotspotParent, guidePlaceListHref } from "$lib/guide-location";
 import { seenSet } from "$server/needs";
 import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
@@ -42,7 +42,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       : new Date().getMonth() + 1;
   const returnLink = safeReturnTo(url.searchParams.get("returnTo"), url.searchParams.get("returnLabel"));
 
-  const [listMeta, officialCache, place, freqMap, seen, home, lastLoad, guideCountyRes] = await Promise.all([
+  const [listMeta, officialCache, place, freqMap, seen, home, lastLoad, guideParentRes] = await Promise.all([
     hotspotFromCache(locId),
     officialHotspotCacheEntry(locId),
     hotspotPlace(locId),
@@ -64,12 +64,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
         LIMIT 1`,
       [locId],
     ),
-    // td-c52c37: the Field Guide opens a hotspot only inside its LOADED county,
-    // so the species-list link exists only when both rows are stored.
-    query<{ county: string }>(
-      `SELECT f.region_code AS county
+    // td-c52c37 / td-327dd6: the Field Guide opens a hotspot inside its
+    // LOADED county, or under the state or region eBird files it in with no
+    // county; guideHotspotParent decides from these two facts.
+    query<{ region_code: string | null; county_loaded: boolean }>(
+      `SELECT f.region_code,
+              EXISTS (SELECT 1 FROM frequency_fetch c
+                       WHERE c.loc_code = f.region_code AND c.loc_kind = 'region') AS county_loaded
          FROM frequency_fetch f
-         JOIN frequency_fetch c ON c.loc_code = f.region_code AND c.loc_kind = 'region'
         WHERE f.loc_code = $1 AND f.loc_kind = 'hotspot'`,
       [locId],
     ),
@@ -142,7 +144,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     numSpeciesAllTime: meta?.numSpeciesAllTime ?? null,
     latestObsDt: meta?.latestObsDt ?? null,
     distanceKm,
-    speciesListHref: freq ? guidePlaceListHref(locId, guideCountyRes.rows[0]?.county ?? null) : null,
+    speciesListHref: freq ? guidePlaceListHref(
+          locId,
+          guideHotspotParent(guideParentRes.rows[0]?.region_code ?? null, guideParentRes.rows[0]?.county_loaded ?? false),
+        ) : null,
     freq: freq
       ? {
           beginYear: freq.beginYear,

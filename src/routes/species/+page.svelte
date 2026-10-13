@@ -27,8 +27,10 @@
   } from "$lib/guide-location";
   import {
     PlaceChoiceLoader,
-    childLevel,
     fetchGuideChoices,
+    CHOICE_LEVELS,
+    NO_LOADING,
+    PlaceListsController,
     guideDraftKey,
     placeLevels,
     toggledTag,
@@ -91,28 +93,40 @@
     name: `${family.name ?? family.scientificName ?? family.code}${family.name && family.scientificName ? ` (${family.scientificName})` : ""}`,
   })));
 
-  // Place choices below the chosen level, loaded without navigating.
-  const PARENT_OF: Record<GuideChoicesLevel, GuideLevel> = { region: "country", county: "region", hotspot: "county" };
+  // Place choices below the chosen level, loaded without navigating. The
+  // hotspot list hangs under the county, or with no county chosen under the
+  // state: its hotspots eBird records with no county (td-327dd6).
   const CHOICE_NOUN: Record<GuideChoicesLevel, string> = { region: "states or regions", county: "counties", hotspot: "hotspots" };
   const loader = new PlaceChoiceLoader(fetchGuideChoices);
   let lists = $state<Record<GuideChoicesLevel, PlaceChoice[]>>(
     untrack(() => ({ region: data.regions, county: data.counties, hotspot: data.hotspots })),
   );
-  let loadingLevel = $state<GuideChoicesLevel | null>(null);
-  let choiceError = $state<{ level: GuideChoicesLevel; parent: string; message: string } | null>(null);
+  // Per list: a state change can load the counties and the state's own
+  // hotspots together, and each keeps its own progress and failure (CODEX1).
+  let loading = $state<Record<GuideChoicesLevel, boolean>>({ ...NO_LOADING });
+  let choiceErrors = $state<Partial<Record<GuideChoicesLevel, { parent: string; message: string }>>>({});
+  const anyLoading = $derived(CHOICE_LEVELS.find((l) => loading[l]) ?? null);
+  const placeLists = new PlaceListsController(
+    loader,
+    () => ({ lists, loading, errors: choiceErrors }),
+    (patch) => {
+      if (patch.lists) lists = patch.lists;
+      if (patch.loading) loading = patch.loading;
+      if (patch.errors) choiceErrors = patch.errors;
+    },
+    () => placeLevels(draft.place),
+  );
 
   function seedLists() {
     lists = { region: data.regions, county: data.counties, hotspot: data.hotspots };
     loader.seed("region", data.country, data.regions);
     loader.seed("county", data.region, data.counties);
-    loader.seed("hotspot", data.county, data.hotspots);
+    loader.seed("hotspot", data.county || data.region, data.hotspots);
   }
 
   /** Discard the draft and every transient edit state. */
   function resetToApplied() {
-    loader.invalidate();
-    loadingLevel = null;
-    choiceError = null;
+    placeLists.cancel();
     mapOpen = false;
     picked = null;
     radiusText = "";
@@ -132,39 +146,15 @@
     untrack(resetToApplied);
   });
 
-  async function loadChoices(level: GuideChoicesLevel, parent: string) {
-    loadingLevel = level;
-    choiceError = null;
-    const result = await loader.load(level, parent, () => placeLevels(draft.place)[PARENT_OF[level]]);
-    if (result.status === "stale") return;
-    loadingLevel = null;
-    if (result.status === "ok") lists = { ...lists, [level]: result.choices };
-    else choiceError = { level, parent, message: result.message };
-  }
-
   /** Choose one Place level: clears deeper levels (and any map point) in the
-   * draft, then loads the choices the new value unlocks. */
+   * draft, then loads the lists the new value unlocks. Every list below the
+   * changed level is refilled from its parent now, so the hotspot list follows
+   * the county, or the state when no county is chosen. */
   function chooseLevel(level: GuideLevel, code: string) {
     // Re-picking the current value changes nothing (and keeps deeper choices).
     if (code.trim().toUpperCase() === placeLevels(draft.place)[level]) return;
-    loader.invalidate();
-    loadingLevel = null;
-    choiceError = null;
     draft.place = withDraftLevel(draft.place, level, code);
-    const levels = placeLevels(draft.place);
-    let cleared = false;
-    const next = { ...lists };
-    for (const l of ["region", "county", "hotspot"] as GuideChoicesLevel[]) {
-      if (l === childLevel(level)) cleared = true;
-      if (cleared) next[l] = [];
-    }
-    lists = next;
-    const child = childLevel(level);
-    if (child && levels[level]) {
-      const hit = loader.cached(child, levels[level]);
-      if (hit) lists = { ...lists, [child]: hit };
-      else void loadChoices(child, levels[level]);
-    }
+    void placeLists.afterChoice(level);
   }
 
   function toggleTag(tag: string) {
@@ -287,9 +277,7 @@
       applyError = built.message;
       return;
     }
-    loader.invalidate();
-    loadingLevel = null;
-    choiceError = null;
+    placeLists.cancel();
     draft.place = built.selection as GuideLocationSelection;
     mapOpen = false;
     picked = null;
@@ -489,26 +477,31 @@
             <div class="location-fields">
               {#if placeHydrated}
                 <SearchableSelect id="guide-country" name="country" label="Country" choices={data.countries} value={draftLevels.country} anywhereLabel="Anywhere" onCommit={(code) => chooseLevel("country", code)} />
-                <SearchableSelect id="guide-region" name="region" label="State / region" choices={lists.region} value={draftLevels.region} anywhereLabel="Anywhere in this country" disabled={!draftLevels.country} disabledText="Choose a country first" loading={loadingLevel === "region"} emptyText="No loaded states or regions" onCommit={(code) => chooseLevel("region", code)} />
-                <SearchableSelect id="guide-county" name="county" label="County / equivalent" choices={lists.county} value={draftLevels.county} anywhereLabel="Anywhere in this state or region" disabled={!draftLevels.region} disabledText="Choose a state or region first" loading={loadingLevel === "county"} emptyText="No loaded counties" onCommit={(code) => chooseLevel("county", code)} />
-                <SearchableSelect id="guide-hotspot" name="hotspot" label="Verified hotspot" choices={lists.hotspot} value={draftLevels.hotspot} anywhereLabel="Anywhere in this county" disabled={!draftLevels.county} disabledText="Choose a county first" loading={loadingLevel === "hotspot"} emptyText="No loaded hotspots" onCommit={(code) => chooseLevel("hotspot", code)} />
+                <SearchableSelect id="guide-region" name="region" label="State / region" choices={lists.region} value={draftLevels.region} anywhereLabel="Anywhere in this country" disabled={!draftLevels.country} disabledText="Choose a country first" loading={loading.region} emptyText="No loaded states or regions" onCommit={(code) => chooseLevel("region", code)} />
+                <SearchableSelect id="guide-county" name="county" label="County / equivalent" choices={lists.county} value={draftLevels.county} anywhereLabel="Anywhere in this state or region" disabled={!draftLevels.region} disabledText="Choose a state or region first" loading={loading.county} emptyText="No loaded counties" onCommit={(code) => chooseLevel("county", code)} />
+                <SearchableSelect id="guide-hotspot" name="hotspot" label="Verified hotspot" choices={lists.hotspot} value={draftLevels.hotspot} anywhereLabel={draftLevels.county ? "Anywhere in this county" : "Anywhere in this state or region"} disabled={!draftLevels.region} disabledText="Choose a state or region first" loading={loading.hotspot} emptyText={!draftLevels.county && (lists.county.length > 0 || loading.county) ? "Choose a county first" : "No loaded hotspots"} onCommit={(code) => chooseLevel("hotspot", code)} />
               {:else}
                 <div class="location-field"><label for="guide-country">Country</label><select id="guide-country" name="country" value={data.country}><option value="">Anywhere</option>{#each data.countries as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
                 <div class="location-field"><label for="guide-region">State / region</label><select id="guide-region" name="region" value={data.region} disabled={!data.country || data.regions.length === 0}><option value="">{data.country ? "Anywhere in this country" : "Choose a country first"}</option>{#each data.regions as r (r.code)}<option value={r.code}>{r.name}</option>{/each}</select></div>
                 <div class="location-field"><label for="guide-county">County / equivalent</label><select id="guide-county" name="county" value={data.county} disabled={!data.region || data.counties.length === 0}><option value="">{!data.region ? "Choose a state or region first" : data.counties.length === 0 ? "No loaded counties" : "Anywhere in this state or region"}</option>{#each data.counties as c (c.code)}<option value={c.code}>{c.name}</option>{/each}</select></div>
-                <div class="location-field"><label for="guide-hotspot">Verified hotspot</label><select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={!data.county || data.hotspots.length === 0}><option value="">{!data.county ? "Choose a county first" : data.hotspots.length === 0 ? "No loaded hotspots" : "Anywhere in this county"}</option>{#each data.hotspots as h (h.code)}<option value={h.code}>{h.name}</option>{/each}</select></div>
+                <div class="location-field"><label for="guide-hotspot">Verified hotspot</label><select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={data.hotspots.length === 0}><option value="">{data.hotspots.length > 0 ? (data.county ? "Anywhere in this county" : "Anywhere in this state or region") : !data.region ? "Choose a state or region first" : !data.county && data.counties.length > 0 ? "Choose a county first" : "No loaded hotspots"}</option>{#each data.hotspots as h (h.code)}<option value={h.code}>{h.name}</option>{/each}</select></div>
               {/if}
             </div>
-            {#if loadingLevel}<p class="muted place-status" role="status">Loading {CHOICE_NOUN[loadingLevel]}…</p>{/if}
-            {#if choiceError}
-              {@const failed = choiceError}
-              <p class="err place-status" role="alert">
-                Couldn't load {CHOICE_NOUN[failed.level]}. Your other choices are kept.
-                <button type="button" class="secondary retry" aria-label={`Retry loading ${CHOICE_NOUN[failed.level]}`} onclick={() => loadChoices(failed.level, failed.parent)}>Retry</button>
-              </p>
+            {#if anyLoading}<p class="muted place-status" role="status">Loading {CHOICE_NOUN[anyLoading]}…</p>{/if}
+            {#each CHOICE_LEVELS as level (level)}
+              {@const failed = choiceErrors[level]}
+              {#if failed}
+                <p class="err place-status" role="alert">
+                  Couldn't load {CHOICE_NOUN[level]}. Your other choices are kept.
+                  <button type="button" class="secondary retry" aria-label={`Retry loading ${CHOICE_NOUN[level]}`} onclick={() => placeLists.load(level, failed.parent)}>Retry</button>
+                </p>
+              {/if}
+            {/each}
+            {#if draftLevels.region && !draftLevels.county && !loading.county && !loading.hotspot && !choiceErrors.county && !choiceErrors.hotspot && lists.county.length === 0}
+              {#if lists.hotspot.length > 0}<p class="location-hint muted">No county data is loaded for this state or region. Its hotspots that eBird records with no county are under Verified hotspot.</p>
+              {:else}<p class="location-hint muted">No county data is loaded for this state or region. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a county.</p>{/if}
             {/if}
-            {#if draftLevels.region && !draftLevels.county && !loadingLevel && !choiceError && lists.county.length === 0}<p class="location-hint muted">No county data is loaded for this state or region. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a county.</p>{/if}
-            {#if draftLevels.county && !draftLevels.hotspot && !loadingLevel && !choiceError && lists.hotspot.length === 0}<p class="location-hint muted">No hotspot data is loaded for this county. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a hotspot.</p>{/if}
+            {#if draftLevels.county && !draftLevels.hotspot && !loading.hotspot && !choiceErrors.hotspot && lists.hotspot.length === 0}<p class="location-hint muted">No hotspot data is loaded for this county. <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to choose a hotspot.</p>{/if}
           {/if}
         </fieldset>
       </form>

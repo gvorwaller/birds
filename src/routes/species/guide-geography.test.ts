@@ -41,6 +41,9 @@ const M_FAR = "L99887213"; // (10, 0)
 const M_NOCOORD = "L99887214"; // loaded, but no ebird_locations row
 const M_UNLOADED = "L99887215"; // coordinates, but never loaded
 const NEMO = { lat: -48.87, lng: -123.39 }; // Point Nemo: nothing loaded
+// td-327dd6: hotspots eBird records directly under a state, with no county.
+const HS_FL = "L99887251"; // under US-FL, a state whose counties are loaded
+const HS_NC = "L99887252"; // under a state with no loaded counties (directState)
 
 const S = (n: string) => `g8s${n}`;
 const SPECIES = {
@@ -61,12 +64,13 @@ const PG_FIX = Array.from({ length: 7 }, (_, i) => `g8pf${i}`);
 let PAGED_REAL: string[] = [];
 let OUTSIDE_REAL: string[] = [];
 const FIXTURE_SPECIES = [...Object.values(SPECIES), ...PG_FIX];
-const LOCS = [CA, CB, CC, HA1, HA2, HB1, HC, HX, M_IN, M_NEAR, M_FAR, M_NOCOORD];
+const LOCS = [CA, CB, CC, HA1, HA2, HB1, HC, HX, M_IN, M_NEAR, M_FAR, M_NOCOORD, HS_FL, HS_NC];
 const ELOCS = [M_IN, M_NEAR, M_FAR, M_UNLOADED];
 
 let uid: number;
 let emptyState: string | null = null;
 let componentCounty = "";
+let directState = "";
 const users: number[] = [];
 
 function event(path: string, userId = uid) {
@@ -190,6 +194,23 @@ describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () 
       await freq(componentCounty, SPECIES.UL);
     }
 
+    // td-327dd6: a state-direct hotspot under Florida, and one under another
+    // untouched state that has no counties loaded at all.
+    await fetchRow(HS_FL, "hotspot", "State Direct Fixture Glades", STATE);
+    await freq(HS_FL, SPECIES.A3);
+    directState = (
+      await query<{ code: string }>(
+        `SELECT code FROM regions r WHERE level='subnational1' AND code <> $1
+           AND NOT EXISTS (SELECT 1 FROM frequency_fetch f
+             WHERE f.loc_code = r.code OR f.loc_code LIKE r.code||'-%'
+                OR f.region_code = r.code OR f.region_code LIKE r.code||'-%')
+         ORDER BY code LIMIT 1`,
+        [emptyState ?? ""],
+      )
+    ).rows[0].code;
+    await fetchRow(HS_NC, "hotspot", "No County Fixture Fjord", directState);
+    await freq(HS_NC, SPECIES.B1);
+
     // Personal state for the pagination user.
     const user = (
       await query<{ id: number }>(
@@ -220,6 +241,42 @@ describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () 
     await query("DELETE FROM frequency_fetch WHERE loc_code=ANY($1)", [LOCS]);
     await query("DELETE FROM ebird_locations WHERE loc_id=ANY($1)", [ELOCS]);
     await query("DELETE FROM taxonomy_cache WHERE species_code=ANY($1)", [FIXTURE_SPECIES]);
+  });
+
+  describe("a hotspot recorded directly under a state (td-327dd6)", () => {
+    it("resolves country + state + hotspot with no county, strictly", async () => {
+      const resolved = await resolveGuideLocation({ kind: "hotspot", country: "US", region: STATE, county: null, hotspot: HS_FL });
+      expect(resolved).toMatchObject({
+        kind: "hotspot",
+        label: "State Direct Fixture Glades",
+        locCodes: [HS_FL],
+        ancestry: { country: "US", region: STATE, county: null, hotspot: HS_FL },
+        place: { kind: "locations", locCodes: [HS_FL] },
+      });
+    });
+
+    it("searches only that hotspot's species, under a state with or without counties", async () => {
+      const fl = await run(`/species?region=${STATE}&hotspot=${HS_FL}&list=all`);
+      expect(fl.location).toMatchObject({ kind: "hotspot", label: "State Direct Fixture Glades" });
+      expect(fl.county).toBe("");
+      expect(fl.hotspot).toBe(HS_FL);
+      expect(codesOf(fl)).toEqual([SPECIES.A3]);
+      const nc = await run(`/species?region=${directState}&hotspot=${HS_NC}&list=all`);
+      expect(codesOf(nc)).toEqual([SPECIES.B1]);
+      expect(nc.counties).toEqual([]);
+      expect(nc.hotspots).toEqual([{ code: HS_NC, name: "No County Fixture Fjord" }]);
+    });
+
+    it("lists a state's own hotspots for the hotspot field, and never offers them under a county", async () => {
+      expect(await guideHotspots(directState)).toEqual([{ code: HS_NC, name: "No County Fixture Fjord" }]);
+      expect((await guideHotspots(CA)).map((h) => h.code)).not.toContain(HS_FL);
+    });
+
+    it("keeps the canonical URL without a county", async () => {
+      const parsed = parseGuideLocation(new URLSearchParams(`region=${STATE}&hotspot=${HS_FL}`));
+      if (!parsed.ok) throw new Error(parsed.message);
+      expect(guideLocationPairs(parsed.selection)).toEqual([["country", "US"], ["region", STATE], ["hotspot", HS_FL]]);
+    });
   });
 
   describe("county and hotspot identity", () => {
@@ -295,7 +352,18 @@ describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () 
       const data = await run(`/species?county=${CA}`);
       expect(data.counties.map((c: { code: string }) => c.code)).toEqual(counties.map((c) => c.code));
       expect(data.hotspots.map((h: { code: string }) => h.code)).toEqual([HA1, HA2]);
-      expect((await run(`/species?region=${STATE}`)).hotspots).toEqual([]);
+      // With no county chosen, the hotspot list is the state's OWN hotspots,
+      // never its counties' (td-327dd6).
+      const stateDirect = (
+        await query<{ loc_code: string }>(
+          `SELECT loc_code FROM frequency_fetch WHERE loc_kind='hotspot' AND region_code=$1`,
+          [STATE],
+        )
+      ).rows.map((r) => r.loc_code);
+      const regionPage = (await run(`/species?region=${STATE}`)).hotspots.map((h: { code: string }) => h.code);
+      expect(regionPage).toContain(HS_FL);
+      expect(regionPage.sort()).toEqual(stateDirect.sort());
+      expect(regionPage).not.toContain(HA1);
     });
 
     it("uses the official county-equivalent label when this exact code is known", async () => {
@@ -314,7 +382,11 @@ describe.runIf(dbUp)("Field Guide county, hotspot and map/radius selection", () 
         `/species?county=${CA}&hotspot=L99887299`, // shaped right, never loaded
         `/species?county=${CA}&hotspot=P12345`, // personal location shape
         `/species?county=${CA}&hotspot=${M_NOCOORD}`, // loaded hotspot with no county
-        `/species?region=${STATE}&hotspot=${HA1}`, // county omitted
+        `/species?region=${STATE}&hotspot=${HA1}`, // county omitted: HA1 is filed under CA
+        `/species?county=${CA}&hotspot=${HS_FL}`, // state-direct hotspot sent with a county
+        `/species?region=US-GA&hotspot=${HS_FL}`, // filed under another state
+        `/species?region=${STATE}&hotspot=${M_NOCOORD}`, // loaded with no region at all
+        `/species?hotspot=${HS_FL}`, // no state named
         `/species?county=US-FL`,
         `/species?country=invalid`,
         `/species?region=US-ZZ`,

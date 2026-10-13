@@ -15,9 +15,10 @@ const RUN = String(process.pid % 100000).padStart(5, "0");
 const COUNTY = `US-FL-Z${RUN}`;
 const EMPTY_COUNTY = `US-FL-Y${RUN}`;
 const SPOTS = [`L97${RUN}1`, `L97${RUN}2`];
+const DIRECT = `L97${RUN}3`; // td-327dd6: recorded directly under US-FL, no county
 
 async function cleanup() {
-  await query("DELETE FROM frequency_fetch WHERE loc_code = ANY($1::text[])", [[COUNTY, EMPTY_COUNTY, ...SPOTS]]);
+  await query("DELETE FROM frequency_fetch WHERE loc_code = ANY($1::text[])", [[COUNTY, EMPTY_COUNTY, ...SPOTS, DIRECT]]);
 }
 
 type Handler = (e: { locals: unknown; url: URL }) => Promise<Response>;
@@ -44,6 +45,7 @@ describe.runIf(dbUp)("/api/guide-locations", () => {
     await row(EMPTY_COUNTY, "region", "Yy Empty Fixture County", "US-FL");
     await row(SPOTS[1], "hotspot", "b fixture pond", COUNTY);
     await row(SPOTS[0], "hotspot", "A Fixture Marsh", COUNTY);
+    await row(DIRECT, "hotspot", "Direct Fixture Glades", "US-FL");
   });
   afterAll(async () => {
     await cleanup();
@@ -63,6 +65,18 @@ describe.runIf(dbUp)("/api/guide-locations", () => {
     expect((await call("level=region&parent=XX")).status).toBe(400);
     expect((await call("level=county&parent=US-ZZ")).status).toBe(400);
     expect((await call("level=hotspot&parent=US-FL-999999")).status).toBe(400);
+    expect((await call("level=hotspot&parent=US-ZZ")).status).toBe(400);
+  });
+
+  it("lists a state's own hotspots, never its counties' (td-327dd6)", async () => {
+    const res = await call("level=hotspot&parent=us-fl");
+    expect(res.status).toBe(200);
+    expect(res.body.parent).toBe("US-FL");
+    expect(res.body.choices).toEqual(await guideHotspots("US-FL"));
+    const codes = res.body.choices.map((c: { code: string }) => c.code);
+    expect(codes).toContain(DIRECT);
+    expect(codes).not.toContain(SPOTS[0]);
+    expect((await call("level=hotspot&parent=US")).status).toBe(400); // a country is no hotspot parent
   });
 
   it("returns the loader's own lists, identical and uncapped", async () => {

@@ -42,7 +42,9 @@ export type GuideLocationSelection =
       kind: "hotspot";
       country: string;
       region: string;
-      county: string;
+      /** Null for a hotspot eBird records directly under the state or region,
+       * with no county (td-327dd6); the server checks it is filed exactly there. */
+      county: string | null;
       hotspot: string;
     }
   | {
@@ -189,10 +191,12 @@ export function parseGuideLocation(params: ParamReader): GuideLocationParse {
   }
   if (hotspot) {
     if (!isHotspotLocId(hotspot)) return fail("Choose a recognized eBird hotspot.");
-    if (!county) return fail("Choose the county before choosing a hotspot.");
+    // A hotspot code names no ancestry, so the URL must: the county, or, for a
+    // hotspot eBird files directly under a state or region, that region.
+    if (!region) return fail("Choose the state or region before choosing a hotspot.");
     return {
       ok: true,
-      selection: { kind: "hotspot", country, region, county, hotspot },
+      selection: { kind: "hotspot", country, region, county: county || null, hotspot },
     };
   }
   if (county)
@@ -225,7 +229,7 @@ export function guideLocationPairs(
       return [
         ["country", selection.country],
         ["region", selection.region],
-        ["county", selection.county],
+        ...(selection.county ? [["county", selection.county] as [string, string]] : []),
         ["hotspot", selection.hotspot],
       ];
     case "map":
@@ -465,12 +469,14 @@ export function guideScopeText(
 export const GUIDE_CHOICES_LEVELS = ["region", "county", "hotspot"] as const;
 export type GuideChoicesLevel = (typeof GUIDE_CHOICES_LEVELS)[number];
 
-/** The region-code level a parent must have for each choices level. */
-const CHOICES_PARENT_LEVEL = {
-  region: "country",
-  county: "subnational1",
-  hotspot: "subnational2",
-} as const;
+/** The region-code levels a parent may have for each choices level. A hotspot
+ * list hangs under a county, or under a state or region for the hotspots eBird
+ * records there with no county (td-327dd6). */
+const CHOICES_PARENT_LEVELS: Record<GuideChoicesLevel, readonly string[]> = {
+  region: ["country"],
+  county: ["subnational1"],
+  hotspot: ["subnational2", "subnational1"],
+};
 
 export type GuideChoicesRequest =
   | { ok: true; level: GuideChoicesLevel; parent: string }
@@ -495,30 +501,45 @@ export function parseGuideChoicesRequest(params: URLSearchParams): GuideChoicesR
   if (!(GUIDE_CHOICES_LEVELS as readonly string[]).includes(level))
     return fail("Choose region, county or hotspot choices.");
   const typed = level as GuideChoicesLevel;
-  if (parseRegionCode(parent)?.level !== CHOICES_PARENT_LEVEL[typed])
+  if (!CHOICES_PARENT_LEVELS[typed].includes(parseRegionCode(parent)?.level ?? ""))
     return fail(
       typed === "region"
         ? "Choose a recognized country."
         : typed === "county"
           ? "Choose a recognized state or region."
-          : "Choose a recognized county.",
+          : "Choose a recognized county, state or region.",
     );
   return { ok: true, level: typed, parent };
 }
 
 /**
+ * Where the Field Guide finds a loaded hotspot, from its recorded
+ * `region_code`: the county when that county is loaded too (td-c52c37), or
+ * the state or region eBird files it under with no county (td-327dd6). Null
+ * otherwise (a hotspot under a country, an unloaded county, no code).
+ */
+export function guideHotspotParent(regionCode: string | null, countyLoaded: boolean): string | null {
+  const level = regionCode ? parseRegionCode(regionCode)?.level : undefined;
+  if (level === "subnational2") return countyLoaded ? regionCode : null;
+  if (level === "subnational1") return regionCode;
+  return null;
+}
+
+/**
  * The Field Guide's "all species" list for one loaded place (td-c52c37): the
  * link behind a species count on Hotspots & data or a hotspot page. A region
- * code opens that country/state/county; a hotspot also needs its loaded
- * county, because the Field Guide validates a hotspot inside its county.
- * Returns null when the Field Guide can't select the place (a hotspot with no
- * loaded county), so callers show the count without a link, never a 400.
+ * code opens that country/state/county. A hotspot also needs the place it is
+ * filed under, because the Field Guide validates a hotspot there: its loaded
+ * county, or the state or region eBird records it under with no county
+ * (td-327dd6). Returns null when the Field Guide can't select the place, so
+ * callers show the count without a link, never a 400.
  */
-export function guidePlaceListHref(code: string, county?: string | null): string | null {
+export function guidePlaceListHref(code: string, parent?: string | null): string | null {
   const base = new URLSearchParams({ list: "all" });
   if (isHotspotLocId(code)) {
-    if (!county || parseRegionCode(county)?.level !== "subnational2") return null;
-    const next = withGuideLevel(base, "county", county);
+    const level = parent ? parseRegionCode(parent)?.level : undefined;
+    if (level !== "subnational2" && level !== "subnational1") return null;
+    const next = withGuideLevel(base, level === "subnational2" ? "county" : "region", parent!);
     next.set("hotspot", code.trim().toUpperCase());
     return guideResultsHref(next);
   }

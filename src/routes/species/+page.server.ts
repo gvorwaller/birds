@@ -119,7 +119,9 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
       .sort((a, b) => Number(b.code === "US") - Number(a.code === "US")),
     regions: country ? await guideRegions(country) : [],
     counties: region ? await guideCounties(region) : [],
-    hotspots: county ? await guideHotspots(county) : [],
+    // The hotspot field hangs under the county, or with no county chosen under
+    // the state: its hotspots eBird records with no county (td-327dd6).
+    hotspots: county ? await guideHotspots(county) : region ? await guideHotspots(region) : [],
     location: location
       ? {
           kind: location.kind,

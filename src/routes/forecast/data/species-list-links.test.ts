@@ -19,16 +19,18 @@ describe("Hotspots & data species-count links", () => {
     expect(hub).toContain('{@render speciesTotal("world", "world")}');
   });
 
-  it("links row counts, and a hotspot only inside its loaded county", () => {
-    expect(hub).toContain('speciesListHref(r.locCode, r.locKind === "hotspot" ? county : null)');
+  it("links row counts: a hotspot inside its loaded county, or directly under its state (td-327dd6)", () => {
+    expect(hub).toContain('speciesListHref(r.locCode, r.locKind === "hotspot" ? parent : null)');
     expect(hub).toContain("{@render dataRowCells(h, true, b.county ? b.countyCode : null)}");
-    // Hotspots recorded directly under a region have no county: no link.
-    expect(hub).toMatch(/\{@render dataTable\("Hotspot", detail\.stateHotspots\)\}/);
+    // Hotspots recorded directly under a state link through that state…
+    expect(hub).toContain('{@render dataTable("Hotspot", detail.stateHotspots, g.stateCode)}');
+    // …and ones under a country have no Field Guide place: no link.
+    expect(hub).toContain('{@render dataTable("Hotspot", cdetail.stateHotspots)}');
   });
 
-  it("links discovery results, using the hotspot's loaded county", () => {
-    expect(hub).toContain("speciesListHref(r.id, r.guideCounty ?? null)");
-    expect(discovery).toMatch(/guideCounty:\s*loadedRow\?\.region_code &&[\s\S]*?ev\.loaded\.get\(loadedRow\.region_code\)\?\.loc_kind === "region"/);
+  it("links discovery results through the hotspot's loaded county or its state", () => {
+    expect(hub).toContain("speciesListHref(r.id, r.guideParent ?? null)");
+    expect(discovery).toMatch(/guideParent: guideHotspotParent\(\s*loadedRow\?\.region_code \?\? null,\s*!!loadedRow\?\.region_code && ev\.loaded\.get\(loadedRow\.region_code\)\?\.loc_kind === "region",/);
   });
 
   it("joins the path so Back returns to the row, with a 48px target and a descriptive name", () => {
@@ -54,9 +56,9 @@ describe("return focus to a lazily loaded row (GROK)", () => {
 });
 
 describe("hotspot page species-count link", () => {
-  it("links the LOADED-history count only when the hotspot's county is loaded", () => {
-    expect(hotspotLoader).toContain("JOIN frequency_fetch c ON c.loc_code = f.region_code AND c.loc_kind = 'region'");
-    expect(hotspotLoader).toContain("speciesListHref: freq ? guidePlaceListHref(locId, guideCountyRes.rows[0]?.county ?? null) : null");
+  it("links the LOADED-history count through the hotspot's loaded county or its state", () => {
+    expect(hotspotLoader).toContain("WHERE c.loc_code = f.region_code AND c.loc_kind = 'region') AS county_loaded");
+    expect(hotspotLoader).toMatch(/guidePlaceListHref\(\s*locId,\s*guideHotspotParent\(guideParentRes\.rows\[0\]\?\.region_code \?\? null, guideParentRes\.rows\[0\]\?\.county_loaded \?\? false\),/);
     expect(hotspot).toMatch(/\{data\.freq\.nSpecies\} species\{#if speciesListLink\}/);
     // eBird's all-time number links to the loaded-history list without
     // presenting that destination as the same total.

@@ -672,8 +672,8 @@
   };
   // td-c52c37: a species count opens the Field Guide list of those species
   // (All, that place), joining the path so Back returns to this row.
-  function speciesListHref(code: string, county: string | null = null): string | null {
-    const href = guidePlaceListHref(code, county);
+  function speciesListHref(code: string, parent: string | null = null): string | null {
+    const href = guidePlaceListHref(code, parent);
     return href
       ? withReturnTo(href, page.url.pathname + page.url.search + page.url.hash, undefined, "Hotspots & data")
       : null;
@@ -986,7 +986,7 @@
   {/if}
 {/snippet}
 
-{#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number], county: string | null = null)}
+{#snippet metaCells(r: PageData["stateGroups"][number]["stateHotspots"][number], parent: string | null = null)}
   <td>
     {r.beginYear}–{r.endYear}
     {#if !r.current}
@@ -999,7 +999,7 @@
         · {r.nUnmatched} non-species</span
       >{/if}
     {#if r.nSpecies > 0}
-      {@const listHref = speciesListHref(r.locCode, r.locKind === "hotspot" ? county : null)}
+      {@const listHref = speciesListHref(r.locCode, r.locKind === "hotspot" ? parent : null)}
       {#if listHref}
         <a
           id={speciesListId(`row-${r.locCode}`)}
@@ -1042,7 +1042,7 @@
 {#snippet dataRowCells(
   r: PageData["stateGroups"][number]["stateHotspots"][number],
   indent: boolean,
-  county: string | null = null,
+  parent: string | null = null,
 )}
   <tr class:indent>
     <td>
@@ -1061,11 +1061,14 @@
       {/if}
       <span class="code">{r.locCode}</span>
     </td>
-    {@render metaCells(r, county)}
+    {@render metaCells(r, parent)}
   </tr>
 {/snippet}
 
-{#snippet dataTable(label: string, rows: PageData["stateGroups"][number]["stateHotspots"])}
+<!-- `parent`: the state or region these hotspots are filed under with no
+     county, so each links to its Field Guide list (td-327dd6); a country code
+     or none gives no link. -->
+{#snippet dataTable(label: string, rows: PageData["stateGroups"][number]["stateHotspots"], parent: string | null = null)}
   <div class="tablewrap">
     <table>
       <thead>
@@ -1079,7 +1082,7 @@
       </thead>
       <tbody>
         {#each rows as r (r.locCode)}
-          {@render dataRowCells(r, false)}
+          {@render dataRowCells(r, false, parent)}
         {/each}
       </tbody>
     </table>
@@ -1229,7 +1232,7 @@
             specific {g.countryCode === "US" ? "county" : "subdivision"} assignment.
           </p>
         {/if}
-        {@render dataTable("Hotspot", detail.stateHotspots)}
+        {@render dataTable("Hotspot", detail.stateHotspots, g.stateCode)}
       {/if}
     {/if}
   </details>
@@ -1564,7 +1567,7 @@
                   {#if r.distanceMiles != null}<span> · {r.distanceMiles.toLocaleString()} mi</span>{/if}
                   <span> · {stateText(r)}</span>
                   {#if r.type !== "reported" && (r.row || r.loadedBeneath > 0)}
-                    {@const listHref = speciesListHref(r.id, r.guideCounty ?? null)}
+                    {@const listHref = speciesListHref(r.id, r.guideParent ?? null)}
                     {#if listHref}
                       <span> · </span><a
                         id={speciesListId(`hit-${r.id}`)}

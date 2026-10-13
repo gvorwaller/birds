@@ -68,7 +68,10 @@ describe("Phase 8A Field Guide geography UI contract (td-82fbc1)", () => {
     ])
       expect(route).toContain(`<label for="${id}">${label}</label><select id="${id}" name="${name}"`);
     expect(route).toContain("disabled={!data.region || data.counties.length === 0}");
-    expect(route).toContain("disabled={!data.county || data.hotspots.length === 0}");
+    // The hotspot field lists the county's hotspots, or with no county the
+    // state's own (td-327dd6); it is disabled only when there are none.
+    expect(route).toContain('<select id="guide-hotspot" name="hotspot" value={data.hotspot} disabled={data.hotspots.length === 0}>');
+    expect(loader).toContain("hotspots: county ? await guideHotspots(county) : region ? await guideHotspots(region) : [],");
     expect(route).toContain("{#each data.counties as c (c.code)}");
     expect(route).toContain("{#each data.hotspots as h (h.code)}");
     // Every option is rendered: no slice, sample or cap on either list.

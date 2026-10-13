@@ -151,3 +151,13 @@ contract (Phase 8A) only accepts country → region → **county** → hotspot. 
 - **Prod check (read-only) after deploy:** the Hotspots & data NO-18 rows show `see →`, and the link
   opens a Field Guide list.
 - Owner go before deploy.
+
+## CODEX1 plan review (2026-10-13): NEEDS CHANGES → dispositions
+| Finding | Disposition |
+|---|---|
+| P1 Clearing the county must reload the state's own hotspots (draft levels are `""`, so `county \|\| region`, not `??`) | Fixed: `hotspotParent(levels) = county \|\| region`; after every choice, each list below the change is emptied and refilled from its current parent; tests: county URL → clear county → state hotspots without Apply, then county → clear again (memo) |
+| P1 Picking a hotspot invalidates the loader and abandons a sibling county load still in flight | Fixed: `PlaceListsController.afterChoice` refills **every** empty list whose parent is chosen (memo hits are instant, empty ones included); test: state hotspots known, counties loading, pick Everglades → counties re-requested and filled |
+| P2 One `loadingLevel`/`choiceError` for two lists | Fixed: per-list `loading` and `errors`, per-list Retry; lists fill one request at a time; one failing does not stop the next; tests: county fails/hotspots load/retry counties; both fail/retry one keeps the other's error; country switch mid-load drops stale results |
+| Spec appendix (draft picker / API) | Updated (API parent rule; "Two lists per state") |
+
+Implementation notes: the cascade moved from the page into `PlaceListsController` (`src/lib/guide-draft.ts`) so it is unit-tested; the page passes its reactive state through get/set. Shared `guideHotspotParent(regionCode, countyLoaded)` (`src/lib/guide-location.ts`) decides the link parent for discovery and the hotspot page; Hotspots & data passes the state group's code to its state-hotspot table (country groups pass none → no link).

@@ -52,6 +52,7 @@ Extend the existing GET-driven URL with these owned parameters:
 | State / region | `country=US&region=US-FL` |
 | County / equivalent | `country=US&region=US-FL&county=US-FL-115` |
 | Verified hotspot | the country, region and county ancestry plus `hotspot=L299291` |
+| Verified hotspot with no county (td-327dd6) | `country=NO&region=NO-18&hotspot=L1234567` (no `county`) |
 | Map + radius | `place=Myakka+River+SP&lat=27.240503&lng=-82.314817&dist=25` |
 
 `country`, `region`, `county`, `hotspot`, `place`, `lat`, `lng` and `dist` are
@@ -71,7 +72,7 @@ miles. Six decimal places are sufficient in generated URLs. No saved radius or
 hard-coded radius fills an absent or invalid `dist`.
 
 Changing a country clears region, county and hotspot. Changing a region clears
-county and hotspot. Changing a county clears hotspot. Applying map/radius
+county and hotspot. Changing a county, including clearing it, clears hotspot. Applying map/radius
 clears all hierarchical parameters. Clearing location removes every geographic
 parameter without changing search, family, sort, interest, tags or unknown
 parameters. Every change resets `page` and targets `#results`.
@@ -88,7 +89,13 @@ an unknown equivalent.
 
 A hotspot is valid only when an exact loaded `frequency_fetch` row has
 `loc_kind='hotspot'`, its ID passes the public eBird location-ID shape check,
-and its recorded `region_code` belongs to the selected county. The displayed
+and its recorded `region_code` belongs to the selected county, or, when no
+county is selected, is exactly the selected first-level region: eBird records
+some hotspots directly under a state or region with no county (td-327dd6;
+2026-10-13 prod: 1,467 of 7,428 loaded hotspots, in Moscow, Iceland, Norway,
+Sweden and one in Florida). No county is ever guessed, a hotspot code alone
+(without its state) is rejected, and a hotspot filed directly under a country
+has no Field Guide place (none are loaded). The displayed
 name is its stored eBird name. A reported personal location, a Google place or
 a name-only match cannot become a hotspot selection.
 
@@ -148,8 +155,12 @@ State / region selects and add:
 
 1. **County / equivalent**, enabled after a state/region is selected and
    populated with every loaded second-level region directly beneath it.
-2. **Verified hotspot**, enabled after a county is selected and populated with
-   every loaded hotspot recorded under that county.
+2. **Verified hotspot**, populated with every loaded hotspot recorded under the
+   selected county or, while no county is selected, with the hotspots recorded
+   directly under the selected state or region (td-327dd6). It is enabled when
+   that list has entries (without JavaScript) or once a state is chosen (the
+   searchable field, which says "Choose a county first" when the state has
+   counties but no hotspots of its own).
 
 Options are name-sorted with code as a stable tie-breaker. Do not silently cap
 or sample either list. If no loaded child choices exist, say so and provide the
@@ -304,6 +315,15 @@ canonicalization all still hold, with these additions:
   `guideHotspots`), after proving the parent exists (a well-shaped but unknown
   parent is a 400; a real parent with nothing loaded is `[]`). Session
   required; DB/reference data only; `Cache-Control: private, max-age=300`.
+  A hotspot list's parent is a loaded county, or a first-level region known to
+  the `regions` reference (its hotspots with no county, td-327dd6).
+- **Two lists per state (td-327dd6).** Choosing a state fills its counties,
+  then its own hotspots, one request at a time (`PlaceListsController`). Each
+  list keeps its own loading and failure state and Retry. After every choice,
+  each empty list whose parent is chosen is refilled (memoised lists come
+  back at once, empty ones included), so a list cancelled by a newer choice is
+  asked for again. Clearing the county re-parents the hotspot list to the
+  state.
 - **Searchable Place fields.** After hydration, each native select becomes an
   accessible combobox (`SearchableSelect`) that submits its committed code
   through one hidden input. Typing filters case- and accent-insensitively,

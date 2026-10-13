@@ -398,9 +398,11 @@
 						<strong>see the species →</strong> opens that list in the
 						<a href="/species">Field guide</a>, already set to that place and
 						<strong>All</strong>. Switch to Need or Seen there, or add tags, and
-						Back returns you to the same row. A hotspot's list opens only when
-						its county is loaded too, because the Field guide finds a hotspot
-						through its county. A hotspot page does the same from its loaded
+						Back returns you to the same row. The Field guide finds a hotspot
+						through its county, so a hotspot's list opens when its county is
+						loaded too; a hotspot eBird records directly under a state or region,
+						with no county (as in much of Norway, Iceland and Sweden), opens
+						through that state. A hotspot page does the same from its loaded
 						species count; its eBird "all-time" number comes from eBird itself,
 						not from the loaded history, so its link says <strong>see loaded
 						history</strong> and the two can differ. A county row describes that
@@ -816,6 +818,10 @@
 						years. A country, state or county uses the loaded regional, county
 						and hotspot data recorded beneath it. A hotspot uses only that exact
 						eBird hotspot's own loaded data, so it is narrower than its county.
+						eBird records some hotspots directly under a state or region with no
+						county; with no county chosen, Verified hotspot lists those for the
+						chosen state, and choosing a county switches it to that county's
+						hotspots.
 						This is recorded presence, not a complete range checklist or a
 						prediction for today. The page says how many loaded sources and which
 						years it used, and whether a whole-area source is loaded; when only

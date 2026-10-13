@@ -71,9 +71,17 @@ export function withDraftLevel(
   const { country, region, county, hotspot } = levels;
   if (!country) return { kind: "anywhere" };
   if (!region) return { kind: "country", country };
+  // A hotspot with no county is one eBird records directly under the region
+  // (td-327dd6); the server checks it is filed exactly there.
+  if (hotspot) return { kind: "hotspot", country, region, county: county || null, hotspot };
   if (!county) return { kind: "region", country, region };
-  if (!hotspot) return { kind: "county", country, region, county };
-  return { kind: "hotspot", country, region, county, hotspot };
+  return { kind: "county", country, region, county };
+}
+
+/** The place a hotspot list hangs under: the chosen county, else the chosen
+ * state or region (its hotspots recorded with no county), else none. */
+export function hotspotParent(levels: Record<GuideLevel, string>): string {
+  return levels.county || levels.region;
 }
 
 /** The level whose choices a chosen level unlocks, or null for the deepest. */
@@ -175,3 +183,85 @@ export const fetchGuideChoices: ChoicesFetcher = async (level, parent, signal) =
     throw new Error("Couldn't load choices (invalid response).");
   return (body as { choices: PlaceChoice[] }).choices;
 };
+
+/** The parent each Place list hangs under in a draft, "" when not chosen. */
+export function listParent(level: GuideChoicesLevel, levels: Record<GuideLevel, string>): string {
+  return level === "region" ? levels.country : level === "county" ? levels.region : hotspotParent(levels);
+}
+
+export const CHOICE_LEVELS: readonly GuideChoicesLevel[] = ["region", "county", "hotspot"];
+
+export interface PlaceListsState {
+  lists: Record<GuideChoicesLevel, PlaceChoice[]>;
+  loading: Record<GuideChoicesLevel, boolean>;
+  errors: Partial<Record<GuideChoicesLevel, { parent: string; message: string }>>;
+}
+
+export const NO_LOADING: Readonly<Record<GuideChoicesLevel, boolean>> = Object.freeze({
+  region: false,
+  county: false,
+  hotspot: false,
+});
+
+/**
+ * The Place lists of the Filters panel (td-daff98, td-327dd6). A state change
+ * can need two lists, its counties and the hotspots eBird records under it
+ * with no county, so each list keeps its own loading and failure state, and
+ * after every choice each empty list whose parent is chosen is (re)filled: a
+ * choice cancels requests still in flight (the loader keeps one generation),
+ * so a sibling that was still loading (the counties, when one of the state's
+ * own hotspots is picked first) is asked for again rather than left falsely
+ * empty (CODEX1). Lists already fetched come from the loader's memo, empty
+ * ones included. Reads and writes the page's state through `get`/`set`, so
+ * the page keeps its reactive variables and this stays testable.
+ */
+export class PlaceListsController {
+  constructor(
+    private readonly loader: PlaceChoiceLoader,
+    private readonly get: () => PlaceListsState,
+    private readonly set: (patch: Partial<PlaceListsState>) => void,
+    private readonly levels: () => Record<GuideLevel, string>,
+  ) {}
+
+  /** Drops every request in flight and every loading/failure mark. */
+  cancel(): void {
+    this.loader.invalidate();
+    this.set({ loading: { ...NO_LOADING }, errors: {} });
+  }
+
+  /** After the draft's `level` changed: empty the lists below it, refill. */
+  afterChoice(level: GuideLevel): Promise<void> {
+    this.cancel();
+    const lists = { ...this.get().lists };
+    for (const l of CHOICE_LEVELS)
+      if (GUIDE_LEVELS.indexOf(l) > GUIDE_LEVELS.indexOf(level)) lists[l] = [];
+    this.set({ lists });
+    return this.fill();
+  }
+
+  /** Fills each empty list whose parent is chosen, one request at a time.
+   * One list failing does not stop the next; a newer choice does. */
+  async fill(): Promise<void> {
+    for (const level of CHOICE_LEVELS) {
+      if (this.get().lists[level].length > 0) continue;
+      const parent = listParent(level, this.levels());
+      if (!parent) continue;
+      const hit = this.loader.cached(level, parent);
+      if (hit) this.set({ lists: { ...this.get().lists, [level]: hit } });
+      else if ((await this.load(level, parent)) === "stale") return;
+    }
+  }
+
+  /** Loads one list (also the Retry button). "stale" when the draft moved on. */
+  async load(level: GuideChoicesLevel, parent: string): Promise<"ok" | "error" | "stale"> {
+    const { [level]: _cleared, ...errors } = this.get().errors;
+    this.set({ loading: { ...this.get().loading, [level]: true }, errors });
+    const result = await this.loader.load(level, parent, () => listParent(level, this.levels()));
+    if (result.status === "stale") return "stale";
+    const now = this.get();
+    this.set({ loading: { ...now.loading, [level]: false } });
+    if (result.status === "ok") this.set({ lists: { ...now.lists, [level]: result.choices } });
+    else this.set({ errors: { ...now.errors, [level]: { parent, message: result.message } } });
+    return result.status;
+  }
+}
