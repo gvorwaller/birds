@@ -368,7 +368,9 @@
   const hasSeasonalDistribution = $derived(
     (data.ribbon.ok && ribbonGrid !== null) || !data.ribbon.ok,
   );
-  const hasNearestReports = $derived(!data.seen && data.hasApiKey && data.hasHome);
+  // Every species, seen or not (td-27e137): an out-of-season or out-of-range
+  // sighting of a bird already on the list is researched the same way.
+  const hasNearestReports = $derived(data.hasApiKey && data.hasHome);
   const hasAbout = $derived(data.taxon.category === "species");
   const tagGroups = $derived(groupTags(en?.tags ?? []));
   const aiGeneratedOn = $derived(
@@ -954,10 +956,10 @@
     {@render storedAlertLines(nearbyAlertLines)}
   </section>
 
-  {#if !data.seen && data.hasApiKey && data.hasHome}
-    <!-- Nearest lifer (td-a6c322): ON-DEMAND — the ?nearest=1 link makes it
-         an SSR fetch the default page load never pays for (GROK pin). Need
-         species only; unbounded distance from the saved home. -->
+  {#if hasNearestReports}
+    <!-- Nearest reports (td-a6c322): ON-DEMAND — the ?nearest=1 link makes it
+         an SSR fetch the default page load never pays for (GROK pin). Any
+         species, seen or not (td-27e137); measured from the saved home. -->
     <section class="card">
       <h2 id="nearest-reports" class="section-target" tabindex="-1">
         Nearest reports — {data.nearestKm === "any" ? "any distance" : `within ${formatDistance(Number(data.nearestKm), distanceUnit)}`}

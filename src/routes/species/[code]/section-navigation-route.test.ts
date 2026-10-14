@@ -41,6 +41,19 @@ describe("Phase 7B species-page section navigation", () => {
     expect(route).toContain("if (hasAbout)");
   });
 
+  it("offers Nearest reports for seen birds too (td-27e137)", () => {
+    expect(route).toContain(
+      "const hasNearestReports = $derived(data.hasApiKey && data.hasHome);",
+    );
+    expect(route).toContain("{#if hasNearestReports}");
+    const server = readFileSync(
+      resolve(process.cwd(), "src/routes/species/[code]/+page.server.ts"),
+      "utf8",
+    );
+    expect(server).toContain("wantNearest && apiKey && home");
+    expect(server).not.toContain("isNeed");
+  });
+
   it("keeps target headings focusable with shell clearance", () => {
     for (const id of [
       "finding-this-bird",

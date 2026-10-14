@@ -246,9 +246,9 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
   );
 
   // Nearest reports (td-a6c322, GROK pins): ON-DEMAND only — ?nearest=1 —
-  // NEED species only, unbounded distance from the SAVED HOME, inheriting
-  // the page's back window. The default load never spends this eBird call.
-  const isNeed = seen.rows[0] == null;
+  // measured from the SAVED HOME, inheriting the page's back window. The
+  // default load never spends this eBird call. Any species, seen or not
+  // (td-27e137): an unusual sighting of a listed bird is researched too.
   const wantNearest = url.searchParams.get("nearest") === "1";
   // STREAMED when requested (Phase 9); null = section not requested at all.
   const loadNearest = async (): Promise<{
@@ -289,7 +289,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     };
   };
   const nearest =
-    wantNearest && isNeed && apiKey && home
+    wantNearest && apiKey && home
       ? streamed(loadNearest(), (err) =>
           err instanceof EbirdError
             ? err.message

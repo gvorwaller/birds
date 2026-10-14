@@ -1133,12 +1133,14 @@
 				<h3>Check nearest reports</h3>
 				<ul>
 					<li>
-						Open a bird you still need in <strong>Field guide</strong>, then find
+						Open any bird in <strong>Field guide</strong>, then find
 						<strong>Nearest reports</strong> on its species page
 						and tap <strong>Check nearest reports</strong>. This searches recent
 						reports from your saved home. Choose a 1, 7, 14, or 30-day window and
 						any distance or a finite distance. It requires a saved home and an eBird
-						API key; it is shown only for species not yet on your life list.
+						API key. It is shown for every species, including ones already on your
+						life list — useful when you've seen a bird out of season or out of its
+						usual range and want to know where else it is being reported.
 						Results show distance, location, date, source, and a checklist link when available.
 					</li>
 					<li>
