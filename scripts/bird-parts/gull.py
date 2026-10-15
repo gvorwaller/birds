@@ -8,6 +8,9 @@ SIL = poly("M255,162 C262,150 275,128 300,114 C325,102 365,98 395,112 C415,122 4
            "C470,154 520,150 560,150 C620,148 680,146 720,150 C750,154 772,166 782,182 L800,203 L806,214 "
            "Q770,240 724,282 C694,316 664,346 636,360 C600,394 540,416 490,418 C430,418 370,398 335,360 "
            "C305,325 298,280 300,240 C301,215 302,195 302,180 L279,184 Z")
+# the stern below the tail, so the white undertail coverts read as a wedge under the tail
+LOBE = poly("M630,364 C700,376 770,330 802,272 L796,266 L712,326 L700,316 L630,330 Z")
+SIL0, SIL = SIL, SIL.union(LOBE)
 EYE = (321, 143)
 # Bill points left here (mirrored later). The lower edge drops from the base to the
 # gonydeal angle (~205,213), its lowest point, then rises to the lower mandible's tip.
@@ -20,7 +23,7 @@ LEGS = unary_union([stroke("M455,412 L452,520 L447,548", 7), stroke("M565,400 L5
 ROCK = poly("M330,600 Q420,560 520,566 Q600,570 650,610 L330,610 Z")
 
 GRAY = poly("M440,158 C470,154 520,150 560,150 C620,148 680,146 720,150 C750,154 772,166 782,182 L800,205 "
-            "Q770,250 720,300 L706,307 Q670,325 635,338 Q610,320 588,307 Q520,250 440,170 Z").intersection(SIL)
+            "Q770,250 720,300 L706,307 Q670,325 635,338 Q610,320 588,307 Q520,250 440,170 Z").intersection(SIL0)
 
 def feather(cx, cy, length, width, ang):
     e = affinity.scale(Point(0, 0).buffer(1), length/2, width/2)
@@ -36,13 +39,14 @@ def tip_of(f, ang, keep=16):
 CRESC = unary_union([tip_of(f, 14+3*k) for k, f in enumerate(ters)]).intersection(TERT)
 PRIM = poly("M704,306 Q735,275 768,240 Q788,216 798,200 Q840,200 880,208 Q852,222 816,246 Q770,280 718,313 Z")
 APICAL = unary_union([feather(866-15*k, 211+6*k, 12, 5, 22) for k in range(5)]).intersection(PRIM)
-TAIL = poly("M712,312 Q770,278 818,244 L826,254 Q778,292 724,328 Z")
+# Drawn deeper and a little longer than life so it's easy to find; the wingtips still pass it.
+TAIL = poly("M700,316 L842,222 Q858,224 851,236 L713,336 Z")
 
 body = [
     ("belly", SIL),
     ("breast", poly("M290,170 L460,175 Q520,260 470,330 Q420,360 330,370 L290,370 Z")),
     ("sides", poly("M470,200 Q560,265 700,305 L760,262 L770,290 Q700,360 645,372 Q560,420 480,420 Q450,330 470,200 Z")),
-    ("undertail-coverts", poly("M620,320 L760,240 L770,262 Q700,330 650,372 L630,372 Z")),
+    ("undertail-coverts", poly("M620,320 L760,240 L770,262 Q700,330 650,372 L630,372 Z").union(LOBE)),
     ("nape", poly("M380,100 L460,100 L470,170 Q440,190 410,200 L392,140 Z")),
     ("crown", poly("M270,90 L430,90 L432,156 Q380,148 350,148 Q320,146 295,150 L268,152 Z")),
     ("forehead", poly("M250,120 L300,110 L298,140 Q280,146 262,162 L250,165 Z")),

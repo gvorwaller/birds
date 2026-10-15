@@ -208,7 +208,7 @@ export const gull: DiagramText = {
       name: "Tail",
       group: "Tail",
       lookFor: "White on this adult Herring Gull, though a few species, such as Heermann's Gull, have dark tails as adults. Immature Herring Gulls have dark tail bands, and the tail pattern helps tell age and species in many gulls.",
-      visibility: "Largely hidden under the wingtips on a standing gull.",
+      visibility: "Largely hidden under the wingtips on a standing gull. Drawn a little larger here so it's easy to find.",
     },
   ],
 };

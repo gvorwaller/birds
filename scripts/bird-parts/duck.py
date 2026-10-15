@@ -5,8 +5,8 @@ from shapely.geometry import Point, box
 WATER = 352
 SIL = poly("M742,152 C738,136 728,118 712,108 C696,99 676,97 658,101 C636,106 618,120 610,140 "
            "C602,160 598,190 596,212 C594,226 588,234 572,238 C520,244 450,240 390,240 "
-           "C340,240 300,244 270,246 C252,247 236,252 214,258 L186,266 Q178,272 186,278 "
-           "L232,284 C250,298 262,318 290,336 C330,356 420,368 520,368 C620,368 700,362 745,345 "
+           "C340,240 300,244 272,244 C262,244 254,242 246,240 L154,222 Q136,222 138,236 "
+           "L210,262 C222,296 248,324 290,342 C330,358 420,368 520,368 C620,368 700,362 745,345 "
            "C778,330 792,306 790,284 C788,262 774,248 752,240 C738,234 728,222 726,206 "
            "C726,200 730,196 736,193 Z")
 SIL = SIL.intersection(box(0, 0, 1000, WATER))
@@ -19,10 +19,12 @@ body = [
     ("sides", SIL),
     ("breast", poly("M590,232 L700,232 Q760,228 820,240 L820,360 L690,360 Q650,300 640,250 Z")),
     ("flanks", poly("M240,270 L380,262 Q400,310 392,360 L240,360 Z")),
-    ("undertail-coverts", poly("M200,280 L245,268 Q270,300 300,340 L300,360 L200,360 Z")),
+    # the drake's black stern, under the tail down to the water
+    ("undertail-coverts", poly("M196,262 L256,252 Q280,300 312,352 L196,352 Z")),
     ("back", poly("M560,200 L600,230 L590,255 Q480,262 380,262 L360,236 Z")),
     ("rump", poly("M248,240 L340,236 L342,268 L262,268 Z")),
-    ("tail", poly("M170,250 L240,250 L250,284 L170,290 Z")),
+    # drawn longer than a real Mallard's short tail, so it's easy to find
+    ("tail", poly("M100,215 L252,236 L254,254 L212,264 L100,250 Z")),
     ("nape", poly("M560,90 L640,90 Q624,130 624,170 Q624,214 616,250 L560,250 Z")),
     ("crown", poly("M600,80 L760,80 L738,132 Q712,120 684,120 Q652,124 628,146 L606,140 Z")),
     ("forehead", poly("M716,90 L770,90 L770,160 L742,156 Q736,138 720,124 Z")),
@@ -52,7 +54,8 @@ final["bill"] = BILL.difference(NAIL)
 final["nail"] = NAIL
 for k in ("sides", "flanks", "back", "breast"):
     final[k] = final[k].difference(final["scapulars"]).difference(final["tertials"]).difference(final["primaries"]).difference(spec).difference(gcov).difference(trailing)
-final["rump"] = final["rump"].difference(final["primaries"]).difference(final["drake-curl"])
+for k in ("rump", "tail", "undertail-coverts"):
+    final[k] = final[k].difference(final["primaries"]).difference(final["drake-curl"])
 
 meta = [("sides", "light", "mf"), ("breast", "chestnut", "mf"), ("flanks", "light", "mf"),
         ("undertail-coverts", "darker", "mf"), ("back", "mid", "mf"), ("rump", "darker", "mf"),
@@ -63,10 +66,10 @@ meta = [("sides", "light", "mf"), ("breast", "chestnut", "mf"), ("flanks", "ligh
         ("drake-curl", "darker", "mf"), ("bill", "billyellow", "mf"), ("nail", "darker", "mf")]
 order = ["sides", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "nape", "crown", "forehead", "cheek", "neck", "chin",
          "scapulars", "tertials", "primaries", "greater-coverts", "speculum", "drake-curl", "bill", "nail"]
-WATERLINE = box(130, WATER-1, 860, WATER+1.5)
+WATERLINE = box(100, WATER-1, 860, WATER+1.5)
 # the drake's thin white neck ring, on the neck/breast boundary (not tappable: taps reach the neck)
 COLLAR = stroke("M598,253.5 L774,249.5", 4.5).intersection(SIL)
-build("duck", final, meta, order, [0, 0, 700, 300], dx=150, dy=70, base_under=[(trailing, "pale")],
+build("duck", final, meta, order, [0, 0, 730, 300], dx=120, dy=70, base_under=[(trailing, "pale")],
       base_over=[(Point(*EYE).buffer(5.5), "eye"), (Point(EYE[0]+1.5, EYE[1]-1.5).buffer(1.4), "pale"), (WATERLINE, "water"),
                  (COLLAR, "pale")],
       outline=SIL.union(BILL).union(final["primaries"]).union(CURL))

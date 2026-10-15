@@ -148,6 +148,7 @@ export const duck: DiagramText = {
       name: "Tail",
       group: "Tail",
       lookFor: "Note its length and how it's held: Ruddy Ducks often cock a stiff tail; drake pintails have long central tail feathers.",
+      visibility: "A Mallard's tail is short; it's drawn longer here so it's easy to find.",
     },
     {
       id: "drake-curl",
