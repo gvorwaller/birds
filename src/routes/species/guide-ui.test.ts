@@ -367,7 +367,7 @@ describe("td-bdde97: species that only mention a bird-name query are opt-in", ()
 
   it("owns the switch: a new search drops it, a filter change keeps it", () => {
     expect(route).toMatch(/const ownedParams = new Set\(\[[^\]]*"mentions",/);
-    expect(route).toContain('{#if data.mentions?.shown}<input type="hidden" name="mentions" value="1" />{/if}');
+    expect(route).toContain('{#if data.includeMentions}<input type="hidden" name="mentions" value="1" />{/if}');
     const searchForm = route.slice(route.indexOf('class="searchform"'), route.indexOf("</form>", route.indexOf('class="searchform"')));
     expect(searchForm).not.toContain('name="mentions"');
   });

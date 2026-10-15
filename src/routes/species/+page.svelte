@@ -472,7 +472,7 @@
       <form id="guide-filter-form" method="GET" action="/species#results" class="filter-form">
         {#each unknownParams as [key, value], index (`filter-${index}-${key}-${value}`)}<input type="hidden" name={key} value={value} />{/each}
         {#if data.q}<input type="hidden" name="q" value={data.q} />{/if}
-        {#if data.mentions?.shown}<input type="hidden" name="mentions" value="1" />{/if}
+        {#if data.includeMentions}<input type="hidden" name="mentions" value="1" />{/if}
         <fieldset class="geo place">
           <legend>Place</legend>
           <p class="location-hint muted">All species recorded in this place in loaded eBird history, any time of year. Combine with All, Need or Seen above.</p>

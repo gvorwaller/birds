@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setFixtureTags } from "./tag-fixtures.test-helper";
 import { env } from "$env/dynamic/private";
@@ -693,7 +694,8 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
 });
 
 describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, opt-in prose matches", () => {
-  // Own fixtures; made-up words keep the shared snapshot's real species out.
+  // Own fixtures and a disposable user (agent guide §3: never borrow an existing
+  // account); made-up words keep the shared snapshot's real species out.
   const N = "bdnamt01"; // "Plain Bdtestfinch" — name match, evaluated tags
   const F = "bdfamt01"; // "Zz Bdfamilybird" — same family, no enrichment (tags unknown)
   const P = "bdprot01"; // "Zz Bdprosebird" — only MENTIONS bdtestfinch, tags unknown
@@ -702,7 +704,13 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
   let uid = 0;
 
   async function seed() {
-    uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
+    uid = (
+      await query<{ id: number }>(
+        `INSERT INTO users (username, display_name, password_hash, role)
+         VALUES ($1, 'bdde97 fixture', '!unset', 'user') RETURNING id`,
+        [`bdde97-${randomUUID()}`],
+      )
+    ).rows[0].id;
     for (const [code, com, family] of [
       [N, "Plain Bdtestfinch", "Old World Bdtestfinches"],
       [F, "Zz Bdfamilybird", "Old World Bdtestfinches"],
@@ -732,7 +740,11 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
     );
   }
   async function unseed() {
-    await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [CODES]);
+    if (uid) {
+      await query(`DELETE FROM seen_species WHERE user_id = $1`, [uid]);
+      await query(`DELETE FROM users WHERE id = $1 AND username LIKE 'bdde97-%'`, [uid]);
+      uid = 0;
+    }
     await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [CODES]);
     await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [CODES]);
   }
@@ -740,8 +752,8 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
     Object.fromEntries(rows.map((r) => [r.species_code, r.match_provenance]));
 
   it("takes in the family named for the word and offers prose-only matches separately", async () => {
-    await seed();
     try {
+      await seed();
       const found = await searchGuide("bdtestfinch", [], uid);
       expect(provenance(found.rows)).toEqual({ [N]: "name_or_code", [F]: "family" });
       expect(found.nameQuery).toBe(true);
@@ -759,8 +771,8 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
   });
 
   it("never takes in a family whose name lists several groups", async () => {
-    await seed();
     try {
+      await seed();
       const found = await searchGuide("bdtestfinch", [], uid, null, { includeMentions: true });
       expect(found.rows.map((r) => r.species_code)).not.toContain(C);
     } finally {
@@ -769,8 +781,8 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
   });
 
   it("a word that names no bird in scope searches the prose as before", async () => {
-    await seed();
     try {
+      await seed();
       const found = await searchGuide("bdreedword", [], uid);
       expect(provenance(found.rows)).toEqual({ [P]: "description_or_field_note" });
       expect(found.nameQuery).toBe(false);
@@ -780,8 +792,8 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
   });
 
   it("the list scope never turns a name search into a prose search; an empty page still counts what it hides", async () => {
-    await seed();
     try {
+      await seed();
       // Only P is on this life list, and it only mentions the word.
       const seen = await searchGuide("bdtestfinch", [], uid, null, { list: "seen" });
       expect(seen.rows).toEqual([]);
@@ -795,8 +807,8 @@ describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, op
   });
 
   it("the not-yet-evaluated tag count follows the same rule", async () => {
-    await seed();
     try {
+      await seed();
       // N carries the tag, so the query names a bird in scope: F (family, unknown
       // tags) counts; P (prose-only, unknown tags) counts only when shown.
       const hidden = await searchGuide("bdtestfinch", ["habitat:alpine-meadow"], uid);

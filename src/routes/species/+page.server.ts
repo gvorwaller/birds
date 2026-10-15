@@ -111,6 +111,8 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
     interestOnly, interests,
     list, listExplicit,
     family, sort, page, total, unknownCount, families: taxonomy.families,
+    // The opt-in outlives a scope with nothing to show: filter changes keep it.
+    includeMentions,
     // td-bdde97: offer (or withdraw) species that only mention a bird-name query.
     mentions: nameQuery && descriptionMatches > 0
       ? { count: descriptionMatches, shown: includeMentions, href: mentionsHref(!includeMentions) }
