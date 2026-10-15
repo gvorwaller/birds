@@ -115,7 +115,7 @@
     gap: 6px;
   }
   .btn-link {
-    min-height: 44px;
+    min-height: 48px;
     padding: 0 6px;
     border: 0;
     background: none;

@@ -158,7 +158,7 @@
   }
   .layers button,
   .chips button {
-    min-height: 44px;
+    min-height: 48px;
     padding: 8px 14px;
     border: 0;
     border-radius: 6px;

@@ -115,7 +115,9 @@ order = ["legs", "belly", "breast", "sides", "undertail-coverts", "tail", "nape"
          "primaries", "apical-spots", "orbital-ring", "iris", "bill", "gonys", "gonydeal-spot", "mirrors"]
 FX = 560
 build("gull", final, meta, order, [0, 0, 760, 560], dx=FX*2-920, dy=20, raw={"mirrors"},
-      raw_base=[(wing_i.difference(black_i), "gullgray"), (black_i.difference(mirrors), "darker"), (apical_i, "pale")],
+      raw_base=[(wing_i.difference(black_i), "gullgray")],
+      # the inset's black tips and apical spots are the same parts as on the standing bird
+      extra_raw={"primaries": black_i.difference(mirrors).difference(apical_i), "apical-spots": apical_i},
       insets=[{"cx": IC[0], "cy": IC[1], "r": IR, "label": "Open wingtip"}],
       base_under=[(ROCK, "perch")],
       base_over=[(Point(*EYE).buffer(2.6), "eye")],

@@ -35,7 +35,7 @@ export const duck: DiagramText = {
       id: "nape",
       name: "Nape",
       group: "Head",
-      lookFor: "The back of the head. Head shape helps with diving ducks: a Lesser Scaup's head often peaks at the back; a Greater Scaup's is rounder.",
+      lookFor: "The back of the head. Head shape helps with diving ducks: a Lesser Scaup's head often peaks at the back; a Greater Scaup's is usually rounder. Shape changes with posture, so use it with other marks.",
     },
     {
       id: "cheek",
@@ -67,7 +67,7 @@ export const duck: DiagramText = {
       id: "nail",
       name: "Nail",
       group: "Bill & legs",
-      lookFor: "A hard tip at the end of the bill. Its size can help: Greater Scaup has a slightly larger black nail than Lesser Scaup.",
+      lookFor: "A hard tip at the end of the bill. Its size can help: Greater Scaup's black nail averages broader than Lesser Scaup's, a supporting mark alongside head shape.",
     },
     // Upperparts
     {
@@ -155,7 +155,7 @@ export const duck: DiagramText = {
       aka: "drake feathers",
       group: "Tail",
       lookFor: "A drake Mallard's black central tail feathers curl up and forward over the tail. Females don't have them.",
-      visibility: "Lost in summer when drakes molt into their duller eclipse plumage.",
+      visibility: "Usually lost or much straighter in summer, when drakes molt into their duller eclipse plumage.",
     },
   ],
 };

@@ -11,11 +11,13 @@ OUT = Path(__file__).resolve().parents[2] / "src" / "lib" / "bird-parts" / "geom
 
 
 def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=(), outline=None, flip_x=None,
-          raw=(), raw_base=(), insets=()):
+          raw=(), raw_base=(), insets=(), extra_raw=None):
     """final: part id -> shapely geometry in tracing (photo) coordinates.
     meta: (id, tone, layers) where layers is "m", "f" or "mf".
     flip_x: mirror about this x before translating, so every bird faces right.
-    raw / raw_base: parts and base shapes already in output coordinates (the gull's inset)."""
+    raw / raw_base: parts and base shapes already in output coordinates (the gull's inset).
+    extra_raw: part id -> geometry in output coordinates added to a traced part, so one part can
+    be drawn in two places (the gull's wingtip on the bird and in the open-wingtip inset)."""
     def T(g):
         if flip_x is not None: g = affinity.scale(g, xfact=-1, yfact=1, origin=(flip_x, 0))
         return g
@@ -24,6 +26,8 @@ def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=()
         g = final[pid]
         if g.is_empty: sys.exit(f"{name}: empty part {pid}")
         g, ox, oy = (g, 0, 0) if pid in raw else (T(g), dx, dy)
+        if extra_raw and pid in extra_raw:
+            g, ox, oy = affinity.translate(g, -ox, -oy).union(extra_raw[pid]), 0, 0
         parts.append({"id": pid, "tone": tone,
                       "layers": [x for x, c in (("main", "m"), ("feathers", "f")) if c in ly],
                       "d": to_d(g, ox, oy)})

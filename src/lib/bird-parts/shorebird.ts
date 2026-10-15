@@ -147,7 +147,7 @@ export const shorebird: DiagramText = {
       name: "Primary projection",
       group: "Wing",
       lookFor:
-        "How far the primaries extend beyond the tertials on the folded wing. It's usually judged against the length of the tertials themselves, e.g. about half their length.",
+        "How far the primaries extend beyond the tertials on the folded wing. It's usually judged against the exposed length of the tertials themselves, e.g. about half their length.",
     },
     {
       id: "wingtip-vs-tail",

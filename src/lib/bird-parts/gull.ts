@@ -30,19 +30,19 @@ export const gull: DiagramText = {
       id: "crown",
       name: "Crown",
       group: "Head",
-      lookFor: "White on a breeding adult. In winter, many adults get brown streaks on the head; their pattern differs between species.",
+      lookFor: "White on this adult Herring Gull in breeding plumage; some gulls have a dark hood instead. In winter, many adults get brown streaks on the head, and the pattern differs between species.",
     },
     {
       id: "nape",
       name: "Nape",
       group: "Head",
-      lookFor: "Winter streaking is often heaviest here and on the hindneck.",
+      lookFor: "On winter Herring Gulls and many other large gulls, head streaking is often heaviest here and on the hindneck.",
     },
     {
       id: "lores",
       name: "Lores",
       group: "Head",
-      lookFor: "Between the eye and the bill; white on adults.",
+      lookFor: "Between the eye and the bill; white on this adult Herring Gull.",
     },
     {
       id: "ear-coverts",
@@ -55,7 +55,7 @@ export const gull: DiagramText = {
       id: "throat",
       name: "Throat",
       group: "Head",
-      lookFor: "Below the bill; white on adults.",
+      lookFor: "Below the bill; white on this adult Herring Gull.",
     },
     {
       id: "orbital-ring",
@@ -104,13 +104,13 @@ export const gull: DiagramText = {
       name: "Mantle",
       group: "Upperparts",
       lookFor:
-        "Birders use 'mantle' for the gray upperparts as a whole: back, scapulars and wing coverts. Its shade, from pale silver to nearly black, is one of the main marks for adult gulls.",
+        "Strictly, the mantle is the upper back, but in gull identification 'mantle colour' means the gray upperparts as a whole: back, scapulars and wing coverts. Its shade, from pale silver to nearly black, is one of the main marks for adult gulls.",
     },
     {
       id: "back",
       name: "Back",
       group: "Upperparts",
-      lookFor: "The upper body between the neck and the folded wings; the same gray as the rest of the mantle on an adult.",
+      lookFor: "The upper body between the neck and the folded wings; the same gray as the rest of the upperparts on this adult.",
     },
     {
       id: "scapulars",
@@ -123,19 +123,19 @@ export const gull: DiagramText = {
       id: "lesser-coverts",
       name: "Lesser coverts",
       group: "Wing",
-      lookFor: "Gray on an adult. On immature gulls the covert pattern is one of the main ways to judge age.",
+      lookFor: "Gray on this adult. On immature large gulls the covert pattern is one of the main ways to judge age.",
     },
     {
       id: "median-coverts",
       name: "Median coverts",
       group: "Wing",
-      lookFor: "The middle row of coverts. Gray on an adult; patterned brown on immatures.",
+      lookFor: "The middle row of coverts. Gray on this adult; on immature Herring Gulls and many other large gulls they are patterned brown.",
     },
     {
       id: "greater-coverts",
       name: "Greater coverts",
       group: "Wing",
-      lookFor: "The longest row of coverts, just above the secondaries. Gray on an adult; patterned brown on immatures.",
+      lookFor: "The longest row of coverts, just above the secondaries. Gray on this adult; on immature Herring Gulls and many other large gulls they are patterned brown.",
     },
     {
       id: "secondaries",
@@ -175,39 +175,39 @@ export const gull: DiagramText = {
       group: "Wing",
       lookFor:
         "White spots in the black near the tips of the outermost primaries, set in from the tip (unlike apical spots). Their number and size help separate adult gulls.",
-      visibility: "Mostly hidden on a standing gull, so the circle shows the wingtip spread open; seen in flight or when a gull stretches.",
+      visibility: "Mostly hidden on a standing gull, so the circle shows the wingtip spread open, with the outermost primaries (where mirrors sit) at the bottom; seen in flight or when a gull stretches.",
     },
     // Underparts
     {
       id: "breast",
       name: "Breast",
       group: "Underparts",
-      lookFor: "White on adults; immatures are mottled or washed brown.",
+      lookFor: "White on this adult. Immature Herring Gulls are mottled brown, and some species, such as Heermann's Gull, are gray below even as adults.",
     },
     {
       id: "belly",
       name: "Belly",
       group: "Underparts",
-      lookFor: "White on adults.",
+      lookFor: "White on this adult Herring Gull.",
     },
     {
       id: "sides",
       name: "Sides",
       group: "Underparts",
-      lookFor: "The sides of the body below the folded wing; white on adults.",
+      lookFor: "The sides of the body below the folded wing; white on this adult.",
     },
     {
       id: "undertail-coverts",
       name: "Undertail coverts",
       group: "Underparts",
-      lookFor: "White on adults; barred on many immatures.",
+      lookFor: "White on this adult; barred on many immature large gulls.",
     },
     // Tail
     {
       id: "tail",
       name: "Tail",
       group: "Tail",
-      lookFor: "White on adults. Immatures have dark tail bands, and the band's pattern helps tell their age and species.",
+      lookFor: "White on this adult Herring Gull, though a few species, such as Heermann's Gull, have dark tails as adults. Immature Herring Gulls have dark tail bands, and the tail pattern helps tell age and species in many gulls.",
       visibility: "Largely hidden under the wingtips on a standing gull.",
     },
   ],

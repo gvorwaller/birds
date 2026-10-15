@@ -92,6 +92,32 @@ describe("Parts of a Bird data", () => {
     expect(g.parts.find((p) => p.id === "mirrors")!.visibility).toBeTruthy();
   });
 
+  it("makes the open-wingtip inset's spots and black tips the same tappable parts as on the bird", () => {
+    const g = DIAGRAMS.find((d) => d.id === "gull")!;
+    const [inset] = g.insets;
+    const inInset = (d: string) =>
+      [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].some(
+        ([, x, y]) => Math.hypot(Number(x) - inset.cx, Number(y) - inset.cy) < inset.r,
+      );
+    const outside = (d: string) =>
+      [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].some(
+        ([, x, y]) => Math.hypot(Number(x) - inset.cx, Number(y) - inset.cy) > inset.r,
+      );
+    for (const id of ["apical-spots", "primaries"]) {
+      const d = g.parts.find((p) => p.id === id)!.d;
+      expect(inInset(d) && outside(d), id).toBe(true);
+    }
+    // Nothing in the inset is drawn as an untappable copy of those parts.
+    expect(g.under.filter((s) => inInset(s.d)).map((s) => s.tone)).toEqual(["gullgray"]);
+  });
+
+  it("names the songbird's primary coverts as their own feather group", () => {
+    const sb = DIAGRAMS.find((d) => d.id === "songbird")!;
+    const pc = sb.parts.find((p) => p.id === "primary-coverts")!;
+    expect(pc.layers).toEqual(["feathers"]);
+    expect(pc.group).toBe("Wing");
+  });
+
   it("keeps primary projection and wingtip vs. tail as separate shorebird parts", () => {
     const s = DIAGRAMS.find((d) => d.id === "shorebird")!;
     const pp = s.parts.find((p) => p.id === "primary-projection")!;

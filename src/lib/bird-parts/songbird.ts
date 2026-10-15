@@ -154,7 +154,7 @@ export const songbird: DiagramText = {
       name: "Wing bars",
       group: "Wing",
       lookFor:
-        "Pale bars across the folded wing, formed in most songbirds by pale tips on the median and greater coverts. Count them (none, one or two) and note their colour.",
+        "Pale bars across the folded wing. In the usual two-bar songbird pattern, pale tips on the median and greater coverts form them. Count them (none, one or two) and note their colour.",
     },
     {
       id: "lesser-coverts",
@@ -172,16 +172,24 @@ export const songbird: DiagramText = {
       visibility: "Small and often hidden at rest.",
     },
     {
+      id: "primary-coverts",
+      name: "Primary coverts",
+      group: "Wing",
+      lookFor:
+        "Coverts lying over the bases of the primaries, just behind the alula on the lower edge of the folded wing. Usually a small, dark patch at rest.",
+      visibility: "Small on a folded wing; easier to see in flight.",
+    },
+    {
       id: "median-coverts",
       name: "Median coverts",
       group: "Wing",
-      lookFor: "The row of coverts between the lesser and greater coverts. Their pale tips make the upper wing bar.",
+      lookFor: "The row of coverts between the lesser and greater coverts. When their tips are pale, they form the upper wing bar.",
     },
     {
       id: "greater-coverts",
       name: "Greater coverts",
       group: "Wing",
-      lookFor: "The longest row of coverts, lying over the bases of the secondaries. Their pale tips make the lower wing bar.",
+      lookFor: "The longest row of coverts, lying over the bases of the secondaries. When their tips are pale, they form the lower wing bar.",
     },
     {
       id: "secondaries",
@@ -200,7 +208,7 @@ export const songbird: DiagramText = {
       name: "Primaries",
       group: "Wing",
       lookFor:
-        "The long outer flight feathers. On a folded wing only their tips show past the tertials; how far they reach (primary projection) helps separate some look-alikes, such as the small flycatchers.",
+        "The long outer flight feathers. On a folded wing they lie beneath the secondaries, so you see their outer edges along the bottom of the wing and their tips past the tertials. How far the tips reach (primary projection) helps separate some look-alikes, such as the small flycatchers.",
     },
     // Underparts
     {

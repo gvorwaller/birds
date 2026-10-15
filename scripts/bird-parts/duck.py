@@ -64,6 +64,9 @@ meta = [("sides", "light", "mf"), ("breast", "chestnut", "mf"), ("flanks", "ligh
 order = ["sides", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "nape", "crown", "forehead", "cheek", "neck", "chin",
          "scapulars", "tertials", "primaries", "greater-coverts", "speculum", "drake-curl", "bill", "nail"]
 WATERLINE = box(130, WATER-1, 860, WATER+1.5)
+# the drake's thin white neck ring, on the neck/breast boundary (not tappable: taps reach the neck)
+COLLAR = stroke("M598,253.5 L774,249.5", 4.5).intersection(SIL)
 build("duck", final, meta, order, [0, 0, 700, 300], dx=150, dy=70, base_under=[(trailing, "pale")],
-      base_over=[(Point(*EYE).buffer(5.5), "eye"), (Point(EYE[0]+1.5, EYE[1]-1.5).buffer(1.4), "pale"), (WATERLINE, "water")],
+      base_over=[(Point(*EYE).buffer(5.5), "eye"), (Point(EYE[0]+1.5, EYE[1]-1.5).buffer(1.4), "pale"), (WATERLINE, "water"),
+                 (COLLAR, "pale")],
       outline=SIL.union(BILL).union(final["primaries"]).union(CURL))
