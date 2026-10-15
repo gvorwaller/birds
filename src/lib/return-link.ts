@@ -44,6 +44,7 @@ const LABELED_PATHS: [path: string, label: string][] = [
   ["/special-interest", "Special interest"],
   ["/viewed", "Viewed species"],
   ["/taxonomy", "Taxonomy"],
+  ["/parts-of-a-bird", "Parts of a Bird"],
   ["/life", "Life list"],
   ["/forecast/species", "Species forecast"],
   ["/forecast/data", "Hotspots & data"],

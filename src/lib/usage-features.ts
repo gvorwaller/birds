@@ -43,6 +43,7 @@ const ROUTE_FEATURES: [prefix: string, feature: UsageFeature][] = [
   ["/forecast", "forecast"],
   ["/species", "field_guide"],
   ["/taxonomy", "field_guide"],
+  ["/parts-of-a-bird", "field_guide"],
   ["/trips", "trips"],
   ["/photos", "photos"],
   ["/life", "life_list"],

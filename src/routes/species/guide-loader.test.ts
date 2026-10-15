@@ -41,6 +41,9 @@ describe("Field guide nav-active invariant", () => {
     expect(isFieldGuideActive("/viewed")).toBe(true);
     expect(isFieldGuideActive("/viewed/")).toBe(true);
     expect(isFieldGuideActive("/viewed-other")).toBe(false);
+    expect(isFieldGuideActive("/parts-of-a-bird")).toBe(true);
+    expect(isFieldGuideActive("/parts-of-a-bird/")).toBe(true);
+    expect(isFieldGuideActive("/parts-of-a-bird-other")).toBe(false);
     expect(isFieldGuideActive("/species/margod")).toBe(false);
     expect(isFieldGuideActive("/species/margod/")).toBe(false);
     expect(isFieldGuideActive("/")).toBe(false);

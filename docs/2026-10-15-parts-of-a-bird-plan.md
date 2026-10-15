@@ -330,3 +330,35 @@ or git.
 - `/api/health` shows the exact revision, with db and worker ok.
 - An authenticated read-only smoke check of `/parts-of-a-bird` and one existing Field Guide tab page.
 - Then the owner checks it on phone and browser.
+
+## Implementation notes (2026-10-15, after the owner approved the drawings)
+
+Where the build departs from the plan above, and why:
+
+- **Colours.** The approved drawings use fixed natural tones on a light plate, the same in every
+  theme, rather than theme tokens: a drawing has to look like the bird in all five themes. The
+  page around it uses theme tokens. A selection is a yellow fill plus a dark-red dashed outline at a
+  fixed 2.5px (`vector-effect: non-scaling-stroke`), so it never relies on colour alone and stays
+  visible on tiny parts. The drake Mallard got its green head and chestnut breast so the drawing
+  agrees with its own text.
+- **Hash handling.** `afterNavigate` is not used. SvelteKit treats a same-page hash link, and
+  Back/Forward between hashes, as shallow navigation: `page.url` changes but `afterNavigate` never
+  runs (verified in `@sveltejs/kit` 2.70.3 `client.js`). The page instead follows `page.url.hash`
+  in an `$effect`, which also runs on mount.
+- **No-JS deep links.** Chromium and WebKit both open a closed `<details>` to reveal a fragment
+  target, so `/parts-of-a-bird#gull-mirrors` without JS lands on the open section. The limit
+  accepted above does not occur in either engine.
+- **The duck has one layer.** Every swimming-duck part is already in the main view, so its
+  "All feather groups" switch is not shown (`hasFeatherLayer`). Its Help text says so.
+- **Data shape.** Each part has one `d` (several subpaths allowed), not `shapes[]`. Geometry is
+  generated into `src/lib/bird-parts/geometry/*.json` by `scripts/bird-parts/` (Python and
+  shapely; see `generate.py`). The text lives in one TypeScript module per bird. `joinDiagram`
+  throws on any id mismatch. Lists follow the text module's order; drawing follows `drawOrder`.
+- **Fact fixes found while writing the text:**
+  - the drake Mallard's curl is labelled "Curled tail feathers" (the drake's central tail
+    feathers), not uppertail coverts;
+  - the gull's bill was reshaped so its lower edge has a real gonydeal angle (the lowest point,
+    rising to the tip). The earlier gonys shape was swallowed by the spot and drew nothing;
+  - the adult Herring Gull's orbital ring is yellow-orange, not red;
+  - no tip claims primary projection separates the two yellowlegs (sources conflict). The
+    wingtip-vs-tail example uses Baird's and White-rumped vs. Least Sandpiper instead.

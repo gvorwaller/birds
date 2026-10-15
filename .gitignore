@@ -21,3 +21,6 @@ build/
 
 # Local DB/secret snapshots (repo-root only — do not ignore src/**/data/)
 /data/
+
+# Python bytecode (scripts/bird-parts)
+__pycache__/
