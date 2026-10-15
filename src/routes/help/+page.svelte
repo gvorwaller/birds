@@ -793,7 +793,7 @@
 					<li>
 						<strong>Search anything</strong> — use the always-visible search for a name ("godwit"), or words
 						from how you'd describe a bird ("granary trees", "probes
-						mudflats"). With Relevance selected, exact species and banding codes rank before names, then description or field-note matches. Each result says which kind of match it is. Open <strong>Filters and sort</strong> for place, family, tags and other filters.
+						mudflats"). With Relevance selected, exact species and banding codes rank before names, then family matches, then description or field-note matches. Each result says which kind of match it is. A word that names birds in the place you're searching ("sparrow") also finds the rest of a family named for it (Dark-eyed Junco and the towhees are New World Sparrows), and leaves out species that only mention it, such as the American Kestrel, once called the "sparrow hawk"; <strong>Show them too</strong> above the results adds them. Open <strong>Filters and sort</strong> for place, family, tags and other filters.
 					</li>
 					<li>
 						<strong>Filters wait for Apply</strong> — everything you change in

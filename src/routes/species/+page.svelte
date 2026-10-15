@@ -65,6 +65,7 @@
     "sort",
     "tags",
     "page",
+    "mentions",
     ...GUIDE_LOCATION_PARAMS,
     ...GUIDE_WAS_PARAMS,
   ]);
@@ -400,7 +401,7 @@
       </div>
     </form>
     <p class="search-help muted">
-      Searches common and scientific names and eBird/banding codes first, then Wikipedia text, field notes and tags when available. Some species' tags are not yet evaluated.
+      Searches common and scientific names, eBird/banding codes and family names first, then Wikipedia text, field notes and tags when available. When your words name birds, species that only mention them are offered separately. Some species' tags are not yet evaluated.
     </p>
 
     {#if data.active}
@@ -427,6 +428,18 @@
           <p class="coverage unknown-note" role="status">
             {data.unknownCount} {data.unknownCount === 1 ? "species here has" : "species here have"} not
             yet been evaluated for tags, so {data.unknownCount === 1 ? "it" : "they"} can't match a tag filter.
+          </p>
+        {/if}
+        {#if data.mentions}
+          <!-- td-bdde97: a word that names birds hides species that only mention it. -->
+          <p class="coverage mentions-note">
+            {#if data.mentions.shown}
+              Including {data.mentions.count.toLocaleString("en-US")} {data.mentions.count === 1 ? "species whose description or field notes mention" : "species whose descriptions or field notes mention"} “{data.q}”.
+              <a href={data.mentions.href}>Hide them</a>
+            {:else}
+              {data.mentions.count.toLocaleString("en-US")} more {data.mentions.count === 1 ? "species only mentions" : "species only mention"} “{data.q}” in {data.mentions.count === 1 ? "its description or field notes" : "their descriptions or field notes"}.
+              <a href={data.mentions.href}>Show them too</a>
+            {/if}
           </p>
         {/if}
         {#if data.location && coverage}<p class="coverage" role="status">{coverage.text}{#if coverage.status === "unavailable"} <a href="/forecast/data">Load an area in Hotspots &amp; data</a> to search here.{/if}</p>{/if}
@@ -459,6 +472,7 @@
       <form id="guide-filter-form" method="GET" action="/species#results" class="filter-form">
         {#each unknownParams as [key, value], index (`filter-${index}-${key}-${value}`)}<input type="hidden" name={key} value={value} />{/each}
         {#if data.q}<input type="hidden" name="q" value={data.q} />{/if}
+        {#if data.mentions?.shown}<input type="hidden" name="mentions" value="1" />{/if}
         <fieldset class="geo place">
           <legend>Place</legend>
           <p class="location-hint muted">All species recorded in this place in loaded eBird history, any time of year. Combine with All, Need or Seen above.</p>

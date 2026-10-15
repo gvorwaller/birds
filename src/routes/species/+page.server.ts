@@ -49,6 +49,8 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   const { list, explicit: listExplicit } = parsedList;
   const interestOnly = url.searchParams.get("interest") === "1";
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200);
+  // td-bdde97: species that only mention a bird-name query are opt-in.
+  const includeMentions = url.searchParams.get("mentions") === "1";
   // Unknown tags are dropped, not errored — stale links degrade gracefully.
   const tags = [
     ...new Set(url.searchParams.getAll("tags").filter((t) => ALL_TAGS.has(t))),
@@ -78,14 +80,24 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   let results: GuideResult[] = [];
   let total = 0;
   let unknownCount = 0;
+  let nameQuery = false;
+  let descriptionMatches = 0;
   if (active) {
-    const found = await searchGuide(q, tags, locals.scopeId!, location?.place ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit});
+    const found = await searchGuide(q, tags, locals.scopeId!, location?.place ?? null, {family,sort,page,interestUserId:interestOnly ? locals.user!.id : undefined,list,listBrowse:listExplicit,includeMentions});
     results = found.rows; total = found.total; unknownCount = found.unknownCount;
+    nameQuery = found.nameQuery; descriptionMatches = found.descriptionMatches;
     if (page > 1 && !results.length) error(404, 'Results page unavailable. Return to page one.');
   }
   const pageHref = (n:number) => {
     const p = new URLSearchParams(url.searchParams);
     p.set('page', String(n));
+    return `/species?${p}#results`;
+  };
+  /** Show or hide the prose-only matches; back to page one either way. */
+  const mentionsHref = (on: boolean) => {
+    const p = new URLSearchParams(url.searchParams);
+    p.delete('page');
+    if (on) p.set('mentions', '1'); else p.delete('mentions');
     return `/species?${p}#results`;
   };
   let viewed: Record<string, SpeciesView> = {};
@@ -98,7 +110,11 @@ export const load: PageServerLoad = async ({ locals, url, depends }) => {
   return {
     interestOnly, interests,
     list, listExplicit,
-    family, sort, page, total, unknownCount, families: taxonomy.families, taxonomyAvailable: taxonomy.ordered>0,
+    family, sort, page, total, unknownCount, families: taxonomy.families,
+    // td-bdde97: offer (or withdraw) species that only mention a bird-name query.
+    mentions: nameQuery && descriptionMatches > 0
+      ? { count: descriptionMatches, shown: includeMentions, href: mentionsHref(!includeMentions) }
+      : null, taxonomyAvailable: taxonomy.ordered>0,
     previous: page>1 ? pageHref(page-1) : null, next: page*100<total ? pageHref(page+1) : null,
     viewed,
     viewedUnavailable,

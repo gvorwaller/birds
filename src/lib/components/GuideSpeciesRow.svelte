@@ -102,6 +102,7 @@
       </span>
       {#if row.matched_banding_code}<span class="muted">Banding code: {row.matched_banding_code}</span>{/if}
       {#if row.match_provenance === "name_or_code"}<span class="match-provenance">Name or code match</span>{/if}
+      {#if row.match_provenance === "family"}<span class="match-provenance">Family match</span>{/if}
       {#if row.match_provenance === "description_or_field_note"}<span class="match-provenance">Description or field-note match</span>{/if}
       {#if row.family || row.iucn_status}
         <span class="muted sci family"

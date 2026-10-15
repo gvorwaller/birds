@@ -40,6 +40,7 @@ import {
   wikiStaleCodes,
   aiDueCodes,
   searchEnrichment,
+  searchGuide,
   guideCounts,
   upsertAiProseData,
   upsertResolution,
@@ -635,8 +636,10 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
   it("name matches UNION prose matches, name tier ranks first; tags AND-filter; seen badge scoped", async () => {
     await seed();
     try {
-      // "testfinch" hits A by NAME and B by PROSE — union, name first.
-      const both = await searchEnrichment("testfinch", [], uid);
+      // "testfinch" hits A by NAME and B by PROSE. A name query leaves prose-only
+      // matches out unless asked (td-bdde97); asked, they follow the names.
+      expect((await searchEnrichment("testfinch", [], uid)).map((r) => r.species_code)).not.toContain(B);
+      const both = (await searchGuide("testfinch", [], uid, null, { includeMentions: true })).rows;
       const codes = both.map((r) => r.species_code);
       expect(codes).toContain(A);
       expect(codes).toContain(B);
@@ -683,6 +686,124 @@ describe.runIf(dbUp)("Field guide search contract (plan Phase 3)", () => {
     try {
       const rows = await searchEnrichment("", [], uid);
       expect(rows.find((r) => r.species_code === A)?.match_provenance).toBeNull();
+    } finally {
+      await unseed();
+    }
+  });
+});
+
+describe.runIf(dbUp)("td-bdde97: a query that names birds — family matches, opt-in prose matches", () => {
+  // Own fixtures; made-up words keep the shared snapshot's real species out.
+  const N = "bdnamt01"; // "Plain Bdtestfinch" — name match, evaluated tags
+  const F = "bdfamt01"; // "Zz Bdfamilybird" — same family, no enrichment (tags unknown)
+  const P = "bdprot01"; // "Zz Bdprosebird" — only MENTIONS bdtestfinch, tags unknown
+  const C = "bdcomt01"; // "Zz Bdcommabird" — in a comma family named for "bdtestfinch"
+  const CODES = [N, F, P, C];
+  let uid = 0;
+
+  async function seed() {
+    uid = (await query<{ id: number }>(`SELECT id FROM users ORDER BY id LIMIT 1`)).rows[0].id;
+    for (const [code, com, family] of [
+      [N, "Plain Bdtestfinch", "Old World Bdtestfinches"],
+      [F, "Zz Bdfamilybird", "Old World Bdtestfinches"],
+      [P, "Zz Bdprosebird", "Bdhawks"],
+      [C, "Zz Bdcommabird", "Bdkites, Bdtestfinches, and Allies"],
+    ] as const) {
+      await query(
+        `INSERT INTO taxonomy_cache (species_code, com_name, sci_name, category, family)
+         VALUES ($1, $2, 'Testus bdtestus', 'species', $3)
+         ON CONFLICT (species_code) DO UPDATE
+           SET com_name = EXCLUDED.com_name, family = EXCLUDED.family, category = 'species'`,
+        [code, com, family],
+      );
+    }
+    await upsertWikiOk(N, { title: "N", revId: 1, extract: "A plain upland bird.", sections: [] });
+    await setFixtureTags(N, ["habitat:alpine-meadow"]);
+    await upsertWikiOk(P, {
+      title: "P",
+      revId: 1,
+      extract: "A hawk that preys on bdtestfinches and bdreedword thickets.",
+      sections: [],
+    });
+    await query(
+      `INSERT INTO seen_species (user_id, species_code, source) VALUES ($1, $2, 'manual')
+       ON CONFLICT DO NOTHING`,
+      [uid, P],
+    );
+  }
+  async function unseed() {
+    await query(`DELETE FROM seen_species WHERE species_code = ANY($1)`, [CODES]);
+    await query(`DELETE FROM species_enrichment WHERE species_code = ANY($1)`, [CODES]);
+    await query(`DELETE FROM taxonomy_cache WHERE species_code = ANY($1)`, [CODES]);
+  }
+  const provenance = (rows: { species_code: string; match_provenance: string | null }[]) =>
+    Object.fromEntries(rows.map((r) => [r.species_code, r.match_provenance]));
+
+  it("takes in the family named for the word and offers prose-only matches separately", async () => {
+    await seed();
+    try {
+      const found = await searchGuide("bdtestfinch", [], uid);
+      expect(provenance(found.rows)).toEqual({ [N]: "name_or_code", [F]: "family" });
+      expect(found.nameQuery).toBe(true);
+      expect(found.descriptionMatches).toBe(1); // P, hidden
+      expect(found.total).toBe(2);
+
+      const all = await searchGuide("bdtestfinch", [], uid, null, { includeMentions: true });
+      expect(all.rows.map((r) => r.species_code)).toEqual([N, F, P]); // name, family, prose
+      expect(provenance(all.rows)[P]).toBe("description_or_field_note");
+      expect(all.descriptionMatches).toBe(1);
+      expect(all.total).toBe(3);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("never takes in a family whose name lists several groups", async () => {
+    await seed();
+    try {
+      const found = await searchGuide("bdtestfinch", [], uid, null, { includeMentions: true });
+      expect(found.rows.map((r) => r.species_code)).not.toContain(C);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("a word that names no bird in scope searches the prose as before", async () => {
+    await seed();
+    try {
+      const found = await searchGuide("bdreedword", [], uid);
+      expect(provenance(found.rows)).toEqual({ [P]: "description_or_field_note" });
+      expect(found.nameQuery).toBe(false);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("the list scope never turns a name search into a prose search; an empty page still counts what it hides", async () => {
+    await seed();
+    try {
+      // Only P is on this life list, and it only mentions the word.
+      const seen = await searchGuide("bdtestfinch", [], uid, null, { list: "seen" });
+      expect(seen.rows).toEqual([]);
+      expect(seen.nameQuery).toBe(true);
+      expect(seen.descriptionMatches).toBe(1);
+      const shown = await searchGuide("bdtestfinch", [], uid, null, { list: "seen", includeMentions: true });
+      expect(shown.rows.map((r) => r.species_code)).toEqual([P]);
+    } finally {
+      await unseed();
+    }
+  });
+
+  it("the not-yet-evaluated tag count follows the same rule", async () => {
+    await seed();
+    try {
+      // N carries the tag, so the query names a bird in scope: F (family, unknown
+      // tags) counts; P (prose-only, unknown tags) counts only when shown.
+      const hidden = await searchGuide("bdtestfinch", ["habitat:alpine-meadow"], uid);
+      expect(hidden.rows.map((r) => r.species_code)).toEqual([N]);
+      expect(hidden.unknownCount).toBe(1);
+      const shown = await searchGuide("bdtestfinch", ["habitat:alpine-meadow"], uid, null, { includeMentions: true });
+      expect(shown.unknownCount).toBe(2);
     } finally {
       await unseed();
     }

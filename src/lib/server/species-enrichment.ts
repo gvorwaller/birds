@@ -833,7 +833,7 @@ export async function enrichOneNow(
 export interface GuideResult {
 	matched_banding_code?: string | null;
 	/** How a non-empty Field Guide query matched this row. */
-	match_provenance: 'name_or_code' | 'description_or_field_note' | null;
+	match_provenance: 'name_or_code' | 'family' | 'description_or_field_note' | null;
 	species_code: string;
 	com_name: string;
 	sci_name: string;
@@ -897,6 +897,32 @@ export function placeParams(
 		: [place.kind, place.code, null, unledgered];
 }
 
+/** searchGuide's result. */
+export interface GuideSearch {
+	rows: GuideResult[];
+	total: number;
+	unknownCount: number;
+	/** td-bdde97: the query names birds (a species name or code, or a family's group name). */
+	nameQuery: boolean;
+	/** Prose-only matches under the same filters, shown or not. */
+	descriptionMatches: number;
+}
+
+/**
+ * td-bdde97: the families named for the query — single-group families only
+ * ("New World Sparrows", not "Hawks, Eagles, and Kites", whose eagles are not
+ * hawks), matched on the group's last word, so "yellow" never takes in
+ * "Yellow Flycatchers" and "new" no New World family. Arguments are the
+ * placeholders for hasQ and the raw query.
+ */
+export const nameFamiliesCte = (hasQ: string, q: string): string =>
+	`name_families AS MATERIALIZED (
+	   SELECT DISTINCT family FROM taxonomy_cache
+	    WHERE ${hasQ}::bool AND category = 'species' AND family !~ '(,| and )'
+	      AND to_tsvector('english', regexp_replace(family, '^.* ', ''))
+	          @@ plainto_tsquery('english', ${q}::text)
+	 )`;
+
 /**
  * Field-guide search (td-0753d0 taxonomy-first rewrite). Two legs UNIONed:
  *
@@ -909,6 +935,17 @@ export function placeParams(
  *
  * Combined with DISTINCT ON to keep each species' best-ranked candidate,
  * then a location-presence intersection and deterministic ordering and explicit pagination.
+ *
+ * td-bdde97: a query that names birds ("sparrow") also takes every species of
+ * a family named for that word (Dark-eyed Junco and the towhees are New World
+ * Sparrows), and leaves out species that only MENTION the word in their prose
+ * (the kestrel's old name "sparrow hawk", the cowbird that lays in sparrows'
+ * nests) unless `includeMentions` asks for them. `descriptionMatches` counts
+ * those prose-only species under the same filters, shown or not, so the page
+ * can offer them. Whether the query names birds is judged in the searched
+ * scope (place, family, special interest, tags) but not the All/Need/Seen
+ * list: "trill" names a cisticola somewhere in the world, none in Florida, so
+ * in Florida it searches the prose as before.
  * Photo metadata is joined only for that final result set. Location-only
  * searches include taxonomy species even when they have no enrichment.
  */
@@ -926,8 +963,10 @@ export async function searchGuide(
 		list?: 'all' | 'need' | 'seen';
 		/** An explicit scope (even `all`) alone is enough to browse the whole taxonomy. */
 		listBrowse?: boolean;
+		/** td-bdde97: also show prose-only matches for a query that names birds. */
+		includeMentions?: boolean;
 	} = {}
-): Promise<{ rows: GuideResult[]; total: number; unknownCount: number }> {
+): Promise<GuideSearch> {
 	const query_ = q.trim().slice(0, 200);
 	const hasQ = query_.length > 0;
 	const escaped = query_.replace(/[%_\\]/g, (m) => `\\${m}`);
@@ -948,27 +987,32 @@ export async function searchGuide(
 		name_tier: number;
 		rank: number;
 		total_matches: number;
+		mention_matches: number;
+		name_query: boolean;
 		taxon_order: string | null;
 	};
 	// td-894144: the unknown-tags count runs IN PARALLEL on its own connection,
 	// so it never adds its own wall time to the main query.
 	const unknownP =
 		tags.length > 0
-			? guideUnknownCount(query_, seenUserId, place, options)
+			? guideUnknownCount(query_, tags, seenUserId, place, options)
 			: Promise.resolve(0);
 	unknownP.catch(() => {}); // awaited below; never an unhandled rejection
 	const [placeKind, placeCode, placeLocs, placeUnledgered] = placeParams(place);
 	const r = await query<Row>(
 		`WITH regional_species AS MATERIALIZED (
 		   ${placeSpeciesSql('$8', '$15', '$16', '$17')}
-		 )
+		 ), ${nameFamiliesCte('$1', '$2')}
 		 SELECT matches.*,
 		        CASE WHEN $1::bool THEN
 		          CASE WHEN matches.name_tier < 5 THEN 'name_or_code'
+		               WHEN matches.name_tier = 5 THEN 'family'
 		               ELSE 'description_or_field_note' END
 		        ELSE NULL END AS match_provenance,
 		        photo.photo FROM (
 		 SELECT *, count(*) OVER()::int AS total_matches FROM (
+		 SELECT *, (count(*) FILTER (WHERE name_tier = 6) OVER ())::int AS mention_matches FROM (
+		 SELECT *, ($1::bool AND COALESCE(bool_or(name_tier < 6) OVER (), false)) AS name_query FROM (
 		   SELECT DISTINCT ON (species_code) *
 		   FROM (
 		     /* Leg 1: taxonomy name/code — the "never empty" leg */
@@ -1003,6 +1047,28 @@ export async function searchGuide(
 
 		     UNION ALL
 
+		     /* Leg 1b (td-bdde97): every species of a family named for the query */
+		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
+		            NULL AS matched_banding_code,
+		            COALESCE(se.tags, '{}') AS tags,
+		            (se.legacy_tags IS NOT NULL) AS tags_available,
+		            se.iucn_status, se.field_craft,
+		            (ss.species_code IS NOT NULL) AS seen,
+		            se.wiki_status,
+		            se.wiki_fetched_at::text AS wiki_fetched_at,
+		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
+		            5 AS name_tier,
+		            0::float4 AS rank
+		       FROM taxonomy_cache tc
+		       JOIN name_families nf USING (family)
+		       LEFT JOIN species_enrichment se USING (species_code)
+		       LEFT JOIN seen_species ss
+		         ON ss.user_id = $3 AND ss.species_code = tc.species_code
+		      WHERE tc.category = 'species' AND ($9::text IS NULL OR tc.family_code=$9)
+		        AND ($4::text[] = '{}' OR (se.legacy_tags IS NOT NULL AND se.tags @> $4::text[]))
+
+		     UNION ALL
+
 		     /* Leg 2: enrichment prose/tag — FTS + tag AND semantics */
 		     SELECT tc.species_code, tc.com_name, tc.sci_name, tc.family, tc.taxon_order,
  CASE WHEN tc.banding_codes @> ARRAY[upper($5)] THEN upper($5) ELSE NULL END AS matched_banding_code,
@@ -1012,7 +1078,7 @@ export async function searchGuide(
 		            se.wiki_status,
 		            se.wiki_fetched_at::text AS wiki_fetched_at,
 		            (se.wikipedia_extract IS NOT NULL) AS has_prose,
-		            5 AS name_tier,
+		            6 AS name_tier,
 		            ts_rank_cd(se.search_tsv, websearch_to_tsquery('english', $2)) AS rank
 		       FROM species_enrichment se
 		       JOIN taxonomy_cache tc USING (species_code)
@@ -1027,9 +1093,14 @@ export async function searchGuide(
 		 ) deduped
 		 WHERE ($8::text IS NULL OR species_code IN (SELECT species_code FROM regional_species))
            AND ($12::int IS NULL OR species_code IN (SELECT species_code FROM species_special_interest WHERE user_id=$12))
+		 ) placed
+		 WHERE true
            /* Phase 9A list scope: the SAME candidate set, split by the display-scope life list. Applied here so
               count(*) OVER(), ordering, LIMIT and OFFSET all see it. Need is exactly the complement of Seen. */
            AND ($13::text = 'all' OR ($13::text = 'need' AND NOT seen) OR ($13::text = 'seen' AND seen))
+		 ) filtered
+		 /* td-bdde97: prose-only matches of a query that names birds are opt-in */
+		 WHERE name_tier < 6 OR $18::bool OR NOT name_query
 		 ORDER BY ${orderBy}
 		 LIMIT $10 OFFSET $11
 		 ) matches
@@ -1058,18 +1129,36 @@ export async function searchGuide(
 			options.listBrowse === true,
 			placeCode,
 			placeLocs,
-			placeUnledgered
+			placeUnledgered,
+			options.includeMentions === true
 		]
 	);
+	const first = r.rows[0];
+	let nameQuery = first?.name_query ?? false;
+	let descriptionMatches = first?.mention_matches ?? 0;
+	// An empty page can still hide prose-only matches (every species named
+	// "sparrow" filtered out by place or list). They are then the whole
+	// included set, so its total is their count.
+	if (!first && hasQ && !options.includeMentions && (options.page ?? 1) === 1) {
+		const withMentions = await searchGuide(q, tags, seenUserId, place, { ...options, includeMentions: true });
+		if (withMentions.total > 0) {
+			nameQuery = true;
+			descriptionMatches = withMentions.total;
+		}
+	}
 	const unknownCount = await unknownP;
 	return {
-		total: r.rows[0]?.total_matches ?? 0,
+		total: first?.total_matches ?? 0,
 		unknownCount,
+		nameQuery,
+		descriptionMatches,
 		rows: r.rows.map(
 			({
 				name_tier: _t,
 				rank: _r,
 				total_matches: _n,
+				mention_matches: _m,
+				name_query: _q,
 				taxon_order: _o,
 				...row
 			}) => row
@@ -1088,12 +1177,14 @@ export async function searchGuide(
  */
 async function guideUnknownCount(
 	q: string,
+	tags: readonly string[],
 	seenUserId: number,
 	place: GuidePlace | null,
 	options: {
 		family?: string;
 		interestUserId?: number;
 		list?: 'all' | 'need' | 'seen';
+		includeMentions?: boolean;
 	}
 ): Promise<number> {
 	const hasQ = q.length > 0;
@@ -1107,6 +1198,20 @@ async function guideUnknownCount(
 		   ${placeSpeciesSql('$6', '$9', '$10', '$11')}
 		 ), interest AS MATERIALIZED (
 		   SELECT species_code FROM species_special_interest WHERE user_id = $7
+		 ), ${nameFamiliesCte('$1', '$2')}, name_query AS MATERIALIZED (
+		   /* searchGuide's name_query: an evaluated name or family match in this scope */
+		   SELECT EXISTS (
+		     SELECT 1 FROM taxonomy_cache tc
+		       JOIN species_enrichment se USING (species_code)
+		      WHERE $1::bool AND tc.category = 'species'
+		        AND se.legacy_tags IS NOT NULL AND se.tags @> $13::text[]
+		        AND ($5::text IS NULL OR tc.family_code = $5)
+		        AND (tc.species_code = lower($2) OR tc.banding_codes @> ARRAY[upper($2)]
+		             OR tc.com_name ILIKE $4 OR tc.sci_name ILIKE $4
+		             OR tc.family IN (SELECT family FROM name_families))
+		        AND ($6::text IS NULL OR tc.species_code IN (SELECT species_code FROM regional))
+		        AND ($7::int IS NULL OR tc.species_code IN (SELECT species_code FROM interest))
+		   ) AS is_name
 		 )
 		 SELECT count(*)::int AS n
 		   FROM taxonomy_cache tc
@@ -1118,7 +1223,9 @@ async function guideUnknownCount(
 		    AND (NOT $1::bool
 		         OR tc.species_code = lower($2) OR tc.banding_codes @> ARRAY[upper($2)]
 		         OR tc.com_name ILIKE $4 OR tc.sci_name ILIKE $4
-		         OR se.search_tsv @@ websearch_to_tsquery('english', $2))
+		         OR tc.family IN (SELECT family FROM name_families)
+		         OR (se.search_tsv @@ websearch_to_tsquery('english', $2)
+		             AND ($12::bool OR NOT (SELECT is_name FROM name_query))))
 		    AND ($6::text IS NULL OR tc.species_code IN (SELECT species_code FROM regional))
 		    AND ($7::int IS NULL OR tc.species_code IN (SELECT species_code FROM interest))
 		    AND ($8::text = 'all' OR ($8::text = 'need' AND ss.species_code IS NULL)
@@ -1134,7 +1241,9 @@ async function guideUnknownCount(
 			options.list ?? 'all',
 			placeCode,
 			placeLocs,
-			placeUnledgered
+			placeUnledgered,
+			options.includeMentions === true,
+			[...tags]
 		]
 	);
 	return r.rows[0]?.n ?? 0;

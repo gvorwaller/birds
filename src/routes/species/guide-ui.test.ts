@@ -356,3 +356,30 @@ describe("Phase 9A All / Need / Seen UI contract (td-f02bf7)", () => {
     expect(row).not.toMatch(/scopeId|locals|fetch\(/);
   });
 });
+
+describe("td-bdde97: species that only mention a bird-name query are opt-in", () => {
+  it("reads one mentions=1 switch and links back to page one either way", () => {
+    expect(loader).toContain('const includeMentions = url.searchParams.get("mentions") === "1";');
+    expect(loader).toMatch(/includeMentions\}\);/);
+    expect(loader).toMatch(/const mentionsHref = \(on: boolean\) => \{[^}]*p\.delete\('page'\);/);
+    expect(loader).toContain("mentions: nameQuery && descriptionMatches > 0");
+  });
+
+  it("owns the switch: a new search drops it, a filter change keeps it", () => {
+    expect(route).toMatch(/const ownedParams = new Set\(\[[^\]]*"mentions",/);
+    expect(route).toContain('{#if data.mentions?.shown}<input type="hidden" name="mentions" value="1" />{/if}');
+    const searchForm = route.slice(route.indexOf('class="searchform"'), route.indexOf("</form>", route.indexOf('class="searchform"')));
+    expect(searchForm).not.toContain('name="mentions"');
+  });
+
+  it("says how many are hidden or shown, with the link in the scope summary", () => {
+    const summary = route.slice(route.indexOf('class="scope-summary"'), route.indexOf('class="scope-actions"'));
+    expect(summary).toContain('class="coverage mentions-note"');
+    expect(summary).toContain("Show them too");
+    expect(summary).toContain("Hide them");
+  });
+
+  it("labels family matches", () => {
+    expect(row).toContain('{#if row.match_provenance === "family"}<span class="match-provenance">Family match</span>{/if}');
+  });
+});
