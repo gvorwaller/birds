@@ -250,8 +250,8 @@
     cursor: pointer;
   }
   /* On a phone each switch is one row of equal columns (labels may wrap to two lines),
-     the view switch a full row of its own; from 560px they sit side by side at natural width. */
-  @media (max-width: 559.98px) {
+     the view switch a full row of its own; from 640px they sit side by side at natural width. */
+  @media (max-width: 639.98px) {
     .layers {
       display: grid;
       grid-auto-flow: column;

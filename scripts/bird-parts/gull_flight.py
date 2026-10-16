@@ -56,8 +56,9 @@ def above():
     final["mantle"] = unary_union([final[k] for k in ("back", "scapulars", "lesser-coverts", "median-coverts",
                                    "greater-coverts", "tertials", "primary-coverts", "alula")])
     meta = [("tail", "pale", "mf"), ("uppertail-coverts", "pale", "mf"), ("rump", "pale", "mf"),
-            ("secondaries", "gullgray", "mf"), ("trailing-edge", "pale", "mf"),
-            ("primaries", "gullgray", "mf"), ("apical-spots", "pale", "mf"), ("mirrors", "pale", "mf"),
+            ("secondaries", "gullgray", "mf"),
+            # after the primaries: the band runs on across the inner primaries' tips
+            ("primaries", "gullgray", "mf"), ("trailing-edge", "pale", "mf"), ("apical-spots", "pale", "mf"), ("mirrors", "pale", "mf"),
             ("mantle", "gullgray", "m"), ("back", "gullgray", "f"), ("lesser-coverts", "gullgray", "f"),
             ("median-coverts", "gullgray", "f"), ("greater-coverts", "gullgray", "f"), ("primary-coverts", "gullgray", "f"),
             ("alula", "gullgray", "f"), ("tertials", "gullgray", "f"), ("tertial-crescent", "pale", "mf"),
@@ -96,8 +97,8 @@ def below():
     # the body is nearer the viewer than the wing roots
     for k in ("secondaries", "trailing-edge", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
-    meta = [("tail", "pale", "m"), ("secondaries", "gullpale", "m"), ("trailing-edge", "pale", "m"),
-            ("primaries", "gullpale", "m"), ("apical-spots", "pale", "m"), ("mirrors", "pale", "m"),
+    meta = [("tail", "pale", "m"), ("secondaries", "gullpale", "m"),
+            ("primaries", "gullpale", "m"), ("trailing-edge", "pale", "m"), ("apical-spots", "pale", "m"), ("mirrors", "pale", "m"),
             ("underwing-coverts", "pale", "m"), ("axillaries", "pale", "m"), ("sides", "pale", "m"),
             ("belly", "pale", "m"), ("breast", "pale", "m"), ("undertail-coverts", "pale", "m"),
             ("legs", "legpink", "m"), ("throat", "pale", "m"), ("bill", "billyellow", "m")]

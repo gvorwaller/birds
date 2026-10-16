@@ -160,6 +160,18 @@ describe("Parts of a Bird data", () => {
     expect(getView(g, "above").parts.find((p) => p.id === "primaries")!.marks?.length).toBe(1);
   });
 
+  it("paints the gull's white trailing edge over the inner primaries it runs onto (CODEX1 P2)", () => {
+    const g = DIAGRAMS.find((d) => d.id === "gull")!;
+    for (const id of ["above", "below"] as const) {
+      const v = getView(g, id);
+      const order = v.parts.map((p) => p.id);
+      expect(order.indexOf("trailing-edge"), id).toBeGreaterThan(order.indexOf("primaries"));
+      // The band reaches past the wrist (the arm/hand split is at x≈590 on the right wing).
+      const xs = [...v.parts.find((p) => p.id === "trailing-edge")!.d.matchAll(/(-?\d+(?:\.\d+)?),-?\d/g)].map((m) => Number(m[1]));
+      expect(Math.max(...xs), id).toBeGreaterThan(640);
+    }
+  });
+
   it("makes the open-wingtip inset's spots and black tips the same tappable parts as on the bird", () => {
     const g = getView(DIAGRAMS.find((d) => d.id === "gull")!, "standing");
     const [inset] = g.insets;

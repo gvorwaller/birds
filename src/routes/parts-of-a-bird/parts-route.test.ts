@@ -88,6 +88,9 @@ describe("PartsDiagram", () => {
     expect(component).toContain("{#if active.wingViewBox}");
     expect(component).toContain(">One wing, larger</button>");
     expect(component).toContain('role="group" aria-label="View"');
+    // Only the shared breakpoints (cs.md: 640px and 1024px).
+    expect(component).toContain("@media (max-width: 639.98px)");
+    expect(component).not.toMatch(/@media \((?:max|min)-width: (?!639\.98px|640px|1023\.98px|1024px)/);
   });
 
   it("keeps a selection across views and says where a part not drawn here can be seen", () => {
