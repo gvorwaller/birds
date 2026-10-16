@@ -5,13 +5,22 @@
 
 export type Layer = "main" | "feathers";
 
+/** Standing (or perched, or swimming) side view, and wings spread from above and from below (td-a1bfd9). */
+export type View = "standing" | "above" | "below";
+export const VIEWS: { id: View; label: string }[] = [
+  { id: "standing", label: "Standing" },
+  { id: "above", label: "Flight, above" },
+  { id: "below", label: "Flight, below" },
+];
+
 export const PART_GROUPS = ["Head", "Bill & legs", "Upperparts", "Wing", "Underparts", "Tail"] as const;
 export type PartGroup = (typeof PART_GROUPS)[number];
 
 /** Fixed natural colours (the drawing sits on a light plate in every theme). */
 export type Tone =
   | "pale" | "light" | "mid" | "wing" | "dark" | "darker" | "bill" | "leg" | "legyellow" | "billyellow"
-  | "accent2" | "water" | "gullgray" | "legpink" | "eye" | "perch" | "accent" | "orbital" | "mallardgreen" | "chestnut";
+  | "accent2" | "water" | "gullgray" | "legpink" | "eye" | "perch" | "accent" | "orbital" | "mallardgreen" | "chestnut"
+  | "gullpale" | "linegray" | "orange";
 
 export interface PartText {
   id: string;
@@ -49,6 +58,8 @@ export interface Shape {
 export interface PartGeometry extends Shape {
   id: string;
   layers: Layer[];
+  /** Areas of the part in another tone (a gull's black wingtip), drawn over it; never tap targets. */
+  marks?: Shape[];
 }
 
 export interface Inset {
@@ -67,18 +78,28 @@ export interface DiagramGeometry {
   over: Shape[];
   outline: string | null;
   insets: Inset[];
+  /** Flight views: the body and right wing, for the "One wing, larger" size. */
+  wingViewBox?: number[];
 }
 
 export type BirdPart = PartText & PartGeometry;
 
-export interface BirdDiagram extends Omit<DiagramText, "parts"> {
+/** One drawing of a bird. Part ids are shared between a bird's views. */
+export interface DiagramView {
+  id: View;
+  label: string;
   viewBox: string;
+  wingViewBox: string | null;
   /** Bottom to top; the topmost visible part wins a tap. */
   parts: BirdPart[];
-  /** Part ids in reading order (as written in the text module), for the lists. */
-  listOrder: string[];
   under: Shape[];
   over: Shape[];
   outline: string | null;
   insets: Inset[];
+}
+
+export interface BirdDiagram extends Omit<DiagramText, "parts"> {
+  /** Every part of the bird, from any view, in reading order (as written in the text module). */
+  glossary: PartText[];
+  views: DiagramView[];
 }

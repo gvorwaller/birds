@@ -17,6 +17,8 @@ export const songbird: DiagramText = {
     { label: "Flight feather (Wikipedia)", url: "https://en.wikipedia.org/wiki/Flight_feather" },
     { label: "Alula (Wikipedia)", url: "https://en.wikipedia.org/wiki/Alula" },
     { label: "Lore (Wikipedia)", url: "https://en.wikipedia.org/wiki/Lore_(anatomy)" },
+    { label: "Glossary of bird terms: axillaries, underwing (Wikipedia)", url: "https://en.wikipedia.org/wiki/Glossary_of_bird_terms" },
+    { label: "Rose-breasted grosbeak (Wikipedia)", url: "https://en.wikipedia.org/wiki/Rose-breasted_grosbeak" },
   ],
   parts: [
     // Head
@@ -144,10 +146,10 @@ export const songbird: DiagramText = {
     // Wing
     {
       id: "wing",
-      name: "Wing (folded)",
+      name: "Wing",
       group: "Wing",
       lookFor:
-        "On a perched songbird you see mostly the wing coverts, the tertials and the tips of the primaries; each of these feather groups has its own name below.",
+        "The whole wing as one area; each of its feather groups has its own name. Folded on a perched songbird, it shows mostly the coverts, the tertials and the primary tips. Spread in flight, the same groups lie in rows from the front edge back.",
     },
     {
       id: "wing-bars",
@@ -209,6 +211,24 @@ export const songbird: DiagramText = {
       group: "Wing",
       lookFor:
         "The long outer flight feathers. On a folded wing they lie beneath the secondaries, so you see their outer edges along the bottom of the wing and their tips past the tertials. How far the tips reach (primary projection) helps separate some look-alikes, such as the small flycatchers.",
+    },
+    {
+      id: "underwing-coverts",
+      name: "Underwing coverts",
+      aka: "wing linings",
+      group: "Wing",
+      lookFor:
+        "Small feathers covering the underside of the wing in front of the flight feathers. Plain and pale on most songbirds, but a contrasting colour can help from below, such as the rosy wing linings of a male Rose-breasted Grosbeak.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
+    },
+    {
+      id: "axillaries",
+      name: "Axillaries",
+      aka: "wingpits",
+      group: "Wing",
+      lookFor:
+        "Feathers in the 'armpit', where the underwing meets the body. On songbirds they usually match the wing linings; on some other birds they're a key mark, such as a Black-bellied Plover's black wingpits.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
     },
     // Underparts
     {

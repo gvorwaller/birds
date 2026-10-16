@@ -17,6 +17,10 @@ export const gull: DiagramText = {
     { label: "California gull (Wikipedia)", url: "https://en.wikipedia.org/wiki/California_gull" },
     { label: "Gonys (Wikipedia)", url: "https://en.wikipedia.org/wiki/Gonys" },
     { label: "Covert feather (Wikipedia)", url: "https://en.wikipedia.org/wiki/Covert_feather" },
+    { label: "Herring gull in flight (00938).jpg (reference photo for the flight views, proportions only)", url: "https://commons.wikimedia.org/wiki/File:Herring_gull_in_flight_(00938).jpg", credit: "Rhododendrites, CC BY-SA 4.0" },
+    { label: "Larus smithsonianus Cap-de-Bon-Desir 01.jpg (reference photo for the flight views, proportions only)", url: "https://commons.wikimedia.org/wiki/File:Larus_smithsonianus_Cap-de-Bon-Desir_01.jpg", credit: "Cephas, CC BY-SA 4.0" },
+    { label: "Glossary of bird terms: axillaries, underwing (Wikipedia)", url: "https://en.wikipedia.org/wiki/Glossary_of_bird_terms" },
+    { label: "Little gull (Wikipedia)", url: "https://en.wikipedia.org/wiki/Little_gull" },
   ],
   parts: [
     // Head
@@ -118,6 +122,14 @@ export const gull: DiagramText = {
       group: "Upperparts",
       lookFor: "Shoulder feathers over the top of the folded wing. On many adults their white tips form a scapular crescent.",
     },
+    {
+      id: "rump",
+      name: "Rump",
+      group: "Upperparts",
+      lookFor:
+        "Between the back and the tail. White on an adult gull, so the gray mantle ends sharply above a white rump and tail.",
+      visibility: "Covered by the wings at rest; seen in flight.",
+    },
     // Wing
     {
       id: "lesser-coverts",
@@ -138,11 +150,35 @@ export const gull: DiagramText = {
       lookFor: "The longest row of coverts, just above the secondaries. Gray on this adult; on immature Herring Gulls and many other large gulls they are patterned brown.",
     },
     {
+      id: "primary-coverts",
+      name: "Primary coverts",
+      group: "Wing",
+      lookFor:
+        "Coverts lying over the bases of the primaries; gray on this adult, like the rest of the mantle. Often darker on immature gulls.",
+      visibility: "Hidden on a standing gull; seen in flight.",
+    },
+    {
+      id: "alula",
+      name: "Alula",
+      group: "Wing",
+      lookFor:
+        "A small group of feathers on the bird's 'thumb', at the bend of the wing. A landmark rather than an ID mark.",
+      visibility: "Hidden on a standing gull; seen in flight.",
+    },
+    {
       id: "secondaries",
       name: "Secondaries (skirt)",
       group: "Wing",
       lookFor:
         "Their white tips make the white trailing edge of the wing in flight. On a standing gull they can show below the coverts as a white 'skirt'.",
+    },
+    {
+      id: "trailing-edge",
+      name: "White trailing edge",
+      group: "Wing",
+      lookFor:
+        "White tips to the secondaries and inner primaries make a white band along the back of an adult gull's wing. How broad it is, and how far it runs onto the outer wing, help with some adults.",
+      visibility: "Seen in flight; on a standing gull the same tips show as the white skirt and the tertial crescent.",
     },
     {
       id: "tertials",
@@ -175,7 +211,26 @@ export const gull: DiagramText = {
       group: "Wing",
       lookFor:
         "White spots in the black near the tips of the outermost primaries, set in from the tip (unlike apical spots). Their number and size help separate adult gulls.",
-      visibility: "Mostly hidden on a standing gull, so the circle shows the wingtip spread open, with the outermost primaries (where mirrors sit) at the bottom; seen in flight or when a gull stretches.",
+      visibility:
+        "Mostly hidden on a standing gull, so that drawing adds a circle showing the wingtip spread open, with the outermost primaries (where mirrors sit) at the bottom. The flight views show them where they're seen best.",
+    },
+    {
+      id: "underwing-coverts",
+      name: "Underwing coverts",
+      aka: "wing linings",
+      group: "Wing",
+      lookFor:
+        "Small feathers covering the underside of the wing in front of the flight feathers. White on an adult Herring Gull; a few gulls, such as the adult Little Gull, have dark underwings.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
+    },
+    {
+      id: "axillaries",
+      name: "Axillaries",
+      aka: "wingpits",
+      group: "Wing",
+      lookFor:
+        "Feathers in the 'armpit', where the underwing meets the body. White on an adult Herring Gull, like the wing linings.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
     },
     // Underparts
     {
@@ -208,7 +263,16 @@ export const gull: DiagramText = {
       name: "Tail",
       group: "Tail",
       lookFor: "White on this adult Herring Gull, though a few species, such as Heermann's Gull, have dark tails as adults. Immature Herring Gulls have dark tail bands, and the tail pattern helps tell age and species in many gulls.",
-      visibility: "Largely hidden under the wingtips on a standing gull. Drawn a little larger here so it's easy to find.",
+      visibility:
+        "Largely hidden under the wingtips on a standing gull, so it's drawn a little larger there to be easy to find.",
+    },
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor:
+        "The feathers covering the base of the tail from above; white on this adult. On many immature gulls a paler rump and uppertail coverts set off a dark tail band.",
+      visibility: "Covered by the wings on a standing gull; seen in flight.",
     },
   ],
 };

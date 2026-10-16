@@ -30,8 +30,15 @@ describe("Parts of a Bird page (td-9c9655)", () => {
     // page.url.hash, not afterNavigate: same-page hash links and Back/Forward between hashes are shallow.
     expect(route).toMatch(/\$effect\(\(\) => \{\s*const hash = page\.url\.hash;\s*untrack\(\(\) => void revealFromHash\(hash\)\);/);
     expect(route).not.toContain("afterNavigate(");
-    // A feathers-only part switches its section to a layer that draws it.
-    expect(route).toContain("if (!part.layers.includes(layers[target.diagram])) layers[target.diagram] = part.layers[0];");
+    // A part opens in a view and layer that draw it: feathers-only and flight-only parts included.
+    expect(route).toContain("const place = placePart(diagram, target.part, views[target.diagram], layers[target.diagram]);");
+    expect(route).toMatch(/views\[target\.diagram\] = place\.view;\s*layers\[target\.diagram\] = place\.layer;/);
+  });
+
+  it("owns each bird's view and drawing size, starting standing and whole (td-a1bfd9)", () => {
+    expect(route).toContain('Object.fromEntries(DIAGRAMS.map((d) => [d.id, "standing" as View]))');
+    expect(route).toContain("bind:view={views[d.id]}");
+    expect(route).toContain("bind:wingOnly={wingOnly[d.id]}");
   });
 
   it("adds the tab, spanning the phone grid and joining the row from 640px", () => {
@@ -46,13 +53,19 @@ describe("PartsDiagram", () => {
   it("server-renders the whole glossary with anchors and no inert controls", () => {
     for (const diagram of DIAGRAMS) {
       const { body } = render(PartsDiagram, { props: { diagram } });
-      for (const p of diagram.parts) {
+      for (const p of diagram.glossary) {
         expect(body, `${diagram.id}-${p.id}`).toContain(`id="${diagram.id}-${p.id}"`);
       }
       expect(body).not.toContain("All feather groups");
       expect(body).not.toContain("Tap a part");
       expect(body).not.toContain("<button");
-      expect(body).toContain(`aria-label="Diagram of a ${diagram.title.toLowerCase()}"`);
+      // Every view is drawn without JS, labelled, with no selection painted.
+      const title = diagram.title.toLowerCase();
+      expect(body).toContain(`aria-label="Diagram of a ${title}, ${diagram.model.pose}"`);
+      expect(body).toContain(`aria-label="Diagram of a ${title}, in flight, from above"`);
+      expect(body).toContain(`aria-label="Diagram of a ${title}, in flight, from below"`);
+      expect(body.match(/<figure class="plate/g)).toHaveLength(3);
+      expect(body).not.toContain('class="selection"');
     }
   });
 
@@ -70,7 +83,19 @@ describe("PartsDiagram", () => {
     expect(component).toMatch(/\.selection \{[^}]*vector-effect: non-scaling-stroke/);
   });
 
-  it("offers the layer switch only where it adds parts", () => {
-    expect(component).toContain("{#if hydrated && twoLayers}");
+  it("offers the layer switch only where it adds parts, and the size only in flight", () => {
+    expect(component).toContain("{#if twoLayers}");
+    expect(component).toContain("{#if active.wingViewBox}");
+    expect(component).toContain(">One wing, larger</button>");
+    expect(component).toContain('role="group" aria-label="View"');
+  });
+
+  it("keeps a selection across views and says where a part not drawn here can be seen", () => {
+    expect(component).toMatch(/async function setView\(next: View\) \{[^}]*layer = layerAfterViewChange\(diagram, selected, next, layer\);/);
+    expect(component).not.toMatch(/async function setView[^}]*selected = /);
+    expect(component).toContain("Not drawn in this view. Show it:");
+    // The caption's link vanishes once the part is drawn; focus moves to the part's name.
+    expect(component).toContain("onclick={() => showIn(v.id)}");
+    expect(component).toMatch(/async function showIn\(next: View\) \{\s*await setView\(next\);\s*const chip = selected \? document\.getElementById/);
   });
 });

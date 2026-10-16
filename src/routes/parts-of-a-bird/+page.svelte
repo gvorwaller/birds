@@ -4,8 +4,8 @@
   import FieldGuideTabs from "$components/FieldGuideTabs.svelte";
   import PathNavigation from "$components/PathNavigation.svelte";
   import PartsDiagram from "$components/PartsDiagram.svelte";
-  import { DIAGRAMS, parseHash } from "$lib/bird-parts";
-  import type { Layer } from "$lib/bird-parts/types";
+  import { DIAGRAMS, parseHash, placePart } from "$lib/bird-parts";
+  import type { Layer, View } from "$lib/bird-parts/types";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -15,6 +15,8 @@
   let open = $state<Record<string, boolean>>(Object.fromEntries(DIAGRAMS.map((d) => [d.id, false])));
   let layers = $state<Record<string, Layer>>(Object.fromEntries(DIAGRAMS.map((d) => [d.id, "main" as Layer])));
   let selected = $state<Record<string, string | null>>(Object.fromEntries(DIAGRAMS.map((d) => [d.id, null])));
+  let views = $state<Record<string, View>>(Object.fromEntries(DIAGRAMS.map((d) => [d.id, "standing" as View])));
+  let wingOnly = $state<Record<string, boolean>>(Object.fromEntries(DIAGRAMS.map((d) => [d.id, false])));
   let hydrated = $state(false);
   onMount(() => (hydrated = true));
 
@@ -27,9 +29,12 @@
     if (!target) return;
     open[target.diagram] = true;
     if (target.part) {
-      const part = DIAGRAMS.find((d) => d.id === target.diagram)!.parts.find((p) => p.id === target.part)!;
-      if (!part.layers.includes(layers[target.diagram])) layers[target.diagram] = part.layers[0];
-      selected[target.diagram] = part.id;
+      // The current view if it draws the part, else the first view that does (flight-only parts).
+      const diagram = DIAGRAMS.find((d) => d.id === target.diagram)!;
+      const place = placePart(diagram, target.part, views[target.diagram], layers[target.diagram]);
+      views[target.diagram] = place.view;
+      layers[target.diagram] = place.layer;
+      selected[target.diagram] = target.part;
     }
     await tick();
     document.getElementById(target.diagram)?.scrollIntoView({ block: "start" });
@@ -63,13 +68,20 @@
       {/if}
     </div>
     <p>Field guides describe birds by their parts: a pale supercilium, two wing bars, long primary projection. Open a bird, then tap a part on the drawing or a name below it to see what to look for there.</p>
+    <p>Each bird is drawn standing and in flight, from above and from below. A part you pick stays picked when you switch views, so you can see where the same feathers sit on the open wing.</p>
     <p class="muted">Each drawing is simplified to show where the parts are, not the exact colours of every species.</p>
   </section>
 
   {#each DIAGRAMS as d (d.id)}
     <details class="card bird" id={d.id} bind:open={open[d.id]}>
       <summary><h2>{d.title}</h2></summary>
-      <PartsDiagram diagram={d} bind:layer={layers[d.id]} bind:selected={selected[d.id]} />
+      <PartsDiagram
+        diagram={d}
+        bind:layer={layers[d.id]}
+        bind:selected={selected[d.id]}
+        bind:view={views[d.id]}
+        bind:wingOnly={wingOnly[d.id]}
+      />
     </details>
   {/each}
 </div>

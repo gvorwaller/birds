@@ -13,7 +13,7 @@ TONES = {"pale": "#f4efe6", "light": "#e6dccb", "mid": "#b9a68a", "wing": "#a18c
          "darker": "#4a3d30", "bill": "#8c8172", "leg": "#c49a7a", "legyellow": "#e0b23a", "billyellow": "#d9c05a",
          "accent2": "#5b5fa8", "water": "#6c8fb0", "gullgray": "#a9b1ba", "legpink": "#d9a79b", "eye": "#1c1c1c",
          "perch": "#9b9286", "accent": "#c0392b", "orbital": "#e08a2c",
-         "mallardgreen": "#3c5f45", "chestnut": "#7a4a35"}
+         "mallardgreen": "#3c5f45", "chestnut": "#7a4a35", "gullpale": "#d3d8de", "linegray": "#6f7780", "orange": "#e0893a"}
 
 
 def svg(d, layer, highlight=None, width=900, title=None):
@@ -30,10 +30,15 @@ def svg(d, layer, highlight=None, width=900, title=None):
     for p in sorted((p for p in d["parts"] if layer in p["layers"]), key=lambda p: order[p["id"]]):
         fill = "#f6c344" if p["id"] == highlight else TONES[p["tone"]]
         out.append(f'<path d="{p["d"]}" fill="{fill}" fill-rule="evenodd" stroke="#8a7d6c" stroke-width="0.6"/>')
+        if p["id"] != highlight:
+            out += [f'<path d="{m["d"]}" fill="{TONES[m["tone"]]}"/>' for m in p.get("marks", [])]
     if d["outline"]:
         out.append(f'<path d="{d["outline"]}" fill="none" stroke="#2a2a2a" stroke-width="1.4" stroke-linejoin="round"/>')
     for b in d["over"]:
         out.append(f'<path d="{b["d"]}" fill="{TONES[b["tone"]]}"/>')
+    hp = next((p for p in d["parts"] if p["id"] == highlight), None)
+    if hp:   # a selected part is drawn again on top, so overlapping rows never hide it
+        out.append(f'<path d="{hp["d"]}" fill="#f6c344" fill-rule="evenodd" stroke="#8e1b10" stroke-width="1.5" stroke-dasharray="5 3"/>')
     if title:
         out.append(f'<text x="{x0 + 6}" y="{y0 + 22}" font-size="22">{title}</text>')
     return "\n".join(out + ["</svg>"])

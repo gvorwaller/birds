@@ -16,6 +16,9 @@ export const shorebird: DiagramText = {
     { label: "Flight feather: primary projection (Wikipedia)", url: "https://en.wikipedia.org/wiki/Flight_feather" },
     { label: "Covert feather (Wikipedia)", url: "https://en.wikipedia.org/wiki/Covert_feather" },
     { label: "Bird anatomy (Wikipedia)", url: "https://en.wikipedia.org/wiki/Bird_anatomy" },
+    { label: "Glossary of bird terms: axillaries, underwing (Wikipedia)", url: "https://en.wikipedia.org/wiki/Glossary_of_bird_terms" },
+    { label: "Grey plover (Black-bellied Plover; Wikipedia)", url: "https://en.wikipedia.org/wiki/Grey_plover" },
+    { label: "Short-billed dowitcher (Wikipedia)", url: "https://en.wikipedia.org/wiki/Short-billed_dowitcher" },
   ],
   parts: [
     // Head
@@ -103,12 +106,21 @@ export const shorebird: DiagramText = {
       lookFor:
         "Shoulder feathers covering the top of the folded wing. Their pattern (dark centres, pale spots or edges) helps separate species and ages.",
     },
+    {
+      id: "rump",
+      name: "Rump",
+      group: "Upperparts",
+      lookFor:
+        "The lower back, between the back and the uppertail coverts. Dark like the back on a Lesser Yellowlegs; its white patch starts behind the rump, on the uppertail coverts.",
+      visibility: "Covered by the folded wings at rest; seen in flight.",
+    },
     // Wing
     {
       id: "wing-coverts",
       name: "Wing coverts",
       group: "Wing",
-      lookFor: "The rows of feathers lying over the bases of the flight feathers: the lesser, median and greater coverts.",
+      lookFor:
+        "The rows of feathers lying over the bases of the flight feathers: the lesser, median and greater coverts, and, on the outer wing, the primary coverts.",
     },
     {
       id: "lesser-coverts",
@@ -131,16 +143,41 @@ export const shorebird: DiagramText = {
       lookFor: "The longest row of coverts, closest to the flight feathers.",
     },
     {
+      id: "primary-coverts",
+      name: "Primary coverts",
+      group: "Wing",
+      lookFor:
+        "Coverts lying over the bases of the primaries, on the outer wing. Usually dark on shorebirds.",
+      visibility: "Mostly hidden on a standing bird; seen in flight.",
+    },
+    {
+      id: "alula",
+      name: "Alula",
+      group: "Wing",
+      lookFor:
+        "A small group of feathers on the bird's 'thumb', at the bend of the wing. A landmark rather than an ID mark.",
+      visibility: "Hidden at rest; seen in flight.",
+    },
+    {
       id: "tertials",
       name: "Tertials",
       group: "Wing",
       lookFor: "The innermost flight feathers, lying on top of the folded wing. Their tips are the starting point for judging primary projection.",
     },
     {
+      id: "secondaries",
+      name: "Secondaries",
+      group: "Wing",
+      lookFor:
+        "The flight feathers of the inner wing, behind the greater coverts. Many sandpipers show a white wing stripe in flight, made mostly by pale tips to the greater coverts and pale bases to the flight feathers. Yellowlegs have plain dark wings without one.",
+      visibility: "Mostly hidden under the tertials and coverts at rest; seen in flight.",
+    },
+    {
       id: "primaries",
       name: "Primaries",
       group: "Wing",
-      lookFor: "The long outer flight feathers. On a standing bird, their tips form the wingtip.",
+      lookFor:
+        "The long outer flight feathers. On a standing bird their tips form the wingtip; in flight they make up most of the outer wing.",
     },
     {
       id: "primary-projection",
@@ -155,6 +192,24 @@ export const shorebird: DiagramText = {
       group: "Wing",
       lookFor:
         "Whether the folded wingtips fall short of the tail tip, reach it, or pass it. Baird's and White-rumped Sandpipers have wingtips well past the tail; a Least Sandpiper's don't reach beyond it.",
+    },
+    {
+      id: "underwing-coverts",
+      name: "Underwing coverts",
+      aka: "wing linings",
+      group: "Wing",
+      lookFor:
+        "Small feathers covering the underside of the wing in front of the flight feathers. Whether they're pale or dark, plain or barred helps when a shorebird flies overhead.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
+    },
+    {
+      id: "axillaries",
+      name: "Axillaries",
+      aka: "wingpits",
+      group: "Wing",
+      lookFor:
+        "Feathers in the 'armpit', where the underwing meets the body. A Black-bellied Plover's black wingpits separate it from the golden-plovers in every plumage.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
     },
     // Underparts
     {
@@ -188,6 +243,14 @@ export const shorebird: DiagramText = {
       group: "Tail",
       lookFor: "Note its pattern when the bird flies: bars, a dark centre or white sides.",
       visibility: "Mostly covered by the folded wings at rest.",
+    },
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor:
+        "The feathers covering the base of the tail from above. A flying yellowlegs shows a square white patch here (field guides often call it a white rump); a dowitcher's white runs up the back in a narrow wedge.",
+      visibility: "Mostly covered by the folded wings at rest; seen in flight.",
     },
   ],
 };

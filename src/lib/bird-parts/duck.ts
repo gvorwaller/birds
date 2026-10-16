@@ -16,6 +16,9 @@ export const duck: DiagramText = {
     { label: "Speculum feathers (Wikipedia)", url: "https://en.wikipedia.org/wiki/Speculum_feathers" },
     { label: "Greater scaup (Wikipedia)", url: "https://en.wikipedia.org/wiki/Greater_scaup" },
     { label: "Covert feather (Wikipedia)", url: "https://en.wikipedia.org/wiki/Covert_feather" },
+    { label: "Glossary of bird terms: axillaries, underwing (Wikipedia)", url: "https://en.wikipedia.org/wiki/Glossary_of_bird_terms" },
+    { label: "Northern shoveler (Wikipedia)", url: "https://en.wikipedia.org/wiki/Northern_shoveler" },
+    { label: "American black duck (Wikipedia)", url: "https://en.wikipedia.org/wiki/American_black_duck" },
   ],
   parts: [
     // Head
@@ -69,6 +72,14 @@ export const duck: DiagramText = {
       group: "Bill & legs",
       lookFor: "A hard tip at the end of the bill. Its size can help: Greater Scaup's black nail averages broader than Lesser Scaup's, a supporting mark alongside head shape.",
     },
+    {
+      id: "legs",
+      name: "Legs and feet",
+      group: "Bill & legs",
+      lookFor:
+        "Orange on a Mallard. In flight a duck tucks its feet back under the tail.",
+      visibility: "Under water on a swimming duck.",
+    },
     // Upperparts
     {
       id: "back",
@@ -90,6 +101,47 @@ export const duck: DiagramText = {
     },
     // Wing
     {
+      id: "wing-coverts",
+      name: "Wing coverts",
+      aka: "forewing",
+      group: "Wing",
+      lookFor:
+        "The coverts of the forewing, in front of the white bar and the speculum. Gray-brown on a Mallard. On some dabbling ducks a coloured forewing is a key mark in flight, such as the pale blue forewing of a Northern Shoveler or Blue-winged Teal.",
+      visibility: "Mostly covered by the side feathers on a swimming duck; seen in flight.",
+    },
+    {
+      id: "lesser-coverts",
+      name: "Lesser coverts",
+      group: "Wing",
+      lookFor:
+        "The small coverts along the front edge of the wing; part of the forewing colour.",
+      visibility: "Covered on a swimming duck; seen in flight.",
+    },
+    {
+      id: "median-coverts",
+      name: "Median coverts",
+      group: "Wing",
+      lookFor:
+        "The row between the lesser and greater coverts; on a Mallard the same gray-brown as the rest of the forewing.",
+      visibility: "Covered on a swimming duck; seen in flight.",
+    },
+    {
+      id: "primary-coverts",
+      name: "Primary coverts",
+      group: "Wing",
+      lookFor:
+        "Coverts lying over the bases of the primaries, on the outer wing. Plain gray-brown on a Mallard.",
+      visibility: "Covered on a swimming duck; seen in flight.",
+    },
+    {
+      id: "alula",
+      name: "Alula",
+      group: "Wing",
+      lookFor:
+        "A small group of feathers on the bird's 'thumb', at the bend of the wing. A landmark rather than an ID mark.",
+      visibility: "Covered on a swimming duck; seen in flight.",
+    },
+    {
       id: "tertials",
       name: "Tertials",
       group: "Wing",
@@ -99,7 +151,8 @@ export const duck: DiagramText = {
       id: "primaries",
       name: "Primaries",
       group: "Wing",
-      lookFor: "The outer flight feathers. At rest they're mostly tucked under the tertials and show only as the wingtip.",
+      lookFor:
+        "The outer flight feathers. At rest they're mostly tucked under the tertials and show only as the wingtip; in flight they form the outer wing, plain gray-brown on a Mallard.",
     },
     {
       id: "speculum",
@@ -110,11 +163,37 @@ export const duck: DiagramText = {
       visibility: "Often partly hidden on a swimming duck; clearest when it preens, stretches or flies.",
     },
     {
+      id: "secondaries",
+      name: "Secondaries",
+      group: "Wing",
+      lookFor:
+        "The flight feathers of the inner wing. Seen from above, their glossy outer parts make a Mallard's speculum; from below they're plain gray.",
+      visibility: "Mostly hidden on a swimming duck; seen in flight.",
+    },
+    {
       id: "greater-coverts",
       name: "Greater coverts",
       group: "Wing",
       lookFor: "The row of coverts just in front of the speculum. On a Mallard their white tips make the white bar on the speculum's front edge.",
       visibility: "Often partly hidden on a swimming duck.",
+    },
+    {
+      id: "underwing-coverts",
+      name: "Underwing coverts",
+      aka: "wing linings",
+      group: "Wing",
+      lookFor:
+        "Small feathers covering the underside of the wing in front of the flight feathers. White on a Mallard. Pale wing linings against a dark body help pick out some ducks overhead, such as American Black Duck.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
+    },
+    {
+      id: "axillaries",
+      name: "Axillaries",
+      aka: "wingpits",
+      group: "Wing",
+      lookFor:
+        "Feathers in the 'armpit', where the underwing meets the body. White on a Mallard, like the wing linings.",
+      visibility: "Seen in flight, or when a bird raises its wings.",
     },
     // Underparts
     {
@@ -129,6 +208,14 @@ export const duck: DiagramText = {
       group: "Underparts",
       lookFor:
         "The broad area below the folded wing, often the largest part of a swimming duck. Note its colour and any bar or stripe, such as the vertical white bar at the front of a drake Green-winged Teal's sides.",
+    },
+    {
+      id: "belly",
+      name: "Belly",
+      group: "Underparts",
+      lookFor:
+        "Between the breast and the tail, underneath. Pale gray on a drake Mallard.",
+      visibility: "Below the waterline on a swimming duck; seen in flight.",
     },
     {
       id: "flanks",
@@ -148,7 +235,8 @@ export const duck: DiagramText = {
       name: "Tail",
       group: "Tail",
       lookFor: "Note its length and how it's held: Ruddy Ducks often cock a stiff tail; drake pintails have long central tail feathers.",
-      visibility: "A Mallard's tail is short; it's drawn longer here so it's easy to find.",
+      visibility:
+        "A Mallard's tail is short; it's drawn longer on the swimming duck so it's easy to find.",
     },
     {
       id: "drake-curl",

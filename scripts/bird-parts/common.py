@@ -11,13 +11,16 @@ OUT = Path(__file__).resolve().parents[2] / "src" / "lib" / "bird-parts" / "geom
 
 
 def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=(), outline=None, flip_x=None,
-          raw=(), raw_base=(), insets=(), extra_raw=None):
+          raw=(), raw_base=(), insets=(), extra_raw=None, marks=None, wing_view_box=None):
     """final: part id -> shapely geometry in tracing (photo) coordinates.
     meta: (id, tone, layers) where layers is "m", "f" or "mf".
     flip_x: mirror about this x before translating, so every bird faces right.
     raw / raw_base: parts and base shapes already in output coordinates (the gull's inset).
     extra_raw: part id -> geometry in output coordinates added to a traced part, so one part can
-    be drawn in two places (the gull's wingtip on the bird and in the open-wingtip inset)."""
+    be drawn in two places (the gull's wingtip on the bird and in the open-wingtip inset).
+    marks: part id -> [(geometry, tone)] in tracing coordinates, drawn over the part in another
+    tone (the black tip of a gull's primaries); the part's own path stays the tap target.
+    wing_view_box: flight views only, the body and right wing for the "One wing, larger" size."""
     def T(g):
         if flip_x is not None: g = affinity.scale(g, xfact=-1, yfact=1, origin=(flip_x, 0))
         return g
@@ -31,6 +34,9 @@ def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=()
         parts.append({"id": pid, "tone": tone,
                       "layers": [x for x, c in (("main", "m"), ("feathers", "f")) if c in ly],
                       "d": to_d(g, ox, oy)})
+        if marks and pid in marks:
+            parts[-1]["marks"] = [{"d": to_d(T(m.intersection(final[pid])), dx, dy), "tone": t}
+                                  for m, t in marks[pid]]
     ids = {p["id"] for p in parts}
     assert set(order) == ids and len(order) == len(ids), set(order) ^ ids
     d = {"id": name, "viewBox": viewBox, "drawOrder": order, "parts": parts,
@@ -39,6 +45,7 @@ def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=()
          "over": [{"d": to_d(T(g), dx, dy), "tone": t} for g, t in base_over],
          "outline": to_d(T(outline), dx, dy) if outline is not None else None,
          "insets": list(insets)}
+    if wing_view_box: d["wingViewBox"] = wing_view_box
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{name}.json"
     path.write_text(json.dumps(d, indent=1) + "\n")
