@@ -68,10 +68,11 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     sci_name: string;
     family: string | null;
     family_code: string | null;
+    family_sci_name: string | null;
     order_name: string | null;
     category: string;
   }>(
-    "SELECT species_code, com_name, sci_name, family, family_code, order_name, category FROM taxonomy_cache WHERE species_code = $1",
+    "SELECT species_code, com_name, sci_name, family, family_code, family_sci_name, order_name, category FROM taxonomy_cache WHERE species_code = $1",
     [code],
   );
   if (!taxon.rows[0]) {

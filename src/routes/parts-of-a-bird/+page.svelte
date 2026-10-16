@@ -51,7 +51,9 @@
 
 <svelte:head><title>Parts of a Bird — birds</title></svelte:head>
 <div class="page">
-  <PathNavigation accountId={data.user?.id} label="Parts of a Bird" href={page.url.pathname} fallbackHref="/species" fallbackLabel="Field guide" hideWhenNoPath />
+  <!-- The hash is part of this page's address in the path: a part link (#songbird-supercilium) from a
+       species page (td-e4c6dd) is registered under its full href, and the page must find that node. -->
+  <PathNavigation accountId={data.user?.id} label="Parts of a Bird" href={page.url.pathname + page.url.hash} fallbackHref={data.returnLink?.href ?? "/species"} fallbackLabel={data.returnLink?.label ?? "Field guide"} hasExplicitSource={data.returnLink != null} hideWhenNoPath={data.returnLink == null} />
   <h1>📖 Field guide</h1>
   <p class="muted">Learn the parts of a bird that identification depends on.</p>
   <FieldGuideTabs active="parts" />

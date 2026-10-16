@@ -39,6 +39,8 @@
 	import { speciesLinkHref, type SpeciesLocationContext } from '$lib/species-context';
 	import { withReturnTo } from '$lib/navigation-context';
 	import { navigationAction } from '$lib/navigation-context.svelte';
+	import PartTermText from './PartTermText.svelte';
+	import { linkPartTerms, type DiagramId } from '$lib/bird-parts/terms';
 
 	let {
 		similar,
@@ -49,7 +51,8 @@
 		context = null,
 		open = $bindable(true),
 		accountId = null,
-		currentSpeciesName = null
+		currentSpeciesName = null,
+		partsDiagram = null
 	}: {
 		similar: SimilarSpeciesRow[];
 		unresolved: UnresolvedSimilarRow[];
@@ -60,6 +63,8 @@
 		open?: boolean;
 		accountId?: number | null;
 		currentSpeciesName?: string | null;
+		/** The page species' Parts of a Bird drawing: part words in notes link to it (td-e4c6dd). */
+		partsDiagram?: DiagramId | null;
 	} = $props();
 
 	const showCard = $derived(
@@ -118,7 +123,16 @@
 			</div>
 
 			{#if item.note}
-				<p class="diff-note">{item.note}</p>
+				<p class="diff-note">
+					{#if partsDiagram && currentSpeciesName}<PartTermText
+							segments={linkPartTerms([item.note], partsDiagram)[0]}
+							idPrefix={`part-term-similar-${encodeURIComponent(item.species_code)}`}
+							{accountId}
+							{returnTo}
+							returnLabel={currentSpeciesName}
+							ui={{ expandedIds: ['similar-species'] }}
+						/>{:else}{item.note}{/if}
+				</p>
 			{/if}
 
 			<p class="basis muted">

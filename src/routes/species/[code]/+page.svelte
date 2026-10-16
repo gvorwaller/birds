@@ -38,10 +38,12 @@
   import Skeleton from "$components/Skeleton.svelte";
   import SpeciesMediaCard from "$components/SpeciesMediaCard.svelte";
   import SimilarSpeciesCard from "$components/SimilarSpeciesCard.svelte";
+  import PartTermText from "$components/PartTermText.svelte";
+  import { diagramForFamily, linkPartTerms } from "$lib/bird-parts/terms";
   import type { ActionData, PageData } from "./$types";
   import { observationIdentity } from "$lib/observation-evidence";
   import PathNavigation from "$components/PathNavigation.svelte";
-  import { canonicalHref, withReturnTo } from "$lib/navigation-context";
+  import { canonicalHref, withReturnTo, type NavigationUiState } from "$lib/navigation-context";
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { sectionHref, shouldEnhanceSectionLink } from "$lib/section-navigation";
 
@@ -62,6 +64,17 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const speciesContextHref = $derived(canonicalHref(page.url.pathname + page.url.search + page.url.hash) ?? `/species/${data.taxon.species_code}`);
+  // Part words link to Parts of a Bird (td-e4c6dd): in Similar species notes and in these
+  // Wikipedia sections only (owner, 2026-10-16), on the drawing for this bird's family.
+  const PART_TERM_SECTIONS = new Set(["Description", "Description and taxonomy"]);
+  const partsDiagram = $derived(diagramForFamily(data.taxon.family_sci_name));
+  // Coming back from a part link reopens the section it was in: a Wikipedia section
+  // ("wiki-section-N"), or the Similar species card ("similar-species").
+  let reopenedSections = $state<string[]>([]);
+  function restoreSpecies({ ui }: { ui: NavigationUiState | null }) {
+    reopenedSections = ui?.expandedIds ?? [];
+    if (reopenedSections.includes("similar-species")) similarExpanded = true;
+  }
   function adopt(label: string, originId: string) {
     return (event: MouseEvent) => navigationAction(data.user?.id, { label, originId })(event);
   }
@@ -500,7 +513,7 @@
 
 <div class="page">
   <header class="page-head">
-    <PathNavigation contentReady={(data.nearby == null || nearbyView.current != null) && (data.nearest == null || nearestView.current != null)} accountId={data.user?.id} label={data.taxon.com_name} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref={data.returnLink.href} fallbackLabel={data.returnLink.label} hasExplicitSource={data.returnLink.href !== "/"} />
+    <PathNavigation contentReady={(data.nearby == null || nearbyView.current != null) && (data.nearest == null || nearestView.current != null)} accountId={data.user?.id} label={data.taxon.com_name} href={page.url.pathname + page.url.search + page.url.hash} fallbackHref={data.returnLink.href} fallbackLabel={data.returnLink.label} hasExplicitSource={data.returnLink.href !== "/"} onRestore={restoreSpecies} />
     <h1>
       {data.taxon.com_name}
       {#if data.seen}<Badge kind="seen" label="Seen" />{:else}<Badge
@@ -593,6 +606,7 @@
     bind:open={similarExpanded}
     accountId={data.user?.id}
     currentSpeciesName={data.taxon.com_name}
+    {partsDiagram}
   />
 
   {#if hasFieldCraft}
@@ -1143,13 +1157,20 @@
             {aboutExpanded ? "Show less" : "Read more"}
           </button>
         {/if}
-        {#each en?.wikipedia_sections ?? [] as s (s.title)}
-          <details class="wiki-section">
+        {#each en?.wikipedia_sections ?? [] as s, si (s.title)}
+          {@const sectionId = `wiki-section-${si}`}
+          {@const blocks = sectionBlocks(s.text)}
+          {@const linked = PART_TERM_SECTIONS.has(s.title)
+            ? linkPartTerms(blocks.map((b) => (b.kind === "p" ? b.text : "")), partsDiagram)
+            : null}
+          <details class="wiki-section" open={reopenedSections.includes(sectionId)}>
             <summary>{s.title}</summary>
             <div class="section-text">
-              {#each sectionBlocks(s.text) as block, i (i)}
+              {#each blocks as block, i (i)}
                 {#if block.kind === "sub"}
                   <p class="subhead">{block.text}</p>
+                {:else if linked}
+                  <p><PartTermText segments={linked[i]} idPrefix={`part-term-desc-${si}`} accountId={data.user?.id} returnTo={speciesContextHref} returnLabel={data.taxon.com_name} ui={{ expandedIds: [sectionId] }} /></p>
                 {:else}
                   <p>{block.text}</p>
                 {/if}
