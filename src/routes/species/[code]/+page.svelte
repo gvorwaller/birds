@@ -32,7 +32,7 @@
   import { browser } from "$app/environment";
   import { sectionBlocks } from "$lib/wiki-render";
   import { groupTags, dimensionLabel, tagLabel } from "$lib/species-tags";
-  import { allAboutBirdsUrl } from "$lib/species-links";
+  import { allAboutBirdsUrl, birdsOfTheWorldUrl } from "$lib/species-links";
   import { formatFeet, tideWord, TIDE_ATTRIBUTION_URL } from "$lib/tide-format";
   import type { TideResult } from "$lib/tide-format";
   import Skeleton from "$components/Skeleton.svelte";
@@ -415,12 +415,23 @@
       : null,
   );
 
+  const bowUrl = $derived(birdsOfTheWorldUrl(data.taxon, data.bowSubscriber));
   const links = $derived([
     {
       label: "eBird species page ↗",
       sub: "range maps, bar charts, photos",
       href: `https://ebird.org/species/${data.taxon.species_code}`,
     },
+    // Subscribers only (Settings → Birds of the World), species only.
+    ...(bowUrl
+      ? [
+          {
+            label: "Birds of the World ↗",
+            sub: "full species account (your subscription)",
+            href: bowUrl,
+          },
+        ]
+      : []),
     {
       label: "All About Birds ↗",
       sub: "ID tips, life history",

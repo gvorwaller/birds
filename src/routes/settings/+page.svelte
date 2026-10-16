@@ -177,7 +177,7 @@
 <div class="page">
   <header class="page-head">
     <h1>Settings</h1>
-    <p class="sub">{userTab ? "Account usage and user management" : "Appearance, life-list sharing, eBird credentials, home location, and syncs"}</p>
+    <p class="sub">{userTab ? "Account usage and user management" : "Appearance, life-list sharing, eBird credentials, Birds of the World, home location, and syncs"}</p>
   </header>
 
   {#if form && "message" in form && form.message}
@@ -392,6 +392,26 @@
         <button type="submit" disabled={busy === "csv"}>Import CSV</button>
       </form>
     </details>
+  </section>
+
+  <section class="card" id="birds-of-the-world">
+    <h2>Birds of the World</h2>
+    <p class="muted" id="bow-description">
+      If you subscribe to Cornell's
+      <a href="https://birdsoftheworld.org" target="_blank" rel="noopener">Birds of the World</a>,
+      species pages show a link to the bird's full account under Learn more.
+      Nothing else is stored: you sign in on Birds of the World with your Cornell
+      Lab account (the same one as eBird), and your browser remembers it.
+    </p>
+    <form method="POST" action="?/bow_subscriber" use:enhance={track("bow", { reset: false })}>
+      <input type="hidden" name="accountId" value={data.accountId} />
+      <label class="sharing-choice">
+        <input type="checkbox" name="bow_subscriber" checked={data.bowSubscriber}
+          aria-describedby="bow-description" />
+        I subscribe to Birds of the World
+      </label>
+      <button type="submit" disabled={busy === "bow"}>Save</button>
+    </form>
   </section>
 
   <section class="card">

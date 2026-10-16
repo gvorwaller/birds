@@ -16,3 +16,17 @@ export function allAboutBirdsUrl(comName: string): string {
 		.replace(/\s+/g, '_');
 	return `https://www.allaboutbirds.org/guide/${encodeURIComponent(slug)}`;
 }
+
+/**
+ * Birds of the World species account, keyed by the eBird species code (the
+ * same code BOW uses). Null unless the signed-in account subscribes, and for
+ * any non-species taxon: BOW 404s for forms, hybrids, slashes, spuhs, ISSFs,
+ * intergrades and domestics (verified live, td-9308e2).
+ */
+export function birdsOfTheWorldUrl(
+	taxon: { species_code: string; category: string },
+	subscriber: boolean
+): string | null {
+	if (!subscriber || taxon.category !== 'species') return null;
+	return `https://birdsoftheworld.org/bow/species/${encodeURIComponent(taxon.species_code)}/cur/introduction`;
+}

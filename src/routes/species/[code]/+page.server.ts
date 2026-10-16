@@ -97,7 +97,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     (c) => c.speciesCode,
   )?.speciesCode;
 
-  const [seen, photos, userRow, backSpecies, interest, alertRows] = await Promise.all([
+  const [seen, photos, userRow, backSpecies, interest, alertRows, bowRow] = await Promise.all([
     query<{
       first_seen: string | null;
       source: string;
@@ -146,6 +146,11 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
         LIMIT 30`,
       [locals.user!.id, code],
     ).catch(() => ({ rows: [] as { sent_at: Date | string; reports: unknown }[] })),
+    // Personal Birds of the World subscription (td-9308e2), not the owner's.
+    query<{ bow_subscriber: boolean }>(
+      "SELECT bow_subscriber FROM users WHERE id = $1",
+      [locals.user!.id],
+    ),
   ]);
   // Unknown code (stale link, retired taxon) keeps the generic label rather
   // than inventing a name.
@@ -337,6 +342,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
      * (see the header comment in $lib/species-context). */
     locationContext,
     isAdmin: locals.user!.role === "admin",
+    bowSubscriber: bowRow.rows[0]?.bow_subscriber === true,
     seen: seen.rows[0] ?? null,
     forecastTeaser,
     ribbon,

@@ -712,6 +712,16 @@
 						a free key from eBird and paste it here.
 					</li>
 					<li>
+						<strong>Birds of the World</strong> — if you subscribe to Cornell's
+						<a href="https://birdsoftheworld.org" target="_blank" rel="noopener">Birds of the World</a>,
+						tick <em>I subscribe to Birds of the World</em> and Save. Species pages
+						then show a Birds of the World ↗ link under Learn more, opening that
+						bird's full account. The app stores only the tick, never a password:
+						you sign in on Birds of the World with your Cornell Lab (eBird) account.
+						Groups such as hybrids, forms or "duck sp." have no Birds of the World
+						page, so they show no link.
+					</li>
+					<li>
 						<strong>Home location</strong> — set it once and the planner and Home
 						default to your home area when you don't specify a place.
 					</li>

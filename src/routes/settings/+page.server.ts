@@ -111,8 +111,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       home_google_place_id: string | null;
       near_me_radius_km: number | null;
       share_life_list: boolean;
+      bow_subscriber: boolean;
     }>(
-      `SELECT home_lat, home_lon, home_label, home_google_place_id, near_me_radius_km, share_life_list
+      `SELECT home_lat, home_lon, home_label, home_google_place_id, near_me_radius_km, share_life_list,
+              bow_subscriber
 			   FROM users WHERE id = $1`,
       [userId],
     ),
@@ -168,6 +170,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   return {
     accountId: userId,
     shareLifeList: user.rows[0]?.share_life_list ?? false,
+    bowSubscriber: user.rows[0]?.bow_subscriber ?? false,
     ebird: {
       api_key_set: row?.api_key_set ?? false,
       login_set: row?.login_set ?? false,
@@ -298,6 +301,30 @@ export const actions: Actions = {
         choice === "on"
           ? "Your life list is now shared with signed-in Birds users."
           : "Life-list sharing is off. Existing family access is unchanged.",
+    };
+  },
+  // Personal (td-9308e2): saved on the signed-in account, never its data
+  // owner. Read-only viewers can't reach Settings (hooks.server.ts).
+  bow_subscriber: async ({ locals, request }) => {
+    if (!locals.user) return fail(401, { error: "Sign in to change this setting." });
+    const form = await request.formData();
+    if (form.get("accountId") !== String(locals.user.id))
+      return fail(409, {
+        error: "Your account changed. Reload Settings before saving.",
+      });
+    const choice = form.get("bow_subscriber");
+    if (choice !== null && choice !== "on")
+      return fail(400, { error: "Choose whether you subscribe to Birds of the World." });
+    await query("UPDATE users SET bow_subscriber=$1 WHERE id=$2", [
+      choice === "on",
+      locals.user.id,
+    ]);
+    return {
+      ok: true as const,
+      message:
+        choice === "on"
+          ? "Species pages now link to Birds of the World."
+          : "Birds of the World links are off.",
     };
   },
   save_api_key: async ({ locals, request }) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allAboutBirdsUrl } from "./species-links";
+import { allAboutBirdsUrl, birdsOfTheWorldUrl } from "./species-links";
 
 describe("allAboutBirdsUrl (td-09fdc0 — Cornell slug normalization)", () => {
   it("strips apostrophes to match Cornell's canonical slugs (CODEX1 cases)", () => {
@@ -23,5 +23,20 @@ describe("allAboutBirdsUrl (td-09fdc0 — Cornell slug normalization)", () => {
     expect(allAboutBirdsUrl("Kirtland's Warbler")).toBe(
       "https://www.allaboutbirds.org/guide/Kirtlands_Warbler",
     );
+  });
+});
+
+describe("birdsOfTheWorldUrl (td-9308e2)", () => {
+  it("links a species account by its eBird code for a subscriber", () => {
+    expect(birdsOfTheWorldUrl({ species_code: "norcar", category: "species" }, true)).toBe(
+      "https://birdsoftheworld.org/bow/species/norcar/cur/introduction",
+    );
+  });
+  it("is absent without a subscription", () => {
+    expect(birdsOfTheWorldUrl({ species_code: "norcar", category: "species" }, false)).toBeNull();
+  });
+  it("is absent for every non-species category (Birds of the World 404s them)", () => {
+    for (const category of ["form", "hybrid", "intergrade", "issf", "slash", "spuh", "domestic"])
+      expect(birdsOfTheWorldUrl({ species_code: "x", category }, true)).toBeNull();
   });
 });
