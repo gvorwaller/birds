@@ -10,7 +10,7 @@
 | 1b | td-a47c0d | System health: Backup card (waits on Decision 2) | snapshot |
 | 2 | td-009031 | eBird traffic metric | daily rollup |
 | 3 | td-67b481 | Performance panel (slow requests over 750 ms) | time series |
-| 4 | td-618181 | Enrichment observability (narrowed; see below) | snapshot + one admin write |
+| ~~4~~ | ~~td-618181~~ | ~~Enrichment observability~~ | closed 2026-10-17: no prod data to show |
 | ~~5~~ | ~~td-be8674~~ | ~~Frequency anomalies table~~ | closed 2026-10-17: already shipped |
 
 **Revision 2026-10-17 (owner accepted CC1's recommendations):** td-be8674 is closed because the Hotspots & data page already lists every `frequency_anomalies` row ("Adjusted source values", `src/routes/forecast/data/`). Slice 1 ships as two deploys so the Backup card cannot hold up the rest. Slice 2 can reuse the worker's existing job context. Slices 2 and 3 are built back to back so their tab placement is decided once. td-618181's ticket text is rewritten to the narrowed scope, and its deferred items move to a separate ticket.
@@ -197,7 +197,10 @@ As specified in the ticket:
   - The panel is labelled plainly as "only requests slower than 0.75 s are recorded: this shows what is slow and whether it is getting worse, not how fast the site usually is".
 - **Worker jobs:** not in this slice. Job durations already live in `jobs`; slice 1's queue card can show the median and worst duration per type cheaply.
 
-## Slice 4: td-618181 Enrichment observability (narrowed)
+## Slice 4: td-618181 Enrichment observability (closed 2026-10-17)
+
+**Closed by the owner before building.** Measured on prod first: `species_match_overrides` had 0 rows ever, and `species_enrichment` had 0 `wiki_error` / 0 `ai_error` rows, so both remaining features would have shown empty cards. AI cost and `max_tokens` visibility were already live (`ai_usage`: 20 max_tokens, 20,520 end_turn). Reopen if failures or overrides ever appear. The original narrowed scope is kept below for that case.
+
 
 **Already shipped, so it drops out of scope:**
 - Anthropic token cost accounting: the `ai_usage` ledger and AI & Cost meter;
