@@ -9,6 +9,7 @@
  * Credentials are stored AES-GCM-encrypted (crypto.ts) and never logged.
  */
 import { query } from '$lib/db';
+import { classifyWebUrl, outcomeForStatus, recordEbirdTraffic } from '$server/ebird-traffic';
 import { claimFencedQuery, isStaleClaim, withClaimTx } from '$server/job-claim';
 import { resolveLiferLocations, type LiferLocResolution } from '$server/lifer-locations';
 import { decryptSecret } from '$server/crypto';
@@ -142,15 +143,63 @@ async function fetchWithJar(
 	timeout?: number
 ): Promise<Response> {
 	const t = timeout ?? EBIRD_FETCH_TIMEOUT_MS;
-	const res = await fetch(url, {
-		...init,
-		redirect: 'manual',
-		signal: AbortSignal.timeout(t),
-		headers: { ...(init?.headers ?? {}), Cookie: jar.headerFor(url), 'User-Agent': UA }
-	});
+	// eBird traffic metric (td-009031): every eBird web request and sign-in
+	// hop passes here. A redirect or an HTTP error is counted now; a 2xx page
+	// is counted once, when its body is read (readCountedText: success with
+	// size and total time, or a network error if the body breaks off) or
+	// knowingly left unread (discardCounted).
+	const endpoint = classifyWebUrl(url);
+	const started = performance.now();
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			...init,
+			redirect: 'manual',
+			signal: AbortSignal.timeout(t),
+			headers: { ...(init?.headers ?? {}), Cookie: jar.headerFor(url), 'User-Agent': UA }
+		});
+	} catch (err) { // stale-safe: counts the failed request, then rethrows it unchanged
+		recordEbirdTraffic(endpoint, 'network_error', performance.now() - started);
+		throw err;
+	}
+	if (res.status >= 200 && res.status < 300) unreadBodies.set(res, { endpoint, started });
+	else recordEbirdTraffic(endpoint, outcomeForStatus(res.status), performance.now() - started);
 	jar.absorb(res, url);
 	return res;
 }
+
+/** 2xx web responses whose count waits for their body (td-009031). */
+const unreadBodies = new WeakMap<Response, { endpoint: string; started: number }>();
+
+/** Read an eBird web page's body, counting the request once: its size and
+ * the time through the last byte, or a network error if the body breaks off. */
+async function readCountedText(res: Response): Promise<string> {
+	const pending = unreadBodies.get(res);
+	unreadBodies.delete(res);
+	let body: string;
+	try {
+		body = await res.text();
+	} catch (err) { // stale-safe: counts the failed read, then rethrows it unchanged
+		if (pending) recordEbirdTraffic(pending.endpoint, 'network_error', performance.now() - pending.started);
+		throw err;
+	}
+	if (pending) {
+		recordEbirdTraffic(pending.endpoint, 'ok', performance.now() - pending.started, Buffer.byteLength(body));
+	}
+	return body;
+}
+
+/** Count a 2xx web response the caller leaves unread (a sign-in landing page,
+ * a session that bounced to /home or the login page). */
+function discardCounted(res: Response): void {
+	const pending = unreadBodies.get(res);
+	if (!pending) return;
+	unreadBodies.delete(res);
+	recordEbirdTraffic(pending.endpoint, 'ok', performance.now() - pending.started);
+}
+
+/** Tests only (td-009031): the counted web request and body read. */
+export { fetchWithJar as __fetchWithJarForTests, readCountedText as __readCountedTextForTests };
 
 /** Follow redirects manually (fetch's auto-follow drops Set-Cookie state we need). */
 async function followRedirects(
@@ -205,7 +254,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 			formRes.status
 		);
 	}
-	const formHtml = await formRes.text();
+	const formHtml = await readCountedText(formRes);
 	const execution = extractInput(formHtml, 'execution');
 	if (!execution) {
 		throw new EbirdLoginError(
@@ -246,7 +295,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 	// means the form came back — almost always bad credentials.
 	if (loginRes.status >= 300 && loginRes.status < 400) {
 		try {
-			await followRedirects(loginRes, jar);
+			discardCounted(await followRedirects(loginRes, jar));
 		} catch (err) { // stale-safe: wraps the CAS transport error; no fenced call inside
 			throw new EbirdUpstreamError(
 				`Could not complete the eBird sign-in redirect: ${err instanceof Error ? err.message : err}`,
@@ -256,7 +305,7 @@ async function casLogin(username: string, password: string): Promise<CookieJar> 
 		return jar;
 	}
 	if (loginRes.status === 200 || loginRes.status === 401) {
-		const html = await loginRes.text();
+		const html = await readCountedText(loginRes);
 		if (/invalid|incorrect|name=["']password["']/i.test(html)) {
 			throw new EbirdLoginError('eBird rejected the username or password.');
 		}
@@ -403,14 +452,20 @@ export async function fetchAuthenticatedEbird(
 
 	const attempt = async (jar: CookieJar): Promise<string | null> => {
 		let res = await doFetch(jar);
-		if (new URL(res.url).host !== target.host) return null;
+		if (new URL(res.url).host !== target.host) {
+			discardCounted(res);
+			return null;
+		}
 		// CAS gateway bounce: the redirect chain refreshed the session but
 		// landed on a different page (typically /home). The JAR now holds a
 		// valid EBIRD_SESSIONID — retry the original URL once.
 		if (res.ok && new URL(res.url).pathname !== target.pathname) {
+			discardCounted(res);
 			res = await doFetch(jar);
-			if (new URL(res.url).host !== target.host) return null;
-			if (new URL(res.url).pathname !== target.pathname) return null;
+			if (new URL(res.url).host !== target.host || new URL(res.url).pathname !== target.pathname) {
+				discardCounted(res);
+				return null;
+			}
 		}
 		if (!res.ok) {
 			throw new EbirdUpstreamError(
@@ -418,7 +473,7 @@ export async function fetchAuthenticatedEbird(
 				res.status
 			);
 		}
-		return res.text();
+		return readCountedText(res);
 	};
 
 	let body = await attempt(await getSession(userId));
@@ -817,7 +872,7 @@ export async function syncLifeListFromEbird(
 			);
 		}
 		const contentType = csvRes.headers.get('content-type') ?? '';
-		const text = await csvRes.text();
+		const text = await readCountedText(csvRes);
 		// Classification split (GROK Phase-3 P2, same class as the CAS legs):
 		// a 5xx/429 export page after a SUCCESSFUL login is upstream trouble
 		// and must retry — only a login-page/flow-change response blames auth.

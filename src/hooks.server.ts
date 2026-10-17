@@ -8,6 +8,7 @@ import { isSpeciesViewsRequest } from '$lib/species-views';
 import { scopeOwnerId } from '$server/access';
 import { building, dev } from '$app/environment';
 import { startMemorySampler } from '$server/process-health';
+import { flushEbirdTrafficOnShutdown, startEbirdTrafficFlusher } from '$server/ebird-traffic';
 import { isActivityRequest } from '$lib/usage-features';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
@@ -23,6 +24,12 @@ import {
 // Server health (td-7739c2): sample this process's memory for the admin page.
 // Not during a build, and not under Vitest (tests import hooks directly).
 if (!building && !process.env.VITEST) startMemorySampler('web');
+// eBird traffic metric (td-009031): flush this process's counts every minute
+// and once more when adapter-node shuts down cleanly.
+if (!building && !process.env.VITEST) {
+	startEbirdTrafficFlusher();
+	process.once('sveltekit:shutdown', () => void flushEbirdTrafficOnShutdown());
+}
 
 export const SESSION_COOKIE_OPTS = {
 	path: '/',

@@ -14,6 +14,7 @@
   import TagsPanel from "$components/admin/TagsPanel.svelte";
   import UsagePanel from "$components/admin/UsagePanel.svelte";
   import SystemHealthPanel from "$components/admin/SystemHealthPanel.svelte";
+  import EbirdTrafficPanel from "$components/admin/EbirdTrafficPanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -35,7 +36,7 @@
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
   type Surface = "enrichment" | "familyEnrichment" | "guidance" | "tagDraft";
-  const ADMIN_TABS = ["status", "ai", "tags", "users", "health"] as const;
+  const ADMIN_TABS = ["status", "ai", "tags", "users", "health", "metrics"] as const;
   type AdminTab = (typeof ADMIN_TABS)[number];
   // ?tab=tags lets a tag page's back link land on the Tags tab.
   const requestedTab = page.url.searchParams.get("tab");
@@ -376,6 +377,19 @@
       onkeydown={onAdminTabKeydown}
     >
       Server health
+    </button>
+    <button
+      type="button"
+      role="tab"
+      id="admin-tab-metrics"
+      aria-controls="admin-panel-metrics"
+      aria-selected={activeTab === "metrics"}
+      tabindex={activeTab === "metrics" ? 0 : -1}
+      class:active={activeTab === "metrics"}
+      onclick={() => (activeTab = "metrics")}
+      onkeydown={onAdminTabKeydown}
+    >
+      Metrics
     </button>
   </div>
 
@@ -1036,6 +1050,11 @@
     {:else}
       <p class="error" role="alert">Account usage is unavailable right now.</p>
     {/if}
+  </div>
+  {:else if activeTab === "metrics"}
+  <div id="admin-panel-metrics" role="tabpanel" aria-labelledby="admin-tab-metrics">
+    <!-- td-009031: trends over days, read when the tab opens. -->
+    <EbirdTrafficPanel />
   </div>
   {:else}
   <div id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health">

@@ -17,6 +17,7 @@ process.env.BIRDS_DB_APP_NAME = 'birds-worker';
 
 import pg from 'pg';
 import { recordMemorySample, startMemorySampler } from '$server/process-health';
+import { flushEbirdTrafficOnShutdown, setTrafficProcess, startEbirdTrafficFlusher } from '$server/ebird-traffic';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
 import { runJob, ensureNeedAlertScan, ensureEnrichmentScan, ensureHotspotCoordinateRepair } from '$server/job-handlers';
 import { ensureTagConsistency } from '$server/tag-jobs';
@@ -66,6 +67,10 @@ async function checkHotspotCoordinates(when: 'startup' | 'loop'): Promise<void> 
 }
 
 async function main(): Promise<void> {
+	// eBird traffic metric (td-009031): before any startup task can call eBird,
+	// so requests outside a job count as the worker's, not the web app's.
+	setTrafficProcess('worker');
+	startEbirdTrafficFlusher();
 	assertEnvironment();
 
 	// Dedicated connection holding the advisory lock for the process lifetime.
@@ -260,6 +265,7 @@ async function main(): Promise<void> {
 			err instanceof Error ? err.message : err
 		);
 	});
+	await flushEbirdTrafficOnShutdown();
 	await lockClient.end();
 	console.log('[birds-worker] drained — exiting');
 	process.exit(0);

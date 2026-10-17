@@ -26,12 +26,23 @@ import { query, withTransaction } from '$lib/db';
 export interface JobClaim {
 	jobId: number;
 	claimSeq: string;
+	/** The job's type, for attribution only (eBird traffic origin, td-009031);
+	 * never part of the fencing identity. */
+	jobType?: string;
 }
 const claimContext = new AsyncLocalStorage<JobClaim>();
 
 /** Run `fn` as the holder of this claim (the worker's runJob; tests). */
-export function runWithClaim<T>(job: { id: number; claim_seq?: string | number | null }, fn: () => Promise<T>): Promise<T> {
-	return claimContext.run({ jobId: job.id, claimSeq: String(job.claim_seq ?? '0') }, fn);
+export function runWithClaim<T>(
+	job: { id: number; claim_seq?: string | number | null; type?: string },
+	fn: () => Promise<T>
+): Promise<T> {
+	return claimContext.run({ jobId: job.id, claimSeq: String(job.claim_seq ?? '0'), jobType: job.type }, fn);
+}
+
+/** The type of the job this execution runs for, if any (td-009031). */
+export function currentJobType(): string | null {
+	return claimContext.getStore()?.jobType ?? null;
 }
 
 /** The claim this execution holds for `jobId`, if any (queue APIs targeting a job id). */

@@ -53,11 +53,7 @@ beforeEach(() => {
       fetchCalls.push(String(url));
       // Long enough that the second caller arrives while this is in flight.
       await new Promise((r) => setTimeout(r, 20));
-      return {
-        ok: true,
-        status: 200,
-        json: async () => [],
-      } as unknown as Response;
+      return Response.json([]);
     }),
   );
 });
@@ -72,7 +68,7 @@ describe("request deadline", () => {
       "fetch",
       vi.fn(async (_url: string, init: RequestInit) => {
         seen = init.signal as AbortSignal;
-        return { ok: true, status: 200, json: async () => [] } as unknown as Response;
+        return Response.json([]);
       }),
     );
 
@@ -143,7 +139,7 @@ describe("recentSpeciesInRegion (ladder rung)", () => {
       "fetch",
       vi.fn(async (url: string) => {
         urls.push(String(url));
-        return { ok: true, status: 200, json: async () => [] } as unknown as Response;
+        return Response.json([]);
       }),
     );
   });
@@ -191,7 +187,7 @@ describe("cachedFetch coalescing", () => {
     db.query
       .mockResolvedValueOnce({ rows: [{ payload: [{ ...validObs, speciesCode: undefined }], fetched_at: new Date().toISOString() }] })
       .mockResolvedValueOnce({ rows: [] });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => [validObs] }) as unknown as Response));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([validObs])));
     const result = await recentNearbyObs("key", 30.11, -81.61, 40, 7);
     expect(result).toMatchObject({ stale: false, data: [validObs] });
     expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ebird_cache"))).toBe(true);
@@ -200,9 +196,7 @@ describe("cachedFetch coalescing", () => {
   it("keeps a valid stale cache row when the refreshed eBird schema drifts", async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ payload: [validObs], fetched_at: "2020-01-01T00:00:00.000Z" }] });
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true, status: 200, json: async () => [{ ...validObs, locId: undefined, locationId: "L1" }],
-    }) as unknown as Response));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([{ ...validObs, locId: undefined, locationId: "L1" }])));
     const result = await recentNearbyObs("key", 30.12, -81.62, 40, 7);
     expect(result).toMatchObject({ stale: true, data: [validObs] });
   });
@@ -210,7 +204,7 @@ describe("cachedFetch coalescing", () => {
   it("retains the refresh status when serving a stale fallback", async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ payload: [], fetched_at: "2026-09-18T00:00:00.000Z" }] });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) }) as unknown as Response));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 429 })));
     const result = await hotspotsNear("key", 30.33, -81.66, 40);
     expect(result).toMatchObject({ stale: true, refreshErrorStatus: 429, data: [] });
   });

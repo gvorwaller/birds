@@ -1397,6 +1397,20 @@
 						Samples are taken every 5 minutes and kept for 7 days. Refresh the page
 						for current memory numbers.
 					</li>
+					<li>
+						<strong>Metrics</strong> (its own Admin tab) shows how the app behaves over
+						days. <strong>eBird traffic</strong> counts every request the app makes to
+						eBird: the website API, bar-chart loads, life-list downloads, checklist
+						pages and eBird sign-in. For the last 7 and 30 days it shows how many
+						requests went to each kind of endpoint, how often the app answered from
+						its own saved eBird data instead, how long a request typically took, how
+						much data came back, and how many were rate limited or failed. It also
+						shows who asked (the web app, for pages people open, or a background job
+						such as a frequency load) and a bar for each of the last 30 days. Counts
+						are saved every minute, so they are approximate: a crash can lose the last
+						minute. Only the kind of request is stored, never a place, species,
+						checklist or account. Daily totals are kept for 400 days.
+					</li>
 				</ul>
 			</div>
 		{/if}

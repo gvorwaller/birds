@@ -8,6 +8,7 @@ import { replaceTaxonomy } from '$server/taxonomy-sync';
  */
 import { query, withTransaction } from '$lib/db';
 import { timed } from '$server/request-timing';
+import { classifyApiPath, classifyCacheKey, outcomeForStatus, recordEbirdTraffic } from '$server/ebird-traffic';
 import { noteEbirdResponse, PaceAborted, PaceDeferred } from '$server/ebird-rate';
 import { decryptSecret } from '$server/crypto';
 import { rememberOfficialHotspots } from '$server/hotspot-coordinates';
@@ -129,6 +130,8 @@ export async function ebirdFetchOrNull<T>(
 	const deadlineMs = opts.deadlineMs ?? EBIRD_DEFAULT_TIMEOUT_MS;
 	const deadline = AbortSignal.timeout(deadlineMs);
 	const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+	const endpoint = classifyApiPath(path);
+	const started = performance.now();
 	let res: Response;
 	try {
 		res = await timed('ebird', () =>
@@ -138,6 +141,7 @@ export async function ebirdFetchOrNull<T>(
 			})
 		);
 	} catch (err) { // stale-safe: wraps the eBird transport error; no fenced call inside
+		recordEbirdTraffic(endpoint, 'network_error', performance.now() - started);
 		if (opts.signal?.aborted) {
 			throw new EbirdError('eBird API request aborted (caller cancelled).');
 		}
@@ -150,6 +154,7 @@ export async function ebirdFetchOrNull<T>(
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
 	const noted = observeResponse(res, path, apiKey);
+	if (!res.ok) recordEbirdTraffic(endpoint, outcomeForStatus(res.status), performance.now() - started);
 	if (nullOn.includes(res.status)) return null;
 	if (res.status === 429) {
 		throw new EbirdError('eBird API rate limit hit.', 429, noted.retryAfterMs ?? undefined);
@@ -161,7 +166,7 @@ export async function ebirdFetchOrNull<T>(
 	// hotspot/info. Bare res.json() throws SyntaxError — not an EbirdError —
 	// which bypassed the resolver's catch and aborted every prod pass
 	// (td-2fbfc1 root cause). Parse safely: empty or non-JSON 200 → null.
-	const body = await res.text();
+	const body = await readBody(res, endpoint, started);
 	if (!body.trim()) return null;
 	try {
 		return JSON.parse(body) as T;
@@ -207,6 +212,8 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 	const deadlineMs = opts.deadlineMs ?? EBIRD_DEFAULT_TIMEOUT_MS;
 	const deadline = AbortSignal.timeout(deadlineMs);
 	const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+	const endpoint = classifyApiPath(path);
+	const started = performance.now();
 	let res: Response;
 	try {
 		// Only live HTTP is timed — cachedFetch hits never reach this function,
@@ -218,6 +225,7 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 			})
 		);
 	} catch (err) { // stale-safe: wraps the eBird transport error; no fenced call inside
+		recordEbirdTraffic(endpoint, 'network_error', performance.now() - started);
 		// Order matters. Caller cancellation is not a provider fault and must
 		// not read as one; a blown deadline is distinct from "unreachable",
 		// which would misattribute a stalled upstream to the network.
@@ -233,6 +241,7 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 		throw new EbirdError(`eBird API unreachable: ${err instanceof Error ? err.message : err}`);
 	}
 	const noted = observeResponse(res, path, apiKey);
+	if (!res.ok) recordEbirdTraffic(endpoint, outcomeForStatus(res.status), performance.now() - started);
 	if (res.status === 403 || res.status === 401) {
 		throw new EbirdError('eBird API key is missing or invalid — check Settings.', res.status);
 	}
@@ -246,7 +255,21 @@ async function ebirdFetch<T>(path: string, apiKey: string, opts: EbirdFetchOpts 
 	if (!res.ok) {
 		throw new EbirdError(`eBird API error ${res.status} for ${path}`, res.status);
 	}
-	return (await res.json()) as T;
+	return JSON.parse(await readBody(res, endpoint, started)) as T;
+}
+
+/** Read a successful response's body and count the request with its size
+ * and time (td-009031). A body that breaks off mid-read is a network error. */
+async function readBody(res: Response, endpoint: string, started: number): Promise<string> {
+	let body: string;
+	try {
+		body = await res.text();
+	} catch (err) { // stale-safe: counts the failed read, then rethrows it unchanged
+		recordEbirdTraffic(endpoint, 'network_error', performance.now() - started);
+		throw err;
+	}
+	recordEbirdTraffic(endpoint, 'ok', performance.now() - started, Buffer.byteLength(body));
+	return body;
 }
 
 /**
@@ -310,6 +333,7 @@ async function cachedFetchUncoalesced<T>(
 	}
 	const fresh = row && Date.now() - new Date(row.fetched_at).getTime() < ttlMinutes * 60_000;
 	if (row && fresh && cachedData !== undefined) {
+		recordEbirdTraffic(classifyCacheKey(cacheKey), 'cache_hit');
 		return {
 			data: cachedData,
 			fetchedAt: new Date(row.fetched_at),
@@ -343,6 +367,7 @@ async function cachedFetchUncoalesced<T>(
 		if (err instanceof PaceAborted) throw err;
 		if (!(err instanceof PaceDeferred)) reportSchemaDrift(err, `fetch ${cacheKey}`);
 		if (row && cachedData !== undefined) {
+			recordEbirdTraffic(classifyCacheKey(cacheKey), 'stale_fallback');
 			return {
 				data: cachedData,
 				fetchedAt: new Date(row.fetched_at),

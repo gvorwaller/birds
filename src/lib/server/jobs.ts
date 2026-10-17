@@ -754,6 +754,8 @@ export interface PruneScope {
 	jobIds?: readonly number[];
 	/** td-7739c2: limit the memory-sample sweep to these rows. */
 	memorySampleIds?: readonly number[];
+	/** td-009031: limit the eBird traffic sweep to this origin (a test's own). */
+	trafficOrigin?: string;
 	alertUserId?: number;
 	cacheKeyLike?: string;
 }
@@ -801,6 +803,15 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 			  WHERE sampled_at < NOW() - interval '7 days' AND id = ANY($1::bigint[])`,
 			[[...scope.memorySampleIds]]
 		);
+	}
+	// eBird traffic daily totals (td-009031): 400 days, by the UTC date the
+	// rows are filed under (not the session time zone's CURRENT_DATE).
+	if (!scope) {
+		await query(`DELETE FROM ebird_traffic_daily WHERE day < (NOW() AT TIME ZONE 'UTC')::date - 400`);
+	} else if (scope.trafficOrigin) {
+		await query(`DELETE FROM ebird_traffic_daily WHERE day < (NOW() AT TIME ZONE 'UTC')::date - 400 AND origin = $1`, [
+			scope.trafficOrigin
+		]);
 	}
 	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);
 }
