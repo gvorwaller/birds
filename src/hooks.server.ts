@@ -9,6 +9,7 @@ import { scopeOwnerId } from '$server/access';
 import { building, dev } from '$app/environment';
 import { startMemorySampler } from '$server/process-health';
 import { flushEbirdTrafficOnShutdown, startEbirdTrafficFlusher } from '$server/ebird-traffic';
+import { recordSlowRequest } from '$server/page-timing';
 import { isActivityRequest } from '$lib/usage-features';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
@@ -141,8 +142,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// completion and covers the whole response — two numbers, kept apart.
 	const shellMs = Date.now() - bag.startedAt;
 	response.headers.set('server-timing', serverTimingHeader(bag, shellMs));
-	return withBodyCompletionLog(response, event.url.pathname, bag, shellMs);
+	return withBodyCompletionLog(response, event.url.pathname, bag, shellMs, {
+		routeId: event.route?.id ?? null,
+		method: event.request.method
+	});
 };
+
+/** Performance panel (td-67b481): persist slow requests, not in builds/tests. */
+const RECORD_SLOW_REQUESTS = !building && !process.env.VITEST;
 
 /**
  * Count '<' bytes — every tag, opening and closing, so roughly 2x the element
@@ -167,7 +174,8 @@ function withBodyCompletionLog(
 	response: Response,
 	pathname: string,
 	bag: TimingBag,
-	shellMs: number
+	shellMs: number,
+	request: { routeId: string | null; method: string }
 ): Response {
 	// Document weight, the third cost hiding inside "the page is slow": server
 	// time (shell=), transfer+parse (bytes=), and hydration — which scales with
@@ -183,13 +191,31 @@ function withBodyCompletionLog(
 		if (fired) return;
 		fired = true;
 		const totalMs = Date.now() - bag.startedAt;
+		const memory = process.memoryUsage();
 		if (dev || totalMs > PERF_LOG_SLOW_MS) {
 			console.log(
 				perfLogLine(pathname, response.status, shellMs, totalMs, bag, {
 					bytes,
 					tags: isHtml ? tags : null
-				}, process.memoryUsage())
+				}, memory)
 			);
+		}
+		// The same slow requests the prod log keeps, stored for Admin → Metrics.
+		// Fire-and-forget: the response has already been sent.
+		if (RECORD_SLOW_REQUESTS && totalMs > PERF_LOG_SLOW_MS) {
+			void recordSlowRequest({
+				routeId: request.routeId,
+				method: request.method,
+				status: response.status,
+				shellMs,
+				totalMs,
+				bytes,
+				tags: isHtml ? tags : null,
+				bag,
+				rssBytes: memory.rss,
+				heapBytes: memory.heapUsed,
+				version: __GIT_SHA__
+			});
 		}
 	};
 	const body = response.body;

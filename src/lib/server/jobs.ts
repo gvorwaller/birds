@@ -756,6 +756,8 @@ export interface PruneScope {
 	memorySampleIds?: readonly number[];
 	/** td-009031: limit the eBird traffic sweep to this origin (a test's own). */
 	trafficOrigin?: string;
+	/** td-67b481: limit the slow-request sweep to these rows. */
+	pageTimingIds?: readonly number[];
 	alertUserId?: number;
 	cacheKeyLike?: string;
 }
@@ -811,6 +813,14 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 	} else if (scope.trafficOrigin) {
 		await query(`DELETE FROM ebird_traffic_daily WHERE day < (NOW() AT TIME ZONE 'UTC')::date - 400 AND origin = $1`, [
 			scope.trafficOrigin
+		]);
+	}
+	// Slow requests for the Performance panel (td-67b481): 30 days.
+	if (!scope) {
+		await query(`DELETE FROM page_timing WHERE at < NOW() - interval '30 days'`);
+	} else if (scope.pageTimingIds) {
+		await query(`DELETE FROM page_timing WHERE at < NOW() - interval '30 days' AND id = ANY($1::bigint[])`, [
+			[...scope.pageTimingIds]
 		]);
 	}
 	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);

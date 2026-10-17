@@ -1399,7 +1399,16 @@
 					</li>
 					<li>
 						<strong>Metrics</strong> (its own Admin tab) shows how the app behaves over
-						days. <strong>eBird traffic</strong> counts every request the app makes to
+						days. <strong>Slow pages</strong> lists every request that took longer than
+						0.75 seconds, kept 30 days. For each page (by its kind, such as
+						/species/[code], never a particular bird or place) it shows how many were
+						slow this week and the week before, the typical and worst time, when the
+						first part of the page was ready, and whether it got slower. Pick a deploy
+						to see only requests served by that version, to tell whether a release made
+						a page slower. The latest slow requests show where their time went
+						(database, eBird, Google or AI). Fast requests are never recorded, so this
+						shows what is slow and whether it is getting worse, not how fast the site
+						usually is. <strong>eBird traffic</strong> counts every request the app makes to
 						eBird: the website API, bar-chart loads, life-list downloads, checklist
 						pages and eBird sign-in. For the last 7 and 30 days it shows how many
 						requests went to each kind of endpoint, how often the app answered from
