@@ -963,8 +963,12 @@ export interface WorkerHealth {
 
 export const WORKER_ALIVE_WINDOW_MS = 60_000;
 
-export async function workerHealth(): Promise<WorkerHealth> {
-	const r = await query<{
+export async function workerHealth(timeoutMs?: number): Promise<WorkerHealth> {
+	// Server health's Worker card passes a deadline (td-a47c0d); /api/health
+	// and the Status tab keep the untimed read.
+	const read = <T extends pg.QueryResultRow>(sql: string) =>
+		timeoutMs == null ? query<T>(sql) : queryTimed<T>(sql, undefined, timeoutMs);
+	const r = await read<{
 		pid: number | null;
 		version: string | null;
 		state: WorkerState;

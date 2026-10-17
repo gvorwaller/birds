@@ -17,7 +17,7 @@
  * search_tsv.
  */
 import { createHash } from 'node:crypto';
-import { query } from '$lib/db';
+import { query, queryTimed } from '$lib/db';
 import { claimFencedQuery, isStaleClaim, withClaimTx } from '$server/job-claim';
 import type pg from 'pg';
 
@@ -569,8 +569,12 @@ export interface EnrichmentCoverage {
 /** Current coverage for the same in-scope universe used by the enrichment
  * scanner. This is deliberately a read-only aggregate for the admin preflight;
  * it does not create enrichment rows or contact any provider. */
-export async function enrichmentCoverage(): Promise<EnrichmentCoverage> {
-	const r = await query<{
+export async function enrichmentCoverage(timeoutMs?: number): Promise<EnrichmentCoverage> {
+	// Server health's Coverage card passes a deadline (td-a47c0d); the admin
+	// preflight keeps the untimed read.
+	const read = <T extends pg.QueryResultRow>(sql: string) =>
+		timeoutMs == null ? query<T>(sql) : queryTimed<T>(sql, undefined, timeoutMs);
+	const r = await read<{
 		eligible: number;
 		wiki_attempted: number;
 		wiki_complete: number;

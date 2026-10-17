@@ -13,6 +13,7 @@
   import CollapsibleCard from "$components/CollapsibleCard.svelte";
   import TagsPanel from "$components/admin/TagsPanel.svelte";
   import UsagePanel from "$components/admin/UsagePanel.svelte";
+  import SystemHealthPanel from "$components/admin/SystemHealthPanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -1038,10 +1039,12 @@
   </div>
   {:else}
   <div id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health">
+  <!-- td-a47c0d: live system cards, refreshed every 30 s while this tab is open. -->
+  <SystemHealthPanel />
   <section class="card health" aria-labelledby="health-heading">
-    <h2 id="health-heading">Server health</h2>
+    <h2 id="health-heading">Memory</h2>
     {#if !data.health}
-      <p class="error" role="alert">Server health data is unavailable right now.</p>
+      <p class="error" role="alert">Memory data is unavailable right now.</p>
     {:else}
       {@const h = data.health}
       {@const previousWebRun = h.runs.find((r) => r.process === "web" && !isCurrentRun(r))}

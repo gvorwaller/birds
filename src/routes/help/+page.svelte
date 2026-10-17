@@ -1345,13 +1345,51 @@
 						admin explicitly resumes it.
 					</li>
 					<li>
-						<strong>Server health</strong> (its own Admin tab) shows the web app's
+						<strong>Server health</strong> (its own Admin tab) opens with cards that
+						refresh every 30 seconds while the tab is open. Each card reads on its own,
+						so if one cannot be read it says why and the others still show.
+						<ul>
+							<li>
+								<strong>Worker</strong>: whether the background worker is running,
+								paused or not responding, when it last checked in, and what it is doing.
+							</li>
+							<li>
+								<strong>Job queue</strong>: exact counts for every kind of background
+								job: running, waiting, and failed in the last day and week, with the
+								last success and the typical and longest run time over the week.
+								Scheduled checks (alerts, species information, family descriptions,
+								tag checks) show when they next run. While parked until that time they
+								are not counted as waiting work; once due, overdue or retrying after a
+								failure, they are. Finished jobs are kept 90 days.
+							</li>
+							<li>
+								<strong>Database</strong>: free space on the server's disk, the
+								database's size, its main memory settings, and how often reads were
+								answered from Postgres's memory. Those percentages are totals since
+								the statistics began; a miss may still come from the server's file
+								cache rather than the disk.
+							</li>
+							<li>
+								<strong>Biggest tables</strong>: each table's size, its indexes, and an
+								estimated row count (Postgres's own estimate, not an exact count).
+							</li>
+							<li>
+								<strong>Loaded data</strong>: how many countries, states and provinces,
+								counties and hotspots have bar-chart data, how many species were
+								recorded at those places, and how far species information (Wikipedia,
+								look-alikes, AI notes, photos and sounds) has got.
+							</li>
+						</ul>
+					</li>
+					<li>
+						Below the cards, <strong>Memory</strong> shows the web app's
 						memory right now, the worker's latest reading, a 7-day memory chart for
 						each with its restart limit, and every run in that week. A new run means
 						the process started again, after a deploy or a restart. A clean worker
 						shutdown is labeled; other end causes stay unknown because the app cannot
 						prove whether a deploy, crash, or memory restart caused them.
-						Samples are taken every 5 minutes and kept for 7 days.
+						Samples are taken every 5 minutes and kept for 7 days. Refresh the page
+						for current memory numbers.
 					</li>
 				</ul>
 			</div>

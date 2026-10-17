@@ -6,11 +6,14 @@
 
 | # | td | Slice | Kind |
 |---|----|-------|------|
-| 1 | td-a47c0d | System health: worker, queue, Postgres, coverage, backup | snapshot |
+| 1a | td-a47c0d | System health: worker, queue, Postgres, big tables, coverage | snapshot |
+| 1b | td-a47c0d | System health: Backup card (waits on Decision 2) | snapshot |
 | 2 | td-009031 | eBird traffic metric | daily rollup |
 | 3 | td-67b481 | Performance panel (slow requests over 750 ms) | time series |
 | 4 | td-618181 | Enrichment observability (narrowed; see below) | snapshot + one admin write |
-| 5 | td-be8674 | Frequency anomalies table | audit list |
+| ~~5~~ | ~~td-be8674~~ | ~~Frequency anomalies table~~ | closed 2026-10-17: already shipped |
+
+**Revision 2026-10-17 (owner accepted CC1's recommendations):** td-be8674 is closed because the Hotspots & data page already lists every `frequency_anomalies` row ("Adjusted source values", `src/routes/forecast/data/`). Slice 1 ships as two deploys so the Backup card cannot hold up the rest. Slice 2 can reuse the worker's existing job context. Slices 2 and 3 are built back to back so their tab placement is decided once. td-618181's ticket text is rewritten to the narrowed scope, and its deferred items move to a separate ticket.
 
 This plan supersedes the ordering in Phase 2 of `docs/2026-10-09-infrastructure-tightening-plan.md`, keeps its slice boundaries, and corrects two scope assumptions. Those corrections came from checking the code on 2026-10-13.
 
@@ -126,6 +129,8 @@ Extend the Server health tab with these cards.
    - Recommended: on success, the script records the time on prod with one small write. Either a row in a one-row `ops_marker` table through `psql`, or a file the app can read. The card then reads it.
    - The script change is ops, not app code; it needs the owner's go because it adds a write to prod from the Mac.
 
+**Delivery:** cards 1–5 ship first as slice 1a. Card 6 (Backup) ships as slice 1b after the owner approves the script change in Decision 2; until then the tab carries no Backup card rather than an "unknown" one.
+
 **Reuse:** extend `adminLiveStatus()` / `/api/admin/status` for the worker and queue cards so the Status tab and this tab share one source. Cards refresh every 30 s while the tab is open (madonnahist's cadence), paused when hidden.
 
 **Tests:**
@@ -150,6 +155,7 @@ Extend the Server health tab with these cards.
 - **Dimensions:** day × endpoint class × origin × outcome.
   - **Endpoint class:** a fixed allow-list such as `data/obs/recent`, `data/obs/notable`, `ref/hotspot/region`, `ref/hotspot/geo`, `ref/hotspot/info`, `ref/region`, `ref/taxonomy`, `barchartData`, `login`, `lifelist`, `checklist`; unknown paths become `other`.
   - **Origin:** `web` or the worker job type, read from an AsyncLocalStorage context that the job runner sets. This needs care: `request-timing.ts` is a no-op in the worker.
+  - The worker already has that context: `runWithClaim()` in `src/lib/server/job-claim.ts` runs every handler inside `claimContext` (job id + claim seq). Adding the job type to `JobClaim` gives the origin without a second AsyncLocalStorage. Verified 2026-10-17.
   - **Outcome:** `network_ok`, `http_error`, `rate_limited` (429), `network_error`/timeout, `cache_hit`, `stale_fallback`.
 - **Measures:** calls, total ms, bytes.
 
@@ -162,7 +168,7 @@ Extend the Server health tab with these cards.
 - The class comes from the path template only.
 - Never store query strings, keys, usernames, region codes or IDs.
 
-**UI (Server health tab, or a sixth tab):**
+**UI (Server health tab, or a sixth tab; decided here for slices 2 and 3 together):**
 - top endpoint classes by calls, 7 / 30 days;
 - cache-hit rate per class;
 - web vs worker split, and which job types drive worker traffic;
@@ -208,33 +214,30 @@ Confirm both on prod at the start of the slice, then record them in the ticket.
   - This is the epic's one write action: form actions with CSRF, an admin check, delete confirmation by modal (no toasts), and an audit line in the job/event log.
   - It needs its own CODEX1 security pass.
 
+At the start of the slice, rewrite td-618181's description to this narrowed scope and file the deferred items below as their own ticket.
+
 **Deferred (unchanged):** Wikidata QID link, AI dropped-tag vocabulary report, Wikipedia Vocalization / lead image, Wikidata extras. These are data-transparency items for later.
 
-## Slice 5: td-be8674 Frequency anomalies
+## Slice 5: td-be8674 Frequency anomalies (closed 2026-10-17)
 
-As specified in the ticket:
-
-- an admin-only list of `frequency_anomalies` (migration 0030), with location, species, week, original vs stored frequency, sample size and detected_at;
-- newest first, deterministic order;
-- an empty state;
-- paged rather than silently capped.
-
-It is more data audit than background operations. It is last because the owner said the data-audit tickets can wait. It can move out of the epic if those get their own epic.
+Already shipped before this epic, in commit 5a21637: the Hotspots & data page's "Adjusted source values" section lists every `frequency_anomalies` row, with location, species, week, source vs stored frequency, sample size and detection date. The rows are newest first in a deterministic order, with no cap. It is open to every signed-in user rather than admin-only, which fits the app's educational purpose. The owner closed the ticket.
 
 ## Order and dependencies
 
 1. Slice 1 first: it is the frame, and slices 2 and 3 link into it.
 2. Then slice 2, the metric the owner asked for. It can start in parallel with slice 1, but its UI lands on slice 1's tab.
-3. Slices 3, 4 and 5 are independent of each other.
+3. Slice 3 right after slice 2: both are time series, so they share one placement decision and the flush/prune pattern slice 2 builds.
+4. Slice 4 last: independent of the others, and it carries the epic's only write action and its own security review.
+5. Slice 1b (Backup card) slots in whenever Decision 2 is answered.
 
 Each slice is its own commit series, review, deploy and td review, so any one can be rolled back alone.
 
-## Owner decisions needed
+## Owner decisions
 
-1. **One Admin tab vs a new page** for system health. Recommended: grow Server health. Ask at the start of slice 1.
-2. **Backup marker on prod** written by the Mac backup script. Ask at the start of slice 1; the Backup card waits for it.
-3. **Retention:**
-   - eBird traffic: 400 days proposed;
+1. **One Admin tab vs a new page** for system health: **grow Server health** (accepted 2026-10-17).
+2. **Backup marker on prod** written by the Mac backup script: recommended; the owner's go on the prod write is confirmed at slice 1b. The Backup card waits for it.
+3. **Retention** (accepted 2026-10-17):
+   - eBird traffic: 400 days;
    - page_timing: 30 days, per the ticket.
 
 ## Verification (epic done)

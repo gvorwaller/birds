@@ -1,5 +1,5 @@
 import { familyEnrichmentStatus } from "./family-enrichment";
-import { listJobs, workerHealth } from "$server/jobs";
+import { listJobs, workerHealth, type WorkerHealth } from "$server/jobs";
 import {
   displayName,
   durationMs,
@@ -87,16 +87,22 @@ export async function adminLiveStatus(): Promise<AdminLiveStatus> {
   return {
     families,
     now: now.toISOString(),
-    worker: {
-      alive: worker.alive,
-      state: worker.state,
-      pid: worker.pid,
-      version: worker.version,
-      startedAt: worker.startedAt?.toISOString() ?? null,
-      heartbeatAt: worker.heartbeatAt?.toISOString() ?? null,
-      currentJobId: worker.currentJobId,
-      pauseRequested: worker.pauseRequested,
-    },
+    worker: adminWorker(worker),
     jobs: jobs.map((job) => decorateAdminJob(job, now)),
+  };
+}
+
+/** The worker heartbeat as Admin shows it. The Status tab and the Server
+ * health tab's Worker card (td-a47c0d) share this one reading. */
+export function adminWorker(worker: WorkerHealth): AdminWorker {
+  return {
+    alive: worker.alive,
+    state: worker.state,
+    pid: worker.pid,
+    version: worker.version,
+    startedAt: worker.startedAt?.toISOString() ?? null,
+    heartbeatAt: worker.heartbeatAt?.toISOString() ?? null,
+    currentJobId: worker.currentJobId,
+    pauseRequested: worker.pauseRequested,
   };
 }

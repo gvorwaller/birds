@@ -231,7 +231,7 @@ describe("admin Server health tab", () => {
       'id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health"',
     );
     expect(page).toContain("onkeydown={onAdminTabKeydown}");
-    expect(page).toContain("Server health data is unavailable right now.");
+    expect(page).toContain("Memory data is unavailable right now.");
     expect(page).toContain("Previous web run");
     expect(page).toContain("{runEnd(r)}");
     expect(page).toMatch(/<line class="limit"/);
