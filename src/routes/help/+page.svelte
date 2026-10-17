@@ -1370,6 +1370,12 @@
 								cache rather than the disk.
 							</li>
 							<li>
+								<strong>Backup</strong>: when the nightly backup last copied the database
+								from the server, and how big the copy was. The backup runs on your Mac and
+								records each successful copy on the server; one older than 26 hours, or
+								none recorded at all, is flagged.
+							</li>
+							<li>
 								<strong>Biggest tables</strong>: each table's size, its indexes, and an
 								estimated row count (Postgres's own estimate, not an exact count).
 							</li>

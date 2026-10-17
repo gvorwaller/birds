@@ -30,6 +30,7 @@ describe("GET /api/admin/system-health", () => {
       disk: { ok: true, data: { path: "/", totalBytes: 10, freeBytes: 5 } },
       tables: { ok: true, data: [] },
       coverage: { ok: false, reason: "Timed out after 3 s." },
+      backup: { ok: true, data: { at: null, bytes: null, stale: true, staleAfterHours: 26 } },
     });
     const res = await GET({ locals: { user: { id: 1, role: "admin" } } } as never);
     expect(res.headers.get("cache-control")).toBe("private, no-store");

@@ -35,6 +35,9 @@ export const JOB_RETENTION_DAYS = 90;
  */
 export const DISK_PATH = "/";
 
+/** The madonnahist rule: a nightly backup older than this is stale. */
+export const BACKUP_STALE_HOURS = 26;
+
 export type HealthCard<T> = { ok: true; data: T } | { ok: false; reason: string };
 
 export interface QueueRow {
@@ -103,6 +106,15 @@ export interface CoverageSummary {
   enrichment: EnrichmentCoverage;
 }
 
+export interface BackupStatus {
+  /** When the owner's Mac last pulled and verified a prod dump; null when
+   * none has been recorded (backup-pg.sh writes it, migration 0089). */
+  at: string | null;
+  bytes: number | null;
+  stale: boolean;
+  staleAfterHours: number;
+}
+
 export interface SystemHealth {
   now: string;
   worker: HealthCard<AdminWorker>;
@@ -111,6 +123,7 @@ export interface SystemHealth {
   disk: HealthCard<DiskSpace>;
   tables: HealthCard<TableStat[]>;
   coverage: HealthCard<CoverageSummary>;
+  backup: HealthCard<BackupStatus>;
 }
 
 /** A card's failure as the admin reads it: plain words, never a fake 0. */
@@ -363,15 +376,40 @@ export async function coverageSummary(): Promise<CoverageSummary> {
   return { ...loaded.rows[0], enrichment };
 }
 
+/** The stale rule, apart from the read (pure; tested alone). No record is
+ * stale too: prod cannot tell "never backed up" from "not recorded". */
+export function backupStatus(
+  row: { at: Date | string; bytes: string | number | null } | undefined,
+  now: Date,
+): BackupStatus {
+  const at = row ? iso(row.at) : null;
+  return {
+    at,
+    bytes: row?.bytes == null ? null : Number(row.bytes),
+    stale: at == null || now.getTime() - Date.parse(at) > BACKUP_STALE_HOURS * 3600_000,
+    staleAfterHours: BACKUP_STALE_HOURS,
+  };
+}
+
+export async function lastBackup(): Promise<BackupStatus> {
+  const r = await queryTimed<{ at: Date; bytes: string | null }>(
+    `SELECT at, bytes::text AS bytes FROM ops_markers WHERE name = 'backup'`,
+    [],
+    CARD_TIMEOUT_MS,
+  );
+  return backupStatus(r.rows[0], new Date());
+}
+
 /** Everything the system cards show, each card independent of the others. */
 export async function systemHealth(): Promise<SystemHealth> {
-  const [worker, queue, postgres, disk, tables, coverage] = await Promise.all([
+  const [worker, queue, postgres, disk, tables, coverage, backup] = await Promise.all([
     card("worker", async () => adminWorker(await workerHealth(CARD_TIMEOUT_MS))),
     card("queue", jobQueueSummary),
     card("postgres", postgresSummary),
     card("disk", () => diskSpace()),
     card("tables", tableStats),
     card("coverage", coverageSummary),
+    card("backup", lastBackup),
   ]);
-  return { now: new Date().toISOString(), worker, queue, postgres, disk, tables, coverage };
+  return { now: new Date().toISOString(), worker, queue, postgres, disk, tables, coverage, backup };
 }

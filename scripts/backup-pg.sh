@@ -22,6 +22,10 @@
 #   local/birds.pgdump        - local test DB dump when --local-only is used
 #   preflight.log             - tee of every run (uid, args, stdout, stderr)
 #
+# On prod, after a verified pull: the 'backup' row of ops_markers (migration
+# 0089) gets the time and dump size, for Admin → Server health (td-a47c0d).
+# That one row is the only thing this script writes to prod's database.
+#
 # Flags:
 #   --local-only   dump the local test DB only, no SSH
 #   -h, --help     show this header
@@ -78,6 +82,8 @@ PROD_HISTORY_DIR="${PROD_BACKUP_DIR}/history"
 LOG_FILE="${BACKUP_DIR}/preflight.log"
 # shellcheck source=lib/backup-retention.sh
 source "${SCRIPT_DIR}/lib/backup-retention.sh"
+# shellcheck source=lib/backup-marker.sh
+source "${SCRIPT_DIR}/lib/backup-marker.sh"
 
 mkdir -p "${BACKUP_DIR}" "${LOCAL_BACKUP_DIR}" "${PROD_BACKUP_DIR}"
 {
@@ -301,4 +307,12 @@ if keep_dated_dump "${PROD_DUMP}" "${PROD_HISTORY_DIR}" "${TODAY}" \
   echo "[backup-pg] history: $(ls "${PROD_HISTORY_DIR}" | grep -c '^birds-.*\.pgdump$') dated dump(s) in ${PROD_HISTORY_DIR}"
 else
   echo "[backup-pg] WARN: dated history update failed in ${PROD_HISTORY_DIR}"
+fi
+
+# Tell prod (Admin → Server health) that a verified backup exists (td-a47c0d).
+# A failed write is reported but never fails the backup that just succeeded.
+if record_backup_marker "$(size_of "${PROD_DUMP}")" "${DROPLET}" "${PROD_DB_PORT}" "${PROD_DB_NAME}" "${SSH_OPTS[@]}"; then
+  echo "[backup-pg] backup recorded on prod for Admin → Server health"
+else
+  echo "[backup-pg] WARN: could not record the backup on prod; Server health will show the previous one"
 fi

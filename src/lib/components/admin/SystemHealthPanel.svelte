@@ -236,6 +236,27 @@
 		{/if}
 	</CollapsibleCard>
 
+	<CollapsibleCard id="sys-backup" title="Backup">
+		{#if !h.backup.ok}
+			<p class="error">Unavailable: {unavailable(h.backup)}</p>
+		{:else}
+			{@const b = h.backup.data}
+			{#if b.at}
+				<p>
+					<AdminBadge tone={b.stale ? 'error' : 'ok'} label={b.stale ? `Stale: over ${b.staleAfterHours} h old` : 'Current'} />
+				</p>
+				<p>Last backup {fmtWhen(b.at)} ({relative(b.at, h.now)}){b.bytes != null ? ` · ${fmtBytes(b.bytes)} file` : ''}</p>
+			{:else}
+				<p><AdminBadge tone="error" label="None recorded" /></p>
+				<p>No backup has been recorded here yet.</p>
+			{/if}
+			<p class="muted">
+				The nightly backup runs on your Mac and copies the database from the server. It records each
+				successful copy here; a backup older than {b.staleAfterHours} hours is flagged as stale.
+			</p>
+		{/if}
+	</CollapsibleCard>
+
 	<CollapsibleCard id="sys-tables" title="Biggest tables" initiallyOpen={false}>
 		{#if !h.tables.ok}
 			<p class="error">Unavailable: {unavailable(h.tables)}</p>
