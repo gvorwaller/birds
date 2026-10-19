@@ -2,10 +2,39 @@
 
 The app reads these files as-is; names and ID text live in src/lib/bird-parts/{name}.ts.
 """
-import json, sys
+import json, re, sys
 from pathlib import Path
 from shapely import affinity
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 from geom import to_d
+
+# A part must show at least this share of its own area in every layer that lists it; otherwise
+# it is a tap target hidden under other parts, and selecting it outlines a different part
+# (CODEX1, td-46e6e3: the heron's tibia behind the tail from above showed 2%).
+MIN_VISIBLE = 0.25
+
+
+def _shape(d):
+    """A path from to_d (absolute M/L/Z rings, even-odd fill) back to a polygon."""
+    out = Polygon()
+    for ring in re.findall(r"M([^Z]+)Z", d):
+        pts = [tuple(map(float, xy.split(","))) for xy in ring.replace("L", " ").split()]
+        if len(pts) >= 3: out = out.symmetric_difference(Polygon(pts).buffer(0))
+    return out
+
+
+def check_visible(name, parts, order):
+    rank = {pid: i for i, pid in enumerate(order)}
+    for layer in ("main", "feathers"):
+        shown = sorted((p for p in parts if layer in p["layers"]), key=lambda p: rank[p["id"]])
+        shapes = [_shape(p["d"]) for p in shown]
+        for i, p in enumerate(shown):
+            area = shapes[i].area
+            if area <= 0: continue
+            share = shapes[i].difference(unary_union(shapes[i + 1:])).area / area if i + 1 < len(shapes) else 1.0
+            if share < MIN_VISIBLE:
+                sys.exit(f"{name}: {p['id']} is only {share:.0%} visible in the {layer} layer")
 
 OUT = Path(__file__).resolve().parents[2] / "src" / "lib" / "bird-parts" / "geometry"
 
@@ -39,6 +68,7 @@ def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=()
                                   for m, t in marks[pid]]
     ids = {p["id"] for p in parts}
     assert set(order) == ids and len(order) == len(ids), set(order) ^ ids
+    check_visible(name, parts, order)
     d = {"id": name, "viewBox": viewBox, "drawOrder": order, "parts": parts,
          "under": [{"d": to_d(g, 0, 0), "tone": t} for g, t in raw_base]
                   + [{"d": to_d(T(g), dx, dy), "tone": t} for g, t in base_under],

@@ -29,7 +29,7 @@ describe("part terms (td-e4c6dd)", () => {
       speculum: "speculum", "apical-spots": "apical spots", mirrors: "mirrors", "undertail-coverts": "undertail coverts",
       "uppertail-coverts": "uppertail coverts", rectrices: "rectrices", cere: "cere", "patagial-bar": "patagial bar",
       "carpal-patch": "carpal patch", fingers: "fingers", "subterminal-band": "subterminal band", "belly-band": "belly band",
-      tarsus: "tarsi",
+      tarsus: "tarsi", tibia: "tibia", foreneck: "foreneck", hindneck: "hindneck", "head-plumes": "head plumes",
     };
     expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
     for (const t of TERMS) {
@@ -53,6 +53,8 @@ describe("part terms (td-e4c6dd)", () => {
     expect(diagramForFamily("Alcidae")).toBe("songbird");
     for (const f of ["Accipitridae", "Falconidae", "Pandionidae", "Cathartidae", "Sagittariidae", "Strigidae", "Tytonidae"])
       expect(diagramForFamily(f), f).toBe("raptor");
+    for (const f of ["Ardeidae", "Ciconiidae", "Threskiornithidae", "Gruidae", "Aramidae", "Balaenicipitidae", "Scopidae"])
+      expect(diagramForFamily(f), f).toBe("heron");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -131,6 +133,21 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a dark bill with a white cere", "songbird")).toEqual(["cere→raptor-cere"]);
     expect(links("bare (unfeathered) on the tarsi", "songbird")).toEqual(["tarsi→raptor-tarsus"]);
     expect(links("a rufous belly band", "songbird")).toEqual(["belly band→raptor-belly-band"]);
+  });
+
+  it("links the heron terms production text uses, the neck words only on heron-group pages (td-46e6e3)", () => {
+    // Phrases from species_similar notes and Description sections in the test snapshot.
+    expect(links("Greater Adjutant's upper shank (tibia) is pinkish", "heron")).toEqual(["tibia→heron-tibia"]);
+    expect(links("a dull red tibia", "shorebird")).toEqual(["tibia→heron-tibia"]);
+    expect(links("a black face and foreneck with a broad white stripe", "heron")).toEqual(["foreneck→heron-foreneck"]);
+    expect(links("contrasting with dark crown and hindneck", "heron")).toEqual(["hindneck→heron-hindneck"]);
+    expect(links("fine head plumes and back aigrettes", "heron")).toEqual(["head plumes→heron-head-plumes"]);
+    expect(links("yellow lores between a black bill and the eye", "heron")).toEqual(["lores→heron-lores"]);
+    // Stilts and grebes use the neck words too; there they stay plain text.
+    expect(links("a clean black hindneck collar", "shorebird")).toEqual([]);
+    expect(links("a clean white face and foreneck", "songbird")).toEqual([]);
+    // The heron's own drawing for the shared wing words.
+    expect(links("slaty primaries and secondaries", "heron")).toEqual(["primaries→heron-primaries", "secondaries→heron-secondaries"]);
   });
 
   it("uses the bird's own drawing when it has the part, otherwise the first that does", () => {

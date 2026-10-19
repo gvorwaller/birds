@@ -43,8 +43,8 @@ function pathIsValid(d: string): boolean {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the five diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor"]);
+  it("has the six diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron"]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -230,6 +230,24 @@ describe("Parts of a Bird data", () => {
     expect(h).toBeGreaterThan(w);
   });
 
+  it("draws the heron's legs in every view and its folded neck in flight (td-46e6e3)", () => {
+    const h = DIAGRAMS.find((d) => d.id === "heron")!;
+    // A heron's long legs trail past the tail in flight. From above the tibiae are hidden behind the
+    // rump and tail, so only the tarsi and toes are drawn there (CODEX1 P2: a tibia 2% visible).
+    for (const id of ["tarsus", "toes"]) {
+      expect(viewsDrawing(h, id).map((v) => v.id), id).toEqual(["standing", "above", "below"]);
+    }
+    expect(viewsDrawing(h, "tibia").map((v) => v.id)).toEqual(["standing", "below"]);
+    // The streaked foreneck shows on the standing bird and as the bulge under the head in flight.
+    expect(viewsDrawing(h, "foreneck").map((v) => v.id)).toEqual(["standing", "below"]);
+    for (const id of ["head-plumes", "breast-plumes", "back-plumes", "flank-stripe", "thighs", "lores"]) {
+      expect(viewsDrawing(h, id).map((v) => v.id), id).toContain("standing");
+    }
+    // The perched hawk and the standing heron are the two upright drawings, taller than wide.
+    const [, , w, ht] = getView(h, "standing").viewBox.split(" ").map(Number);
+    expect(ht).toBeGreaterThan(w);
+  });
+
   it("puts the duck's speculum on the open wing between its two white borders", () => {
     const above = getView(DIAGRAMS.find((d) => d.id === "duck")!, "above");
     expect(above.parts.find((p) => p.id === "speculum")!.marks?.map((m) => m.tone)).toEqual(["pale", "darker"]);
@@ -308,7 +326,7 @@ describe("parseHash", () => {
   });
 
   it("ignores unknown, malformed and injection-looking hashes", () => {
-    for (const h of ["", "#", "#heron", "#gull-wattle", "#gull-", "#Gull", "#gull mirrors", "#%E0%A4%A", "#gull-mirrors\"><img src=x>", "#songbird-wing-bars;alert(1)", "#gull-above"]) {
+    for (const h of ["", "#", "#egret", "#gull-wattle", "#gull-", "#Gull", "#gull mirrors", "#%E0%A4%A", "#gull-mirrors\"><img src=x>", "#songbird-wing-bars;alert(1)", "#gull-above"]) {
       expect(parseHash(h), h).toBeNull();
     }
   });

@@ -380,3 +380,20 @@ A fifth drawing, built the same way as the other four (`scripts/bird-parts/rapto
     - carpal patch (a tern's upperwing carpal bar);
     - fingers/emarginations ("finger claws");
     - subterminal band (gull bill bands).
+
+## Addendum (2026-10-19): the heron (td-46e6e3, epic td-56a506)
+
+The sixth drawing and the first of the epic's new groups (`scripts/bird-parts/heron.py`, `heron_flight.py`; text in `src/lib/bird-parts/heron.ts`).
+
+- **Model:** an adult Great Blue Heron in breeding plumage, standing.
+- **New parts:** head plumes, face, hindneck, foreneck, breast plumes, back plumes, flank stripe, thighs, tibia and toes.
+- **Flight views:**
+  - the neck is folded into an S, so the foreneck is the bulge under the head;
+  - the legs trail past the tail;
+  - from above, the tibiae are hidden behind the rump and tail, so only the tarsi and toes are drawn there.
+- **The eye is not a part,** because no source in hand gave a Great Blue Heron iris fact.
+- **New check in `common.build`:** `check_visible` stops generation if any part shows less than 25% of its own area in a layer that lists it. CODEX1 found the heron's tibia 2% visible from above. The lowest share across all six birds is 42.8%.
+- **Term links:**
+  - Ardeidae, Ciconiidae, Threskiornithidae, Gruidae, Aramidae, Balaenicipitidae and Scopidae use the heron drawing.
+  - `tibia` links on every bird.
+  - foreneck, hindneck and head/nuchal/occipital plumes link only on the heron group's pages. Stilts, grebes and others use the neck words in other senses.
