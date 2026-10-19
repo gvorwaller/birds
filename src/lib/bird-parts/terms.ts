@@ -8,10 +8,10 @@
  * that have its part, and bird-parts.test.ts checks those lists against the real glossaries.
  */
 
-export type DiagramId = "songbird" | "shorebird" | "duck" | "gull";
+export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor";
 
 /** Fallback order when the bird's own drawing lacks a part: the order of the Parts of a Bird page. */
-export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull"];
+export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor"];
 
 const SHOREBIRD_FAMILIES = new Set([
   "Scolopacidae",
@@ -31,9 +31,21 @@ const SHOREBIRD_FAMILIES = new Set([
   "Pedionomidae",
 ]);
 
+/** Hawks, eagles, kites, harriers, falcons, the Osprey, vultures, the Secretarybird, and owls (td-dd4f9c). */
+const RAPTOR_FAMILIES = new Set([
+  "Accipitridae",
+  "Falconidae",
+  "Pandionidae",
+  "Cathartidae",
+  "Sagittariidae",
+  "Strigidae",
+  "Tytonidae",
+]);
+
 /** The drawing a species' links prefer, by scientific family name. Everything else is the songbird. */
 export function diagramForFamily(familySciName: string | null | undefined): DiagramId {
   if (familySciName === "Anatidae") return "duck";
+  if (familySciName && RAPTOR_FAMILIES.has(familySciName)) return "raptor";
   if (familySciName === "Laridae" || familySciName === "Stercorariidae") return "gull";
   if (familySciName && SHOREBIRD_FAMILIES.has(familySciName)) return "shorebird";
   return "songbird";
@@ -49,7 +61,7 @@ export interface PartTerm {
   onlyFor?: DiagramId[];
 }
 
-const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull"];
+const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor"];
 const COVERTS = "[- ]coverts";
 
 /**
@@ -61,24 +73,30 @@ export const TERMS: PartTerm[] = [
   { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull"] },
   { part: "eye-ring", forms: ["eye[- ]?rings?"], drawnIn: ["songbird", "shorebird"] },
   { part: "eye-line", forms: ["eye[- ]?lines?", "eye[- ]?stripes?"], drawnIn: ["songbird"] },
-  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull"] },
+  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
   { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird"] },
-  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ["songbird"] },
+  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ["songbird", "raptor"] },
+  { part: "cere", forms: ["ceres?"], drawnIn: ["raptor"] },
   { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ["gull"] },
   { part: "gonydeal-spot", forms: ["gonydeal spots?"], drawnIn: ["gull"] },
   { part: "gonys", forms: ["gonys"], drawnIn: ["gull"] },
   { part: "scapulars", forms: ["scapulars?"], drawnIn: ALL },
   { part: "lesser-coverts", forms: [`lesser(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
-  { part: "median-coverts", forms: [`median(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ["songbird", "shorebird", "duck", "gull"] },
-  { part: "greater-coverts", forms: [`greater(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ["songbird", "shorebird", "duck", "gull"] },
+  { part: "median-coverts", forms: [`median(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
+  { part: "greater-coverts", forms: [`greater(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck"] },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor"] },
+  { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
+  // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
+  { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "alula", forms: ["alulae?"], drawnIn: ALL },
   { part: "tertial-crescent", forms: ["tertial crescents?"], drawnIn: ["gull"] },
   { part: "tertials", forms: ["tertials?"], drawnIn: ALL },
   { part: "secondaries", forms: ["secondaries"], drawnIn: ALL },
+  // "fingers" is ordinary English elsewhere ("finger claws"), so only raptors' (and owls') pages link it.
+  { part: "fingers", forms: ["emarginated primaries", "emarginations?", "emarginated", "emarginate", "(?:primary )?fingers?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "primaries", forms: ["primaries"], drawnIn: ALL },
   { part: "wing-bars", forms: ["wing[- ]?bars?"], drawnIn: ["songbird"] },
   { part: "axillaries", forms: ["axillaries", "axillars", "axillary"], drawnIn: ALL },
@@ -86,7 +104,11 @@ export const TERMS: PartTerm[] = [
   { part: "apical-spots", forms: ["apical spots?"], drawnIn: ["gull"] },
   { part: "mirrors", forms: ["mirrors?"], drawnIn: ["gull"], onlyFor: ["gull"] },
   { part: "undertail-coverts", forms: [`under[- ]?tail${COVERTS}`], drawnIn: ALL },
-  { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ["songbird", "shorebird", "gull"] },
+  { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
+  // A gull's or tern's bill has a "subterminal band" too, so only raptors' pages link it.
+  { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
+  { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
+  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor"] },
   { part: "rectrices", forms: ["rectrices", "rectrix"], drawnIn: ["songbird"] },
 ];
 

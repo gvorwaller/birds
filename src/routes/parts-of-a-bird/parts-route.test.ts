@@ -11,7 +11,7 @@ const component = read("src/lib/components/PartsDiagram.svelte");
 const tabs = read("src/lib/components/FieldGuideTabs.svelte");
 
 describe("Parts of a Bird page (td-9c9655)", () => {
-  it("is a Field Guide tab page with four collapsible sections the page controls", () => {
+  it("is a Field Guide tab page with a collapsible section per bird that the page controls", () => {
     expect(route).toContain("<title>Parts of a Bird — birds</title>");
     expect(route).toContain('<FieldGuideTabs active="parts" />');
     expect(route).toContain('<details class="card bird" id={d.id} bind:open={open[d.id]}>');
@@ -59,6 +59,10 @@ describe("PartsDiagram", () => {
       expect(body).not.toContain("All feather groups");
       expect(body).not.toContain("Tap a part");
       expect(body).not.toContain("<button");
+      // A name and its other name read as two words, e.g. "Ear coverts (auriculars)" (td-dd4f9c).
+      for (const p of diagram.glossary.filter((q) => q.aka)) {
+        expect(body.replace(/<!--.*?-->/g, ""), `${diagram.id}-${p.id}`).toMatch(new RegExp(`${p.name.replace(/[.()]/g, "\\$&")} <span class="aka[^"]*">\\(`));
+      }
       // Every view is drawn without JS, labelled, with no selection painted.
       const title = diagram.title.toLowerCase();
       expect(body).toContain(`aria-label="Diagram of a ${title}, ${diagram.model.pose}"`);

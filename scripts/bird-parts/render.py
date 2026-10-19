@@ -68,4 +68,4 @@ def main(outdir, birds):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2:] or ["songbird", "shorebird", "duck", "gull"])
+    main(sys.argv[1], sys.argv[2:] or ["songbird", "shorebird", "duck", "gull", "raptor"])

@@ -86,6 +86,13 @@
     return { destroy: () => svg.removeEventListener("click", onClick) };
   }
 
+  /** A whole drawing is never taller than 560px (the perched hawk is upright); "One wing, larger" may be. */
+  function maxWidth(v: DiagramView, viewBox: string): string | undefined {
+    if (viewBox !== v.viewBox) return undefined;
+    const [, , w, h] = viewBox.split(" ").map(Number);
+    return h > w ? `${Math.round((560 * w) / h)}px` : undefined;
+  }
+
   const describe = (v: DiagramView) =>
     v.id === "standing" ? `${diagram.model.pose}` : v.id === "above" ? "in flight, from above" : "in flight, from below";
 
@@ -99,7 +106,7 @@
 </script>
 
 {#snippet drawing(v: DiagramView, lyr: Layer, viewBox: string, interactive: boolean)}
-  <svg {viewBox} role="img" aria-label={`Diagram of a ${diagram.title.toLowerCase()}, ${describe(v)}`} use:tapParts>
+  <svg {viewBox} style:max-width={maxWidth(v, viewBox)} role="img" aria-label={`Diagram of a ${diagram.title.toLowerCase()}, ${describe(v)}`} use:tapParts>
     {#each v.insets as inset}
       <circle class="inset" cx={inset.cx} cy={inset.cy} r={inset.r} />
       <text class="inset-label" x={inset.cx} y={inset.cy + inset.r - 8}>{inset.label}</text>
@@ -153,7 +160,7 @@
 
     <p class="caption" id={captionId} aria-live="polite">
       {#if part}
-        <strong>{part.name}</strong>{#if part.aka}<span class="aka"> ({part.aka})</span>{/if} — {part.lookFor}
+        <strong>{part.name}</strong>{#if part.aka}{" "}<span class="aka">({part.aka})</span>{/if} — {part.lookFor}
         {#if part.visibility}<span class="visibility">{part.visibility}</span>{/if}
         {#if elsewhere.length}
           <span class="elsewhere">
@@ -196,7 +203,7 @@
     {:else}
       <dl class="glossary">
         {#each g.parts as p (p.id)}
-          <dt id={`${diagram.id}-${p.id}`}>{p.name}{#if p.aka}<span class="aka"> ({p.aka})</span>{/if}</dt>
+          <dt id={`${diagram.id}-${p.id}`}>{p.name}{#if p.aka}{" "}<span class="aka">({p.aka})</span>{/if}</dt>
           <dd>{p.lookFor}{#if p.visibility}<span class="visibility">{p.visibility}</span>{/if}</dd>
         {/each}
       </dl>

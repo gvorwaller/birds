@@ -43,8 +43,8 @@ function pathIsValid(d: string): boolean {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the four v1 diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull"]);
+  it("has the five diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor"]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -207,6 +207,29 @@ describe("Parts of a Bird data", () => {
     expect(pp.d).not.toBe(wt.d);
   });
 
+  it("draws the raptor's flight marks from below and its fingers in both flight views (td-dd4f9c)", () => {
+    const r = DIAGRAMS.find((d) => d.id === "raptor")!;
+    for (const id of ["patagial-bar", "carpal-patch", "trailing-edge", "underwing-coverts", "axillaries", "belly-band"]) {
+      expect(viewsDrawing(r, id).map((v) => v.id), id).toContain("below");
+    }
+    expect(viewsDrawing(r, "fingers").map((v) => v.id)).toEqual(["above", "below"]);
+    for (const id of ["cere", "tarsus", "talons", "wingtip-vs-tail", "belly-band", "subterminal-band", "malar"]) {
+      expect(viewsDrawing(r, id).map((v) => v.id), id).toContain("standing");
+    }
+    // Patagial bar and carpal patch are separate parts, both drawn over the wing linings.
+    const below = getView(r, "below").parts.map((p) => p.id);
+    expect(below.indexOf("patagial-bar")).toBeGreaterThan(below.indexOf("underwing-coverts"));
+    expect(below.indexOf("carpal-patch")).toBeGreaterThan(below.indexOf("underwing-coverts"));
+    // Main parts on the perched hawk: the covert rows as one area, and the exposed secondaries
+    // below them as their own part, never inside "Wing coverts" (CODEX1 P2).
+    const standing = getView(r, "standing");
+    expect(standing.parts.find((p) => p.id === "secondaries")!.layers).toEqual(["main", "feathers"]);
+    expect(standing.parts.find((p) => p.id === "wing-coverts")!.layers).toEqual(["main"]);
+    // The perched hawk is upright: the one drawing taller than wide.
+    const [, , w, h] = getView(r, "standing").viewBox.split(" ").map(Number);
+    expect(h).toBeGreaterThan(w);
+  });
+
   it("puts the duck's speculum on the open wing between its two white borders", () => {
     const above = getView(DIAGRAMS.find((d) => d.id === "duck")!, "above");
     expect(above.parts.find((p) => p.id === "speculum")!.marks?.map((m) => m.tone)).toEqual(["pale", "darker"]);
@@ -280,6 +303,7 @@ describe("parseHash", () => {
     expect(parseHash("#gull-mirrors")).toEqual({ diagram: "gull", part: "mirrors" });
     expect(parseHash("#gull-axillaries")).toEqual({ diagram: "gull", part: "axillaries" });
     expect(parseHash("#shorebird-wingtip-vs-tail")).toEqual({ diagram: "shorebird", part: "wingtip-vs-tail" });
+    expect(parseHash("#raptor-patagial-bar")).toEqual({ diagram: "raptor", part: "patagial-bar" });
     expect(parseHash("songbird-median-coverts")).toEqual({ diagram: "songbird", part: "median-coverts" });
   });
 

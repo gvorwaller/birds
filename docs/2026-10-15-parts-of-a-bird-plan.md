@@ -362,3 +362,21 @@ Where the build departs from the plan above, and why:
   - the adult Herring Gull's orbital ring is yellow-orange, not red;
   - no tip claims primary projection separates the two yellowlegs (sources conflict). The
     wingtip-vs-tail example uses Baird's and White-rumped vs. Least Sandpiper instead.
+
+## Addendum (2026-10-19): the raptor (td-dd4f9c)
+
+A fifth drawing, built the same way as the other four (`scripts/bird-parts/raptor.py`, `raptor_flight.py`; text in `src/lib/bird-parts/raptor.ts`).
+
+- **Model:** an adult light-morph Red-tailed Hawk, perched. It is North America's most widespread hawk and carries the classic hawk marks: belly band, patagial bar, red tail.
+- **Parts it adds:** cere, tarsus, talons, belly band, leg feathers, patagial bar, carpal patch, fingers, dark trailing edge, subterminal band, wingtip vs. tail.
+- **Drawing notes:**
+  - The perched hawk is upright, so its plate is portrait (580×740). `PartsDiagram` caps any portrait whole drawing at 560 px tall; "One wing, larger" is not capped.
+  - The flight views use `HawkWing`, a `flight.Wing` whose hand ends in five fanned fingers. `fingers` is its own part, drawn over the primaries.
+- **Facts:** checked against Wikipedia and the USGS Patuxent ID page. Two claims were dropped because no source in hand confirmed them: Swainson's Hawk's wingtips on a perched bird, and the harrier's rump.
+- **Term links:**
+  - Hawks, eagles, kites, harriers, falcons, the Osprey, New World vultures, the Secretarybird and owls use the raptor drawing.
+  - New terms: cere, patagial bar/patagium, belly band, tarsus/tarsi.
+  - Linked only on raptor pages, because a count over the snapshot's text found other meanings elsewhere:
+    - carpal patch (a tern's upperwing carpal bar);
+    - fingers/emarginations ("finger claws");
+    - subterminal band (gull bill bands).

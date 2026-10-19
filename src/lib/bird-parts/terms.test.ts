@@ -27,7 +27,9 @@ describe("part terms (td-e4c6dd)", () => {
       "underwing-coverts": "underwing coverts", "wing-coverts": "wing coverts", alula: "alula", "tertial-crescent": "tertial crescent",
       tertials: "tertials", secondaries: "secondaries", primaries: "primaries", "wing-bars": "wing bars", axillaries: "axillaries",
       speculum: "speculum", "apical-spots": "apical spots", mirrors: "mirrors", "undertail-coverts": "undertail coverts",
-      "uppertail-coverts": "uppertail coverts", rectrices: "rectrices",
+      "uppertail-coverts": "uppertail coverts", rectrices: "rectrices", cere: "cere", "patagial-bar": "patagial bar",
+      "carpal-patch": "carpal patch", fingers: "fingers", "subterminal-band": "subterminal band", "belly-band": "belly band",
+      tarsus: "tarsi",
     };
     expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
     for (const t of TERMS) {
@@ -49,6 +51,8 @@ describe("part terms (td-e4c6dd)", () => {
       expect(diagramForFamily(f), f).toBe("shorebird");
     expect(diagramForFamily("Parulidae")).toBe("songbird");
     expect(diagramForFamily("Alcidae")).toBe("songbird");
+    for (const f of ["Accipitridae", "Falconidae", "Pandionidae", "Cathartidae", "Sagittariidae", "Strigidae", "Tytonidae"])
+      expect(diagramForFamily(f), f).toBe("raptor");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -100,6 +104,33 @@ describe("part terms (td-e4c6dd)", () => {
   it("links mirrors only on gull-group pages", () => {
     expect(links("likely behavior mirrors the common paradise kingfisher", "songbird")).toEqual([]);
     expect(links("black wingtips with white mirrors", "gull")).toEqual(["mirrors→gull-mirrors"]);
+  });
+
+  it("links the raptor terms production text uses (td-dd4f9c)", () => {
+    // Phrases from species_similar notes and Description sections in the test snapshot.
+    expect(links("a dark leading-edge patagial mark", "raptor")).toEqual(["patagial mark→raptor-patagial-bar"]);
+    expect(links("lacking the pale patagial band", "raptor")).toEqual(["patagial band→raptor-patagial-bar"]);
+    expect(links("a bold blackish carpal patch", "raptor")).toEqual(["carpal patch→raptor-carpal-patch"]);
+    expect(links("bolder dark carpal commas", "raptor")).toEqual(["carpal commas→raptor-carpal-patch"]);
+    expect(links("four (not five) visible primary 'fingers'.", "raptor")).toEqual(["fingers→raptor-fingers"]);
+    expect(links("its deep wing emarginations", "raptor")).toEqual(["emarginations→raptor-fingers"]);
+    expect(links("a whitish tail with a single black subterminal band", "raptor")).toEqual(["subterminal band→raptor-subterminal-band"]);
+    expect(links("bright orange-red cere, eye-ring and feet", "raptor")).toEqual(["cere→raptor-cere", "eye-ring→songbird-eye-ring"]);
+    expect(links("Feathered tarsi", "raptor")).toEqual(["tarsi→raptor-tarsus"]);
+    expect(links("a distinctive dark belly band", "raptor")).toEqual(["belly band→raptor-belly-band"]);
+    // Shared words go to the hawk on a raptor's page.
+    expect(links("pale primaries and a dark malar", "raptor")).toEqual(["primaries→raptor-primaries", "malar→raptor-malar"]);
+  });
+
+  it("links the raptor-only words only on raptor and owl pages", () => {
+    // A tern's upperwing carpal bar, a gull's bill band and a hoatzin's finger claws are other things.
+    expect(links("in winter it has a dark carpal bar", "gull")).toEqual([]);
+    expect(links("a dark red bill with a dark subterminal band", "gull")).toEqual([]);
+    expect(links("the dinosaurian finger claws and fingers", "songbird")).toEqual([]);
+    // Words every bird shares still link from any page, to the hawk that draws them.
+    expect(links("a dark bill with a white cere", "songbird")).toEqual(["cere→raptor-cere"]);
+    expect(links("bare (unfeathered) on the tarsi", "songbird")).toEqual(["tarsi→raptor-tarsus"]);
+    expect(links("a rufous belly band", "songbird")).toEqual(["belly band→raptor-belly-band"]);
   });
 
   it("uses the bird's own drawing when it has the part, otherwise the first that does", () => {
