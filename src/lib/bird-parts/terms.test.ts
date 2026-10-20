@@ -30,7 +30,7 @@ describe("part terms (td-e4c6dd)", () => {
       "uppertail-coverts": "uppertail coverts", rectrices: "rectrices", cere: "cere", "patagial-bar": "patagial bar",
       "carpal-patch": "carpal patch", fingers: "fingers", "subterminal-band": "subterminal band", "belly-band": "belly band",
       tarsus: "tarsi", tibia: "tibia", foreneck: "foreneck", hindneck: "hindneck", "head-plumes": "head plumes",
-      "gular-skin": "gular pouch", toes: "totipalmate",
+      "gular-skin": "gular pouch", toes: "totipalmate", "nostril-tubes": "naricorns",
     };
     expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
     for (const t of TERMS) {
@@ -60,6 +60,7 @@ describe("part terms (td-e4c6dd)", () => {
       expect(diagramForFamily(f), f).toBe("cormorant");
     // Tropicbirds have the same webbed feet but a tern's build.
     expect(diagramForFamily("Phaethontidae")).toBe("songbird");
+    for (const f of ["Diomedeidae", "Procellariidae", "Hydrobatidae", "Oceanitidae"]) expect(diagramForFamily(f), f).toBe("tubenose");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -153,6 +154,19 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a clean white face and foreneck", "songbird")).toEqual([]);
     // The heron's own drawing for the shared wing words.
     expect(links("slaty primaries and secondaries", "heron")).toEqual(["primaries→heron-primaries", "secondaries→heron-secondaries"]);
+  });
+
+  it("links the tube words production text uses, only on tubenose pages (td-315613)", () => {
+    expect(links("a stouter, gull-like bill with tubular nostrils on top", "tubenose")).toEqual(["tubular nostrils→tubenose-nostril-tubes"]);
+    expect(links("pink with a black tip and dark bluish naricorns", "tubenose")).toEqual(["naricorns→tubenose-nostril-tubes"]);
+    expect(links("the nasal tube on top of the bill is long", "tubenose")).toEqual(["nasal tube→tubenose-nostril-tubes"]);
+    expect(links("the fulmar's thick tubenose bill and stiff flight", "tubenose")).toEqual(["tubenose→tubenose-nostril-tubes"]);
+    expect(links("Like other tube-nosed seabirds", "tubenose")).toEqual(["tube-nosed→tubenose-nostril-tubes"]);
+    // The group name and a nasal call are not the part.
+    expect(links("Moult is prolonged in all tubenoses", "tubenose")).toEqual([]);
+    expect(links("a nasal call", "tubenose")).toEqual([]);
+    expect(links("tubular nostrils", "gull")).toEqual([]);
+    expect(links("silvery underwing coverts and dark primaries", "tubenose")).toEqual(["underwing coverts→tubenose-underwing-coverts", "primaries→tubenose-primaries"]);
   });
 
   it("links an auk page's part names to the auk drawing where it has the part (td-5076e6)", () => {

@@ -427,3 +427,19 @@ The eighth drawing (`scripts/bird-parts/auk.py`, `auk_flight.py`; text in `src/l
   - the feet show beside the short tail from below in flight, as in the reference photo; the view from above leaves them out.
 - **Facts:** Wikipedia (Common, Thick-billed murre, Auk, Razorbill, Atlantic, Horned and Tufted puffin, Rhinoceros and Cassin's auklet, Black and Pigeon guillemot) and the Audubon Field Guide. Not claimed, for want of a source in hand: the legs being set far back, three toes, the white trailing edge of the secondaries, and the underwing colour of a Common Murre.
 - **Term links:** Alcidae uses the auk drawing. The family test that mapped Alcidae to the songbird now maps it to the auk.
+
+## Addendum (2026-10-20): the tubenose (td-315613, epic td-56a506)
+
+The ninth drawing (`scripts/bird-parts/tubenose.py`, `tubenose_flight.py`; text in `src/lib/bird-parts/tubenose.ts`).
+
+- **Model:** an adult Sooty Shearwater, swimming. It is on a production life list, lives in the Pacific and the Atlantic, and its silvery underwing stripe is the classic shearwater underwing mark.
+- **New parts:** nostril tubes (naricorns) and the hooked tip (maxillary unguis), split from the bill because a tubenose's bill is made of separate horny plates.
+- **Drawing details:**
+  - the swimming reference photo is tilted, so the tracing is rotated about 11° until the waterline is level, scaled and mirrored to face right; parts are clipped at the waterline, like the swimming duck;
+  - a "Bill, close up" inset (the gull's inset machinery) draws the bill, nostril tubes and hooked tip a second time, larger, from a head close-up photo. Each is one part drawn in two places, so a tap on either selects it;
+  - the dark leading edge in front of the silvery underwing coverts is a mark, never a tap target;
+  - the wing rows run parallel to the folded wing's lower edge. The script stops if any wing, head or body part comes out in more than one piece (the auk's lesson, extended after CODEX1 found the flanks also covering a strip of the forehead).
+- **Facts:** Wikipedia (Sooty shearwater, Procellariiformes, Albatross, Northern fulmar) and the Audubon Field Guide (Sooty, Short-tailed, Pink-footed, Great and Manx Shearwaters, Northern Fulmar, Black-footed Albatross, Wilson's and Leach's Storm-Petrels).
+- **Term links:**
+  - Diomedeidae, Procellariidae, Hydrobatidae and Oceanitidae use the tubenose drawing. Penguins (Spheniscidae), which the ticket mentioned as a fallback, keep the default: neither the tubenose nor the auk drawing is a penguin.
+  - New term: naricorns, nasal tubes, tubular nostrils and tube-nose(d), linked only on tubenose pages. "Nasal" alone is a call in other species' text, and the group noun "tubenoses" is not linked.

@@ -43,8 +43,8 @@ function pathIsValid(d: string): boolean {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the eight diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk"]);
+  it("has the nine diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose"]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -276,6 +276,20 @@ describe("Parts of a Bird data", () => {
     // The throat and face are drawn standing and from below, where the dark neck meets the white breast.
     for (const id of ["throat", "face", "breast"]) expect(viewsDrawing(a, id).map((v) => v.id), id).toEqual(["standing", "below"]);
     expect(getView(a, "standing").parts.find((p) => p.id === "wing-coverts")!.layers).toEqual(["main"]);
+  });
+
+  it("draws the shearwater's bill plates on the bird and in the close-up, and its silvery underwing (td-315613)", () => {
+    const t = DIAGRAMS.find((d) => d.id === "tubenose")!;
+    const standing = getView(t, "standing");
+    expect(standing.insets.map((i) => i.label)).toEqual(["Bill, close up"]);
+    // Each plate is one part drawn twice: on the swimming bird and, larger, in the close-up.
+    for (const id of ["bill", "nostril-tubes", "unguis"]) {
+      expect(viewsDrawing(t, id).map((v) => v.id), id).toContain("standing");
+      const d = standing.parts.find((p) => p.id === id)!.d;
+      expect(d.match(/M/g)!.length, id).toBeGreaterThanOrEqual(2);
+    }
+    expect(getView(t, "below").parts.find((p) => p.id === "underwing-coverts")!.marks?.length).toBe(1);
+    expect(viewsDrawing(t, "rump").map((v) => v.id)).toEqual(["above"]);
   });
 
   it("puts the duck's speculum on the open wing between its two white borders", () => {
