@@ -30,6 +30,7 @@ describe("part terms (td-e4c6dd)", () => {
       "uppertail-coverts": "uppertail coverts", rectrices: "rectrices", cere: "cere", "patagial-bar": "patagial bar",
       "carpal-patch": "carpal patch", fingers: "fingers", "subterminal-band": "subterminal band", "belly-band": "belly band",
       tarsus: "tarsi", tibia: "tibia", foreneck: "foreneck", hindneck: "hindneck", "head-plumes": "head plumes",
+      "gular-skin": "gular pouch", toes: "totipalmate",
     };
     expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
     for (const t of TERMS) {
@@ -55,6 +56,10 @@ describe("part terms (td-e4c6dd)", () => {
       expect(diagramForFamily(f), f).toBe("raptor");
     for (const f of ["Ardeidae", "Ciconiidae", "Threskiornithidae", "Gruidae", "Aramidae", "Balaenicipitidae", "Scopidae"])
       expect(diagramForFamily(f), f).toBe("heron");
+    for (const f of ["Phalacrocoracidae", "Anhingidae", "Sulidae", "Fregatidae", "Pelecanidae"])
+      expect(diagramForFamily(f), f).toBe("cormorant");
+    // Tropicbirds have the same webbed feet but a tern's build.
+    expect(diagramForFamily("Phaethontidae")).toBe("songbird");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -148,6 +153,22 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a clean white face and foreneck", "songbird")).toEqual([]);
     // The heron's own drawing for the shared wing words.
     expect(links("slaty primaries and secondaries", "heron")).toEqual(["primaries→heron-primaries", "secondaries→heron-secondaries"]);
+  });
+
+  it("links the cormorant terms production text uses, only on cormorant-group pages (td-af7c6b)", () => {
+    // Phrases from species_similar notes and Description sections in the test snapshot.
+    expect(links("the key mark is the yellow gular skin bordered below", "cormorant")).toEqual(["gular skin→cormorant-gular-skin"]);
+    expect(links("bare face and gular pouch that projects forward", "cormorant")).toEqual(["gular pouch→cormorant-gular-skin"]);
+    expect(links("a buff-tan chin strap bordering the throat pouch", "cormorant")).toEqual(["throat pouch→cormorant-gular-skin"]);
+    expect(links("males show red gular sacs in both species", "cormorant")).toEqual(["gular sacs→cormorant-gular-skin"]);
+    expect(links("a longer black gular stripe running well down", "cormorant")).toEqual(["gular→cormorant-gular-skin"]);
+    expect(links("a huge orange-yellow bill and pouch", "cormorant")).toEqual(["pouch→cormorant-gular-skin"]);
+    expect(links("fully webbed between all four toes (totipalmate)", "cormorant")).toEqual(["totipalmate→cormorant-toes"]);
+    expect(links("orange lores and dark primaries", "cormorant")).toEqual(["lores→cormorant-lores", "primaries→cormorant-primaries"]);
+    // Storks, gamebirds and hummingbirds use the throat words for other marks; there they stay plain text.
+    expect(links("a bare red throat pouch", "heron")).toEqual([]);
+    expect(links("an iridescent gular patch", "songbird")).toEqual([]);
+    expect(links("totipalmate feet", "songbird")).toEqual([]);
   });
 
   it("uses the bird's own drawing when it has the part, otherwise the first that does", () => {

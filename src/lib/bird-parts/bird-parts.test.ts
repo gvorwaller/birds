@@ -43,8 +43,8 @@ function pathIsValid(d: string): boolean {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the six diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron"]);
+  it("has the seven diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -246,6 +246,23 @@ describe("Parts of a Bird data", () => {
     // The perched hawk and the standing heron are the two upright drawings, taller than wide.
     const [, , w, ht] = getView(h, "standing").viewBox.split(" ").map(Number);
     expect(ht).toBeGreaterThan(w);
+  });
+
+  it("draws the cormorant's bare throat skin and webbed feet, and its scaly wing (td-af7c6b)", () => {
+    const c = DIAGRAMS.find((d) => d.id === "cormorant")!;
+    // The orange skin under the bill shows on the perched bird and from below.
+    expect(viewsDrawing(c, "gular-skin").map((v) => v.id)).toEqual(["standing", "below"]);
+    // The webbed feet grip the perch and show beside the tail from below; from above the tail hides them.
+    expect(viewsDrawing(c, "toes").map((v) => v.id)).toEqual(["standing", "below"]);
+    for (const v of viewsDrawing(c, "toes")) expect(v.parts.find((p) => p.id === "toes")!.marks?.length, v.id).toBe(1);
+    for (const id of ["crests", "lores", "flanks", "wing-coverts"]) {
+      expect(viewsDrawing(c, id).map((v) => v.id), id).toContain("standing");
+    }
+    // The dark feather edges are drawn over the coverts and scapulars, never as tap targets.
+    for (const id of ["scapulars", "wing-coverts"]) {
+      expect(getView(c, "standing").parts.find((p) => p.id === id)!.marks?.length, id).toBe(1);
+    }
+    expect(getView(c, "standing").parts.find((p) => p.id === "wing-coverts")!.layers).toEqual(["main"]);
   });
 
   it("puts the duck's speculum on the open wing between its two white borders", () => {

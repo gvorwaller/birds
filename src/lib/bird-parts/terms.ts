@@ -8,10 +8,10 @@
  * that have its part, and bird-parts.test.ts checks those lists against the real glossaries.
  */
 
-export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron";
+export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant";
 
 /** Fallback order when the bird's own drawing lacks a part: the order of the Parts of a Bird page. */
-export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron"];
+export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"];
 
 const SHOREBIRD_FAMILIES = new Set([
   "Scolopacidae",
@@ -53,11 +53,18 @@ const HERON_FAMILIES = new Set([
   "Scopidae",
 ]);
 
+/**
+ * Cormorants and shags, the Anhinga, gannets and boobies, frigatebirds and pelicans (td-af7c6b). Tropicbirds share
+ * the webbed feet but are built like terns, so they stay with the default drawing.
+ */
+const CORMORANT_FAMILIES = new Set(["Phalacrocoracidae", "Anhingidae", "Sulidae", "Fregatidae", "Pelecanidae"]);
+
 /** The drawing a species' links prefer, by scientific family name. Everything else is the songbird. */
 export function diagramForFamily(familySciName: string | null | undefined): DiagramId {
   if (familySciName === "Anatidae") return "duck";
   if (familySciName && RAPTOR_FAMILIES.has(familySciName)) return "raptor";
   if (familySciName && HERON_FAMILIES.has(familySciName)) return "heron";
+  if (familySciName && CORMORANT_FAMILIES.has(familySciName)) return "cormorant";
   if (familySciName === "Laridae" || familySciName === "Stercorariidae") return "gull";
   if (familySciName && SHOREBIRD_FAMILIES.has(familySciName)) return "shorebird";
   return "songbird";
@@ -73,7 +80,7 @@ export interface PartTerm {
   onlyFor?: DiagramId[];
 }
 
-const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron"];
+const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"];
 const COVERTS = "[- ]coverts";
 
 /**
@@ -82,7 +89,7 @@ const COVERTS = "[- ]coverts";
  */
 export const TERMS: PartTerm[] = [
   { part: "supercilium", forms: ["supercilium", "supercilia", "superciliums", "superciliary", "eyebrows?"], drawnIn: ["songbird", "shorebird"] },
-  { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull", "heron"] },
+  { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull", "heron", "cormorant"] },
   { part: "eye-ring", forms: ["eye[- ]?rings?"], drawnIn: ["songbird", "shorebird"] },
   { part: "eye-line", forms: ["eye[- ]?lines?", "eye[- ]?stripes?"], drawnIn: ["songbird"] },
   { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
@@ -99,7 +106,7 @@ export const TERMS: PartTerm[] = [
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron"] },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant"] },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
   // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
@@ -120,12 +127,16 @@ export const TERMS: PartTerm[] = [
   // A gull's or tern's bill has a "subterminal band" too, so only raptors' pages link it.
   { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
-  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron"] },
+  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant"] },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.
   { part: "foreneck", forms: ["fore[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
   { part: "hindneck", forms: ["hind[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
   { part: "head-plumes", forms: ["(?:head|nuchal|occipital) plumes?"], drawnIn: ["heron"], onlyFor: ["heron"] },
+  // Storks, cranes, gamebirds and hummingbirds use "gular" and "throat pouch" for other throat marks, and a heron's
+  // toes are not webbed, so only the cormorant group's pages link these.
+  { part: "gular-skin", forms: ["gular(?: (?:pouch(?:es)?|skin|sacs?|patch(?:es)?))?", "throat[- ](?:pouch(?:es)?|sacs?)", "pouch(?:es)?"], drawnIn: ["cormorant"], onlyFor: ["cormorant"] },
+  { part: "toes", forms: ["totipalmate(?: feet| foot)?"], drawnIn: ["heron", "cormorant"], onlyFor: ["cormorant"] },
   { part: "rectrices", forms: ["rectrices", "rectrix"], drawnIn: ["songbird"] },
 ];
 

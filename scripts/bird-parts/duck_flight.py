@@ -26,7 +26,7 @@ NAIL = mirror(poly("M380,4 Q386,4 388,9 L386,13 L380,13 Z"))
 TAIL = mirror(poly("M380,318 L402,318 L414,392 Q398,404 380,406 Z"))
 COLLAR = NECK.intersection(box(0, 118, 999, 124))
 SIL = BODY.union(TAIL).union(WING).union(NECK).union(HEAD)
-EYES = mirror(Point(CX + 17, 58).buffer(2.4))
+EYES = mirror(Point(CX + 15.5, 58).buffer(2.4))
 VB = [40, 0, 680, 420]
 
 

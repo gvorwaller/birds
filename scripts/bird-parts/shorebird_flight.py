@@ -25,7 +25,7 @@ TAIL = mirror(poly("M380,252 L394,252 L404,304 Q394,310 380,310 Z"))
 # legs trail past the tail; feet together
 LEGS = mirror(poly("M383,262 L387,262 L388,330 L392,352 L389,356 L384,340 Z"))
 SIL = BODY.union(TAIL).union(WING)
-EYES = mirror(Point(CX + 13, 70).buffer(2.4))
+EYES = mirror(Point(CX + 12, 70).buffer(2.4))
 VB = [0, 0, 760, 370]
 
 

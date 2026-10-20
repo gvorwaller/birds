@@ -36,6 +36,19 @@ def check_visible(name, parts, order):
             if share < MIN_VISIBLE:
                 sys.exit(f"{name}: {p['id']} is only {share:.0%} visible in the {layer} layer")
 
+# An eye painted over the bird must sit inside its outline. Base shapes are not tap targets, so
+# check_visible never sees them (CODEX1, td-af7c6b: the perched cormorant's eye stuck out of its forehead).
+MAX_EYE_OUTSIDE = 0.02
+
+
+def check_eyes(name, base_over, outline):
+    if outline is None: return
+    for g, tone in base_over:
+        if tone != "eye" or g.area <= 0: continue
+        out = g.difference(outline).area / g.area
+        if out > MAX_EYE_OUTSIDE:
+            sys.exit(f"{name}: an eye is {out:.0%} outside the outline")
+
 OUT = Path(__file__).resolve().parents[2] / "src" / "lib" / "bird-parts" / "geometry"
 
 
@@ -69,6 +82,7 @@ def build(name, final, meta, order, viewBox, dx, dy, base_under=(), base_over=()
     ids = {p["id"] for p in parts}
     assert set(order) == ids and len(order) == len(ids), set(order) ^ ids
     check_visible(name, parts, order)
+    check_eyes(name, base_over, outline)
     d = {"id": name, "viewBox": viewBox, "drawOrder": order, "parts": parts,
          "under": [{"d": to_d(g, 0, 0), "tone": t} for g, t in raw_base]
                   + [{"d": to_d(T(g), dx, dy), "tone": t} for g, t in base_under],

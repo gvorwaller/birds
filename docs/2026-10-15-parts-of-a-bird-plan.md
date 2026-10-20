@@ -397,3 +397,19 @@ The sixth drawing and the first of the epic's new groups (`scripts/bird-parts/he
   - Ardeidae, Ciconiidae, Threskiornithidae, Gruidae, Aramidae, Balaenicipitidae and Scopidae use the heron drawing.
   - `tibia` links on every bird.
   - foreneck, hindneck and head/nuchal/occipital plumes link only on the heron group's pages. Stilts, grebes and others use the neck words in other senses.
+
+## Addendum (2026-10-19): the cormorant (td-af7c6b, epic td-56a506)
+
+The seventh drawing (`scripts/bird-parts/cormorant.py`, `cormorant_flight.py`; text in `src/lib/bird-parts/cormorant.ts`). The owner split the seabird ticket in two: one drawing can't teach both body plans. The tubenoses are td-315613.
+
+- **Model:** an adult Double-crested Cormorant in breeding plumage, perched. The reference photo faces left, so `build(flip_x=…)` mirrors it.
+- **New parts:** crests, gular skin (throat pouch), neck and flanks. The cormorant also draws lores, tarsus and toes, which already exist on other birds.
+- **Drawing details:**
+  - the scaly back and coverts are dark edges drawn as marks, never tap targets;
+  - the curly crests are closed into one solid shape with two tuft lobes, the curls drawn over it, so a tap between the curls still picks the crest (found in the iOS Simulator);
+  - the webbed feet carry toe lines as marks and show beside the tail from below; from above the tail hides them.
+- **New check in `common.build`:** `check_eyes` stops generation if an eye (a `base_over` shape with tone `eye`) is more than 2% outside the outline. CODEX1 found the perched cormorant's eye 40% outside its forehead. The check also caught the duck's and shorebird's flight eyes (20% and 12% outside), which were moved inward; only those eye lines changed.
+- **Term links:**
+  - Phalacrocoracidae, Anhingidae, Sulidae, Fregatidae and Pelecanidae use the cormorant drawing.
+  - Tropicbirds have the same webbed feet but a tern's build, so they keep the default drawing.
+  - "gular" (skin, pouch, sac, patch), "throat pouch/sac", bare "pouch" and "totipalmate" link only on the cormorant group's pages. Storks, cranes, gamebirds and hummingbirds use the throat words for other marks, and a heron's toes are not webbed.
