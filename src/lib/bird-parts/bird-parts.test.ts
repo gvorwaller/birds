@@ -43,8 +43,8 @@ function pathIsValid(d: string): boolean {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the seven diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"]);
+  it("has the eight diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk"]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -263,6 +263,19 @@ describe("Parts of a Bird data", () => {
       expect(getView(c, "standing").parts.find((p) => p.id === id)!.marks?.length, id).toBe(1);
     }
     expect(getView(c, "standing").parts.find((p) => p.id === "wing-coverts")!.layers).toEqual(["main"]);
+  });
+
+  it("stands the murre upright, with streaked flanks and webbed feet beside the tail in flight (td-5076e6)", () => {
+    const a = DIAGRAMS.find((d) => d.id === "auk")!;
+    const [, , w, ht] = getView(a, "standing").viewBox.split(" ").map(Number);
+    expect(ht).toBeGreaterThan(w);
+    // The dark flank streaks and the toes inside each web are marks, never tap targets.
+    expect(getView(a, "standing").parts.find((p) => p.id === "flanks")!.marks?.length).toBe(1);
+    expect(viewsDrawing(a, "toes").map((v) => v.id)).toEqual(["standing", "below"]);
+    for (const v of viewsDrawing(a, "toes")) expect(v.parts.find((p) => p.id === "toes")!.marks?.length, v.id).toBe(1);
+    // The throat and face are drawn standing and from below, where the dark neck meets the white breast.
+    for (const id of ["throat", "face", "breast"]) expect(viewsDrawing(a, id).map((v) => v.id), id).toEqual(["standing", "below"]);
+    expect(getView(a, "standing").parts.find((p) => p.id === "wing-coverts")!.layers).toEqual(["main"]);
   });
 
   it("puts the duck's speculum on the open wing between its two white borders", () => {

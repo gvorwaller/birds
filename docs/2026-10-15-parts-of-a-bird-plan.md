@@ -413,3 +413,17 @@ The seventh drawing (`scripts/bird-parts/cormorant.py`, `cormorant_flight.py`; t
   - Phalacrocoracidae, Anhingidae, Sulidae, Fregatidae and Pelecanidae use the cormorant drawing.
   - Tropicbirds have the same webbed feet but a tern's build, so they keep the default drawing.
   - "gular" (skin, pouch, sac, patch), "throat pouch/sac", bare "pouch" and "totipalmate" link only on the cormorant group's pages. Storks, cranes, gamebirds and hummingbirds use the throat words for other marks, and a heron's toes are not webbed.
+
+## Addendum (2026-10-20): the auk (td-5076e6, epic td-56a506)
+
+The eighth drawing (`scripts/bird-parts/auk.py`, `auk_flight.py`; text in `src/lib/bird-parts/auk.ts`).
+
+- **Model:** an adult Common Murre in breeding plumage, standing upright on a rock. It is on a production life list, lives in both the Pacific and the Atlantic (where it is the Common Guillemot), and carries the marks the group's text compares. The reference bird is from the Farne Islands, so it is the dark brown British subspecies.
+- **Parts:** no new part ids. The auk reuses throat, face, flanks, tarsus and toes, and adds no technical term: a count over the snapshot's 102 auk text rows found no auk-specific word worth a link. "Bridled" also names a tern, and the bridle is a morph the model lacks, so it is text under Face.
+- **Drawing details:**
+  - the plate is portrait (700×1120), like the raptor and the heron;
+  - the folded wing on the narrow standing bird is split by explicit bands (scapulars along the back, the three covert rows one below the other, tertials over the rear, secondaries below the greater coverts, primaries to the tip). The script stops if any of them comes out in more than one piece; CODEX1 found the first, frame-based layout crushed the rows into slivers and relabelled the leftovers as tertials;
+  - the dark streaks on the flanks and the toes inside each web are marks, never tap targets;
+  - the feet show beside the short tail from below in flight, as in the reference photo; the view from above leaves them out.
+- **Facts:** Wikipedia (Common, Thick-billed murre, Auk, Razorbill, Atlantic, Horned and Tufted puffin, Rhinoceros and Cassin's auklet, Black and Pigeon guillemot) and the Audubon Field Guide. Not claimed, for want of a source in hand: the legs being set far back, three toes, the white trailing edge of the secondaries, and the underwing colour of a Common Murre.
+- **Term links:** Alcidae uses the auk drawing. The family test that mapped Alcidae to the songbird now maps it to the auk.

@@ -20,6 +20,9 @@ import heronBelow from "./geometry/heron-below.json";
 import cormorantGeometry from "./geometry/cormorant.json";
 import cormorantAbove from "./geometry/cormorant-above.json";
 import cormorantBelow from "./geometry/cormorant-below.json";
+import aukGeometry from "./geometry/auk.json";
+import aukAbove from "./geometry/auk-above.json";
+import aukBelow from "./geometry/auk-below.json";
 import { songbird } from "./songbird";
 import { shorebird } from "./shorebird";
 import { duck } from "./duck";
@@ -27,6 +30,7 @@ import { gull } from "./gull";
 import { raptor } from "./raptor";
 import { heron } from "./heron";
 import { cormorant } from "./cormorant";
+import { auk } from "./auk";
 
 export type ViewGeometries = Record<View, DiagramGeometry>;
 
@@ -75,6 +79,7 @@ export const DIAGRAMS: BirdDiagram[] = [
   joinDiagram(raptor, { standing: g(raptorGeometry), above: g(raptorAbove), below: g(raptorBelow) }),
   joinDiagram(heron, { standing: g(heronGeometry), above: g(heronAbove), below: g(heronBelow) }),
   joinDiagram(cormorant, { standing: g(cormorantGeometry), above: g(cormorantAbove), below: g(cormorantBelow) }),
+  joinDiagram(auk, { standing: g(aukGeometry), above: g(aukAbove), below: g(aukBelow) }),
 ];
 
 export function getView(diagram: BirdDiagram, view: View): DiagramView {

@@ -51,7 +51,7 @@ describe("part terms (td-e4c6dd)", () => {
     for (const f of ["Scolopacidae", "Charadriidae", "Recurvirostridae", "Haematopodidae", "Jacanidae", "Burhinidae", "Glareolidae", "Rostratulidae", "Thinocoridae", "Chionidae", "Dromadidae", "Ibidorhynchidae", "Pluvianellidae", "Pluvianidae", "Pedionomidae"])
       expect(diagramForFamily(f), f).toBe("shorebird");
     expect(diagramForFamily("Parulidae")).toBe("songbird");
-    expect(diagramForFamily("Alcidae")).toBe("songbird");
+    expect(diagramForFamily("Alcidae")).toBe("auk");
     for (const f of ["Accipitridae", "Falconidae", "Pandionidae", "Cathartidae", "Sagittariidae", "Strigidae", "Tytonidae"])
       expect(diagramForFamily(f), f).toBe("raptor");
     for (const f of ["Ardeidae", "Ciconiidae", "Threskiornithidae", "Gruidae", "Aramidae", "Balaenicipitidae", "Scopidae"])
@@ -153,6 +153,15 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a clean white face and foreneck", "songbird")).toEqual([]);
     // The heron's own drawing for the shared wing words.
     expect(links("slaty primaries and secondaries", "heron")).toEqual(["primaries→heron-primaries", "secondaries→heron-secondaries"]);
+  });
+
+  it("links an auk page's part names to the auk drawing where it has the part (td-5076e6)", () => {
+    expect(links("scapulars and underwing coverts are dark", "auk")).toEqual(["scapulars→auk-scapulars", "underwing coverts→auk-underwing-coverts"]);
+    expect(links("bare tarsi are red", "auk")).toEqual(["tarsi→auk-tarsus"]);
+    // The auk drawing has no lores or eye-ring: those open the songbird.
+    expect(links("a white eye-ring and dark lores", "auk")).toEqual(["eye-ring→songbird-eye-ring", "lores→songbird-lores"]);
+    // Cormorant-only words stay unlinked on an auk page.
+    expect(links("a gular pouch", "auk")).toEqual([]);
   });
 
   it("links the cormorant terms production text uses, only on cormorant-group pages (td-af7c6b)", () => {

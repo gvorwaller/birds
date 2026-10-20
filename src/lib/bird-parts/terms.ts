@@ -8,10 +8,10 @@
  * that have its part, and bird-parts.test.ts checks those lists against the real glossaries.
  */
 
-export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant";
+export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant" | "auk";
 
 /** Fallback order when the bird's own drawing lacks a part: the order of the Parts of a Bird page. */
-export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"];
+export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk"];
 
 const SHOREBIRD_FAMILIES = new Set([
   "Scolopacidae",
@@ -65,6 +65,8 @@ export function diagramForFamily(familySciName: string | null | undefined): Diag
   if (familySciName && RAPTOR_FAMILIES.has(familySciName)) return "raptor";
   if (familySciName && HERON_FAMILIES.has(familySciName)) return "heron";
   if (familySciName && CORMORANT_FAMILIES.has(familySciName)) return "cormorant";
+  // Murres, the Razorbill, guillemots, puffins, auklets and murrelets (td-5076e6).
+  if (familySciName === "Alcidae") return "auk";
   if (familySciName === "Laridae" || familySciName === "Stercorariidae") return "gull";
   if (familySciName && SHOREBIRD_FAMILIES.has(familySciName)) return "shorebird";
   return "songbird";
@@ -80,7 +82,7 @@ export interface PartTerm {
   onlyFor?: DiagramId[];
 }
 
-const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant"];
+const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk"];
 const COVERTS = "[- ]coverts";
 
 /**
@@ -106,7 +108,7 @@ export const TERMS: PartTerm[] = [
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant"] },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant", "auk"] },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
   // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
@@ -127,7 +129,7 @@ export const TERMS: PartTerm[] = [
   // A gull's or tern's bill has a "subterminal band" too, so only raptors' pages link it.
   { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
-  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant"] },
+  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant", "auk"] },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.
   { part: "foreneck", forms: ["fore[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
@@ -136,7 +138,7 @@ export const TERMS: PartTerm[] = [
   // Storks, cranes, gamebirds and hummingbirds use "gular" and "throat pouch" for other throat marks, and a heron's
   // toes are not webbed, so only the cormorant group's pages link these.
   { part: "gular-skin", forms: ["gular(?: (?:pouch(?:es)?|skin|sacs?|patch(?:es)?))?", "throat[- ](?:pouch(?:es)?|sacs?)", "pouch(?:es)?"], drawnIn: ["cormorant"], onlyFor: ["cormorant"] },
-  { part: "toes", forms: ["totipalmate(?: feet| foot)?"], drawnIn: ["heron", "cormorant"], onlyFor: ["cormorant"] },
+  { part: "toes", forms: ["totipalmate(?: feet| foot)?"], drawnIn: ["heron", "cormorant", "auk"], onlyFor: ["cormorant"] },
   { part: "rectrices", forms: ["rectrices", "rectrix"], drawnIn: ["songbird"] },
 ];
 
