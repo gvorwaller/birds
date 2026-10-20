@@ -75,7 +75,7 @@ def above():
     check_body("woodpecker-above", body_parts)
     final = {k: mirror(v) for k, v in up.items()}
     final.update(body_parts)
-    final.update({ "tail": TAIL.difference(rump).difference(OTF),
+    final.update({ "tail": TAIL.difference(rump),   # the outer feathers are drawn over the whole tail (td-d32fd3)
                   "outer-tail-feathers": OTF.difference(rump), "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
@@ -118,7 +118,7 @@ def below():
     check_body("woodpecker-below", body_parts)
     final = {k: mirror(v) for k, v in un.items()}
     final.update(body_parts)
-    final.update({"tail": TAIL.difference(utc).difference(OTF), "outer-tail-feathers": OTF.difference(utc), "bill": BILL})
+    final.update({"tail": TAIL.difference(utc), "outer-tail-feathers": OTF.difference(utc), "bill": BILL})
     for k in ("secondaries", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
     meta = [("tail", "eye", "m"), ("outer-tail-feathers", "pale", "m"),

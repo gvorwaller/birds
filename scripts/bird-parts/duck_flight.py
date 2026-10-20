@@ -49,7 +49,7 @@ def above():
     # two black central feathers curled up over the rump
     curl = mirror(Point(388, 330).buffer(6.5).difference(Point(386.5, 331.5).buffer(3.6))
                   .union(poly("M380,316 L386,316 L388,324 L382,324 Z")))
-    tail = TAIL.difference(rump).difference(curl)
+    tail = TAIL.difference(rump).union(curl)   # the curled central feathers are rectrices too (td-d32fd3)
     R = mirror
     final = {k: R(v) for k, v in up.items() if k != "secondaries"}
     final.update({"speculum": R(spec), "crown": crown, "cheek": cheek, "nape": nape, "neck": neck,

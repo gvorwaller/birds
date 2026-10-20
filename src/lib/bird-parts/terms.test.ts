@@ -18,6 +18,27 @@ describe("part terms (td-e4c6dd)", () => {
     }
   });
 
+  it("names, for each drawing a term borrows a name on, a part that drawing really has and lacks under the term's id", () => {
+    for (const t of TERMS) {
+      for (const [d, part] of Object.entries(t.sameAs ?? {})) {
+        expect(t.drawnIn, `${t.part} on ${d}`).not.toContain(d);
+        expect(DIAGRAMS.find((x) => x.id === d)!.glossary.some((p) => p.id === part), `${t.part} → ${d}/${part}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the songbird's legs and every bird's own tail for tarsus and rectrices (td-d32fd3)", () => {
+    expect(links("pale pinkish tarsi and toes", "songbird")).toEqual(["tarsi→songbird-legs"]);
+    expect(links("bare tarsi are red", "auk")).toEqual(["tarsi→auk-tarsus"]);
+    expect(links("the outer rectrices are white", "duck")).toEqual(["rectrices→duck-tail"]);
+    expect(links("the outer rectrices are white", "raptor")).toEqual(["rectrices→raptor-tail"]);
+    expect(links("white outer rectrices", "songbird")).toEqual(["rectrices→songbird-rectrices"]);
+    // A grebe has almost no tail: its page still opens the songbird's tail feathers.
+    expect(links("rectrices", "grebe")).toEqual(["rectrices→songbird-rectrices"]);
+    // The songbird's own covert area, where "wing coverts" used to open the shorebird.
+    expect(links("brownish wing coverts with buff edges", "songbird")).toEqual(["wing coverts→songbird-wing-coverts"]);
+  });
+
   it("builds deep links that Parts of a Bird accepts, for every term on every bird", () => {
     const sample: Record<string, string> = {
       supercilium: "supercilium", lores: "lores", "eye-ring": "eye-ring", "eye-line": "eye-line", "ear-coverts": "ear coverts",
@@ -39,9 +60,10 @@ describe("part terms (td-e4c6dd)", () => {
       for (const own of DIAGRAM_ORDER) {
         if (t.onlyFor && !t.onlyFor.includes(own)) continue;
         const [seg] = linkPartTerms([sample[t.part]], own)[0];
-        expect(seg.part, `${t.part} on ${own}`).toBe(t.part);
+        const part = t.drawnIn.includes(own) ? t.part : (t.sameAs?.[own] ?? t.part);
+        expect(seg.part, `${t.part} on ${own}`).toBe(part);
         const href = partHref(seg.diagram!, seg.part!);
-        expect(parseHash(href.slice(href.indexOf("#")))).toEqual({ diagram: seg.diagram, part: t.part });
+        expect(parseHash(href.slice(href.indexOf("#")))).toEqual({ diagram: seg.diagram, part });
       }
     }
   });
@@ -145,7 +167,8 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("the dinosaurian finger claws and fingers", "songbird")).toEqual([]);
     // Words every bird shares still link from any page, to the hawk that draws them.
     expect(links("a dark bill with a white cere", "songbird")).toEqual(["cere→raptor-cere"]);
-    expect(links("bare (unfeathered) on the tarsi", "songbird")).toEqual(["tarsi→raptor-tarsus"]);
+    // The songbird draws the tarsus as its "legs" (td-d32fd3).
+    expect(links("bare (unfeathered) on the tarsi", "songbird")).toEqual(["tarsi→songbird-legs"]);
     expect(links("a rufous belly band", "songbird")).toEqual(["belly band→raptor-belly-band"]);
   });
 
@@ -245,7 +268,7 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a blue speculum", "duck")).toEqual(["speculum→duck-speculum"]);
     expect(links("a blue speculum", "songbird")).toEqual(["speculum→duck-speculum"]);
     expect(links("two wing bars", "duck")).toEqual(["wing bars→songbird-wing-bars"]);
-    expect(links("pale wing coverts", "gull")).toEqual(["wing coverts→shorebird-wing-coverts"]);
+    expect(links("pale wing coverts", "gull")).toEqual(["wing coverts→songbird-wing-coverts"]);
     expect(links("white-tipped tertials", "gull")).toEqual(["tertials→gull-tertials"]);
   });
 

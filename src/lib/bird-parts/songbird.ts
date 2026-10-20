@@ -121,7 +121,8 @@ export const songbird: DiagramText = {
       id: "legs",
       name: "Legs and feet",
       group: "Bill & legs",
-      lookFor: "Leg colour (pink, yellow, dark) is a quick check on a perched bird.",
+      aka: "tarsus and toes",
+      lookFor: "Leg colour (pink, yellow, dark) is a quick check on a perched bird. The bare part of the leg is the tarsus.",
     },
     // Upperparts
     {
@@ -150,6 +151,13 @@ export const songbird: DiagramText = {
       group: "Wing",
       lookFor:
         "The whole wing as one area; each of its feather groups has its own name. Folded on a perched songbird, it shows mostly the coverts, the tertials and the primary tips. Spread in flight, the same groups lie in rows from the front edge back.",
+    },
+    {
+      id: "wing-coverts",
+      name: "Wing coverts",
+      group: "Wing",
+      lookFor:
+        "The rows of smaller feathers covering the bases of the flight feathers, shown here as one area: the lesser, median and greater coverts on the perched bird, and in flight from above the primary coverts and the alula too. Pale tips on the median and greater coverts make the wing bars. Choose All feather groups to see each row.",
     },
     {
       id: "wing-bars",

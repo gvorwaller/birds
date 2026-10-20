@@ -45,7 +45,7 @@ def above():
     scap = mirror(poly("M398,142 C414,156 426,182 428,212 C430,238 424,258 414,272 L402,268 C402,230 400,186 398,142 Z"))
     back = BODY.intersection(box(0, 120, 999, 280)).difference(HEAD).difference(nape).difference(scap)
     rump = BODY.intersection(box(0, 280, 999, 360)).difference(back).difference(scap)
-    tail = TAIL.difference(rump).difference(BAND)
+    tail = TAIL.difference(rump)   # the band is drawn over the whole tail (td-d32fd3)
     final = {k: mirror(v) for k, v in up.items()}
     final.update({"crest": crest, "nape": nape, "back": back, "scapulars": scap, "rump": rump,
                   "tail": tail, "subterminal-band": BAND.difference(rump), "bill": BILL})
@@ -79,7 +79,7 @@ def below():
     flanks = body.difference(breast).intersection(mirror(poly("M414,214 L444,214 L444,320 L408,320 C416,290 418,250 414,214 Z")))
     utc = mirror(poly("M380,300 L410,300 C408,316 404,330 398,340 Q390,346 380,346 Z"))
     belly = body.difference(breast).difference(utc).difference(flanks)
-    tail = TAIL.difference(utc).difference(BAND)
+    tail = TAIL.difference(utc)   # the band is drawn over the whole tail (td-d32fd3)
     final = {k: mirror(v) for k, v in un.items()}
     final.update({"face": face, "throat": throat, "breast": breast, "flanks": flanks, "belly": belly,
                   "undertail-coverts": utc, "tail": tail, "subterminal-band": BAND.difference(utc), "bill": BILL})

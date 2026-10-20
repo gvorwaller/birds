@@ -13,6 +13,7 @@ import {
   type ViewGeometries,
 } from "./index";
 import { PART_GROUPS, VIEWS, type DiagramGeometry } from "./types";
+import { TERMS } from "./terms";
 import { songbird } from "./songbird";
 import songbirdGeometry from "./geometry/songbird.json";
 import songbirdAbove from "./geometry/songbird-above.json";
@@ -47,6 +48,38 @@ const WINGS_HIDDEN = new Set(["loon", "grebe"]);
 /** Feather groups a bird's open wing or body really lacks: a hummingbird's wing has no alula (its scapulars and tertials are
  * not drawn), and a grebe has almost no tail. */
 const LACKS: Record<string, string[]> = { hummingbird: ["alula", "tertials", "scapulars"], grebe: ["tail"] };
+
+/** The rings of an absolute M/L/Z path, as point lists. */
+function rings(d: string): number[][][] {
+  return d.split("M").filter(Boolean).map((r) => (r.replace(/Z/g, "").match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number))
+    .map((n) => n.flatMap((_, i) => (i % 2 ? [] : [[n[i], n[i + 1]]])));
+}
+
+/** Even-odd point-in-path, as the drawings are filled. */
+function inside(d: string, x: number, y: number): boolean {
+  let hit = false;
+  for (const ring of rings(d)) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+  }
+  return hit;
+}
+
+/** The share of a grid of points inside path `a` that are also inside path `b`. */
+function coveredShare(a: string, b: string): number {
+  const pts = rings(a).flat();
+  const [x0, y0, x1, y1] = [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+  let n = 0, both = 0;
+  for (let i = 0; i <= 60; i++) for (let j = 0; j <= 60; j++) {
+    const x = x0 + ((x1 - x0) * i) / 60, y = y0 + ((y1 - y0) * j) / 60;
+    if (!inside(a, x, y)) continue;
+    n++;
+    if (inside(b, x, y)) both++;
+  }
+  return n ? both / n : 1;
+}
 
 describe("Parts of a Bird data", () => {
   it("has the fourteen diagrams in order, each standing and in flight from above and below", () => {
@@ -350,6 +383,22 @@ describe("Parts of a Bird data", () => {
     // A grebe has almost no tail; nothing in its glossary is the tail.
     expect(g.glossary.some((p) => p.id === "tail")).toBe(false);
     expect(viewsDrawing(g, "toes").map((v) => v.id)).toEqual(["standing", "above", "below"]);
+  });
+
+  it("gives 'rectrices' the whole tail where a bird's tail stands in for them (CODEX1, td-d32fd3)", () => {
+    // The raptor's and grouse's subterminal bands, the woodpecker's outer tail feathers and a drake's curled central
+    // feathers are drawn over the tail as their own parts, but the tail path must still cover them.
+    const tailFor = TERMS.find((t) => t.part === "rectrices")!.sameAs!;
+    for (const [id, part] of Object.entries(tailFor)) {
+      const d = DIAGRAMS.find((x) => x.id === id)!;
+      for (const v of d.views) {
+        const tail = v.parts.find((p) => p.id === part);
+        if (!tail) continue;
+        for (const p of v.parts.filter((q) => q.group === "Tail" && !["tail", "uppertail-coverts"].includes(q.id))) {
+          expect(coveredShare(p.d, tail.d), `${id}/${v.id}/${p.id}`).toBeGreaterThan(0.97);
+        }
+      }
+    }
   });
 
   it("puts the duck's speculum on the open wing between its two white borders", () => {

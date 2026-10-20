@@ -73,7 +73,8 @@ for k, _ in head_rough:
     final[k] = g
 final["nasal-tufts"] = TUFTS.intersection(SIL).difference(BILL)
 final["bill"] = BILL
-final["tail"] = TAIL.difference(SIL).difference(OTF)
+# the tail is the whole tail, the outer feathers drawn over it as its own part, so 'rectrices' opens all of it (CODEX1, td-d32fd3)
+final["tail"] = TAIL.difference(SIL)
 final["outer-tail-feathers"] = OTF.difference(SIL)
 final["tarsus"] = TARSUS
 final["toes"] = TOES.difference(TARSUS)

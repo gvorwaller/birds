@@ -79,6 +79,9 @@ final["median-coverts"] = fband(WING, 0.13, 0.255, -0.62, 0.95, scallops=4, amp=
 final["greater-coverts"] = fband(WING, 0.255, 0.43, -0.62, 0.97, scallops=5, amp=0.012, skew=-0.07).intersection(sec).difference(final["median-coverts"])
 used = unary_union([final[k] for k in ("lesser-coverts", "alula", "primary-coverts", "median-coverts", "greater-coverts")])
 final["secondaries"] = rest.difference(used)
+# the covert rows as one area in the main layer, as on the other birds, so "wing coverts" on a songbird's page opens
+# the songbird (td-d32fd3); closed up so the rows show no seams
+final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")]).buffer(0.5).buffer(-0.5).intersection(WOUT)
 # tail feathers layer
 tail = final["tail"]
 final["uppertail-coverts"] = poly("M278,352 L322,326 L334,348 L318,374 L282,386 Z").intersection(tail.union(final["rump"])).difference(WOUT)
@@ -95,7 +98,7 @@ META = [  # id, name, tone, layers
     ("throat", "pale", "mf"), ("chin", "pale", "mf"), ("malar", "dark", "mf"), ("submoustachial", "pale", "mf"),
     ("supercilium", "pale", "mf"), ("eye-line", "dark", "mf"),
     ("lores", "mid", "mf"), ("eye-ring", "pale", "mf"),
-    ("wing", "wing", "m"), ("scapulars", "mid", "f"), ("lesser-coverts", "wing", "f"),
+    ("wing", "wing", "m"), ("wing-coverts", "wing", "m"), ("scapulars", "mid", "f"), ("lesser-coverts", "wing", "f"),
     ("alula", "dark", "f"), ("median-coverts", "dark", "f"),
     ("greater-coverts", "dark", "f"), ("primary-coverts", "darker", "f"), ("secondaries", "wing", "f"),
     ("tertials", "dark", "mf"), ("primaries", "darker", "mf"), ("wing-bars", "pale", "mf"),
@@ -105,7 +108,7 @@ META = [  # id, name, tone, layers
 ]
 order = ["legs", "belly", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "rectrices", "uppertail-coverts",
          "nape", "crown", "forehead", "ear-coverts", "throat", "chin", "submoustachial", "malar", "supercilium", "eye-line", "lores", "eye-ring",
-         "wing", "scapulars", "lesser-coverts", "alula", "primary-coverts", "median-coverts", "greater-coverts", "secondaries",
+         "wing", "wing-coverts", "scapulars", "lesser-coverts", "alula", "primary-coverts", "median-coverts", "greater-coverts", "secondaries",
          "tertials", "primaries", "wing-bars", "upper-mandible", "lower-mandible"]
 build("songbird", final, META, order, [0, 0, 540, 360], dx=DX, dy=DY,
       base_under=[(PERCH, "perch")],

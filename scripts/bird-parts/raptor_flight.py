@@ -86,7 +86,7 @@ def above():
     back = BODY.intersection(box(0, 62, 999, 168)).difference(mirror(scap)).difference(nape)
     rump = BODY.intersection(box(0, 160, 999, 182)).difference(mirror(scap))
     utc = mirror(poly("M380,178 L408,178 C410,190 406,200 398,206 Q390,210 380,210 Z"))
-    tail = TAIL.difference(utc).difference(rump).difference(BAND)
+    tail = TAIL.difference(utc).difference(rump)   # the band is drawn over the whole tail (td-d32fd3)
     R = mirror
     final = {k: R(v) for k, v in up.items()}
     final["primaries"] = final["primaries"].difference(R(fing))
@@ -132,7 +132,7 @@ def below():
     legs = mirror(affinity.scale(Point(398, 166).buffer(1), 12, 20))
     utc = mirror(poly("M380,176 L400,176 C404,190 400,204 392,210 Q386,214 380,214 Z"))
     belly = BODY.difference(throat).difference(breast).difference(band).difference(legs).difference(utc)
-    tail = TAIL.difference(utc).difference(BAND)
+    tail = TAIL.difference(utc)   # the band is drawn over the whole tail (td-d32fd3)
     R = mirror
     final = {k: R(v) for k, v in un.items()}
     final["primaries"] = final["primaries"].difference(R(fing))

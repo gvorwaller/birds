@@ -56,6 +56,9 @@ for k in ("sides", "flanks", "back", "breast"):
     final[k] = final[k].difference(final["scapulars"]).difference(final["tertials"]).difference(final["primaries"]).difference(spec).difference(gcov).difference(trailing)
 for k in ("rump", "tail", "undertail-coverts"):
     final[k] = final[k].difference(final["primaries"]).difference(final["drake-curl"])
+# the curled central feathers are rectrices too: the tail takes them in, drawn over as their own part, so "rectrices"
+# opens the whole tail (CODEX1, td-d32fd3)
+final["tail"] = final["tail"].union(final["drake-curl"])
 
 meta = [("sides", "light", "mf"), ("breast", "chestnut", "mf"), ("flanks", "light", "mf"),
         ("undertail-coverts", "darker", "mf"), ("back", "mid", "mf"), ("rump", "darker", "mf"),

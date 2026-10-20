@@ -113,6 +113,11 @@ export interface PartTerm {
   drawnIn: DiagramId[];
   /** Only linked on these birds' pages ("behavior mirrors the…" on a kingfisher is not a gull's mirror). */
   onlyFor?: DiagramId[];
+  /**
+   * The same part under another name on a drawing that lacks this id (the songbird's "legs" for the tarsus), so a
+   * bird's link stays on its own drawing (td-d32fd3). Checked by test against the real glossaries.
+   */
+  sameAs?: Partial<Record<DiagramId, string>>;
 }
 
 const ALL: DiagramId[] = [...DIAGRAM_ORDER];
@@ -143,7 +148,7 @@ export const TERMS: PartTerm[] = [
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe"] },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ALL.filter((d) => d !== "gull") },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
   // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
@@ -164,7 +169,12 @@ export const TERMS: PartTerm[] = [
   // A gull's or tern's bill has a "subterminal band" too, so only raptors' and gamebirds' pages link it.
   { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor", "gamebird"], onlyFor: ["raptor", "gamebird"] },
   { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
-  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"] },
+  {
+    part: "tarsus",
+    forms: ["tarsus", "tarsi"],
+    drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"],
+    sameAs: { songbird: "legs" },
+  },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.
   { part: "foreneck", forms: ["fore[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
@@ -199,7 +209,13 @@ export const TERMS: PartTerm[] = [
   { part: "crest", forms: ["top[- ]?knots?"], drawnIn: ["gamebird"], onlyFor: ["gamebird"] },
   // Grebes (td-7adea3): owls have "ear tufts" and many birds "horns".
   { part: "ear-tufts", forms: ["ear[- ]?tufts?", "ear[- ]?plumes?", "ear[- ]?fans?", "horns"], drawnIn: ["grebe"], onlyFor: ["grebe"] },
-  { part: "rectrices", forms: ["rectrices", "rectrix"], drawnIn: ["songbird"] },
+  // The tail feathers: every drawing but the songbird's (and the grebe's, which has almost no tail) draws them as the tail.
+  {
+    part: "rectrices",
+    forms: ["rectrices", "rectrix"],
+    drawnIn: ["songbird"],
+    sameAs: Object.fromEntries(ALL.filter((d) => d !== "songbird" && d !== "grebe").map((d) => [d, "tail"])),
+  },
 ];
 
 /**
@@ -209,9 +225,11 @@ export const TERMS: PartTerm[] = [
 const TERM_RE = new RegExp(`(?:${TERMS.map((t, i) => `(?<t${i}>${t.forms.join("|")})`).join("|")})(?![\\p{L}\\p{N}_-])`, "giu");
 const WORD_CHAR = /[\p{L}\p{N}_-]/u;
 
-/** The bird's own drawing if it has the part, else the first drawing that does. */
-export function partDiagram(term: PartTerm, own: DiagramId): DiagramId {
-  return term.drawnIn.includes(own) ? own : term.drawnIn[0];
+/** The bird's own drawing if it has the part (under its own id or another), else the first drawing that does. */
+export function partTarget(term: PartTerm, own: DiagramId): { diagram: DiagramId; part: string } {
+  if (term.drawnIn.includes(own)) return { diagram: own, part: term.part };
+  const same = term.sameAs?.[own];
+  return same ? { diagram: own, part: same } : { diagram: term.drawnIn[0], part: term.part };
 }
 
 export type PartTermSegment = { text: string; diagram?: undefined; part?: undefined } | { text: string; diagram: DiagramId; part: string };
@@ -236,7 +254,7 @@ export function linkPartTerms(blocks: string[], own: DiagramId): PartTermSegment
       if ((term.onlyFor && !term.onlyFor.includes(own)) || seen.has(term.part)) continue;
       seen.add(term.part);
       if (m.index > last) out.push({ text: text.slice(last, m.index) });
-      out.push({ text: m[0], diagram: partDiagram(term, own), part: term.part });
+      out.push({ text: m[0], ...partTarget(term, own) });
       last = m.index + m[0].length;
     }
     if (last < text.length) out.push({ text: text.slice(last) });

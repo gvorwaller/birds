@@ -63,8 +63,10 @@ def above():
         final[k] = final[k].difference(final["scapulars"])
     final["wing"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                  "primary-coverts", "alula", "secondaries")]).difference(final["wing-bars"])
+    final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
+                                         "primary-coverts", "alula")]).difference(final["wing-bars"])
     meta = [("tail", "mid", "m"), ("rectrices", "mid", "f"), ("uppertail-coverts", "mid", "f"), ("rump", "mid", "mf"),
-            ("wing", "wing", "m"), ("secondaries", "wing", "f"), ("lesser-coverts", "wing", "f"),
+            ("wing", "wing", "m"), ("wing-coverts", "wing", "m"), ("secondaries", "wing", "f"), ("lesser-coverts", "wing", "f"),
             ("median-coverts", "dark", "f"), ("greater-coverts", "dark", "f"), ("primary-coverts", "darker", "f"),
             ("alula", "dark", "f"), ("primaries", "darker", "mf"), ("wing-bars", "pale", "mf"),
             ("tertials", "dark", "mf"), ("back", "mid", "mf"), ("scapulars", "mid", "mf"),

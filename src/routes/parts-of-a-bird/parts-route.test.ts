@@ -56,7 +56,8 @@ describe("PartsDiagram", () => {
       for (const p of diagram.glossary) {
         expect(body, `${diagram.id}-${p.id}`).toContain(`id="${diagram.id}-${p.id}"`);
       }
-      expect(body).not.toContain("All feather groups");
+      // The layer control (glossary text may name it, as the songbird's wing coverts do).
+      expect(body).not.toContain(">All feather groups<");
       expect(body).not.toContain("Tap a part");
       expect(body).not.toContain("<button");
       // A name and its other name read as two words, e.g. "Ear coverts (auriculars)" (td-dd4f9c).

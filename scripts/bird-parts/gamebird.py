@@ -87,7 +87,8 @@ final["bill"] = BILL
 final["tarsus"] = TARSUS
 final["toes"] = TOES
 final["subterminal-band"] = BAND
-final["tail"] = TAIL.difference(BAND)
+# the tail is the whole tail, the band drawn over it as its own part, so 'rectrices' opens all of it (CODEX1, td-d32fd3)
+final["tail"] = TAIL
 
 
 def one_piece(final, keys, speck=60):

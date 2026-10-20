@@ -83,7 +83,8 @@ final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "media
 TAIL = final["belly"].intersection(poly("M100,700 L270,700 L250,900 L100,900 Z"))
 final["belly"] = final["belly"].difference(TAIL)
 final["subterminal-band"] = TAIL.intersection(poly("M100,846 L260,830 L260,846 L100,866 Z"))
-final["tail"] = TAIL.difference(final["subterminal-band"])
+# the tail is the whole tail, the band drawn over it as its own part, so 'rectrices' opens all of it (CODEX1, td-d32fd3)
+final["tail"] = TAIL
 
 META = [
     ("belly", "pale", "mf"), ("undertail-coverts", "pale", "mf"), ("leg-feathers", "light", "mf"),
