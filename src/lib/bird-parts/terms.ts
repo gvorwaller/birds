@@ -8,10 +8,14 @@
  * that have its part, and bird-parts.test.ts checks those lists against the real glossaries.
  */
 
-export type DiagramId = "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant" | "auk" | "tubenose";
+export type DiagramId =
+  | "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant" | "auk" | "tubenose"
+  | "woodpecker" | "hummingbird" | "gamebird" | "loon" | "grebe";
 
 /** Fallback order when the bird's own drawing lacks a part: the order of the Parts of a Bird page. */
-export const DIAGRAM_ORDER: readonly DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose"];
+export const DIAGRAM_ORDER: readonly DiagramId[] = [
+  "songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe",
+];
 
 const SHOREBIRD_FAMILIES = new Set([
   "Scolopacidae",
@@ -62,6 +66,25 @@ const CORMORANT_FAMILIES = new Set(["Phalacrocoracidae", "Anhingidae", "Sulidae"
 /** Albatrosses, shearwaters, petrels and fulmars, and the storm-petrels of both hemispheres (td-315613). */
 const TUBENOSE_FAMILIES = new Set(["Diomedeidae", "Procellariidae", "Hydrobatidae", "Oceanitidae"]);
 
+/** Woodpeckers, and the rest of their order: barbets, toucans, honeyguides, jacamars and puffbirds (td-71bf41). */
+const WOODPECKER_FAMILIES = new Set([
+  "Picidae",
+  "Lybiidae",
+  "Megalaimidae",
+  "Capitonidae",
+  "Semnornithidae",
+  "Ramphastidae",
+  "Indicatoridae",
+  "Galbulidae",
+  "Bucconidae",
+]);
+
+/** Hummingbirds, and the swifts and treeswifts that share their order (td-725e4c). */
+const HUMMINGBIRD_FAMILIES = new Set(["Trochilidae", "Apodidae", "Hemiprocnidae"]);
+
+/** Grouse, ptarmigan, pheasants, partridges, turkeys, New World quail, guineafowl, curassows and guans, and megapodes (td-71be07). */
+const GAMEBIRD_FAMILIES = new Set(["Phasianidae", "Odontophoridae", "Numididae", "Cracidae", "Megapodiidae"]);
+
 /** The drawing a species' links prefer, by scientific family name. Everything else is the songbird. */
 export function diagramForFamily(familySciName: string | null | undefined): DiagramId {
   if (familySciName === "Anatidae") return "duck";
@@ -71,6 +94,12 @@ export function diagramForFamily(familySciName: string | null | undefined): Diag
   // Murres, the Razorbill, guillemots, puffins, auklets and murrelets (td-5076e6).
   if (familySciName === "Alcidae") return "auk";
   if (familySciName && TUBENOSE_FAMILIES.has(familySciName)) return "tubenose";
+  if (familySciName && WOODPECKER_FAMILIES.has(familySciName)) return "woodpecker";
+  if (familySciName && HUMMINGBIRD_FAMILIES.has(familySciName)) return "hummingbird";
+  if (familySciName && GAMEBIRD_FAMILIES.has(familySciName)) return "gamebird";
+  // Loons (divers, td-a3a17d) and grebes (td-7adea3).
+  if (familySciName === "Gaviidae") return "loon";
+  if (familySciName === "Podicipedidae") return "grebe";
   if (familySciName === "Laridae" || familySciName === "Stercorariidae") return "gull";
   if (familySciName && SHOREBIRD_FAMILIES.has(familySciName)) return "shorebird";
   return "songbird";
@@ -86,7 +115,9 @@ export interface PartTerm {
   onlyFor?: DiagramId[];
 }
 
-const ALL: DiagramId[] = ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose"];
+const ALL: DiagramId[] = [...DIAGRAM_ORDER];
+/** The hummingbird's wing has no alula, and its scapulars and tertials are not drawn. */
+const NOT_HUMMINGBIRD: DiagramId[] = ALL.filter((d) => d !== "hummingbird");
 const COVERTS = "[- ]coverts";
 
 /**
@@ -94,31 +125,31 @@ const COVERTS = "[- ]coverts";
  * "tertial"): at one position the regex takes the first alternative that matches.
  */
 export const TERMS: PartTerm[] = [
-  { part: "supercilium", forms: ["supercilium", "supercilia", "superciliums", "superciliary", "eyebrows?"], drawnIn: ["songbird", "shorebird"] },
-  { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull", "heron", "cormorant"] },
+  { part: "supercilium", forms: ["supercilium", "supercilia", "superciliums", "superciliary", "eyebrows?(?![- ]?combs?)"], drawnIn: ["songbird", "shorebird", "woodpecker"] },
+  { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull", "heron", "cormorant", "grebe"] },
   { part: "eye-ring", forms: ["eye[- ]?rings?"], drawnIn: ["songbird", "shorebird"] },
   { part: "eye-line", forms: ["eye[- ]?lines?", "eye[- ]?stripes?"], drawnIn: ["songbird"] },
-  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
-  { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird"] },
-  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ["songbird", "raptor"] },
+  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull", "raptor", "woodpecker"] },
+  { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird", "woodpecker"] },
+  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ["songbird", "raptor", "woodpecker"] },
   { part: "cere", forms: ["ceres?"], drawnIn: ["raptor"] },
   { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ["gull"] },
   { part: "gonydeal-spot", forms: ["gonydeal spots?"], drawnIn: ["gull"] },
   { part: "gonys", forms: ["gonys"], drawnIn: ["gull"] },
-  { part: "scapulars", forms: ["scapulars?"], drawnIn: ALL },
+  { part: "scapulars", forms: ["scapulars?"], drawnIn: NOT_HUMMINGBIRD },
   { part: "lesser-coverts", forms: [`lesser(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "median-coverts", forms: [`median(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "greater-coverts", forms: [`greater(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant", "auk", "tubenose"] },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ["shorebird", "duck", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe"] },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
   // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
-  { part: "alula", forms: ["alulae?"], drawnIn: ALL },
+  { part: "alula", forms: ["alulae?"], drawnIn: NOT_HUMMINGBIRD },
   { part: "tertial-crescent", forms: ["tertial crescents?"], drawnIn: ["gull"] },
-  { part: "tertials", forms: ["tertials?"], drawnIn: ALL },
+  { part: "tertials", forms: ["tertials?"], drawnIn: NOT_HUMMINGBIRD },
   { part: "secondaries", forms: ["secondaries"], drawnIn: ALL },
   // "fingers" is ordinary English elsewhere ("finger claws"), so only raptors' (and owls') pages link it.
   { part: "fingers", forms: ["emarginated primaries", "emarginations?", "emarginated", "emarginate", "(?:primary )?fingers?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
@@ -130,10 +161,10 @@ export const TERMS: PartTerm[] = [
   { part: "mirrors", forms: ["mirrors?"], drawnIn: ["gull"], onlyFor: ["gull"] },
   { part: "undertail-coverts", forms: [`under[- ]?tail${COVERTS}`], drawnIn: ALL },
   { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
-  // A gull's or tern's bill has a "subterminal band" too, so only raptors' pages link it.
-  { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
+  // A gull's or tern's bill has a "subterminal band" too, so only raptors' and gamebirds' pages link it.
+  { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor", "gamebird"], onlyFor: ["raptor", "gamebird"] },
   { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
-  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant", "auk"] },
+  { part: "tarsus", forms: ["tarsus", "tarsi"], drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"] },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.
   { part: "foreneck", forms: ["fore[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
@@ -142,9 +173,32 @@ export const TERMS: PartTerm[] = [
   // Storks, cranes, gamebirds and hummingbirds use "gular" and "throat pouch" for other throat marks, and a heron's
   // toes are not webbed, so only the cormorant group's pages link these.
   { part: "gular-skin", forms: ["gular(?: (?:pouch(?:es)?|skin|sacs?|patch(?:es)?))?", "throat[- ](?:pouch(?:es)?|sacs?)", "pouch(?:es)?"], drawnIn: ["cormorant"], onlyFor: ["cormorant"] },
-  { part: "toes", forms: ["totipalmate(?: feet| foot)?"], drawnIn: ["heron", "cormorant", "auk"], onlyFor: ["cormorant"] },
+  // Parrots, cuckoos and owls have zygodactyl feet too, but only the woodpecker drawing shows them.
+  {
+    part: "toes",
+    forms: ["totipalmate(?: feet| foot)?", "zygodactyl(?: feet| foot| toes)?"],
+    drawnIn: ["heron", "cormorant", "auk", "woodpecker", "hummingbird", "gamebird", "loon", "grebe"],
+    onlyFor: ["cormorant", "woodpecker"],
+  },
   // "nasal" alone is a call ("nasal kip"); only the tube words, and only on tubenose pages.
   { part: "nostril-tubes", forms: ["naricorns?", "nasal tubes?", "tubular nostrils?", "tube[- ]?nosed?"], drawnIn: ["tubenose"], onlyFor: ["tubenose"] },
+  // Woodpeckers (td-71bf41). "Nape patch" is also a tit's white patch, so only woodpecker pages link it; the nasal
+  // tufts of birds-of-paradise are the same feathers.
+  { part: "nasal-tufts", forms: ["nasal[- ]tufts?"], drawnIn: ["woodpecker"] },
+  { part: "nape-patch", forms: ["(?:nape|nuchal) (?:patch(?:es)?|spots?)"], drawnIn: ["woodpecker"], onlyFor: ["woodpecker"] },
+  // Hummingbirds and swifts (td-725e4c). A partridge's or bee-eater's "gorget" is another throat mark, and a sparrow's
+  // postocular stripe another face mark.
+  { part: "gorget", forms: ["gorgets?"], drawnIn: ["hummingbird"], onlyFor: ["hummingbird"] },
+  { part: "post-ocular-spot", forms: ["post[- ]?ocular(?: (?:spots?|stripes?|streaks?|lines?|patch(?:es)?))?"], drawnIn: ["hummingbird"], onlyFor: ["hummingbird"] },
+  // Gamebirds (td-71be07). The drawn comb is the grouse's bare skin over the eye; a junglefowl's or pheasant's bare
+  // "comb" is on top of the head (CODEX1), so only the eye words link (the supercilium's "eyebrow" stops short of
+  // "eyebrow comb"). "Ruff" also names a sandpiper and a cowbird's neck feathers, and "crest" is an everyday word, so
+  // only the quail's "topknot" stands for the crest.
+  { part: "comb", forms: ["eye(?:brow)?[- ]?combs?"], drawnIn: ["gamebird"], onlyFor: ["gamebird"] },
+  { part: "ruff", forms: ["(?:neck[- ])?ruffs?"], drawnIn: ["gamebird"], onlyFor: ["gamebird"] },
+  { part: "crest", forms: ["top[- ]?knots?"], drawnIn: ["gamebird"], onlyFor: ["gamebird"] },
+  // Grebes (td-7adea3): owls have "ear tufts" and many birds "horns".
+  { part: "ear-tufts", forms: ["ear[- ]?tufts?", "ear[- ]?plumes?", "ear[- ]?fans?", "horns"], drawnIn: ["grebe"], onlyFor: ["grebe"] },
   { part: "rectrices", forms: ["rectrices", "rectrix"], drawnIn: ["songbird"] },
 ];
 

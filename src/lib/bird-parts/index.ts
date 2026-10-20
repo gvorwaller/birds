@@ -26,6 +26,21 @@ import aukBelow from "./geometry/auk-below.json";
 import tubenoseGeometry from "./geometry/tubenose.json";
 import tubenoseAbove from "./geometry/tubenose-above.json";
 import tubenoseBelow from "./geometry/tubenose-below.json";
+import woodpeckerGeometry from "./geometry/woodpecker.json";
+import woodpeckerAbove from "./geometry/woodpecker-above.json";
+import woodpeckerBelow from "./geometry/woodpecker-below.json";
+import hummingbirdGeometry from "./geometry/hummingbird.json";
+import hummingbirdAbove from "./geometry/hummingbird-above.json";
+import hummingbirdBelow from "./geometry/hummingbird-below.json";
+import gamebirdGeometry from "./geometry/gamebird.json";
+import gamebirdAbove from "./geometry/gamebird-above.json";
+import gamebirdBelow from "./geometry/gamebird-below.json";
+import loonGeometry from "./geometry/loon.json";
+import loonAbove from "./geometry/loon-above.json";
+import loonBelow from "./geometry/loon-below.json";
+import grebeGeometry from "./geometry/grebe.json";
+import grebeAbove from "./geometry/grebe-above.json";
+import grebeBelow from "./geometry/grebe-below.json";
 import { songbird } from "./songbird";
 import { shorebird } from "./shorebird";
 import { duck } from "./duck";
@@ -35,6 +50,11 @@ import { heron } from "./heron";
 import { cormorant } from "./cormorant";
 import { auk } from "./auk";
 import { tubenose } from "./tubenose";
+import { woodpecker } from "./woodpecker";
+import { hummingbird } from "./hummingbird";
+import { gamebird } from "./gamebird";
+import { loon } from "./loon";
+import { grebe } from "./grebe";
 
 export type ViewGeometries = Record<View, DiagramGeometry>;
 
@@ -85,6 +105,11 @@ export const DIAGRAMS: BirdDiagram[] = [
   joinDiagram(cormorant, { standing: g(cormorantGeometry), above: g(cormorantAbove), below: g(cormorantBelow) }),
   joinDiagram(auk, { standing: g(aukGeometry), above: g(aukAbove), below: g(aukBelow) }),
   joinDiagram(tubenose, { standing: g(tubenoseGeometry), above: g(tubenoseAbove), below: g(tubenoseBelow) }),
+  joinDiagram(woodpecker, { standing: g(woodpeckerGeometry), above: g(woodpeckerAbove), below: g(woodpeckerBelow) }),
+  joinDiagram(hummingbird, { standing: g(hummingbirdGeometry), above: g(hummingbirdAbove), below: g(hummingbirdBelow) }),
+  joinDiagram(gamebird, { standing: g(gamebirdGeometry), above: g(gamebirdAbove), below: g(gamebirdBelow) }),
+  joinDiagram(loon, { standing: g(loonGeometry), above: g(loonAbove), below: g(loonBelow) }),
+  joinDiagram(grebe, { standing: g(grebeGeometry), above: g(grebeAbove), below: g(grebeBelow) }),
 ];
 
 export function getView(diagram: BirdDiagram, view: View): DiagramView {

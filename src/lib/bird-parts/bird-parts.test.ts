@@ -42,9 +42,17 @@ function pathIsValid(d: string): boolean {
   return true;
 }
 
+/** The swimming loon and grebe hide their folded wings, so their standing view has one layer (td-a3a17d, td-7adea3). */
+const WINGS_HIDDEN = new Set(["loon", "grebe"]);
+/** Feather groups a bird's open wing or body really lacks: a hummingbird's wing has no alula (its scapulars and tertials are
+ * not drawn), and a grebe has almost no tail. */
+const LACKS: Record<string, string[]> = { hummingbird: ["alula", "tertials", "scapulars"], grebe: ["tail"] };
+
 describe("Parts of a Bird data", () => {
-  it("has the nine diagrams in order, each standing and in flight from above and below", () => {
-    expect(DIAGRAMS.map((d) => d.id)).toEqual(["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose"]);
+  it("has the fourteen diagrams in order, each standing and in flight from above and below", () => {
+    expect(DIAGRAMS.map((d) => d.id)).toEqual([
+      "songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe",
+    ]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
   });
@@ -114,11 +122,12 @@ describe("Parts of a Bird data", () => {
       it("offers the feathers layer only when it adds parts", () => {
         const standing = getView(d, "standing");
         expect(visibleParts(standing, "main").length).toBeGreaterThan(5);
-        expect(visibleParts(standing, "feathers").length).toBeGreaterThan(5);
+        if (!WINGS_HIDDEN.has(d.id)) expect(visibleParts(standing, "feathers").length).toBeGreaterThan(5);
         const addsParts = standing.parts.some((p) => !p.layers.includes("main"));
         expect(hasFeatherLayer(standing)).toBe(addsParts);
-        // The swimming duck already shows its wing groups; every other bird has a real second layer.
-        expect(addsParts).toBe(d.id !== "duck");
+        // The swimming duck already shows its wing groups, and the swimming loon and grebe hide theirs; every other bird
+        // has a real second layer.
+        expect(addsParts).toBe(d.id !== "duck" && !WINGS_HIDDEN.has(d.id));
         // From above the open wing splits into feather groups; from below there's one layer.
         expect(hasFeatherLayer(getView(d, "above"))).toBe(true);
         expect(hasFeatherLayer(getView(d, "below"))).toBe(false);
@@ -127,15 +136,18 @@ describe("Parts of a Bird data", () => {
       it("uses the same ids for the same feathers on the open wing", () => {
         const above = getView(d, "above").parts.map((p) => p.id);
         const below = getView(d, "below").parts.map((p) => p.id);
+        const lacks = LACKS[d.id] ?? [];
         for (const id of ["primaries", "primary-coverts", "alula", "greater-coverts", "tertials", "scapulars", "tail"]) {
-          expect(above, `above has ${id}`).toContain(id);
+          if (lacks.includes(id)) expect(above, `above lacks ${id}`).not.toContain(id);
+          else expect(above, `above has ${id}`).toContain(id);
         }
         for (const id of ["primaries", "underwing-coverts", "axillaries", "undertail-coverts", "tail"]) {
-          expect(below, `below has ${id}`).toContain(id);
+          if (lacks.includes(id)) expect(below, `below lacks ${id}`).not.toContain(id);
+          else expect(below, `below has ${id}`).toContain(id);
         }
-        // Parts shared with the standing drawing keep their standing names.
+        // Parts shared with the standing drawing keep their standing names (fewer where the standing bird hides its wings).
         const standing = new Set(getView(d, "standing").parts.map((p) => p.id));
-        expect(above.filter((id) => standing.has(id)).length).toBeGreaterThan(6);
+        expect(above.filter((id) => standing.has(id)).length).toBeGreaterThan(WINGS_HIDDEN.has(d.id) ? 3 : 6);
       });
 
       it("records its model and sources", () => {
@@ -290,6 +302,54 @@ describe("Parts of a Bird data", () => {
     }
     expect(getView(t, "below").parts.find((p) => p.id === "underwing-coverts")!.marks?.length).toBe(1);
     expect(viewsDrawing(t, "rump").map((v) => v.id)).toEqual(["above"]);
+  });
+
+  it("draws the woodpecker's foot on the trunk and in the close-up, and its spotted wing (td-71bf41)", () => {
+    const w = DIAGRAMS.find((d) => d.id === "woodpecker")!;
+    const standing = getView(w, "standing");
+    expect(standing.insets.map((i) => i.label)).toEqual(["Foot, close up"]);
+    // Two toes forward and two back, on the bird and again, larger, in the close-up.
+    expect(standing.parts.find((p) => p.id === "toes")!.d.match(/M/g)!.length).toBeGreaterThanOrEqual(4);
+    for (const id of ["nasal-tufts", "nape-patch", "malar", "outer-tail-feathers"]) expect(viewsDrawing(w, id).length, id).toBeGreaterThan(0);
+    // The white wing spots and the tail bars are marks, never tap targets.
+    expect(standing.parts.find((p) => p.id === "primaries")!.marks?.length).toBe(1);
+    expect(standing.parts.find((p) => p.id === "outer-tail-feathers")!.marks?.length).toBe(1);
+    expect(viewsDrawing(w, "rump").map((v) => v.id)).toEqual(["above"]);
+  });
+
+  it("draws the hummingbird's gorget and the spot behind its eye, on a wing with no alula (td-725e4c)", () => {
+    const h = DIAGRAMS.find((d) => d.id === "hummingbird")!;
+    expect(getView(h, "standing").parts.find((p) => p.id === "gorget")!.tone).toBe("accent");
+    expect(viewsDrawing(h, "post-ocular-spot").map((v) => v.id)).toContain("standing");
+    for (const id of ["alula", "scapulars", "tertials"]) expect(h.glossary.some((p) => p.id === id), id).toBe(false);
+    expect(viewsDrawing(h, "underwing-coverts").map((v) => v.id)).toEqual(["below"]);
+  });
+
+  it("draws the grouse's comb, ruff, crest and banded fan tail (td-71be07)", () => {
+    const g = DIAGRAMS.find((d) => d.id === "gamebird")!;
+    for (const id of ["comb", "ruff", "crest", "subterminal-band"]) expect(viewsDrawing(g, id).map((v) => v.id), id).toContain("standing");
+    // The tail bars are marks over the tail, which stays one tap target.
+    expect(getView(g, "standing").parts.find((p) => p.id === "tail")!.marks?.length).toBe(2);
+  });
+
+  it("swims the loon low, its wings hidden, with feet trailing past the tail in flight (td-a3a17d)", () => {
+    const l = DIAGRAMS.find((d) => d.id === "loon")!;
+    const standing = getView(l, "standing");
+    expect(hasFeatherLayer(standing)).toBe(false);
+    expect(standing.parts.some((p) => p.group === "Wing")).toBe(false);
+    expect(viewsDrawing(l, "necklace").map((v) => v.id)).toEqual(["standing"]);
+    expect(standing.parts.find((p) => p.id === "back")!.marks?.length).toBe(1);
+    expect(viewsDrawing(l, "toes").map((v) => v.id)).toEqual(["above", "below"]);
+  });
+
+  it("draws the grebe's ear tufts, and its lobed foot only in the close-up (td-7adea3)", () => {
+    const g = DIAGRAMS.find((d) => d.id === "grebe")!;
+    const standing = getView(g, "standing");
+    expect(standing.insets.map((i) => i.label)).toEqual(["Foot, close up"]);
+    expect(viewsDrawing(g, "ear-tufts").map((v) => v.id)).toContain("standing");
+    // A grebe has almost no tail; nothing in its glossary is the tail.
+    expect(g.glossary.some((p) => p.id === "tail")).toBe(false);
+    expect(viewsDrawing(g, "toes").map((v) => v.id)).toEqual(["standing", "above", "below"]);
   });
 
   it("puts the duck's speculum on the open wing between its two white borders", () => {

@@ -30,7 +30,9 @@ describe("part terms (td-e4c6dd)", () => {
       "uppertail-coverts": "uppertail coverts", rectrices: "rectrices", cere: "cere", "patagial-bar": "patagial bar",
       "carpal-patch": "carpal patch", fingers: "fingers", "subterminal-band": "subterminal band", "belly-band": "belly band",
       tarsus: "tarsi", tibia: "tibia", foreneck: "foreneck", hindneck: "hindneck", "head-plumes": "head plumes",
-      "gular-skin": "gular pouch", toes: "totipalmate", "nostril-tubes": "naricorns",
+      "gular-skin": "gular pouch", toes: "totipalmate", "nostril-tubes": "naricorns", "nasal-tufts": "nasal tufts",
+      "nape-patch": "nape patch", gorget: "gorget", "post-ocular-spot": "postocular spot", comb: "eye-comb", ruff: "ruff", crest: "topknot",
+      "ear-tufts": "ear tufts",
     };
     expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
     for (const t of TERMS) {
@@ -61,6 +63,12 @@ describe("part terms (td-e4c6dd)", () => {
     // Tropicbirds have the same webbed feet but a tern's build.
     expect(diagramForFamily("Phaethontidae")).toBe("songbird");
     for (const f of ["Diomedeidae", "Procellariidae", "Hydrobatidae", "Oceanitidae"]) expect(diagramForFamily(f), f).toBe("tubenose");
+    for (const f of ["Picidae", "Lybiidae", "Megalaimidae", "Capitonidae", "Semnornithidae", "Ramphastidae", "Indicatoridae", "Galbulidae", "Bucconidae"])
+      expect(diagramForFamily(f), f).toBe("woodpecker");
+    for (const f of ["Trochilidae", "Apodidae", "Hemiprocnidae"]) expect(diagramForFamily(f), f).toBe("hummingbird");
+    for (const f of ["Phasianidae", "Odontophoridae", "Numididae", "Cracidae", "Megapodiidae"]) expect(diagramForFamily(f), f).toBe("gamebird");
+    expect(diagramForFamily("Gaviidae")).toBe("loon");
+    expect(diagramForFamily("Podicipedidae")).toBe("grebe");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -167,6 +175,45 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a nasal call", "tubenose")).toEqual([]);
     expect(links("tubular nostrils", "gull")).toEqual([]);
     expect(links("silvery underwing coverts and dark primaries", "tubenose")).toEqual(["underwing coverts→tubenose-underwing-coverts", "primaries→tubenose-primaries"]);
+  });
+
+  it("links the woodpecker, hummingbird, gamebird, loon and grebe terms on their own pages only (td-56a506)", () => {
+    // Phrases from species_similar notes and Description sections in the test snapshot.
+    expect(links("They have zygodactyl feet, where the two toes facing forward", "woodpecker")).toEqual(["zygodactyl feet→woodpecker-toes"]);
+    expect(links("a pale yellowish nasal tuft and red-and-white barred", "woodpecker")).toEqual(["nasal tuft→woodpecker-nasal-tufts"]);
+    expect(links("the male's red nape patch is split", "woodpecker")).toEqual(["nape patch→woodpecker-nape-patch"]);
+    expect(links("a ruby-red (not violet) gorget and no black chin band", "hummingbird")).toEqual(["gorget→hummingbird-gorget"]);
+    expect(links("gray-bellied with a white postocular stripe", "hummingbird")).toEqual(["postocular stripe→hummingbird-post-ocular-spot"]);
+    expect(links("a black bib and red eye-comb; the tail is blackish", "gamebird")).toEqual(["eye-comb→gamebird-comb"]);
+    expect(links("a black ruff on the neck sides", "gamebird")).toEqual(["ruff→gamebird-ruff"]);
+    expect(links("a forward-curving teardrop-shaped topknot", "gamebird")).toEqual(["topknot→gamebird-crest"]);
+    expect(links("barred tail with a single broad dark subterminal band", "gamebird")).toEqual(["subterminal band→gamebird-subterminal-band"]);
+    expect(links("males show a red eye comb but lack the yellow throat sac", "gamebird")).toEqual(["eye comb→gamebird-comb"]);
+    expect(links("a throat/neck air sac and yellow eyebrow comb", "gamebird")).toEqual(["eyebrow comb→gamebird-comb"]);
+    // A junglefowl's comb is on top of its head, not the grouse's eye comb (CODEX1); a loon's "necklace" is either the
+    // neck-side collar or the throat streaks, so it is not linked.
+    expect(links("Red Junglefowl males show a bright red comb, wattles, and glossy orange", "gamebird")).toEqual([]);
+    expect(links("two white necklaces on the upper foreneck", "loon")).toEqual([]);
+    expect(links("in nonbreeding plumage a thin, dark necklace", "loon")).toEqual([]);
+    expect(links("breeding birds have a rufous neck with buff horns", "grebe")).toEqual(["horns→grebe-ear-tufts"]);
+    expect(links("in summer show golden ear fans, not a red neck", "grebe")).toEqual(["ear fans→grebe-ear-tufts"]);
+    // The same words on other birds' pages are other marks: an owl's ear tufts, a warbler's necklace, a partridge's
+    // gorget, a cowbird's ruff, the Comb Duck, a tit's nape patch, a parrot's toes, a sparrow's postocular stripe.
+    expect(links("close-set ear tufts, and yellow-orange eyes", "raptor")).toEqual([]);
+    expect(links("plain yellow below with no dark necklace", "songbird")).toEqual([]);
+    expect(links("examine throat coloration and gorget intensity", "gamebird")).toEqual([]);
+    expect(links("can raise a thick neck ruff", "songbird")).toEqual([]);
+    expect(links("Comb Duck is smaller", "duck")).toEqual([]);
+    expect(links("a black cap with a white nape patch", "songbird")).toEqual([]);
+    expect(links("The legs are dark-brown, with zygodactyl toes", "songbird")).toEqual([]);
+    expect(links("a white postocular stripe", "songbird")).toEqual([]);
+    expect(links("the Topknot Pigeon with its bushy crest", "songbird")).toEqual([]);
+    // Shared parts open the bird's own drawing where it has them; a hummingbird's wing has no alula or tertials.
+    expect(links("a long dark malar stripe and white secondaries", "woodpecker")).toEqual(["malar stripe→woodpecker-malar", "secondaries→woodpecker-secondaries"]);
+    expect(links("the alula and tertials", "hummingbird")).toEqual(["alula→songbird-alula", "tertials→songbird-tertials"]);
+    expect(links("feathered tarsi", "gamebird")).toEqual(["tarsi→gamebird-tarsus"]);
+    expect(links("black-and-white scapulars", "loon")).toEqual(["scapulars→loon-scapulars"]);
+    expect(links("black lores", "grebe")).toEqual(["lores→grebe-lores"]);
   });
 
   it("links an auk page's part names to the auk drawing where it has the part (td-5076e6)", () => {

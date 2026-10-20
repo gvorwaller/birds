@@ -443,3 +443,25 @@ The ninth drawing (`scripts/bird-parts/tubenose.py`, `tubenose_flight.py`; text 
 - **Term links:**
   - Diomedeidae, Procellariidae, Hydrobatidae and Oceanitidae use the tubenose drawing. Penguins (Spheniscidae), which the ticket mentioned as a fallback, keep the default: neither the tubenose nor the auk drawing is a penguin.
   - New term: naricorns, nasal tubes, tubular nostrils and tube-nose(d), linked only on tubenose pages. "Nasal" alone is a call in other species' text, and the group noun "tubenoses" is not linked.
+
+## Addendum (2026-10-20): woodpecker, hummingbird, gamebird, loon and grebe (epic td-56a506)
+
+Drawings ten to fourteen, built together for one deploy at the owner's request ("Do the remaining bird groups all for one deploy"). The loon and grebe ticket (td-a3a17d) left one drawing or two open; the owner had said they like seeing the small differences between drawings, so each got its own, as the seabirds did, and the grebe got its own ticket (td-7adea3). Scripts are `scripts/bird-parts/{bird}.py` and `{bird}_flight.py`, text in `src/lib/bird-parts/{bird}.ts`.
+
+- **Models:** production reads were blocked during the build, so the models come from the test snapshot's life lists (Downy Woodpecker and Ruby-throated Hummingbird are on three each):
+  - woodpecker td-71bf41: adult male Downy Woodpecker clinging to a trunk, propped on its tail, with a "Foot, close up" inset (two toes forward, two back);
+  - hummingbird td-725e4c: adult male Ruby-throated Hummingbird, perched;
+  - gamebird td-71be07: adult male Ruffed Grouse, crest raised and tail spread;
+  - loon td-a3a17d: adult Common Loon in breeding plumage, swimming;
+  - grebe td-7adea3: adult Horned (Slavonian) Grebe in breeding plumage, swimming, with a "Foot, close up" inset of a lobed foot.
+- **New parts:** nasal-tufts, nape-patch, outer-tail-feathers (woodpecker); gorget, post-ocular-spot (hummingbird); comb, ruff, crest (gamebird); necklace, throat-streaks (loon); ear-tufts (grebe). The gamebird reuses the raptor's subterminal-band, the grebe the duck's neck and the gull's iris.
+- **Drawing details:**
+  - the swimming loon and grebe hide their folded wings, so their standing view has one layer (the shared test names them in `WINGS_HIDDEN`);
+  - a hummingbird's wing has no alula, and its scapulars and tertials are not drawn; a grebe has almost no tail. The shared open-wing test lists these in `LACKS`, and the scapular, alula and tertial terms use `NOT_HUMMINGBIRD`;
+  - the woodpecker's wing spots and tail bars, the grouse's tail and flank bars, the loon's checks, spots and stripes, and the grebe's toe lines are marks, never tap targets;
+  - every head and body part is one piece; the flight scripts check this one side at a time, and the woodpecker's view from above also checks that its parts cover the whole body (CODEX1 found two unpainted strips and a hummingbird belly in three pieces).
+- **Facts:** Wikipedia, the Audubon Field Guide, National Geographic, Sibley Guides (Downy and Hairy nape patches), Oiseaux-Birds (the grouse's comb). All About Birds and eBird refused the fetch. Each bird's notes list what was not claimed for want of a source.
+- **Term links:**
+  - families: all Piciformes → woodpecker; Trochilidae, Apodidae, Hemiprocnidae → hummingbird; Phasianidae, Odontophoridae, Numididae, Cracidae, Megapodiidae → gamebird; Gaviidae → loon; Podicipedidae → grebe;
+  - new terms, counted over the snapshot's species text: nasal tufts; nape patch (woodpecker pages only); gorget and postocular (hummingbird and swift pages only); eye comb and eyebrow comb, ruff and topknot (gamebird pages only); ear tufts, ear plumes, ear fans and horns (grebe pages only); zygodactyl added to toes (woodpecker pages); subterminal band now on gamebird pages too;
+  - not linked: a bare "comb" (a junglefowl's head comb is not the grouse's eye comb), "necklace" (on loon pages it means either the neck-side collar or the throat streaks), "crest" and "outer tail feathers" (everyday words), "lobed toes" (no grebe text uses it).
