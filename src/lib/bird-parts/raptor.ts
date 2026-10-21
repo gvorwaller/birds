@@ -48,6 +48,38 @@ export const raptor: DiagramText = {
       lookFor: "The back of the head and neck; brown like the crown on this adult.",
     },
     {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor:
+        "Between the eye and the cere. Greyish on this Red-tailed Hawk, paler than the brown face.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "Above the eye. Brown like the crown on this Red-tailed Hawk, with no pale stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "Behind the eye, between the supercilium and the cheek. Plain brown on this Red-tailed Hawk.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "The narrow ring around the eye; dark like the face on this Red-tailed Hawk.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Cheek",
       aka: "ear coverts",

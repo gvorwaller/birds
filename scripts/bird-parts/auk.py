@@ -9,6 +9,7 @@ from geom import *
 from common import build
 from shapely.geometry import Point
 from shapely.ops import unary_union
+from shapely import affinity
 
 # head, neck and body, the folded wing along the back down to its tip (bill, tail and feet are separate)
 SIL = poly("M518,433 C548,433 570,438 590,446 C620,458 648,470 666,478 L660,533 "
@@ -58,6 +59,30 @@ for pid, rough in reversed(body_rough):
     final[pid] = rough.intersection(SIL).difference(claimed)
     claimed = claimed.union(rough.intersection(SIL))
 final["tail"] = TAIL.difference(SIL)
+
+# The small head areas field guides name, so an auk's species-page links stay on this drawing (td-93f86b). Each is
+# cut from the face, crown and throat around it and keeps the dark head's tone.
+def O(g):
+    """Plate coordinates (where the head was laid out) -> tracing coordinates."""
+    return affinity.translate(g, 150, 400)
+HEAD_AREAS = [
+    ("eye-ring", Point(*EYE).buffer(11).difference(Point(*EYE).buffer(8))),
+    ("lores", O(poly("M412,82 Q460,76 512,78 L512,104 Q460,100 412,94 Z"))),
+    ("supercilium", O(poly("M512,70 Q470,64 420,66 Q385,68 355,76 L356,84 Q385,77 404,75 Q460,72 512,76 Z"))),
+    ("eye-line", O(poly("M391,82 L350,84 L350,94 L391,93 Z"))),
+    ("ear-coverts", O(poly("M392,96 L345,96 L340,130 Q370,136 395,128 Z"))),
+    # along the lower edge of the face, from the base of the lower mandible back
+    ("malar", O(poly("M508,126 Q470,139 432,151 L431,162 Q470,149 511,134 Z"))),
+]
+_taken = Point(0, 0).buffer(0)
+for pid, rough in HEAD_AREAS:
+    g = rough.intersection(unary_union([final[k] for k in ("face", "crown", "throat")])).difference(_taken)
+    g = unary_union([q for q in getattr(g, "geoms", [g]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"auk: {pid} is in {len(g.geoms)} pieces")
+    final[pid] = g
+    _taken = _taken.union(g)
+for k in ("face", "crown", "throat"):
+    final[k] = final[k].difference(_taken)
 final["bill"] = BILL
 final["tarsus"] = TARSUS
 final["toes"] = TOES.difference(TARSUS)
@@ -88,12 +113,14 @@ final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "media
 META = [
     ("tail", "darker", "mf"), ("undertail-coverts", "pale", "mf"), ("belly", "pale", "mf"), ("flanks", "pale", "mf"),
     ("breast", "pale", "mf"), ("throat", "darker", "mf"), ("nape", "darker", "mf"), ("face", "darker", "mf"),
-    ("crown", "darker", "mf"), ("bill", "eye", "mf"),
+    ("crown", "darker", "mf"), ("lores", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"),
+    ("ear-coverts", "darker", "mf"), ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("bill", "eye", "mf"),
     ("scapulars", "darker", "mf"), ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"), ("median-coverts", "darker", "f"),
     ("greater-coverts", "darker", "f"), ("secondaries", "darker", "mf"), ("tertials", "darker", "mf"), ("primaries", "darker", "mf"),
     ("tarsus", "eye", "mf"), ("toes", "eye", "mf"),
 ]
-order = ["tail", "undertail-coverts", "belly", "flanks", "breast", "throat", "nape", "face", "crown", "bill",
+order = ["tail", "undertail-coverts", "belly", "flanks", "breast", "throat", "nape", "face", "crown",
+         "lores", "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "bill",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries",
          "tarsus", "toes"]
 # the dark streaks along the white flanks, next to the wing (never tap targets)

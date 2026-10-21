@@ -53,12 +53,22 @@ body = [
     ("ear-coverts", poly("M318,150 Q360,140 410,150 L430,175 Q400,196 360,196 Q330,190 318,176 Z")),
     ("lores", poly("M248,156 L318,136 L322,176 L284,190 Z")),
     ("throat", poly("M285,176 L320,172 L330,240 L290,240 Z")),
+    # td-93f86b: the malar from the base of the lower mandible back along the throat, the eye-line behind the eye,
+    # the supercilium over it, and the feathered eye-ring just outside the bare orbital ring
+    ("malar", poly("M280,173 L322,168 Q336,184 352,196 L346,205 Q326,194 302,190 L285,190 Z")),
+    ("eye-line", poly("M331,137 L380,141 L380,152 L331,150 Z")),
+    ("supercilium", poly("M284,140 Q300,126 322,124 Q348,124 374,133 L380,141 L331,137 L322,134 L312,139 L292,145 L284,147 Z")),
+    ("eye-ring", Point(*EYE).buffer(11.5).difference(Point(*EYE).buffer(8.5))),
 ]
 final = {}
 TAILV = TAIL.difference(PRIM).difference(GRAY)
 claimed = GRAY.union(TERT).union(PRIM).union(TAILV).union(Point(*EYE).buffer(8.5))
 for pid, rough in reversed(body):
     final[pid] = rough.intersection(SIL).difference(claimed); claimed = claimed.union(rough.intersection(SIL))
+for k in ("nape", "crown", "forehead", "ear-coverts", "lores", "throat", "malar", "eye-line", "supercilium", "eye-ring"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"gull: {k} is in {len(g.geoms)} pieces: " + str([(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]))
+    final[k] = g
 final["orbital-ring"] = Point(*EYE).buffer(8.5).difference(Point(*EYE).buffer(6))
 final["iris"] = Point(*EYE).buffer(6).difference(Point(*EYE).buffer(2.6))
 final["mantle"] = GRAY.union(TERT).difference(PRIM)
@@ -84,6 +94,9 @@ final["back"] = rest.intersection(poly("M430,140 L740,140 L740,168 Q600,176 470,
 rest = rest.difference(final["back"])
 final["scapulars"] = rest.intersection(poly("M470,150 L760,150 L760,222 Q640,228 520,236 Z"))
 final["lesser-coverts"] = rest.difference(final["scapulars"])
+# Main parts: the covert rows as one area over the mantle, as on the other birds (td-93f86b)
+# (one piece: the stray covert crumbs at the rear of the wing stay mantle)
+final["wing-coverts"] = largest(unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")]).buffer(0.5).buffer(-0.5).intersection(final["mantle"]))
 
 # inset (open wingtip), built directly in output coordinates (upper left, behind the bird)
 IC = (140, 430); IR = 98
@@ -105,8 +118,9 @@ mirrors = unary_union([at(0, 44, 6.5), at(1, 50, 5)]).intersection(wing_i)
 apical_i = unary_union([at(i, 70, 4) for i in range(1, 5)]).intersection(wing_i)
 meta = [("belly", "pale", "mf"), ("breast", "pale", "mf"), ("sides", "pale", "mf"),
         ("undertail-coverts", "pale", "mf"), ("nape", "pale", "mf"), ("crown", "pale", "mf"),
-        ("forehead", "pale", "mf"), ("throat", "pale", "mf"), ("lores", "pale", "mf"), ("ear-coverts", "pale", "mf"), ("orbital-ring", "orbital", "mf"),
-        ("iris", "billyellow", "mf"), ("mantle", "gullgray", "m"), ("tertials", "gullgray", "f"),
+        ("forehead", "pale", "mf"), ("throat", "pale", "mf"), ("lores", "pale", "mf"), ("ear-coverts", "pale", "mf"),
+        ("malar", "pale", "mf"), ("eye-line", "pale", "mf"), ("supercilium", "pale", "mf"), ("eye-ring", "pale", "mf"), ("orbital-ring", "orbital", "mf"),
+        ("iris", "billyellow", "mf"), ("mantle", "gullgray", "m"), ("wing-coverts", "gullgray", "m"), ("tertials", "gullgray", "f"),
         ("tertial-crescent", "pale", "mf"), ("primaries", "darker", "mf"),
         ("apical-spots", "pale", "mf"), ("tail", "pale", "mf"), ("bill", "billyellow", "mf"),
         ("gonys", "billyellow", "mf"), ("gonydeal-spot", "accent", "mf"), ("legs", "legpink", "mf"),
@@ -114,7 +128,7 @@ meta = [("belly", "pale", "mf"), ("breast", "pale", "mf"), ("sides", "pale", "mf
         ("lesser-coverts", "gullgray", "f"), ("median-coverts", "gullgray", "f"),
         ("greater-coverts", "gullgray", "f"), ("mirrors", "pale", "mf")]
 final["mirrors"] = mirrors
-order = ["legs", "belly", "breast", "sides", "undertail-coverts", "tail", "nape", "crown", "forehead", "ear-coverts", "lores", "throat", "mantle",
+order = ["legs", "belly", "breast", "sides", "undertail-coverts", "tail", "nape", "crown", "forehead", "ear-coverts", "lores", "throat", "malar", "eye-line", "supercilium", "eye-ring", "mantle", "wing-coverts",
          "back", "scapulars", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "tertials", "tertial-crescent",
          "primaries", "apical-spots", "orbital-ring", "iris", "bill", "gonys", "gonydeal-spot", "mirrors"]
 FX = 560

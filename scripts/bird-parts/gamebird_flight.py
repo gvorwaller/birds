@@ -44,16 +44,18 @@ def above():
     nape = HEAD.difference(crest).union(NECK.difference(HEAD))
     scap = mirror(poly("M398,142 C414,156 426,182 428,212 C430,238 424,258 414,272 L402,268 C402,230 400,186 398,142 Z"))
     back = BODY.intersection(box(0, 120, 999, 280)).difference(HEAD).difference(nape).difference(scap)
-    rump = BODY.intersection(box(0, 280, 999, 360)).difference(back).difference(scap)
-    tail = TAIL.difference(rump)   # the band is drawn over the whole tail (td-d32fd3)
+    rump = BODY.intersection(box(0, 280, 999, 318)).difference(back).difference(scap)
+    # the uppertail coverts lie over the base of the fan, below the rump (td-93f86b)
+    utc = BODY.union(TAIL).intersection(box(0, 318, 999, 372)).difference(back).difference(scap)
+    tail = TAIL.difference(rump).difference(utc)   # the band is drawn over the whole tail (td-d32fd3)
     final = {k: mirror(v) for k, v in up.items()}
-    final.update({"crest": crest, "nape": nape, "back": back, "scapulars": scap, "rump": rump,
+    final.update({"crest": crest, "nape": nape, "back": back, "scapulars": scap, "rump": rump, "uppertail-coverts": utc,
                   "tail": tail, "subterminal-band": BAND.difference(rump), "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
-    meta = [("tail", "chestnut", "mf"), ("subterminal-band", "eye", "mf"), ("rump", "dark", "mf"),
+    meta = [("tail", "chestnut", "mf"), ("subterminal-band", "eye", "mf"), ("rump", "dark", "mf"), ("uppertail-coverts", "dark", "mf"),
             ("secondaries", "darker", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
             ("greater-coverts", "dark", "f"), ("primary-coverts", "dark", "f"), ("alula", "dark", "f"),

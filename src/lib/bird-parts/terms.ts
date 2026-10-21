@@ -130,13 +130,14 @@ const COVERTS = "[- ]coverts";
  * "tertial"): at one position the regex takes the first alternative that matches.
  */
 export const TERMS: PartTerm[] = [
-  { part: "supercilium", forms: ["supercilium", "supercilia", "superciliums", "superciliary", "eyebrows?(?![- ]?combs?)"], drawnIn: ["songbird", "shorebird", "woodpecker"] },
-  { part: "lores", forms: ["lores", "loral"], drawnIn: ["songbird", "shorebird", "gull", "heron", "cormorant", "grebe"] },
-  { part: "eye-ring", forms: ["eye[- ]?rings?"], drawnIn: ["songbird", "shorebird"] },
-  { part: "eye-line", forms: ["eye[- ]?lines?", "eye[- ]?stripes?"], drawnIn: ["songbird"] },
-  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ["songbird", "shorebird", "gull", "raptor", "woodpecker"] },
+  { part: "supercilium", forms: ["supercilium", "supercilia", "superciliums", "superciliary", "eyebrows?(?![- ]?combs?)"], drawnIn: ALL },
+  { part: "lores", forms: ["lores", "loral"], drawnIn: ALL },
+  { part: "eye-ring", forms: ["eye[- ]?rings?"], drawnIn: ALL },
+  { part: "eye-line", forms: ["eye[- ]?lines?", "eye[- ]?stripes?"], drawnIn: ALL },
+  // The duck's "cheek" is its ear-covert area (td-93f86b).
+  { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ALL.filter((d) => d !== "duck"), sameAs: { duck: "cheek" } },
   { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird", "woodpecker"] },
-  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ["songbird", "raptor", "woodpecker"] },
+  { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ALL },
   { part: "cere", forms: ["ceres?"], drawnIn: ["raptor"] },
   { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ["gull"] },
   { part: "gonydeal-spot", forms: ["gonydeal spots?"], drawnIn: ["gull"] },
@@ -148,7 +149,7 @@ export const TERMS: PartTerm[] = [
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
   { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
-  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ALL.filter((d) => d !== "gull") },
+  { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ALL },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
   // "carpal bar" on a tern's upperwing is another mark, so only raptors' (and owls') pages link it.
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
@@ -165,7 +166,7 @@ export const TERMS: PartTerm[] = [
   { part: "apical-spots", forms: ["apical spots?"], drawnIn: ["gull"] },
   { part: "mirrors", forms: ["mirrors?"], drawnIn: ["gull"], onlyFor: ["gull"] },
   { part: "undertail-coverts", forms: [`under[- ]?tail${COVERTS}`], drawnIn: ALL },
-  { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ["songbird", "shorebird", "gull", "raptor"] },
+  { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ALL.filter((d) => d !== "grebe") },
   // A gull's or tern's bill has a "subterminal band" too, so only raptors' and gamebirds' pages link it.
   { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor", "gamebird"], onlyFor: ["raptor", "gamebird"] },
   { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
@@ -173,7 +174,7 @@ export const TERMS: PartTerm[] = [
     part: "tarsus",
     forms: ["tarsus", "tarsi"],
     drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"],
-    sameAs: { songbird: "legs" },
+    sameAs: { songbird: "legs", shorebird: "legs", duck: "legs", gull: "legs", hummingbird: "toes" },
   },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.

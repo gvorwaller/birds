@@ -67,6 +67,23 @@ export const shorebird: DiagramText = {
       lookFor: "Behind and below the eye. A darker patch here adds to the face pattern.",
     },
     {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "Behind the eye, between the supercilium and the ear coverts. Plain grey-brown on this Lesser Yellowlegs, whose dark line is in front of the eye, on the lores.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "From the base of the lower bill back along the side of the throat. Plain on this Lesser Yellowlegs, finely streaked like the rest of its face.",
+    },
+    {
       id: "chin",
       name: "Chin",
       group: "Head",
@@ -89,6 +106,7 @@ export const shorebird: DiagramText = {
     {
       id: "legs",
       name: "Legs and feet",
+      aka: "tarsus and toes",
       group: "Bill & legs",
       lookFor: "Leg colour (yellow, greenish, black) and leg length are often the quickest clues. The yellowlegs are named for theirs.",
     },

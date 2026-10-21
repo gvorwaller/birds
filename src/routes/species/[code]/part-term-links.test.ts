@@ -43,11 +43,11 @@ describe("part-term links on species pages (td-e4c6dd)", () => {
         partsDiagram: "duck",
       },
     });
-    // The duck drawing lacks both, so they open the first drawing that has them.
+    // The duck drawing has both since td-93f86b, so they stay on the duck.
     expect(body).toContain('id="part-term-similar-aaa1-eye-ring"');
     expect(body).toContain('id="part-term-similar-aaa1-supercilium"');
     expect(body).toContain('id="part-term-similar-bbb1-supercilium"');
-    expect(body).toContain("#songbird-eye-ring");
+    expect(body).toContain("#duck-eye-ring");
     expect(body.match(/id="part-term-similar-[^"]+"/g)).toHaveLength(3);
   });
 

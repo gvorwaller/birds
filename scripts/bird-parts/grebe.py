@@ -52,12 +52,23 @@ head_rough = [
     ("throat", poly("M845,256 L805,262 C780,274 760,292 744,312 L730,350 L800,350 L845,300 Z")),
     ("nape", poly("M560,150 L644,150 L644,190 C634,240 636,300 655,340 L662,356 L560,356 Z")),
     ("face", poly("M644,150 L840,150 L840,256 L805,262 C780,274 760,292 744,312 C720,330 690,338 655,340 C636,300 634,240 644,190 L644,150 Z")),
+    # the black cheek behind and below the eye, under the golden band (td-93f86b)
+    ("ear-coverts", poly("M756,236 L628,160 L628,292 C690,302 726,294 748,282 C758,268 760,250 756,236 Z")),
+    # from the base of the lower bill back along the side of the throat
+    ("malar", poly("M798,272 C780,282 764,296 750,310 L742,302 C756,288 774,274 792,264 Z")),
     # black from the forehead over the top of the head, down to the lores in front of the eye
     ("crown", poly("M560,60 L850,60 L850,262 L812,262 C796,256 780,248 766,236 C740,206 700,184 660,170 "
                    "C640,166 625,150 600,140 L560,140 Z")),
+    # the black strip above the golden band, from the bill back over the eye
+    ("supercilium", TUFTS.buffer(11).difference(TUFTS).intersection(
+        poly("M600,60 L850,60 L850,244 L776,220 L676,158 L600,118 Z")).intersection(box(672, 0, 818, 999))
+        .union(poly("M772,204 L824,236 L816,262 L806,252 C792,248 778,240 764,233 Z"))),
     ("ear-tufts", TUFTS),
+    # the golden band starts at the eye: its first stretch, through and just behind the eye, is the eye-line
+    ("eye-line", TUFTS.intersection(box(728, 0, 790, 999))),
     # bare skin from the eye to the bill
     ("lores", poly("M764,233 C778,240 792,248 806,252 L812,262 C796,262 780,252 762,240 Z")),
+    ("eye-ring", Point(*EYE).buffer(10.5).difference(IRIS)),
 ]
 final = {}
 claimed = BILL.union(IRIS)
@@ -118,7 +129,8 @@ META = [
     ("flanks", "chestnut", "m"), ("breast", "chestnut", "m"), ("neck", "chestnut", "m"),
     ("back", "darker", "m"), ("scapulars", "dark", "m"),
     ("throat", "eye", "m"), ("nape", "eye", "m"), ("face", "eye", "m"), ("ear-tufts", "orange", "m"),
-    ("crown", "eye", "m"), ("lores", "chestnut", "m"), ("iris", "accent", "m"), ("bill", "eye", "m"),
+    ("ear-coverts", "eye", "m"), ("malar", "eye", "m"), ("supercilium", "eye", "m"), ("eye-line", "orange", "m"),
+    ("crown", "eye", "m"), ("lores", "chestnut", "m"), ("eye-ring", "eye", "m"), ("iris", "accent", "m"), ("bill", "eye", "m"),
     ("tarsus", "linegray", "m"), ("toes", "gullgray", "m"),
 ]
 order = [m[0] for m in META]

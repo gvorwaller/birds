@@ -9,6 +9,7 @@ from geom import *
 from common import build
 from shapely.geometry import Point, LineString
 from shapely import affinity
+from shapely.ops import unary_union
 
 # head, neck, body and tail with the folded wing (bill and legs are separate)
 SIL = poly("M645,174 C630,156 604,148 578,148 C556,148 538,156 528,170 C516,186 504,206 498,232 "
@@ -71,6 +72,29 @@ final["lores"] = LORES
 final["bill"] = BILL.difference(LORES)
 final.update(LEGS)
 
+# The small head areas field guides name, so a heron's species-page links stay on this drawing (td-93f86b). Each is
+# cut from the face, crown and throat around it; on this adult they are all plain, so they keep the face's tone.
+def O(g):
+    """Plate coordinates (where the head was laid out) -> tracing coordinates."""
+    return affinity.translate(g, 40, 125)
+HEAD_AREAS = [
+    ("eye-ring", Point(*EYE).buffer(9.5).difference(Point(*EYE).buffer(6))),
+    ("supercilium", O(poly("M601,50 Q586,44 562,45 L545,48 L546,56 Q566,53 584,55 L600,57 Z"))),
+    ("eye-line", O(poly("M572,57 L544,57 L544,66 L572,67 Z"))),
+    ("ear-coverts", O(poly("M572,67 L540,66 L537,86 Q556,90 574,86 L578,72 Z"))),
+    # along the lower edge of the face, from the base of the lower mandible back
+    ("malar", O(poly("M608,89 L604,82 Q582,86 556,91 L556,100 Q580,95 608,90 Z"))),
+]
+_taken = Point(0, 0).buffer(0)
+for pid, rough in HEAD_AREAS:
+    g = rough.intersection(unary_union([final[k] for k in ("face", "crown", "throat")])).difference(_taken)
+    g = unary_union([q for q in getattr(g, "geoms", [g]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"heron: {pid} is in {len(g.geoms)} pieces")
+    final[pid] = g
+    _taken = _taken.union(g)
+for k in ("face", "crown", "throat"):
+    final[k] = final[k].difference(_taken)
+
 final["toes"] = TOES.difference(LEGS["tarsus"])
 
 # wing: Main parts shows the coverts as one area; the feather view splits the rows
@@ -102,14 +126,16 @@ META = [
     ("belly", "linegray", "mf"), ("thighs", "chestnut", "mf"),
     ("flank-stripe", "darker", "mf"), ("breast-plumes", "light", "mf"), ("foreneck", "pale", "mf"),
     ("hindneck", "gullgray", "mf"), ("throat", "pale", "mf"), ("face", "pale", "mf"), ("crown", "pale", "mf"),
-    ("head-plumes", "darker", "mf"), ("lores", "bill", "mf"), ("bill", "billyellow", "mf"),
+    ("supercilium", "pale", "mf"), ("eye-line", "pale", "mf"), ("ear-coverts", "pale", "mf"), ("malar", "pale", "mf"),
+    ("eye-ring", "pale", "mf"), ("head-plumes", "darker", "mf"), ("lores", "bill", "mf"), ("bill", "billyellow", "mf"),
     ("wing-coverts", "gullgray", "m"), ("lesser-coverts", "gullgray", "f"), ("median-coverts", "gullgray", "f"),
     ("greater-coverts", "gullgray", "f"), ("secondaries", "linegray", "mf"), ("back-plumes", "gullpale", "mf"),
     ("tertials", "gullgray", "mf"), ("primaries", "darker", "mf"),
     ("tibia", "linegray", "mf"), ("tarsus", "linegray", "mf"), ("toes", "linegray", "mf"),
 ]
 order = ["tibia", "tarsus", "toes", "belly", "thighs", "flank-stripe", "breast-plumes",
-         "hindneck", "foreneck", "throat", "face", "crown", "head-plumes", "lores", "bill",
+         "hindneck", "foreneck", "throat", "face", "crown",
+         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "head-plumes", "lores", "bill",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "tertials",
          "primaries", "back-plumes"]
 # the black-and-white streaks down the foreneck, drawn over it (never tap targets)

@@ -48,12 +48,22 @@ body_rough = [
     ("throat", poly("M530,228 L566,228 L560,300 Q536,306 506,292 Q526,272 532,240 Z")),
     ("crown", poly("M450,170 L570,170 L566,216 Q536,206 512,210 Q488,212 466,222 Z")),
     ("malar", poly("M540,240 Q528,256 516,268 Q508,278 504,290 Q516,286 526,274 Q538,260 546,246 Z")),
+    # td-93f86b: the eye-line behind the eye, the supercilium over the eye, the lores between the eye and the cere,
+    # and the eye-ring
+    ("eye-line", poly("M503,216 L476,218 L478,231 L503,229 Z")),
+    ("supercilium", poly("M547,213 Q530,202 510,202 Q492,203 481,210 L483,217 Q496,211 510,211 Q528,211 547,215 Z")),
+    ("lores", poly("M520,214 Q536,206 556,207 L556,238 Q538,238 520,229 Z")),
+    ("eye-ring", Point(*EYE).buffer(10).difference(Point(*EYE).buffer(7))),
 ]
 final = {}
 claimed = WOUT.union(Point(*EYE).buffer(7)).union(BILL).union(CERE)
 for pid, rough in reversed(body_rough):
     final[pid] = rough.intersection(SIL).difference(claimed)
     claimed = claimed.union(rough.intersection(SIL))
+for k in ("nape", "ear-coverts", "throat", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"raptor: {k} is in {len(g.geoms)} pieces: " + str([(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]))
+    final[k] = g
 final["iris"] = Point(*EYE).buffer(7).difference(Point(*EYE).buffer(3.4))
 final["bill"] = BILL.difference(CERE)
 final["cere"] = CERE
@@ -89,7 +99,8 @@ final["tail"] = TAIL
 META = [
     ("belly", "pale", "mf"), ("undertail-coverts", "pale", "mf"), ("leg-feathers", "light", "mf"),
     ("belly-band", "mid", "mf"), ("breast", "pale", "mf"), ("throat", "light", "mf"), ("nape", "dark", "mf"),
-    ("crown", "dark", "mf"), ("ear-coverts", "dark", "mf"), ("malar", "dark", "mf"), ("iris", "chestnut", "mf"),
+    ("crown", "dark", "mf"), ("ear-coverts", "dark", "mf"), ("malar", "dark", "mf"),
+    ("eye-line", "dark", "mf"), ("supercilium", "dark", "mf"), ("lores", "gullgray", "mf"), ("eye-ring", "dark", "mf"), ("iris", "chestnut", "mf"),
     ("tail", "chestnut", "mf"), ("subterminal-band", "darker", "mf"),
     ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
     ("greater-coverts", "dark", "f"), ("secondaries", "wing", "mf"), ("scapulars", "wing", "mf"),
@@ -97,7 +108,7 @@ META = [
     ("bill", "bill", "mf"), ("cere", "billyellow", "mf"), ("tarsus", "legyellow", "mf"), ("talons", "legyellow", "mf"),
 ]
 order = ["tarsus", "talons", "belly", "undertail-coverts", "leg-feathers", "belly-band", "breast", "tail", "subterminal-band",
-         "throat", "nape", "ear-coverts", "crown", "malar", "iris",
+         "throat", "nape", "ear-coverts", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring", "iris",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials",
          "primaries", "wingtip-vs-tail", "bill", "cere"]
 DX, DY = 100, 170

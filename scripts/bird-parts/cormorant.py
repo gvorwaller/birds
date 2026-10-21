@@ -9,6 +9,7 @@ from geom import *
 from common import build
 from shapely.geometry import Point
 from shapely.ops import unary_union
+from shapely import affinity
 
 # head, neck, body and tail with the folded wing (bill and feet are separate)
 SIL = poly("M516,228 C520,206 548,180 588,170 C616,163 646,172 664,196 C676,214 676,242 668,262 "
@@ -66,6 +67,31 @@ final["face"] = final["face"].difference(CRESTS)
 final["lores"] = LORES
 final["gular-skin"] = GULAR.difference(LORES)
 final["bill"] = BILL.difference(LORES).difference(GULAR)
+
+# The small head areas field guides name, so a cormorant's species-page links stay on this drawing (td-93f86b; the
+# owner's example was "ear coverts" on a Black-faced Cormorant page). Each is cut from the face and crown around it and
+# keeps their dark tone; the malar is a narrow strip above and behind the bare throat skin.
+def O(g):
+    """Plate coordinates (where the head was laid out, facing right) -> tracing coordinates (facing left)."""
+    return affinity.translate(affinity.scale(g, -1, 1, origin=(560, 0)), 0, 120)
+HEAD_AREAS = [
+    ("eye-ring", Point(*EYE).buffer(9.5).difference(Point(*EYE).buffer(6))),
+    ("supercilium", O(poly("M594,91 Q588,82 570,80 L548,78 L548,86 Q566,88 579,89 Z"))),
+    ("eye-line", O(poly("M578,90 L550,88 L550,97 L578,99 Z"))),
+    ("ear-coverts", O(poly("M576,99 L548,97 L546,110 Q560,113 572,111 L572,102 Z"))),
+    # a narrow strip hugging the throat skin's upper back edge
+    ("malar", GULAR.buffer(6).difference(GULAR).intersection(O(poly("M572,106 L538,106 L538,146 L572,146 Z")))),
+]
+_taken = Point(0, 0).buffer(0)
+for pid, rough in HEAD_AREAS:
+    g = rough.intersection(unary_union([final[k] for k in ("face", "crown")])).difference(_taken)
+    g = unary_union([q for q in getattr(g, "geoms", [g]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"cormorant: {pid} is in {len(g.geoms)} pieces")
+    final[pid] = g
+    _taken = _taken.union(g)
+for k in ("face", "crown"):
+    final[k] = final[k].difference(_taken)
+
 final["tarsus"] = TARSUS
 final["toes"] = TOES.difference(TARSUS)
 
@@ -87,13 +113,15 @@ final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "media
 META = [
     ("belly", "darker", "mf"), ("flanks", "darker", "mf"), ("breast", "darker", "mf"), ("undertail-coverts", "darker", "mf"), ("tail", "darker", "mf"),
     ("neck", "darker", "mf"), ("nape", "darker", "mf"), ("face", "darker", "mf"),
-    ("crown", "darker", "mf"), ("crests", "linegray", "mf"),
+    ("crown", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"), ("ear-coverts", "darker", "mf"),
+    ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("crests", "linegray", "mf"),
     ("lores", "orange", "mf"), ("gular-skin", "orange", "mf"), ("bill", "bill", "mf"),
     ("scapulars", "dark", "mf"), ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
     ("greater-coverts", "dark", "f"), ("secondaries", "darker", "mf"), ("tertials", "dark", "mf"), ("primaries", "darker", "mf"),
     ("tarsus", "eye", "mf"), ("toes", "eye", "mf"),
 ]
-order = ["tarsus", "toes", "tail", "undertail-coverts", "belly", "flanks", "breast", "neck", "nape", "face", "crown", "crests",
+order = ["tarsus", "toes", "tail", "undertail-coverts", "belly", "flanks", "breast", "neck", "nape", "face", "crown",
+         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "crests",
          "lores", "gular-skin", "bill",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries"]
 # the black edges that make the bronze-brown scapulars and coverts look scaly (never tap targets)

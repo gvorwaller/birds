@@ -48,7 +48,49 @@ export const loon: DiagramText = {
       name: "Face",
       group: "Head",
       lookFor:
-        "Black, with a red eye, on a breeding Common Loon. In winter its eye is ringed with white; a Pacific Loon shows less white around the eye than a Common or Red-throated Loon, and a winter Red-throated Loon has much of its face white.",
+        "The lower face, below the cheek and in front of the throat: black on a breeding Common Loon. A winter Red-throated Loon has much of its face white.",
+    },
+    {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor: "Between the red eye and the base of the bill. Black on a breeding Common Loon, like the rest of the head.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor: "The band above the eye. Plain black on a breeding Common Loon.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor: "The band running back from the eye. Plain black on a breeding Common Loon.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "The thin ring of feathers around the red eye, black on a breeding Common Loon. In winter its eye is ringed with white; a Pacific Loon shows less white around the eye than a Common or Red-throated Loon.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor: "The cheek behind and below the eye, covering the ear. Black on a breeding Common Loon.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor: "From the base of the lower bill back along the side of the throat. Plain black on a breeding Common Loon, with no stripe.",
     },
     {
       id: "nape",
@@ -124,6 +166,13 @@ export const loon: DiagramText = {
       name: "Rump",
       group: "Upperparts",
       lookFor: "Blackish, like the rest of the upperparts.",
+      visibility: "Seen in flight from above.",
+    },
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor: "The feathers covering the base of the tail from above, just behind the rump. Blackish on a breeding Common Loon, like the rump.",
       visibility: "Seen in flight from above.",
     },
     // Wing

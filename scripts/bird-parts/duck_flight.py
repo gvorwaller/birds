@@ -50,15 +50,20 @@ def above():
     curl = mirror(Point(388, 330).buffer(6.5).difference(Point(386.5, 331.5).buffer(3.6))
                   .union(poly("M380,316 L386,316 L388,324 L382,324 Z")))
     tail = TAIL.difference(rump).union(curl)   # the curled central feathers are rectrices too (td-d32fd3)
+    # the black feathers over the base of the tail, at the rear of the rump (td-93f86b)
+    utc = rump.intersection(box(0, 306, 999, 999))   # the curled feathers lie over it, drawn on top
+    rump = rump.difference(utc)
+    for k, g in (("rump", rump), ("uppertail-coverts", utc)):
+        if g.geom_type != "Polygon": raise SystemExit(f"duck-above: {k} is in {len(g.geoms)} pieces")
     R = mirror
     final = {k: R(v) for k, v in up.items() if k != "secondaries"}
     final.update({"speculum": R(spec), "crown": crown, "cheek": cheek, "nape": nape, "neck": neck,
-                  "scapulars": R(scap), "back": back, "rump": rump, "drake-curl": curl, "tail": tail,
+                  "scapulars": R(scap), "back": back, "rump": rump, "uppertail-coverts": utc, "drake-curl": curl, "tail": tail,
                   "bill": BILL.difference(NAIL), "nail": NAIL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts"):
         final[k] = final[k].difference(final["scapulars"])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "primary-coverts", "alula")])
-    meta = [("tail", "pale", "mf"), ("rump", "darker", "mf"), ("drake-curl", "darker", "mf"),
+    meta = [("tail", "pale", "mf"), ("rump", "darker", "mf"), ("uppertail-coverts", "darker", "mf"), ("drake-curl", "darker", "mf"),
             ("speculum", "accent2", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "mid", "m"), ("lesser-coverts", "mid", "f"), ("median-coverts", "mid", "f"),
             ("primary-coverts", "mid", "f"), ("alula", "mid", "f"), ("greater-coverts", "mid", "mf"),

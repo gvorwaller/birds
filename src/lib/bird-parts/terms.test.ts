@@ -27,6 +27,23 @@ describe("part terms (td-e4c6dd)", () => {
     }
   });
 
+  it("keeps the head and rump areas on every bird's own drawing (td-93f86b)", () => {
+    // The owner's example: ear coverts in a Black-faced Cormorant's description opened the songbird.
+    expect(links("dark ear coverts and a dark face", "cormorant")).toEqual(["ear coverts→cormorant-ear-coverts"]);
+    for (const own of DIAGRAM_ORDER) {
+      for (const [text, part] of [["supercilium", "supercilium"], ["lores", "lores"], ["eye-ring", "eye-ring"], ["eye-line", "eye-line"], ["malar", "malar"]]) {
+        expect(links(text, own), `${text} on ${own}`).toEqual([`${text}→${own}-${part}`]);
+      }
+      if (own !== "duck") expect(links("ear coverts", own)).toEqual([`ear coverts→${own}-ear-coverts`]);
+      if (own !== "grebe") expect(links("uppertail coverts", own)).toEqual([`uppertail coverts→${own}-uppertail-coverts`]);
+    }
+    expect(links("ear coverts", "duck")).toEqual(["ear coverts→duck-cheek"]);
+    expect(links("pale tarsi", "duck")).toEqual(["tarsi→duck-legs"]);
+    expect(links("pale tarsi", "gull")).toEqual(["tarsi→gull-legs"]);
+    expect(links("pale tarsi", "shorebird")).toEqual(["tarsi→shorebird-legs"]);
+    expect(links("pale tarsi", "hummingbird")).toEqual(["tarsi→hummingbird-toes"]);
+  });
+
   it("keeps the songbird's legs and every bird's own tail for tarsus and rectrices (td-d32fd3)", () => {
     expect(links("pale pinkish tarsi and toes", "songbird")).toEqual(["tarsi→songbird-legs"]);
     expect(links("bare tarsi are red", "auk")).toEqual(["tarsi→auk-tarsus"]);
@@ -153,7 +170,7 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("four (not five) visible primary 'fingers'.", "raptor")).toEqual(["fingers→raptor-fingers"]);
     expect(links("its deep wing emarginations", "raptor")).toEqual(["emarginations→raptor-fingers"]);
     expect(links("a whitish tail with a single black subterminal band", "raptor")).toEqual(["subterminal band→raptor-subterminal-band"]);
-    expect(links("bright orange-red cere, eye-ring and feet", "raptor")).toEqual(["cere→raptor-cere", "eye-ring→songbird-eye-ring"]);
+    expect(links("bright orange-red cere, eye-ring and feet", "raptor")).toEqual(["cere→raptor-cere", "eye-ring→raptor-eye-ring"]);
     expect(links("Feathered tarsi", "raptor")).toEqual(["tarsi→raptor-tarsus"]);
     expect(links("a distinctive dark belly band", "raptor")).toEqual(["belly band→raptor-belly-band"]);
     // Shared words go to the hawk on a raptor's page.
@@ -242,8 +259,9 @@ describe("part terms (td-e4c6dd)", () => {
   it("links an auk page's part names to the auk drawing where it has the part (td-5076e6)", () => {
     expect(links("scapulars and underwing coverts are dark", "auk")).toEqual(["scapulars→auk-scapulars", "underwing coverts→auk-underwing-coverts"]);
     expect(links("bare tarsi are red", "auk")).toEqual(["tarsi→auk-tarsus"]);
-    // The auk drawing has no lores or eye-ring: those open the songbird.
-    expect(links("a white eye-ring and dark lores", "auk")).toEqual(["eye-ring→songbird-eye-ring", "lores→songbird-lores"]);
+    // Every drawing has the head areas since td-93f86b; a mark only some birds show still opens the bird that shows it.
+    expect(links("a white eye-ring and dark lores", "auk")).toEqual(["eye-ring→auk-eye-ring", "lores→auk-lores"]);
+    expect(links("two white wing bars", "auk")).toEqual(["wing bars→songbird-wing-bars"]);
     // Cormorant-only words stay unlinked on an auk page.
     expect(links("a gular pouch", "auk")).toEqual([]);
   });
@@ -268,7 +286,7 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a blue speculum", "duck")).toEqual(["speculum→duck-speculum"]);
     expect(links("a blue speculum", "songbird")).toEqual(["speculum→duck-speculum"]);
     expect(links("two wing bars", "duck")).toEqual(["wing bars→songbird-wing-bars"]);
-    expect(links("pale wing coverts", "gull")).toEqual(["wing coverts→songbird-wing-coverts"]);
+    expect(links("pale wing coverts", "gull")).toEqual(["wing coverts→gull-wing-coverts"]);
     expect(links("white-tipped tertials", "gull")).toEqual(["tertials→gull-tertials"]);
   });
 

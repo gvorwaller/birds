@@ -53,8 +53,26 @@ for pid, rough in reversed(head_rough):
     final[pid] = rough.intersection(SIL).difference(claimed)
     claimed = claimed.union(rough.intersection(SIL))
 final["bill"] = BILL.difference(UNGUIS).difference(TUBES)
+# the areas around the eye, cut from the face, crown, throat and nape (td-93f86b). The bill points left here, so
+# the lores lie at smaller x than the eye. Highest priority first; the eye itself is not a part.
+EYE_AREAS = [
+    ("eye-ring", Point(*EYE).buffer(13).difference(Point(*EYE).buffer(8.5))),
+    # a band from the bill base back past the eye, over the eye-line; its top takes a strip of the crown
+    ("supercilium", poly("M176,260 L176,250 L192,240 L230,230 L270,224 L350,226 L350,246 L330,244 L262,243 L240,249 L196,266 L180,262 Z")),
+    ("eye-line", poly("M262,243 L330,244 L350,246 L350,258 L262,259 Z")),
+    ("lores", poly("M176,260 L180,262 L196,266 L240,249 L262,243 L262,262 L240,276 L205,294 L176,300 Z")),
+    ("ear-coverts", poly("M262,259 L350,258 L353,320 L300,316 L276,306 L262,262 Z")),
+    # from the base of the lower bill back along the side of the throat; its bottom takes a strip of the throat
+    ("malar", poly("M196,306 L276,306 L300,316 L353,320 L355,344 L300,340 L214,326 L196,318 Z")),
+]
+taken = Point(*EYE).buffer(8.5).union(BILL).union(TUBES).union(WOUT)
+for pid, rough in EYE_AREAS:
+    final[pid] = rough.intersection(SIL).difference(taken)
+    taken = taken.union(final[pid])
+for k in ("crown", "face", "throat", "nape"):
+    final[k] = final[k].difference(taken)
 # every head and body part is one piece: a leftover sliver would join a far part (CODEX1: flanks reached the forehead)
-for k, _ in head_rough:
+for k in [k for k, _ in head_rough] + [k for k, _ in EYE_AREAS]:
     g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])   # drop zero-area specks
     if g.geom_type != "Polygon": raise SystemExit(f"tubenose: {k} is in {len(g.geoms)} pieces")
     final[k] = g
@@ -107,12 +125,15 @@ UNGUIS_I = BILL_I.intersection(FI(poly("M320,380 L376,396 C368,420 368,445 374,4
 META = [
     ("flanks", "darker", "mf"), ("breast", "dark", "mf"), ("throat", "dark", "mf"), ("nape", "darker", "mf"),
     ("face", "darker", "mf"), ("crown", "darker", "mf"),
+    ("malar", "darker", "mf"), ("ear-coverts", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"),
+    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"),
     ("tail", "eye", "mf"), ("scapulars", "darker", "mf"), ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"),
     ("median-coverts", "darker", "f"), ("greater-coverts", "darker", "f"), ("secondaries", "darker", "mf"),
     ("tertials", "darker", "mf"), ("primaries", "eye", "mf"),
     ("bill", "linegray", "mf"), ("unguis", "linegray", "mf"), ("nostril-tubes", "linegray", "mf"),
 ]
 order = ["tail", "flanks", "breast", "throat", "nape", "face", "crown",
+         "malar", "ear-coverts", "supercilium", "eye-line", "lores", "eye-ring",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries",
          "bill", "unguis", "nostril-tubes"]
 build("tubenose", final, META, order, [0, 0, 760, 452], dx=0, dy=0,

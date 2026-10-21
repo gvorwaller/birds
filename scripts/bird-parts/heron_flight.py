@@ -45,18 +45,21 @@ def above():
     scap = mirror(poly("M394,112 C408,124 420,148 422,178 C424,202 418,222 410,236 L398,234 C398,196 398,150 394,112 Z"))
     back = BODY.intersection(box(0, 100, 999, 250)).difference(hindneck).difference(crown).difference(plumes).difference(scap)
     rump = BODY.intersection(box(0, 250, 999, 310)).difference(back)
-    tail = TAIL.difference(rump)
+    # the feathers over the base of the tail (td-93f86b)
+    utc = mirror(poly("M380,288 L398,288 C401,302 398,314 391,320 Q385,323 380,323 Z")).intersection(rump.union(TAIL))
+    rump = rump.difference(utc)
+    tail = TAIL.difference(rump).difference(utc)
     R = mirror
     final = {k: R(v) for k, v in up.items()}
     # From above, the tibiae lie hidden behind the rump and tail; only the tarsi and toes trail past it.
     final.update({"crown": crown, "head-plumes": plumes, "hindneck": hindneck, "back": back, "scapulars": scap, "rump": rump,
-                  "tail": tail, "bill": BILL, "toes": TOES, "tarsus": LEGS["tarsus"].difference(TAIL)})
+                  "uppertail-coverts": utc, "tail": tail, "bill": BILL, "toes": TOES, "tarsus": LEGS["tarsus"].difference(TAIL)})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
     meta = [("tarsus", "linegray", "mf"), ("toes", "linegray", "mf"),
-            ("tail", "linegray", "mf"), ("rump", "gullgray", "mf"),
+            ("tail", "linegray", "mf"), ("rump", "gullgray", "mf"), ("uppertail-coverts", "gullgray", "mf"),
             ("secondaries", "linegray", "mf"), ("primaries", "darker", "mf"),
             ("wing-coverts", "gullgray", "m"), ("lesser-coverts", "gullgray", "f"), ("median-coverts", "gullgray", "f"),
             ("greater-coverts", "gullgray", "f"), ("primary-coverts", "linegray", "f"), ("alula", "linegray", "f"),

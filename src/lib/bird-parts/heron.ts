@@ -57,6 +57,48 @@ export const heron: DiagramText = {
         "The bare skin between the eye and the bill. Its colour helps with the white egrets: an adult Snowy Egret's lores are usually yellow, between a black bill and the eye, but a male displaying in the breeding season has orange or red lores and feet.",
     },
     {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "A thin ring of feathers just outside the eye. Nearly white on an adult Great Blue Heron, like the face around it.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "The area above the eye, from the bill back. On an adult Great Blue Heron the black head plume starts just above the eye and runs back from it; the rest is white.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "A band through the eye, from the bill back to behind the eye. White behind the eye on an adult Great Blue Heron, with no dark line.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor:
+        "The feathers behind and below the eye, over the ear. White on an adult Great Blue Heron, like the rest of the face.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "The area along the lower edge of the face, from the base of the lower bill back. White on an adult Great Blue Heron, with no dark stripe.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "throat",
       name: "Throat",
       group: "Head",
@@ -246,6 +288,14 @@ export const heron: DiagramText = {
       visibility: "Seen in flight from below.",
     },
     // Tail
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor:
+        "The feathers lying over the base of the tail. Gray on this adult, like the rump.",
+      visibility: "Seen in flight from above.",
+    },
     {
       id: "tail",
       name: "Tail",

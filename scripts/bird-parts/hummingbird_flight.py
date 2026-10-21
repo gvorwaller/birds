@@ -54,16 +54,18 @@ def above():
     crown = HEAD.intersection(box(0, 0, 999, 152))
     nape = BODY.intersection(box(0, 152, 999, 214)).difference(crown)
     back = BODY.intersection(box(0, 214, 999, 360))
-    rump = BODY.intersection(box(0, 360, 999, 430))
-    tail = TAIL.difference(rump)
+    rump = BODY.intersection(box(0, 360, 999, 394))
+    # the uppertail coverts lie over the base of the tail, below the rump (td-93f86b)
+    utc = BODY.union(TAIL).intersection(box(0, 394, 999, 446))
+    tail = TAIL.difference(rump).difference(utc)
     final = {k: mirror(v) for k, v in up.items()}
-    final.update({"crown": crown, "nape": nape, "back": back, "rump": rump, "tail": tail, "bill": BILL})
-    one_piece(final, ("crown", "nape", "back", "rump", "tail"))
+    final.update({"crown": crown, "nape": nape, "back": back, "rump": rump, "uppertail-coverts": utc, "tail": tail, "bill": BILL})
+    one_piece(final, ("crown", "nape", "back", "rump", "uppertail-coverts", "tail"))
     for k in ("lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts")])
-    meta = [("tail", "darker", "mf"), ("rump", "mallardgreen", "mf"),
+    meta = [("tail", "darker", "mf"), ("rump", "mallardgreen", "mf"), ("uppertail-coverts", "mallardgreen", "mf"),
             ("secondaries", "dark", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "mallardgreen", "m"), ("lesser-coverts", "mallardgreen", "f"), ("median-coverts", "mallardgreen", "f"),
             ("greater-coverts", "mallardgreen", "f"), ("primary-coverts", "mallardgreen", "f"),

@@ -55,11 +55,14 @@ def above():
         final[k] = final[k].difference(final["scapulars"])
     final["mantle"] = unary_union([final[k] for k in ("back", "scapulars", "lesser-coverts", "median-coverts",
                                    "greater-coverts", "tertials", "primary-coverts", "alula")])
+    # Main parts: the coverts as one area over the mantle, as on the other birds (td-93f86b)
+    final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
+                                         "primary-coverts", "alula")])
     meta = [("tail", "pale", "mf"), ("uppertail-coverts", "pale", "mf"), ("rump", "pale", "mf"),
             ("secondaries", "gullgray", "mf"),
             # after the primaries: the band runs on across the inner primaries' tips
             ("primaries", "gullgray", "mf"), ("trailing-edge", "pale", "mf"), ("apical-spots", "pale", "mf"), ("mirrors", "pale", "mf"),
-            ("mantle", "gullgray", "m"), ("back", "gullgray", "f"), ("lesser-coverts", "gullgray", "f"),
+            ("mantle", "gullgray", "m"), ("wing-coverts", "gullgray", "m"), ("back", "gullgray", "f"), ("lesser-coverts", "gullgray", "f"),
             ("median-coverts", "gullgray", "f"), ("greater-coverts", "gullgray", "f"), ("primary-coverts", "gullgray", "f"),
             ("alula", "gullgray", "f"), ("tertials", "gullgray", "f"), ("tertial-crescent", "pale", "mf"),
             ("scapulars", "gullgray", "f"), ("nape", "pale", "mf"), ("crown", "pale", "mf"), ("bill", "billyellow", "mf")]

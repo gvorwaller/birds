@@ -65,14 +65,59 @@ export const gamebird: DiagramText = {
       name: "Face",
       group: "Head",
       lookFor:
-        "Face patterns help with quail and partridges. A male Northern Bobwhite has a white throat and a white stripe over the eye, bordered with black; a male California Quail has a black face outlined with white stripes; and a Chukar has a black band from the forehead through the eye that runs down into a necklace around its white throat. A winter male Rock Ptarmigan has a black line from the eye to the bill.",
+        "The front of the head, seen from below in flight. Face patterns help with quail: a male California Quail has a black face outlined with white stripes.",
+      visibility: "Drawn from below in flight. On the standing bird the face is named part by part: lores, supercilium, eye-line, ear coverts and malar.",
+    },
+    {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor: "Between the eye and the base of the bill. Buffy brown on this grouse, like the rest of the face. A winter male Rock Ptarmigan has a black line from the eye to the bill.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "The feathered strip above the eye, around and behind the bare comb. Buffy brown on this grouse, with no pale stripe. A male Northern Bobwhite has a white stripe over the eye, bordered with black.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "The band from the eye back toward the nape. Plain on this Ruffed Grouse. A Chukar has a black band from the forehead through the eye that runs down into a necklace around its white throat.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor: "The thin ring of feathers around the eye, partly covered here by the comb above it.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor: "The patch behind and below the eye, over the ear. Buffy brown on this grouse.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor: "From the base of the lower bill back along the side of the throat, above the paler throat. Plain on this grouse, with no stripe.",
+      visibility: "Small; easiest to pick from the list.",
     },
     {
       id: "throat",
       name: "Throat",
       group: "Head",
       lookFor:
-        "Often paler than the rest of a Ruffed Grouse. A male Spruce Grouse has a black throat and chest edged with white; a male Hazel Grouse has a black throat bordered with white, which the female lacks.",
+        "Often paler than the rest of a Ruffed Grouse. A male Northern Bobwhite has a white throat. A male Spruce Grouse has a black throat and chest edged with white; a male Hazel Grouse has a black throat bordered with white, which the female lacks.",
     },
     {
       id: "nape",
@@ -234,6 +279,12 @@ export const gamebird: DiagramText = {
       lookFor: "The feathers under the base of the tail. A male Black Grouse is black with white undertail coverts.",
     },
     // Tail
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor: "The feathers lying over the base of the tail, between the rump and the fan. Brown on this grouse, like the rump.",
+    },
     {
       id: "tail",
       name: "Tail",

@@ -152,11 +152,50 @@ marks = {k: [(F(g), t) for g, t in v] for k, v in marks.items()}
 OUTLINE = F(unary_union([SIL, CREST, BILL, TAIL]))
 EYE_O = F(Point(*EYE).buffer(13))
 
+# The face areas field guides name, so a species page's "lores" or "supercilium" opens this bird (td-93f86b).
+# Drawn in output coordinates (the bird faces right) and carved from the face, nearest the eye first; the comb
+# stays on top over the eye, and nothing is left under the eye. The supercilium is the feathered strip around
+# and behind the comb.
+EYE_C, EYE_R = (665.04, 93.2), 7.54
+eye_disk = Point(*EYE_C).buffer(EYE_R)
+HEAD_AREAS = [
+    ("eye-ring", Point(*EYE_C).buffer(10).difference(eye_disk)),
+    ("lores", poly("M673,86 L714,90 L714,106 L673,102 Z")),
+    ("eye-line", poly("M606,88 L668,88 L668,101 L606,101 Z")),   # its front edge follows the eye-ring
+    ("supercilium", poly("M606,72 L710,72 L716,92 L606,92 Z")),
+    ("malar", poly("M672,108 L714,102 L714,122 L672,124 Z")),
+    ("ear-coverts", poly("M606,96 L662,96 L668,128 L606,130 Z")),
+]
+claimed_h = final["comb"].union(eye_disk)
+for pid, rough in HEAD_AREAS:
+    final[pid] = rough.intersection(final["face"]).difference(claimed_h)
+    claimed_h = claimed_h.union(final[pid])
+final["face"] = final["face"].difference(claimed_h)
+# What is left of the face is a scrap under the eye (CODEX1): each piece goes to the head area it shares the
+# longest edge with, and the face is drawn only from below, where it is the whole front of the head.
+names = [pid for pid, _ in HEAD_AREAS]
+for q in [q for q in getattr(final["face"], "geoms", [final["face"]]) if q.area > 0]:
+    ring = q.buffer(0.6)
+    best = max(names, key=lambda n: ring.intersection(final[n]).area)
+    final[best] = final[best].union(q).buffer(0.01).buffer(-0.01)
+del final["face"]
+# the uppertail coverts lie over the base of the fanned tail, between the rump and the tail
+UTC = poly("M226,180 L262,180 L262,340 L226,340 Z")
+final["uppertail-coverts"] = UTC.intersection(final["rump"].union(final["tail"]))
+for k in ("rump", "tail"):
+    final[k] = final[k].difference(UTC)
+for k in [pid for pid, _ in HEAD_AREAS] + ["rump", "tail", "uppertail-coverts"]:
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"gamebird: {k} is in {len(g.geoms)} pieces: {[(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]}")
+    final[k] = g
+
 META = [
     ("tarsus", "light", "mf"), ("toes", "linegray", "mf"),
     ("tail", "chestnut", "mf"), ("subterminal-band", "eye", "mf"),
     ("undertail-coverts", "light", "mf"), ("belly", "light", "mf"), ("flanks", "light", "mf"), ("breast", "mid", "mf"),
-    ("rump", "dark", "mf"), ("back", "dark", "mf"), ("nape", "dark", "mf"), ("throat", "light", "mf"), ("face", "mid", "mf"),
+    ("rump", "dark", "mf"), ("uppertail-coverts", "dark", "mf"), ("back", "dark", "mf"), ("nape", "dark", "mf"), ("throat", "light", "mf"),
+    ("ear-coverts", "mid", "mf"), ("malar", "mid", "mf"), ("supercilium", "mid", "mf"), ("eye-line", "mid", "mf"),
+    ("lores", "mid", "mf"), ("eye-ring", "mid", "mf"),
     ("crest", "dark", "mf"), ("ruff", "eye", "mf"), ("comb", "orange", "mf"), ("bill", "eye", "mf"),
     ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"), ("greater-coverts", "dark", "f"),
     ("secondaries", "darker", "mf"), ("scapulars", "dark", "mf"), ("tertials", "wing", "mf"), ("primaries", "darker", "mf"),

@@ -56,6 +56,39 @@ export const gull: DiagramText = {
       lookFor: "Behind the eye. A dark smudge here in winter is typical of some species.",
     },
     {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "Above the eye. White like the rest of the head on this adult Herring Gull, so it shows no stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "Behind the eye, between the supercilium and the ear coverts. White on this adult Herring Gull, with no line.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "The feathers just outside the bare orbital ring. White like the head on this adult Herring Gull, so only the orbital ring and the pale eye stand out.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "From the base of the lower bill back along the side of the throat. White on this adult Herring Gull.",
+    },
+    {
       id: "throat",
       name: "Throat",
       group: "Head",
@@ -99,6 +132,7 @@ export const gull: DiagramText = {
     {
       id: "legs",
       name: "Legs and feet",
+      aka: "tarsus and toes",
       group: "Bill & legs",
       lookFor: "Pink on an adult Herring Gull, yellow on an adult Ring-billed Gull. Leg colour is one of the quickest checks on adults.",
     },
@@ -131,6 +165,13 @@ export const gull: DiagramText = {
       visibility: "Covered by the wings at rest; seen in flight.",
     },
     // Wing
+    {
+      id: "wing-coverts",
+      name: "Wing coverts",
+      group: "Wing",
+      lookFor:
+        "The rows of smaller feathers covering the bases of the flight feathers, shown here as one area: the lesser, median and greater coverts on the standing bird, and in flight from above the primary coverts and the alula too. Pale grey like the rest of the mantle on an adult Herring Gull. Choose All feather groups to see each row.",
+    },
     {
       id: "lesser-coverts",
       name: "Lesser coverts",

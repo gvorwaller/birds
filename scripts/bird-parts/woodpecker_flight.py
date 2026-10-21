@@ -69,19 +69,22 @@ def above():
     # the white stripe runs down the middle of the back; the black scapulars cover the rest of the body's sides
     back = BODY.intersection(mirror(poly("M380,122 L394,126 L392,236 L380,240 Z")))
     scap = BODY.intersection(box(0, 122, 999, 236)).difference(back).difference(nape)
-    rump = BODY.difference(HEAD).difference(nape).difference(back).difference(scap)
+    lower = BODY.difference(HEAD).difference(nape).difference(back).difference(scap)
+    # the uppertail coverts over the base of the tail, the rump above them (td-93f86b)
+    utc = lower.intersection(box(0, 258, 999, 999))
+    rump = lower.difference(utc)
     body_parts = {"crown": crown, "nape-patch": patch, "supercilium": sup, "nape": nape, "back": back,
-                  "scapulars": scap, "rump": rump}
+                  "scapulars": scap, "rump": rump, "uppertail-coverts": utc}
     check_body("woodpecker-above", body_parts)
     final = {k: mirror(v) for k, v in up.items()}
     final.update(body_parts)
-    final.update({ "tail": TAIL.difference(rump),   # the outer feathers are drawn over the whole tail (td-d32fd3)
-                  "outer-tail-feathers": OTF.difference(rump), "bill": BILL})
+    final.update({ "tail": TAIL.difference(rump).difference(utc),   # the outer feathers are drawn over the whole tail (td-d32fd3)
+                  "outer-tail-feathers": OTF.difference(rump).difference(utc), "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
-    meta = [("tail", "eye", "mf"), ("outer-tail-feathers", "pale", "mf"), ("rump", "eye", "mf"),
+    meta = [("tail", "eye", "mf"), ("outer-tail-feathers", "pale", "mf"), ("uppertail-coverts", "eye", "mf"), ("rump", "eye", "mf"),
             ("secondaries", "eye", "mf"), ("primaries", "eye", "mf"),
             ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"),
             ("greater-coverts", "eye", "f"), ("primary-coverts", "eye", "f"), ("alula", "eye", "f"),

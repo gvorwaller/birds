@@ -15,6 +15,9 @@ BILL = poly("M741,150 C770,156 805,166 832,172 Q846,176 846,184 Q842,191 828,190
 NAIL = poly("M830,172 Q846,176 846,184 Q842,191 829,190 Q834,181 830,172 Z")
 CURL = stroke("M262,246 C250,232 236,232 238,242 C240,250 250,248 248,240", 4)
 
+# the sloping front of the head down to the bill, kept whole: the eyebrow and lores stay behind it (CODEX1, td-93f86b)
+FOREHEAD = SIL.difference(SIL.buffer(-12)).intersection(poly("M700,92 L790,92 L790,148 L736,148 L700,108 Z"))
+
 body = [
     ("sides", SIL),
     ("breast", poly("M590,232 L700,232 Q760,228 820,240 L820,360 L690,360 Q650,300 640,250 Z")),
@@ -27,10 +30,16 @@ body = [
     ("tail", poly("M100,215 L252,236 L254,254 L212,264 L100,250 Z")),
     ("nape", poly("M560,90 L640,90 Q624,130 624,170 Q624,214 616,250 L560,250 Z")),
     ("crown", poly("M600,80 L760,80 L738,132 Q712,120 684,120 Q652,124 628,146 L606,140 Z")),
-    ("forehead", poly("M716,90 L770,90 L770,160 L742,156 Q736,138 720,124 Z")),
     ("cheek", poly("M612,140 Q650,112 700,114 Q736,124 748,160 L744,200 Q730,226 712,240 Q680,248 618,248 Q606,200 612,140 Z")),
     ("neck", poly("M604,188 Q650,200 700,196 Q728,194 744,200 L770,252 L596,256 Z")),
     ("chin", poly("M716,190 L742,190 L752,244 L712,246 Z")),
+    ("forehead", FOREHEAD),
+    # the head areas field guides name, all glossy green on a drake (td-93f86b): cut from the cheek, crown and chin
+    ("malar", poly("M741,194 Q720,196 704,208 L697,200 Q716,184 746,170 L746,194 Z")),
+    ("supercilium", poly("M740,149 Q722,142 703,134 Q680,132 660,134 Q648,134 637,135 L636,124 Q666,108 693,108 Q720,111 745,140 Z").difference(FOREHEAD)),
+    ("eye-line", poly("M690,130 Q664,130 638,135 L640,149 Q665,143 690,142 Z")),
+    ("lores", poly("M702,130 Q722,138 741,147 L746,147 L746,171 L739,168 Q720,151 702,142 Z").difference(FOREHEAD)),
+    ("eye-ring", Point(*EYE).buffer(9).difference(Point(*EYE).buffer(5.5))),
 ]
 final = {}
 claimed = Point(*EYE).buffer(5.5)
@@ -56,6 +65,20 @@ for k in ("sides", "flanks", "back", "breast"):
     final[k] = final[k].difference(final["scapulars"]).difference(final["tertials"]).difference(final["primaries"]).difference(spec).difference(gcov).difference(trailing)
 for k in ("rump", "tail", "undertail-coverts"):
     final[k] = final[k].difference(final["primaries"]).difference(final["drake-curl"])
+HEAD_PARTS = ("nape", "crown", "forehead", "cheek", "neck", "chin", "malar", "eye-line", "supercilium", "lores", "eye-ring")
+# no strip thinner than 1.6 units is left where the head areas meet, so a selected part's outline is a clean shape
+# (CODEX1: the cheek kept a tail between the lores and the bill)
+def thin_strips(g):
+    return g.difference(g.buffer(-0.8).buffer(0.8))
+for k in HEAD_PARTS:
+    left = sum(q.area for q in getattr(thin_strips(final[k]), "geoms", [thin_strips(final[k])]))
+    if left > 3: raise SystemExit(f"duck: {k} keeps {left:.1f} units² of strips thinner than 1.6")
+# the head parts and the new areas are one piece each (a leftover sliver would select a far part)
+for k in HEAD_PARTS:
+    g = final[k].buffer(-0.1).buffer(0.1)   # drop zero-width spikes left along a neighbour's edge
+    g = unary_union([q for q in getattr(g, "geoms", [g]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"duck: {k} is in {len(g.geoms)} pieces")
+    final[k] = g
 # the curled central feathers are rectrices too: the tail takes them in, drawn over as their own part, so "rectrices"
 # opens the whole tail (CODEX1, td-d32fd3)
 final["tail"] = final["tail"].union(final["drake-curl"])
@@ -64,10 +87,13 @@ meta = [("sides", "light", "mf"), ("breast", "chestnut", "mf"), ("flanks", "ligh
         ("undertail-coverts", "darker", "mf"), ("back", "mid", "mf"), ("rump", "darker", "mf"),
         ("tail", "pale", "mf"), ("nape", "mallardgreen", "mf"), ("crown", "mallardgreen", "mf"),
         ("forehead", "mallardgreen", "mf"), ("cheek", "mallardgreen", "mf"), ("neck", "mallardgreen", "mf"), ("chin", "mallardgreen", "mf"),
+        ("malar", "mallardgreen", "mf"), ("eye-line", "mallardgreen", "mf"), ("supercilium", "mallardgreen", "mf"),
+        ("lores", "mallardgreen", "mf"), ("eye-ring", "mallardgreen", "mf"),
         ("scapulars", "mid", "mf"), ("tertials", "wing", "mf"), ("primaries", "darker", "mf"),
         ("speculum", "accent2", "mf"), ("greater-coverts", "pale", "mf"),
         ("drake-curl", "darker", "mf"), ("bill", "billyellow", "mf"), ("nail", "darker", "mf")]
 order = ["sides", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "nape", "crown", "forehead", "cheek", "neck", "chin",
+         "malar", "eye-line", "supercilium", "lores", "eye-ring",
          "scapulars", "tertials", "primaries", "greater-coverts", "speculum", "drake-curl", "bill", "nail"]
 WATERLINE = box(100, WATER-1, 860, WATER+1.5)
 # the drake's thin white neck ring, on the neck/breast boundary (not tappable: taps reach the neck)

@@ -55,14 +55,17 @@ def above():
     back = BODY.intersection(box(0, 150, 999, 300)).difference(scap)
     rump = BODY.intersection(box(0, 300, 999, 360)).difference(back).difference(scap)
     tail = TAIL.difference(rump)
+    # the feathers over the base of the tail, at the rear of the rump (td-93f86b)
+    utc = rump.intersection(box(0, 334, 999, 999))
+    rump = rump.difference(utc)
     final = {k: mirror(v) for k, v in up.items()}
-    final.update({"crown": crown, "nape": nape, "back": back, "scapulars": scap, "rump": rump,
+    final.update({"crown": crown, "nape": nape, "back": back, "scapulars": scap, "rump": rump, "uppertail-coverts": utc,
                   "tail": tail, "bill": BILL, "toes": FEET.difference(TAIL)})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
-    meta = [("toes", "darker", "mf"), ("tail", "eye", "mf"), ("rump", "eye", "mf"),
+    meta = [("toes", "darker", "mf"), ("tail", "eye", "mf"), ("rump", "eye", "mf"), ("uppertail-coverts", "eye", "mf"),
             ("secondaries", "eye", "mf"), ("primaries", "eye", "mf"),
             ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"),
             ("greater-coverts", "eye", "f"), ("primary-coverts", "eye", "f"), ("alula", "eye", "f"),

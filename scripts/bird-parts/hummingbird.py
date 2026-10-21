@@ -87,16 +87,64 @@ for k, _ in head_rough:
     final[k] = g
 
 final = {k: F(v) for k, v in final.items()}
+
+# The face areas field guides name, so a species page's "lores" or "supercilium" opens this bird (td-93f86b).
+# Drawn in output coordinates (the bird faces right) and carved from the face and crown, nearest the eye first;
+# the post-ocular spot stays on top, and nothing is left under the eye.
+EYE_C, EYE_R = (495.25, 65.75), 11.25
+eye_disk = Point(*EYE_C).buffer(EYE_R)
+HEAD_AREAS = [
+    ("eye-ring", Point(*EYE_C).buffer(14.5).difference(eye_disk)),
+    ("lores", poly("M506,56 L568,60 L568,80 L506,76 Z")),
+    ("eye-line", poly("M418,56 L490,57 L490,74 L418,74 Z")),   # its front edge follows the eye-ring
+    # the next two reach into the areas already taken, so no strip of face is left between them
+    ("supercilium", poly("M418,44 L500,42 L548,47 L570,62 L418,62 Z")),
+    ("ear-coverts", poly("M418,68 L500,70 L505,97 L418,108 Z")),
+    ("malar", poly("M568,80 L568,92 L505,101 L505,92 Z")),
+]
+head = final["face"].union(final["crown"])
+claimed_h = final["post-ocular-spot"].union(eye_disk)
+for pid, rough in HEAD_AREAS:
+    final[pid] = rough.intersection(head).difference(claimed_h)
+    claimed_h = claimed_h.union(final[pid])
+for k in ("face", "crown"):
+    final[k] = final[k].difference(claimed_h)
+# the post-ocular spot nearly touches the eye-ring, cutting a crumb off the eye-line: the ring takes it
+for k in ("eye-line", "supercilium"):
+    crumbs = [q for q in getattr(final[k], "geoms", [final[k]]) if q.area < 20 and q.distance(final["eye-ring"]) < 0.5]
+    for q in crumbs:
+        final[k] = final[k].difference(q.buffer(0.01))
+        final["eye-ring"] = final["eye-ring"].union(q)
+# What is left of the face is a scrap under the eye (CODEX1): each piece goes to the head area it shares the
+# longest edge with, and the face is drawn only from below, where it is the whole front of the head.
+names = [pid for pid, _ in HEAD_AREAS]
+for q in [q for q in getattr(final["face"], "geoms", [final["face"]]) if q.area > 0]:
+    ring = q.buffer(0.6)
+    best = max(names, key=lambda n: ring.intersection(final[n]).area)
+    final[best] = final[best].union(q).buffer(0.01).buffer(-0.01)
+del final["face"]
+# the uppertail coverts lie over the base of the tail, across the line where the rump meets it
+utc = poly("M147,328 L184,368 L203,347 L166,308 Z")
+final["uppertail-coverts"] = utc.intersection(final["rump"].union(final["tail"]))
+for k in ("rump", "tail"):
+    final[k] = final[k].difference(utc)
+for k in [pid for pid, _ in HEAD_AREAS] + ["crown", "rump", "tail", "uppertail-coverts"]:
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"hummingbird: {k} is in {len(g.geoms)} pieces: {[(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]}")
+    final[k] = g
 META = [
     ("tail", "darker", "mf"), ("rump", "mallardgreen", "mf"), ("undertail-coverts", "pale", "mf"), ("belly", "light", "mf"),
     ("flanks", "mallardgreen", "mf"), ("breast", "pale", "mf"), ("back", "mallardgreen", "mf"), ("nape", "mallardgreen", "mf"),
-    ("gorget", "accent", "mf"), ("face", "darker", "mf"), ("crown", "mallardgreen", "mf"), ("post-ocular-spot", "pale", "mf"),
+    ("gorget", "accent", "mf"), ("crown", "mallardgreen", "mf"),
+    ("ear-coverts", "darker", "mf"), ("malar", "darker", "mf"), ("supercilium", "mallardgreen", "mf"), ("eye-line", "darker", "mf"),
+    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"), ("post-ocular-spot", "pale", "mf"),
+    ("uppertail-coverts", "mallardgreen", "mf"),
     ("wing-coverts", "mallardgreen", "m"), ("lesser-coverts", "mallardgreen", "f"), ("median-coverts", "mallardgreen", "f"),
     ("greater-coverts", "mallardgreen", "f"), ("secondaries", "dark", "mf"), ("primaries", "dark", "mf"),
     ("bill", "eye", "mf"), ("toes", "eye", "mf"),
 ]
-order = ["tail", "rump", "undertail-coverts", "belly", "flanks", "breast", "back", "nape", "gorget", "face", "crown",
-         "post-ocular-spot", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "primaries",
+order = ["tail", "rump", "uppertail-coverts", "undertail-coverts", "belly", "flanks", "breast", "back", "nape", "gorget", "crown",
+         "ear-coverts", "malar", "supercilium", "eye-line", "lores", "eye-ring", "post-ocular-spot", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "primaries",
          "bill", "toes"]
 # feather edges on the folded primaries (never tap targets)
 PLINES = unary_union([stroke(d, 1.6) for d in ("M1100,742 L1384,846", "M1140,722 L1386,842", "M1180,706 L1388,838")]).intersection(WOUT)

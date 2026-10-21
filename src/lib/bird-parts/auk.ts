@@ -61,6 +61,54 @@ export const auk: DiagramText = {
         "Dark in breeding plumage. After breeding the face turns white, with a dark spur running back from the eye. 'Bridled' Common Murres, found in the North Atlantic and commoner the farther north they breed, have a white ring around the eye extending back as a white line. A Thick-billed Murre is never bridled, and in winter it keeps less white on the face.",
     },
     {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "The feathers just outside the eye. Dark on this murre, but a 'bridled' Common Murre has a white ring around the eye.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor:
+        "The feathers between the eye and the bill. Dark on a breeding Common Murre.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "The area above the eye, from the bill back. Dark on a breeding Common Murre, with no pale stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "A band through the eye, from the bill back to behind the eye. On a 'bridled' Common Murre the white eye-ring runs back from the eye as a white line here; after breeding, a dark spur runs back from the eye across the white face.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor:
+        "The feathers behind and below the eye, over the ear. Dark in breeding plumage. After breeding the face turns white, with a dark spur running back from the eye.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "The area along the lower edge of the face, from the base of the lower bill back. Dark on a breeding Common Murre, with no stripe.",
+    },
+    {
       id: "throat",
       name: "Throat",
       group: "Head",
@@ -213,6 +261,14 @@ export const auk: DiagramText = {
       lookFor: "The feathers under the base of the tail.",
     },
     // Tail
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor:
+        "The feathers lying over the base of the tail. Dark, like the rump.",
+      visibility: "Seen in flight from above.",
+    },
     {
       id: "tail",
       name: "Tail",

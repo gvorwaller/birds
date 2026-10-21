@@ -59,7 +59,50 @@ export const hummingbird: DiagramText = {
       name: "Face",
       group: "Head",
       lookFor:
-        "Dark on a male Ruby-throated, whose ruby gorget is bordered narrowly with velvety black along its upper edge. A male Black-chinned Hummingbird has a black face and chin above its purple gorget.",
+        "The front of the head, seen from below in flight. Dark on a male Ruby-throated. A male Black-chinned Hummingbird has a black face and chin above its purple gorget.",
+      visibility: "Drawn from below in flight. On the perched bird the face is named part by part: lores, supercilium, eye-line, ear coverts and malar.",
+    },
+    {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor: "Between the eye and the base of the bill. Dark on this male Ruby-throated, like the rest of the face.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor: "The band above the eye. On this Ruby-throated it is metallic green like the crown, with no pale stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor: "The band through the eye, from the bill back past the small white spot. Dark on this male, part of its dark face.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor: "The thin ring of feathers around the eye. Dark on this Ruby-throated, so the eye shows no pale ring.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor: "The patch behind and below the eye, over the ear. Dark on a male Ruby-throated, the back of its dark face.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "From the base of the lower bill back along the side of the throat, down to the top of the gorget. Dark on this male: the ruby gorget is bordered narrowly with velvety black along its upper edge. It shows no stripe of its own.",
     },
     {
       id: "post-ocular-spot",
@@ -89,9 +132,10 @@ export const hummingbird: DiagramText = {
     {
       id: "toes",
       name: "Feet",
+      aka: "legs and toes",
       group: "Bill & legs",
       lookFor:
-        "Short legs with three toes pointing forward and one back. A Ruby-throated can only shuffle along a branch, not walk or hop, though it can preen by scratching with its feet. A Common Swift's very short legs are used mainly for clinging to vertical surfaces.",
+        "Short legs with three toes pointing forward and one back; the short lower leg is the tarsus. A Ruby-throated can only shuffle along a branch, not walk or hop, though it can preen by scratching with its feet. A Common Swift's very short legs are used mainly for clinging to vertical surfaces.",
     },
     // Upperparts
     {
@@ -198,6 +242,12 @@ export const hummingbird: DiagramText = {
       lookFor: "The feathers under the base of the tail.",
     },
     // Tail
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor: "The feathers lying over the base of the tail, metallic green on a Ruby-throated like the rump.",
+    },
     {
       id: "tail",
       name: "Tail",

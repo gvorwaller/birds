@@ -43,8 +43,45 @@ export const duck: DiagramText = {
     {
       id: "cheek",
       name: "Cheek",
+      aka: "ear coverts, auriculars",
       group: "Head",
-      lookFor: "The side of the head around and behind the eye. Head colour and any patches or stripes here are the first marks for most ducks.",
+      lookFor:
+        "The side of the head around and behind the eye, the area field guides call the ear coverts. Head colour and any patches or stripes here are the first marks for most ducks.",
+    },
+    {
+      id: "lores",
+      name: "Lores",
+      group: "Head",
+      lookFor: "Between the eye and the base of the bill. Glossy green on a drake Mallard, like the rest of the head.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor: "The band above the eye, from the bill back over the eye. Plain green on a drake Mallard, with no pale stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor: "The band running back from the eye. Plain green on a drake Mallard.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor: "The thin ring of feathers around the eye. Green on a drake Mallard, with no ring of another colour.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor: "From the base of the lower bill back along the side of the throat. Plain green on a drake Mallard, with no stripe.",
     },
     {
       id: "chin",
@@ -75,6 +112,7 @@ export const duck: DiagramText = {
     {
       id: "legs",
       name: "Legs and feet",
+      aka: "tarsus and toes",
       group: "Bill & legs",
       lookFor:
         "Orange on a Mallard. In flight a duck tucks its feet back under the tail.",
@@ -98,6 +136,13 @@ export const duck: DiagramText = {
       name: "Rump",
       group: "Upperparts",
       lookFor: "Just in front of the tail. Black on a drake Mallard, as on many drakes.",
+    },
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor: "The feathers covering the base of the tail from above, just behind the rump. Black on a drake Mallard, like the rump.",
+      visibility: "Seen in flight from above.",
     },
     // Wing
     {

@@ -32,6 +32,9 @@ body = [
     ("ear-coverts", poly("M360,162 Q388,158 414,166 L416,192 Q392,204 368,198 Z")),
     ("throat", poly("M344,190 L384,198 L400,226 L362,214 Z")),
     ("chin", poly("M338,186 L354,188 L354,200 L340,196 Z")),
+    # td-93f86b: the eye-line behind the eye, and the malar from the base of the lower mandible back along the throat
+    ("eye-line", poly("M377,149 L414,152 L418,168 L377,164 Z")),
+    ("malar", poly("M353,188 L386,196 L404,208 L401,214 L383,204 L353,197 Z")),
     ("supercilium", poly("M337,170 Q350,149 372,144 Q393,142 406,149 L404,156 Q389,151 372,151 Q357,155 345,176 Z")),
     ("lores", poly("M341,178 L361,156 L367,166 L349,187 Z")),
     ("eye-ring", Point(*EYE).buffer(12).difference(Point(*EYE).buffer(8.5))),
@@ -40,6 +43,13 @@ final = {}
 claimed = WOUT.union(Point(*EYE).buffer(8.5))
 for pid, rough in reversed(body):
     final[pid] = rough.intersection(SIL).difference(claimed); claimed = claimed.union(rough.intersection(SIL))
+
+# the new eye-line and malar, and the parts they are cut from, are one piece each (td-93f86b); the supercilium was
+# drawn in two pieces, either side of the eye
+for k in ("crown", "ear-coverts", "throat", "chin", "lores", "eye-ring", "eye-line", "malar"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"shorebird: {k} is in {len(g.geoms)} pieces")
+    final[k] = g
 
 final["wing-coverts"] = WOUT
 final["scapulars"] = unary_union([fband(WING, -0.1+0.11*k, 0.22+0.11*k, -1.9+0.1*k, -0.05, scallops=1, amp=0.03) for k in range(4)]).intersection(BODY)
@@ -59,6 +69,7 @@ meta = [("belly", "pale", "mf"), ("breast", "light", "mf"), ("flanks", "pale", "
         ("undertail-coverts", "pale", "mf"), ("back", "mid", "mf"), ("tail", "mid", "mf"),
         ("nape", "light", "mf"), ("crown", "mid", "mf"), ("forehead", "mid", "mf"),
         ("ear-coverts", "light", "mf"), ("throat", "pale", "mf"), ("chin", "pale", "mf"),
+        ("eye-line", "light", "mf"), ("malar", "light", "mf"),
         ("supercilium", "pale", "mf"), ("lores", "dark", "mf"), ("eye-ring", "pale", "mf"),
         ("wing-coverts", "wing", "m"), ("scapulars", "mid", "mf"), ("tertials", "dark", "mf"),
         ("primaries", "darker", "f"), ("primary-projection", "darker", "m"),
@@ -66,7 +77,7 @@ meta = [("belly", "pale", "mf"), ("breast", "light", "mf"), ("flanks", "pale", "
         ("lesser-coverts", "wing", "f"), ("median-coverts", "wing", "f"),
         ("greater-coverts", "dark", "f"), ("bill", "darker", "mf"), ("legs", "legyellow", "mf")]
 order = ["legs", "belly", "breast", "flanks", "undertail-coverts", "back", "tail", "nape", "crown", "forehead", "ear-coverts",
-         "throat", "chin", "supercilium", "lores", "eye-ring", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts",
+         "throat", "chin", "malar", "eye-line", "supercilium", "lores", "eye-ring", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts",
          "scapulars", "tertials", "primaries", "primary-projection", "wingtip-vs-tail", "bill"]
 FX = 580  # mirror so the bird faces right
 build("shorebird", final, meta, order, [0, 0, 700, 420], dx=FX*2-910, dy=75,

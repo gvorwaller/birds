@@ -59,7 +59,43 @@ export const grebe: DiagramText = {
       name: "Face",
       group: "Head",
       lookFor:
-        "Black, fan-shaped cheek feathers on a breeding Horned Grebe. In winter its cheeks are clean white; a winter Eared Grebe looks dingier, with darker cheeks. A breeding Red-necked Grebe has very pale grey cheeks and throat, and a Great Crested Grebe always shows white above the eye.",
+        "The lower face, below the cheek and in front of the throat: black on a breeding Horned Grebe. A breeding Red-necked Grebe has very pale grey cheeks and throat.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor: "The band above the eye. On a breeding Horned Grebe it is a black strip between the crown and the golden 'horns'. A Great Crested Grebe always shows white above the eye.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor: "The line through and just behind the eye. On a breeding Horned Grebe the golden 'horn' begins here, just behind the red eye, and widens back into the ear tufts.",
+    },
+    {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor: "The thin ring of feathers around the red eye, dark on a breeding Horned Grebe.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor:
+        "The cheek behind and below the eye, under the golden 'horns': black, fan-shaped feathers on a breeding Horned Grebe. In winter its cheeks are clean white; a winter Eared Grebe looks dingier, with darker cheeks.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor: "From the base of the lower bill back along the side of the throat. Black on a breeding Horned Grebe, with no stripe.",
     },
     {
       id: "lores",

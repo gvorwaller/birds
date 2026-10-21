@@ -33,15 +33,18 @@ def above():
     nape = BODY.intersection(box(0, 56, 999, 120)).difference(crown)
     scap = mirror(poly("M394,128 C406,140 414,164 415,190 C416,212 411,230 404,242 L397,240 C397,206 397,164 394,128 Z"))
     back = BODY.intersection(box(0, 120, 999, 236)).difference(scap)
-    rump = BODY.intersection(box(0, 236, 999, 290)).difference(back).difference(scap)
-    tail = TAIL.difference(rump)
+    lower = BODY.intersection(box(0, 236, 999, 290)).difference(back).difference(scap)
+    # the uppertail coverts over the base of the tail, the rump above them (td-93f86b)
+    utc = lower.intersection(box(0, 262, 999, 999))
+    rump = lower.difference(utc)
+    tail = TAIL.difference(rump).difference(utc)
     final = {k: mirror(v) for k, v in up.items()}
-    final.update({"crown": crown, "nape": nape, "back": back, "scapulars": scap, "rump": rump, "tail": tail, "bill": BILL})
+    final.update({"crown": crown, "nape": nape, "back": back, "scapulars": scap, "rump": rump, "uppertail-coverts": utc, "tail": tail, "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
-    meta = [("tail", "eye", "mf"), ("rump", "darker", "mf"),
+    meta = [("tail", "eye", "mf"), ("uppertail-coverts", "darker", "mf"), ("rump", "darker", "mf"),
             ("secondaries", "eye", "mf"), ("primaries", "eye", "mf"),
             ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"), ("median-coverts", "darker", "f"),
             ("greater-coverts", "darker", "f"), ("primary-coverts", "darker", "f"), ("alula", "darker", "f"),

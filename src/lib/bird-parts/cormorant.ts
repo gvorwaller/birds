@@ -59,6 +59,48 @@ export const cormorant: DiagramText = {
       lookFor: "The feathered side of the head, black on an adult. The bright colour on a cormorant's face is bare skin, not feathers.",
     },
     {
+      id: "eye-ring",
+      name: "Eye-ring",
+      group: "Head",
+      lookFor:
+        "The feathers just outside the eye. Drawn black on this adult, like the feathered face around it.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "supercilium",
+      name: "Supercilium",
+      aka: "eyebrow",
+      group: "Head",
+      lookFor:
+        "The area above the eye, under the crests. Black on an adult Double-crested Cormorant, with no pale stripe.",
+    },
+    {
+      id: "eye-line",
+      name: "Eye-line",
+      aka: "eyestripe",
+      group: "Head",
+      lookFor:
+        "A band through the eye, from the bill back to behind the eye; in front of the eye it is the bare orange lores. Black behind the eye on this adult.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "ear-coverts",
+      name: "Ear coverts",
+      aka: "auriculars",
+      group: "Head",
+      lookFor:
+        "The feathers behind and below the eye, over the ear. Black on an adult Double-crested Cormorant, like the rest of the feathered face.",
+    },
+    {
+      id: "malar",
+      name: "Malar",
+      aka: "moustache area",
+      group: "Head",
+      lookFor:
+        "On a cormorant a narrow strip of feathers along the upper back edge of the bare throat skin. Black on this adult.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "lores",
       name: "Lores",
       group: "Head",
@@ -226,6 +268,14 @@ export const cormorant: DiagramText = {
       lookFor: "The feathers under the base of the tail.",
     },
     // Tail
+    {
+      id: "uppertail-coverts",
+      name: "Uppertail coverts",
+      group: "Tail",
+      lookFor:
+        "The feathers lying over the base of the tail. Black on this adult, like the rump.",
+      visibility: "Seen in flight from above.",
+    },
     {
       id: "tail",
       name: "Tail",

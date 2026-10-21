@@ -42,6 +42,12 @@ TOES = unary_union([stroke("M782,490 L787,458 L791,440", 8), stroke("M791,442 Q7
                     stroke("M782,494 L790,528 L795,556", 8), stroke("M795,554 Q797,566 805,568", 4.5),
                     stroke("M780,496 L788,520 L796,538", 7.5), stroke("M796,536 Q800,544 807,544", 4)])
 
+# the black band through the eye, split along its length: the lores in front of the eye (under the nasal tufts'
+# back edge), the eye-line through and just behind the eye, and the ear coverts behind that (td-93f86b)
+EAR = poly("M700,286 L660,288 L632,288 L600,296 L560,298 L520,300 L490,310 L466,330 L466,342 L510,344 "
+           "L550,341 L600,336 L640,334 L660,334 L700,330 Z")
+EYE_RING = Point(*EYE).buffer(14).difference(Point(*EYE).buffer(10.5))
+
 head_rough = [
     ("belly", SIL),
     ("undertail-coverts", poly("M600,872 Q700,880 800,868 L800,1000 L600,1000 Z")),
@@ -54,15 +60,17 @@ head_rough = [
                    "L600,384 L650,370 L690,352 L712,326 Z").union(box(696,314, 716, 330))),
     ("submoustachial", poly("M690,328 L660,334 L640,334 L600,336 L550,341 L510,344 L466,342 L466,378 L500,374 L540,368 "
                             "L600,358 L650,346 L672,334 Z")),
-    ("ear-coverts", poly("M700,286 L660,288 L632,288 L600,296 L560,298 L520,300 L490,310 L466,330 L466,342 L510,344 "
-                         "L550,341 L600,336 L640,334 L660,334 L700,330 Z")),
+    ("ear-coverts", EAR.intersection(box(0, 0, 556, 999))),
+    ("eye-line", EAR.intersection(box(556, 0, 618, 999))),
+    ("lores", EAR.intersection(box(618, 0, 999, 999))),
     ("supercilium", poly("M632,288 L600,284 L560,278 L530,274 L505,272 L500,286 L478,294 L456,304 L440,312 L380,326 L380,345 "
                          "L440,340 L466,330 L490,310 L520,300 L560,298 L600,296 Z")),
     ("nape-patch", poly("M380,200 L505,200 L505,272 L500,286 L478,294 L456,304 L440,312 L380,326 Z")),
     ("crown", poly("M505,200 L760,200 L760,286 L700,286 L660,288 L632,288 L600,284 L560,278 L530,274 L505,272 Z")),
+    ("eye-ring", EYE_RING),
 ]
 final = {}
-claimed = WOUT.union(TUFTS).union(BILL)
+claimed = WOUT.union(TUFTS).union(BILL).union(Point(*EYE).buffer(10.5))   # the eye is not a part
 for pid, rough in reversed(head_rough):
     final[pid] = rough.intersection(SIL).difference(claimed)
     claimed = claimed.union(rough.intersection(SIL))
@@ -144,7 +152,9 @@ META = [
     ("tail", "eye", "mf"), ("outer-tail-feathers", "pale", "mf"), ("undertail-coverts", "pale", "mf"), ("belly", "pale", "mf"),
     ("flanks", "pale", "mf"), ("breast", "pale", "mf"), ("throat", "pale", "mf"), ("back", "pale", "mf"),
     ("nape", "eye", "mf"), ("malar", "eye", "mf"), ("submoustachial", "pale", "mf"), ("ear-coverts", "eye", "mf"),
-    ("supercilium", "pale", "mf"), ("nape-patch", "accent", "mf"), ("crown", "eye", "mf"), ("nasal-tufts", "light", "mf"),
+    ("eye-line", "eye", "mf"), ("lores", "eye", "mf"),
+    ("supercilium", "pale", "mf"), ("nape-patch", "accent", "mf"), ("crown", "eye", "mf"), ("eye-ring", "eye", "mf"),
+    ("nasal-tufts", "light", "mf"),
     ("bill", "linegray", "mf"),
     ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"), ("greater-coverts", "eye", "f"),
     ("secondaries", "eye", "mf"), ("scapulars", "eye", "mf"), ("tertials", "eye", "mf"), ("primaries", "eye", "mf"),

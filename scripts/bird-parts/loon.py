@@ -51,9 +51,16 @@ rough = [
     ("face", poly("M950,432 Q1000,413 1050,414 Q1090,418 1122,433 L1104,467 Q1080,474 1050,480 "
                   "Q1012,487 985,486 Q968,470 958,452 Z")),
     ("crown", poly("M930,370 L1140,370 L1140,433 L1122,433 Q1090,418 1050,414 Q1000,413 950,432 L930,440 Z")),
+    # the head areas field guides name, all black on a breeding Common Loon (td-93f86b): cut from the face and crown
+    ("malar", poly("M1106,468 Q1080,477 1052,484 L1052,470 Q1076,463 1096,455 Z")),
+    ("ear-coverts", poly("M1040,429 Q1000,429 950,436 L958,462 Q985,477 1010,479 Q1032,471 1042,452 Z")),
+    ("supercilium", poly("M1124,436 Q1085,418 1045,418 Q1000,418 952,424 L950,413 Q1000,399 1045,399 Q1088,401 1126,428 Z")),
+    ("eye-line", poly("M1040,409 Q1000,410 950,421 L950,438 Q1000,430 1040,433 Z")),
+    ("lores", poly("M1050,416 L1126,430 L1100,449 L1050,434 Z")),
+    ("eye-ring", Point(*EYE).buffer(9).difference(Point(*EYE).buffer(5.5))),
 ]
 final = {}
-claimed = BILL.union(NECKLACE).union(STREAKS)
+claimed = BILL.union(NECKLACE).union(STREAKS).union(Point(*EYE).buffer(5.5))
 for pid, r in reversed(rough):
     final[pid] = r.intersection(SIL).difference(claimed)
     claimed = claimed.union(r.intersection(SIL))
@@ -113,6 +120,8 @@ META = [
     ("flanks", "eye", "mf"), ("breast", "pale", "mf"),
     ("back", "eye", "mf"), ("scapulars", "eye", "mf"), ("tail", "eye", "mf"),
     ("nape", "eye", "mf"), ("throat", "eye", "mf"), ("face", "eye", "mf"), ("crown", "eye", "mf"),
+    ("malar", "eye", "mf"), ("ear-coverts", "eye", "mf"), ("eye-line", "eye", "mf"), ("supercilium", "eye", "mf"),
+    ("lores", "eye", "mf"), ("eye-ring", "eye", "mf"),
     ("necklace", "pale", "mf"), ("throat-streaks", "pale", "mf"), ("bill", "linegray", "mf"),
 ]
 order = [m[0] for m in META]
