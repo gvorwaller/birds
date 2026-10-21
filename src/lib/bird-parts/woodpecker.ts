@@ -90,6 +90,14 @@ export const woodpecker: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor: "The bare skin right around the eye, inside the feathered eye-ring. A thin grey ring on this Downy.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "eye-line",
       name: "Eye-line",
       aka: "eyestripe",
@@ -210,6 +218,13 @@ export const woodpecker: DiagramText = {
       lookFor: "The longest row of coverts, just above the secondaries; spotted with white on a Downy.",
     },
     {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor: "Bars across the wing formed by pale feather tips; drawn here along the tips of the median and greater coverts. On a Downy their white spots make two broken bars across the black wing.",
+    },
+    {
       id: "primary-coverts",
       name: "Primary coverts",
       group: "Wing",
@@ -281,6 +296,12 @@ export const woodpecker: DiagramText = {
       group: "Underparts",
       lookFor:
         "White on a Downy. The reddish tinge that names the Red-bellied Woodpecker is hard to see in the field, and a Yellow-bellied Sapsucker's underparts are tinged yellow.",
+    },
+    {
+      id: "belly-band",
+      name: "Belly band",
+      group: "Underparts",
+      lookFor: "A band across the belly, below the breast. Plain white on a Downy.",
     },
     {
       id: "undertail-coverts",

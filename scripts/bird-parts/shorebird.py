@@ -1,6 +1,6 @@
 from geom import *
 from common import build
-from shapely.geometry import Point
+from shapely.geometry import Point, box
 from shapely import affinity
 import math
 
@@ -37,7 +37,9 @@ body = [
     ("malar", poly("M353,188 L386,196 L404,208 L401,214 L383,204 L353,197 Z")),
     ("supercilium", poly("M337,170 Q350,149 372,144 Q393,142 406,149 L404,156 Q389,151 372,151 Q357,155 345,176 Z")),
     ("lores", poly("M341,178 L361,156 L367,166 L349,187 Z")),
-    ("eye-ring", Point(*EYE).buffer(12).difference(Point(*EYE).buffer(8.5))),
+    ("eye-ring", Point(*EYE).buffer(13.5).difference(Point(*EYE).buffer(10.5))),
+    # td-2a2f94: the bare orbital ring, right around the eye and inside the feathered eye-ring
+    ("orbital-ring", Point(*EYE).buffer(10.5).difference(Point(*EYE).buffer(8.5))),
 ]
 final = {}
 claimed = WOUT.union(Point(*EYE).buffer(8.5))
@@ -46,7 +48,7 @@ for pid, rough in reversed(body):
 
 # the new eye-line and malar, and the parts they are cut from, are one piece each (td-93f86b); the supercilium was
 # drawn in two pieces, either side of the eye
-for k in ("crown", "ear-coverts", "throat", "chin", "lores", "eye-ring", "eye-line", "malar"):
+for k in ("crown", "ear-coverts", "throat", "chin", "lores", "eye-ring", "orbital-ring", "eye-line", "malar"):
     g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
     if g.geom_type != "Polygon": raise SystemExit(f"shorebird: {k} is in {len(g.geoms)} pieces")
     final[k] = g
@@ -64,6 +66,11 @@ final["median-coverts"] = fband(WING, 0.12, 0.26, -1, 1.2, scallops=4, amp=0.012
 final["greater-coverts"] = cov.difference(final["lesser-coverts"]).difference(final["median-coverts"])
 final["bill"] = BILL
 final["legs"] = LEGS
+# td-2a2f94: the bare tibia of each leg, from the belly feathers down to the backward-bending joint (the ankle);
+# the legs keep the tarsus and toes below it
+TIBIA = LEGS.intersection(unary_union([box(560, 0, 630, 365), box(630, 0, 700, 362)]))
+final["tibia"] = TIBIA.difference(SIL)
+final["legs"] = LEGS.difference(TIBIA)
 
 meta = [("belly", "pale", "mf"), ("breast", "light", "mf"), ("flanks", "pale", "mf"),
         ("undertail-coverts", "pale", "mf"), ("back", "mid", "mf"), ("tail", "mid", "mf"),
@@ -75,9 +82,10 @@ meta = [("belly", "pale", "mf"), ("breast", "light", "mf"), ("flanks", "pale", "
         ("primaries", "darker", "f"), ("primary-projection", "darker", "m"),
         ("wingtip-vs-tail", "darker", "m"),
         ("lesser-coverts", "wing", "f"), ("median-coverts", "wing", "f"),
-        ("greater-coverts", "dark", "f"), ("bill", "darker", "mf"), ("legs", "legyellow", "mf")]
-order = ["legs", "belly", "breast", "flanks", "undertail-coverts", "back", "tail", "nape", "crown", "forehead", "ear-coverts",
-         "throat", "chin", "malar", "eye-line", "supercilium", "lores", "eye-ring", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts",
+        ("greater-coverts", "dark", "f"), ("bill", "darker", "mf"), ("legs", "legyellow", "mf"), ("tibia", "legyellow", "mf"),
+        ("orbital-ring", "pale", "mf")]
+order = ["legs", "tibia", "belly", "breast", "flanks", "undertail-coverts", "back", "tail", "nape", "crown", "forehead", "ear-coverts",
+         "throat", "chin", "malar", "eye-line", "supercilium", "lores", "eye-ring", "orbital-ring", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts",
          "scapulars", "tertials", "primaries", "primary-projection", "wingtip-vs-tail", "bill"]
 FX = 580  # mirror so the bird faces right
 build("shorebird", final, meta, order, [0, 0, 700, 420], dx=FX*2-910, dy=75,

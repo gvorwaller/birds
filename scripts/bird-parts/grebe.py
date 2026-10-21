@@ -68,7 +68,9 @@ head_rough = [
     ("eye-line", TUFTS.intersection(box(728, 0, 790, 999))),
     # bare skin from the eye to the bill
     ("lores", poly("M764,233 C778,240 792,248 806,252 L812,262 C796,262 780,252 762,240 Z")),
-    ("eye-ring", Point(*EYE).buffer(10.5).difference(IRIS)),
+    ("eye-ring", Point(*EYE).buffer(12).difference(IRIS)),
+    # the bare skin right around the eye, inside the feathered eye-ring (td-2a2f94)
+    ("orbital-ring", Point(*EYE).buffer(10).difference(IRIS)),
 ]
 final = {}
 claimed = BILL.union(IRIS)
@@ -130,7 +132,7 @@ META = [
     ("back", "darker", "m"), ("scapulars", "dark", "m"),
     ("throat", "eye", "m"), ("nape", "eye", "m"), ("face", "eye", "m"), ("ear-tufts", "orange", "m"),
     ("ear-coverts", "eye", "m"), ("malar", "eye", "m"), ("supercilium", "eye", "m"), ("eye-line", "orange", "m"),
-    ("crown", "eye", "m"), ("lores", "chestnut", "m"), ("eye-ring", "eye", "m"), ("iris", "accent", "m"), ("bill", "eye", "m"),
+    ("crown", "eye", "m"), ("lores", "chestnut", "m"), ("eye-ring", "eye", "m"), ("orbital-ring", "eye", "m"), ("iris", "accent", "m"), ("bill", "eye", "m"),
     ("tarsus", "linegray", "m"), ("toes", "gullgray", "m"),
 ]
 order = [m[0] for m in META]

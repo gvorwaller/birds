@@ -1,6 +1,6 @@
 from geom import *
 from common import build
-from shapely.geometry import Point
+from shapely.geometry import Point, box
 DX, DY = 110, 140
 
 SIL = poly("M603,190 C600,178 596,170 590,164 C580,152 565,147 548,148 C532,149 518,154 508,162 "
@@ -27,6 +27,8 @@ PERCH = stroke("M360,462 Q470,452 600,440", 10)
 # painter order for the body partition (bottom -> top); rough shapes are clipped to SIL
 body_rough = [
     ("belly",      SIL),
+    # a band across the belly just below the breast; it takes only what the breast and flanks leave (td-2a2f94)
+    ("belly-band", poly("M495,280 L630,280 L630,336 Q600,352 560,354 Q515,350 490,326 Z")),
     ("breast",     poly("M500,200 L630,200 L630,300 Q600,318 560,322 Q530,320 515,300 Q498,250 500,200 Z")),
     ("flanks",     poly("M300,360 Q420,300 520,282 Q545,318 530,348 Q505,378 450,398 Q380,402 300,396 Z")),
     ("undertail-coverts", poly("M282,392 L330,388 Q375,394 418,404 Q428,414 424,428 L282,428 Z")),
@@ -45,8 +47,16 @@ body_rough = [
     ("eye-line",   poly("M562,177 L520,182 L522,195 L562,192 Z")),
     ("lores",      poly("M566,174 Q590,178 608,184 L604,200 Q585,195 566,192 Z")),
 ]
-eye_ring = Point(*EYE).buffer(10.5).difference(Point(*EYE).buffer(7))
+eye_ring = Point(*EYE).buffer(11).difference(Point(*EYE).buffer(8.5))
 body_rough.append(("eye-ring", eye_ring))
+# Marks other birds show, outlined where they sit, so species-page links stay on this drawing (td-2a2f94):
+# the bare orbital ring just inside the feathered eye-ring, the tufts of feathers over the nostrils at the base
+# of the bill, and the feathered tibia ("thigh") at the top of the leg.
+body_rough += [
+    ("orbital-ring", Point(*EYE).buffer(8.5).difference(Point(*EYE).buffer(7))),
+    ("nasal-tufts", poly("M592,181 L602,184 L606,188 L604,195 L596,192 L590,186 Z")),
+    ("tibia", affinity.scale(Point(443, 403).buffer(1), 12, 8)),
+]
 
 final = {}
 claimed = WOUT.union(Point(*EYE).buffer(7))  # wing sits on top of the body; the eye is not a part
@@ -82,13 +92,29 @@ final["secondaries"] = rest.difference(used)
 # the covert rows as one area in the main layer, as on the other birds, so "wing coverts" on a songbird's page opens
 # the songbird (td-d32fd3); closed up so the rows show no seams
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")]).buffer(0.5).buffer(-0.5).intersection(WOUT)
+# the primary tips past the tertials (primary projection, a main-layer area over the primaries as on the shorebird)
+# and the speculum's place: the exposed secondaries behind the greater coverts (td-2a2f94)
+final["primary-projection"] = WING.band(0.80, 1.0, -1, 1).intersection(WOUT).difference(final["tertials"])
+final["speculum"] = largest(final["secondaries"]).intersection(WING.band(0.47, 0.62, -1, PLOW))
 # tail feathers layer
 tail = final["tail"]
 final["uppertail-coverts"] = poly("M278,352 L322,326 L334,348 L318,374 L282,386 Z").intersection(tail.union(final["rump"])).difference(WOUT)
 final["rectrices"] = tail.difference(final["uppertail-coverts"])
-final["upper-mandible"] = UPPER
-final["lower-mandible"] = LOWER
+# the cere's place (a pigeon's, parrot's or raptor's bare saddle at the base of the upper bill) and the gonys,
+# the ridge under the lower mandible towards the tip (td-2a2f94)
+CERE = UPPER.intersection(box(590, 180, 608, 199))
+GONYS = LOWER.intersection(poly("M610,206.2 L632,203.2 L636,206 L612,214 Z"))
+final["cere"] = CERE
+final["gonys"] = GONYS
+final["upper-mandible"] = UPPER.difference(CERE)
+final["lower-mandible"] = LOWER.difference(GONYS)
 final["legs"] = LEGS
+
+# each new area is one piece; a leftover sliver would be a second, far-off tap target
+for k in ("belly-band", "orbital-ring", "nasal-tufts", "tibia", "cere", "gonys", "primary-projection", "speculum"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"songbird: {k} is in {len(g.geoms)} pieces")
+    final[k] = g
 
 META = [  # id, name, tone, layers
     ("belly", "light", "mf"), ("breast", "light", "mf"), ("flanks", "light", "mf"),
@@ -105,11 +131,13 @@ META = [  # id, name, tone, layers
     ("uppertail-coverts", "mid", "f"), ("rectrices", "mid", "f"),
     ("upper-mandible", "bill", "mf"), ("lower-mandible", "bill", "mf"),
     ("legs", "leg", "mf"),
+    ("belly-band", "light", "mf"), ("orbital-ring", "pale", "mf"), ("nasal-tufts", "mid", "mf"), ("tibia", "light", "mf"),
+    ("cere", "bill", "mf"), ("gonys", "bill", "mf"), ("primary-projection", "darker", "m"), ("speculum", "wing", "f"),
 ]
-order = ["legs", "belly", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "rectrices", "uppertail-coverts",
-         "nape", "crown", "forehead", "ear-coverts", "throat", "chin", "submoustachial", "malar", "supercilium", "eye-line", "lores", "eye-ring",
-         "wing", "wing-coverts", "scapulars", "lesser-coverts", "alula", "primary-coverts", "median-coverts", "greater-coverts", "secondaries",
-         "tertials", "primaries", "wing-bars", "upper-mandible", "lower-mandible"]
+order = ["legs", "belly", "belly-band", "breast", "flanks", "undertail-coverts", "back", "rump", "tail", "rectrices", "uppertail-coverts",
+         "nape", "crown", "forehead", "ear-coverts", "throat", "chin", "submoustachial", "malar", "supercilium", "eye-line", "lores", "eye-ring", "orbital-ring", "nasal-tufts", "tibia",
+         "wing", "wing-coverts", "scapulars", "lesser-coverts", "alula", "primary-coverts", "median-coverts", "greater-coverts", "secondaries", "speculum",
+         "tertials", "primaries", "primary-projection", "wing-bars", "upper-mandible", "lower-mandible", "cere", "gonys"]
 build("songbird", final, META, order, [0, 0, 540, 360], dx=DX, dy=DY,
       base_under=[(PERCH, "perch")],
       base_over=[(Point(*EYE).buffer(7), "eye"), (Point(EYE[0]+2.2, EYE[1]-2.2).buffer(1.8), "pale")],

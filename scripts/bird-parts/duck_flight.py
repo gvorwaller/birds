@@ -63,11 +63,14 @@ def above():
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts"):
         final[k] = final[k].difference(final["scapulars"])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "primary-coverts", "alula")])
+    # the two white bars bordering the speculum, drawn over it as their own part: the greater coverts' tips in front,
+    # the secondaries' tips behind (td-2a2f94)
+    final["wing-bars"] = R(gc_white.union(spec_white)).difference(final["tertials"]).difference(final["scapulars"]).difference(BODY)
     meta = [("tail", "pale", "mf"), ("rump", "darker", "mf"), ("uppertail-coverts", "darker", "mf"), ("drake-curl", "darker", "mf"),
             ("speculum", "accent2", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "mid", "m"), ("lesser-coverts", "mid", "f"), ("median-coverts", "mid", "f"),
             ("primary-coverts", "mid", "f"), ("alula", "mid", "f"), ("greater-coverts", "mid", "mf"),
-            ("tertials", "wing", "mf"), ("back", "mid", "mf"), ("scapulars", "light", "mf"),
+            ("tertials", "wing", "mf"), ("wing-bars", "pale", "mf"), ("back", "mid", "mf"), ("scapulars", "light", "mf"),
             ("neck", "mallardgreen", "mf"), ("nape", "mallardgreen", "mf"), ("cheek", "mallardgreen", "mf"),
             ("crown", "mallardgreen", "mf"), ("bill", "billyellow", "mf"), ("nail", "darker", "mf")]
     lines = R(W.lines(n_sec=11, n_prim=10, sec_to=r0).difference(W.pc_shape()).difference(up["alula"]))

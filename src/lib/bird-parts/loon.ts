@@ -79,6 +79,15 @@ export const loon: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "The bare skin right around the red eye, inside the feathered eye-ring. Drawn black on this breeding Common Loon, like the head around it.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Ear coverts",
       aka: "auriculars",

@@ -44,11 +44,13 @@ def above():
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
+    # where a pale wing bar shows on birds that have one: across the tips of the greater coverts (td-2a2f94)
+    final["wing-bars"] = mirror(W.arm.band(0, 1, 0.40, 0.48)).intersection(final["greater-coverts"])
     meta = [("tail", "eye", "mf"), ("uppertail-coverts", "darker", "mf"), ("rump", "darker", "mf"),
             ("secondaries", "eye", "mf"), ("primaries", "eye", "mf"),
             ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"), ("median-coverts", "darker", "f"),
             ("greater-coverts", "darker", "f"), ("primary-coverts", "darker", "f"), ("alula", "darker", "f"),
-            ("tertials", "darker", "mf"), ("back", "darker", "mf"), ("scapulars", "darker", "mf"),
+            ("wing-bars", "darker", "mf"), ("tertials", "darker", "mf"), ("back", "darker", "mf"), ("scapulars", "darker", "mf"),
             ("nape", "darker", "mf"), ("crown", "darker", "mf"), ("bill", "linegray", "mf")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines().difference(W.pc_shape()).difference(up["alula"]))
@@ -68,9 +70,11 @@ def below():
     utc = mirror(poly("M380,248 L404,248 C402,262 398,274 392,282 Q386,286 380,286 Z"))
     belly = body.difference(breast).difference(utc)
     tail = TAIL.difference(utc)
+    # the legs and feet, held together under the tail in flight, the toes about reaching its tip (td-2a2f94)
+    legs = mirror(poly("M380,262 L385,262 C387,276 388,290 389,300 L392,312 L386,314 L380,310 Z"))
     final = {k: mirror(v) for k, v in un.items()}
     final.update({"face": face, "throat": throat, "breast": breast, "belly": belly,
-                  "undertail-coverts": utc, "tail": tail, "bill": BILL})
+                  "undertail-coverts": utc, "tail": tail, "legs": legs, "bill": BILL})
     # the body is nearer the viewer than the wing roots
     for k in ("secondaries", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
@@ -79,7 +83,7 @@ def below():
     meta = [("tail", "darker", "m"), ("secondaries", "linegray", "m"), ("primaries", "linegray", "m"),
             ("underwing-coverts", "gullpale", "m"), ("axillaries", "darker", "m"),
             ("belly", "darker", "m"), ("undertail-coverts", "darker", "m"), ("breast", "darker", "m"),
-            ("throat", "dark", "m"), ("face", "darker", "m"), ("bill", "linegray", "m")]
+            ("throat", "dark", "m"), ("face", "darker", "m"), ("legs", "linegray", "m"), ("bill", "linegray", "m")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines(sec_to=0.42).difference(un["underwing-coverts"]))
     build("tubenose-below", final, meta, order, VB, dx=0, dy=0,

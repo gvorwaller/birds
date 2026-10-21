@@ -199,6 +199,15 @@ export const gull: DiagramText = {
       visibility: "Hidden on a standing gull; seen in flight.",
     },
     {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "carpal bar",
+      group: "Wing",
+      lookFor:
+        "A dark bar from the wrist diagonally back across the inner wing's coverts. Plain grey on an adult Herring Gull. Young Little Gulls show it in flight as part of a dark \"W\" across the upperwings.",
+      visibility: "Seen in flight from above.",
+    },
+    {
       id: "alula",
       name: "Alula",
       group: "Wing",

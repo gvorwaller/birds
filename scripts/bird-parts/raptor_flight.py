@@ -97,6 +97,8 @@ def above():
         final[k] = final[k].difference(final["scapulars"])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
+    # td-2a2f94: where a wing bar runs, along the greater coverts' tips; none on an adult Red-tail, so the coverts' tone
+    final["wing-bars"] = R(ARM.band(0, 1, 0.30, 0.46).intersection(up["greater-coverts"])).difference(final["tertials"]).difference(final["scapulars"]).difference(BODY)
     # the pale mottling on the scapulars that makes the "V" on an adult's back
     vmarks = mirror(unary_union([affinity.rotate(affinity.scale(Point(x, y).buffer(1), 2.6, 6), a, origin=(x, y))
                                  for x, y, a in [(404, 92, -20), (410, 112, -15), (416, 132, -10), (410, 150, 0),
@@ -105,7 +107,7 @@ def above():
             ("rump", "dark", "mf"), ("secondaries", "wing", "mf"), ("primaries", "darker", "mf"), ("fingers", "darker", "mf"),
             ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
             ("greater-coverts", "dark", "f"), ("primary-coverts", "dark", "f"), ("alula", "dark", "f"),
-            ("tertials", "wing", "mf"), ("back", "dark", "mf"), ("scapulars", "dark", "mf"),
+            ("wing-bars", "dark", "mf"), ("tertials", "wing", "mf"), ("back", "dark", "mf"), ("scapulars", "dark", "mf"),
             ("nape", "dark", "mf"), ("crown", "dark", "mf"), ("bill", "bill", "mf")]
     order = [m[0] for m in meta]
     build("raptor-above", final, meta, order, VB, dx=0, dy=0,

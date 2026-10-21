@@ -69,6 +69,15 @@ export const auk: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "The bare skin right around the eye, inside the feathered eye-ring. Dark on this murre, like the head.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "lores",
       name: "Lores",
       group: "Head",

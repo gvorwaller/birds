@@ -57,7 +57,9 @@ rough = [
     ("supercilium", poly("M1124,436 Q1085,418 1045,418 Q1000,418 952,424 L950,413 Q1000,399 1045,399 Q1088,401 1126,428 Z")),
     ("eye-line", poly("M1040,409 Q1000,410 950,421 L950,438 Q1000,430 1040,433 Z")),
     ("lores", poly("M1050,416 L1126,430 L1100,449 L1050,434 Z")),
-    ("eye-ring", Point(*EYE).buffer(9).difference(Point(*EYE).buffer(5.5))),
+    ("eye-ring", Point(*EYE).buffer(11).difference(Point(*EYE).buffer(5.5))),
+    # the bare skin right around the eye, inside the feathered eye-ring (td-2a2f94)
+    ("orbital-ring", Point(*EYE).buffer(8).difference(Point(*EYE).buffer(5.5))),
 ]
 final = {}
 claimed = BILL.union(NECKLACE).union(STREAKS).union(Point(*EYE).buffer(5.5))
@@ -121,7 +123,7 @@ META = [
     ("back", "eye", "mf"), ("scapulars", "eye", "mf"), ("tail", "eye", "mf"),
     ("nape", "eye", "mf"), ("throat", "eye", "mf"), ("face", "eye", "mf"), ("crown", "eye", "mf"),
     ("malar", "eye", "mf"), ("ear-coverts", "eye", "mf"), ("eye-line", "eye", "mf"), ("supercilium", "eye", "mf"),
-    ("lores", "eye", "mf"), ("eye-ring", "eye", "mf"),
+    ("lores", "eye", "mf"), ("eye-ring", "eye", "mf"), ("orbital-ring", "eye", "mf"),
     ("necklace", "pale", "mf"), ("throat-streaks", "pale", "mf"), ("bill", "linegray", "mf"),
 ]
 order = [m[0] for m in META]

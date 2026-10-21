@@ -5,7 +5,7 @@ export const songbird: DiagramText = {
   title: "Songbird",
   model: { species: "Song Sparrow", age: "adult", pose: "perched" },
   intro:
-    "A typical songbird, shaped after an adult Song Sparrow. Some marks, such as the two wing bars, are drawn to show where they appear on the many songbirds that have them.",
+    "A typical songbird, shaped after an adult Song Sparrow. Some marks, such as the two wing bars, are drawn to show where they appear on the many songbirds that have them. A few marks of other birds, such as a pigeon's cere or a duck's speculum, are outlined to show where they would sit.",
   sources: [
     {
       label: "Song sparrow in Prospect Park (93031).jpg (reference photo, proportions only)",
@@ -49,11 +49,28 @@ export const songbird: DiagramText = {
         "The small area between the eye and the bill. Whether it's dark, pale or coloured helps separate several look-alike species.",
     },
     {
+      id: "nasal-tufts",
+      name: "Nasal tufts",
+      aka: "nasal bristles",
+      group: "Head",
+      lookFor:
+        "Small feathers lying forward over the nostrils at the base of the upper bill. Tiny on this sparrow; on some birds they are thick and bristly and hide the nostrils.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "eye-ring",
       name: "Eye-ring",
       group: "Head",
       lookFor:
         "A ring of feathers around the eye. Note whether it's complete, broken at the front and back, or missing, and whether it's bold or faint.",
+    },
+    {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      group: "Head",
+      lookFor:
+        "The ring of bare skin right around the eye, inside the feathered eye-ring. Thin and plain on this songbird; where it's coloured, note the colour.",
+      visibility: "Small; easiest to pick from the list.",
     },
     {
       id: "supercilium",
@@ -118,11 +135,35 @@ export const songbird: DiagramText = {
       lookFor: "The lower half of the bill. Its colour sometimes differs from the upper mandible's, often paler below.",
     },
     {
+      id: "gonys",
+      name: "Gonys",
+      group: "Bill & legs",
+      lookFor:
+        "The ridge along the underside of the lower mandible towards the tip, where the two halves of the lower jaw join. On a short, conical bill like this one it is barely noticeable.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
+      id: "cere",
+      name: "Cere",
+      group: "Bill & legs",
+      lookFor:
+        "The bare, often coloured, fleshy saddle at the base of the upper bill on birds such as pigeons, parrots and hawks. A songbird has none, so this area only marks where a cere would sit.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "legs",
       name: "Legs and feet",
       group: "Bill & legs",
       aka: "tarsus and toes",
       lookFor: "Leg colour (pink, yellow, dark) is a quick check on a perched bird. The bare part of the leg is the tarsus.",
+    },
+    {
+      id: "tibia",
+      name: "Tibia",
+      group: "Bill & legs",
+      lookFor:
+        "The leg between the knee and the bare tarsus. On a songbird it is feathered and tucked into the belly feathers, so only its lower end shows; long-legged waders show it bare.",
+      visibility: "Small; easiest to pick from the list.",
     },
     // Upperparts
     {
@@ -208,6 +249,13 @@ export const songbird: DiagramText = {
       lookFor: "The inner flight feathers. On a folded wing they show below the tertials; pale edges here can form a pale wing panel.",
     },
     {
+      id: "speculum",
+      name: "Speculum",
+      group: "Wing",
+      lookFor:
+        "A bright, often glossy patch on the secondaries, shown best in flight, as on many ducks. This songbird's secondaries are plain, so this area only marks where a speculum would be.",
+    },
+    {
       id: "tertials",
       name: "Tertials",
       group: "Wing",
@@ -219,6 +267,13 @@ export const songbird: DiagramText = {
       group: "Wing",
       lookFor:
         "The long outer flight feathers. On a folded wing they lie beneath the secondaries, so you see their outer edges along the bottom of the wing and their tips past the tertials. How far the tips reach (primary projection) helps separate some look-alikes, such as the small flycatchers.",
+    },
+    {
+      id: "primary-projection",
+      name: "Primary projection",
+      group: "Wing",
+      lookFor:
+        "How far the primary tips reach past the tertials on the folded wing. A long projection means long wings, and it helps separate some look-alikes, such as the small flycatchers.",
     },
     {
       id: "underwing-coverts",
@@ -250,6 +305,13 @@ export const songbird: DiagramText = {
       name: "Belly",
       group: "Underparts",
       lookFor: "Between the breast and the legs. Often paler and plainer than the breast; note where any streaking stops.",
+    },
+    {
+      id: "belly-band",
+      name: "Belly band",
+      group: "Underparts",
+      lookFor:
+        "A band of colour across the belly, below the breast. Plain on this sparrow, whose belly is all one colour.",
     },
     {
       id: "flanks",

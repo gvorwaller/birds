@@ -118,6 +118,11 @@ export interface PartTerm {
    * bird's link stays on its own drawing (td-d32fd3). Checked by test against the real glossaries.
    */
   sameAs?: Partial<Record<DiagramId, string>>;
+  /**
+   * The drawing that shows the mark, for pages whose own drawing has neither the part nor a same-as (default: the
+   * first of drawnIn). The songbird outlines a cere or speculum only to say where it would sit (td-2a2f94).
+   */
+  home?: DiagramId;
 }
 
 const ALL: DiagramId[] = [...DIAGRAM_ORDER];
@@ -138,16 +143,16 @@ export const TERMS: PartTerm[] = [
   { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ALL.filter((d) => d !== "duck"), sameAs: { duck: "cheek" } },
   { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird", "woodpecker"] },
   { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ALL },
-  { part: "cere", forms: ["ceres?"], drawnIn: ["raptor"] },
-  { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ["gull"] },
+  { part: "cere", forms: ["ceres?"], drawnIn: ["songbird", "duck", "raptor", "gamebird"], home: "raptor" },
+  { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ALL },
   { part: "gonydeal-spot", forms: ["gonydeal spots?"], drawnIn: ["gull"] },
-  { part: "gonys", forms: ["gonys"], drawnIn: ["gull"] },
-  { part: "scapulars", forms: ["scapulars?"], drawnIn: NOT_HUMMINGBIRD },
+  { part: "gonys", forms: ["gonys"], drawnIn: ["songbird", "gull"], home: "gull" },
+  { part: "scapulars", forms: ["scapulars?"], drawnIn: ALL },
   { part: "lesser-coverts", forms: [`lesser(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "median-coverts", forms: [`median(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "greater-coverts", forms: [`greater(?: upper)?(?:[- ]?wing)?${COVERTS}`], drawnIn: ALL },
   { part: "primary-coverts", forms: [`primary${COVERTS}`], drawnIn: ALL },
-  { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["shorebird"] },
+  { part: "primary-projection", forms: ["primary projections?"], drawnIn: ["songbird", "shorebird", "raptor"], home: "shorebird" },
   { part: "underwing-coverts", forms: [`under[- ]?wing${COVERTS}`, "wing[- ]linings?"], drawnIn: ALL },
   { part: "wing-coverts", forms: [`upper[- ]?wing${COVERTS}`, `wing${COVERTS}`], drawnIn: ALL },
   { part: "patagial-bar", forms: ["patagial(?: (?:bars?|marks?|bands?|patch(?:es)?|stripes?))?", "patagium", "patagia"], drawnIn: ["raptor"] },
@@ -155,28 +160,28 @@ export const TERMS: PartTerm[] = [
   { part: "carpal-patch", forms: ["carpal (?:patch(?:es)?|bars?|marks?|crescents?|commas?|spots?)"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "alula", forms: ["alulae?"], drawnIn: NOT_HUMMINGBIRD },
   { part: "tertial-crescent", forms: ["tertial crescents?"], drawnIn: ["gull"] },
-  { part: "tertials", forms: ["tertials?"], drawnIn: NOT_HUMMINGBIRD },
+  { part: "tertials", forms: ["tertials?"], drawnIn: ALL },
   { part: "secondaries", forms: ["secondaries"], drawnIn: ALL },
   // "fingers" is ordinary English elsewhere ("finger claws"), so only raptors' (and owls') pages link it.
   { part: "fingers", forms: ["emarginated primaries", "emarginations?", "emarginated", "emarginate", "(?:primary )?fingers?"], drawnIn: ["raptor"], onlyFor: ["raptor"] },
   { part: "primaries", forms: ["primaries"], drawnIn: ALL },
-  { part: "wing-bars", forms: ["wing[- ]?bars?"], drawnIn: ["songbird"] },
+  { part: "wing-bars", forms: ["wing[- ]?bars?"], drawnIn: ALL.filter((d) => !["auk", "hummingbird", "loon", "grebe"].includes(d)) },
   { part: "axillaries", forms: ["axillaries", "axillars", "axillary"], drawnIn: ALL },
-  { part: "speculum", forms: ["speculum", "speculums", "specula"], drawnIn: ["duck"] },
+  { part: "speculum", forms: ["speculum", "speculums", "specula"], drawnIn: ["songbird", "duck"], home: "duck" },
   { part: "apical-spots", forms: ["apical spots?"], drawnIn: ["gull"] },
   { part: "mirrors", forms: ["mirrors?"], drawnIn: ["gull"], onlyFor: ["gull"] },
   { part: "undertail-coverts", forms: [`under[- ]?tail${COVERTS}`], drawnIn: ALL },
   { part: "uppertail-coverts", forms: [`upper[- ]?tail${COVERTS}`], drawnIn: ALL.filter((d) => d !== "grebe") },
   // A gull's or tern's bill has a "subterminal band" too, so only raptors' and gamebirds' pages link it.
   { part: "subterminal-band", forms: ["subterminal (?:tail )?bands?"], drawnIn: ["raptor", "gamebird"], onlyFor: ["raptor", "gamebird"] },
-  { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["raptor"] },
+  { part: "belly-band", forms: ["belly[- ]?bands?"], drawnIn: ["songbird", "raptor", "cormorant", "woodpecker", "hummingbird"], home: "raptor" },
   {
     part: "tarsus",
     forms: ["tarsus", "tarsi"],
     drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"],
-    sameAs: { songbird: "legs", shorebird: "legs", duck: "legs", gull: "legs", hummingbird: "toes" },
+    sameAs: { songbird: "legs", shorebird: "legs", duck: "legs", gull: "legs", tubenose: "legs", hummingbird: "toes" },
   },
-  { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["heron"] },
+  { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["songbird", "shorebird", "heron", "hummingbird"], home: "heron" },
   // Common on other birds and close to the everyday "neck" and "plumes", so only the heron group's pages link them.
   { part: "foreneck", forms: ["fore[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
   { part: "hindneck", forms: ["hind[- ]?necks?"], drawnIn: ["heron"], onlyFor: ["heron"] },
@@ -193,9 +198,9 @@ export const TERMS: PartTerm[] = [
   },
   // "nasal" alone is a call ("nasal kip"); only the tube words, and only on tubenose pages.
   { part: "nostril-tubes", forms: ["naricorns?", "nasal tubes?", "tubular nostrils?", "tube[- ]?nosed?"], drawnIn: ["tubenose"], onlyFor: ["tubenose"] },
-  // Woodpeckers (td-71bf41). "Nape patch" is also a tit's white patch, so only woodpecker pages link it; the nasal
-  // tufts of birds-of-paradise are the same feathers.
-  { part: "nasal-tufts", forms: ["nasal[- ]tufts?"], drawnIn: ["woodpecker"] },
+  // Woodpeckers (td-71bf41). "Nape patch" is also a tit's white patch, so only woodpecker pages link it. The songbird
+  // drawing shows the nasal tufts too, for crows and birds-of-paradise (td-2a2f94).
+  { part: "nasal-tufts", forms: ["nasal[- ]tufts?"], drawnIn: ["songbird", "woodpecker"], home: "woodpecker" },
   { part: "nape-patch", forms: ["(?:nape|nuchal) (?:patch(?:es)?|spots?)"], drawnIn: ["woodpecker"], onlyFor: ["woodpecker"] },
   // Hummingbirds and swifts (td-725e4c). A partridge's or bee-eater's "gorget" is another throat mark, and a sparrow's
   // postocular stripe another face mark.
@@ -230,7 +235,7 @@ const WORD_CHAR = /[\p{L}\p{N}_-]/u;
 export function partTarget(term: PartTerm, own: DiagramId): { diagram: DiagramId; part: string } {
   if (term.drawnIn.includes(own)) return { diagram: own, part: term.part };
   const same = term.sameAs?.[own];
-  return same ? { diagram: own, part: same } : { diagram: term.drawnIn[0], part: term.part };
+  return same ? { diagram: own, part: same } : { diagram: term.home ?? term.drawnIn[0], part: term.part };
 }
 
 export type PartTermSegment = { text: string; diagram?: undefined; part?: undefined } | { text: string; diagram: DiagramId; part: string };

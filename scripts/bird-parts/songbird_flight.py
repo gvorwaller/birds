@@ -56,20 +56,23 @@ def above():
     rect = TAIL.difference(utc).difference(rump)
     R = mirror
     final = {k: R(v) for k, v in up.items()}
-    final.update({"wing-bars": R(wb), "crown": crown, "supercilium": supercilium, "nape": nape,
+    # the speculum's place: the middle of the secondaries' exposed band (a duck's or parrot's bright patch; td-2a2f94)
+    spec = ARM.band(0.22, 0.92, 0.08, 0.36).intersection(up["secondaries"])
+    final.update({"speculum": R(spec), "wing-bars": R(wb), "crown": crown, "supercilium": supercilium, "nape": nape,
                   "scapulars": R(scap), "back": back, "rump": rump, "uppertail-coverts": utc,
                   "rectrices": rect, "tail": rect.union(utc), "upper-mandible": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars"):
         final[k] = final[k].difference(final["scapulars"])
     final["wing"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
-                                 "primary-coverts", "alula", "secondaries")]).difference(final["wing-bars"])
+                                 "primary-coverts", "alula", "secondaries")])
+    # the bars are covert tips drawn over these areas, never holes in them (CODEX1, td-2a2f94)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
-                                         "primary-coverts", "alula")]).difference(final["wing-bars"])
+                                         "primary-coverts", "alula")])
     meta = [("tail", "mid", "m"), ("rectrices", "mid", "f"), ("uppertail-coverts", "mid", "f"), ("rump", "mid", "mf"),
             ("wing", "wing", "m"), ("wing-coverts", "wing", "m"), ("secondaries", "wing", "f"), ("lesser-coverts", "wing", "f"),
             ("median-coverts", "dark", "f"), ("greater-coverts", "dark", "f"), ("primary-coverts", "darker", "f"),
             ("alula", "dark", "f"), ("primaries", "darker", "mf"), ("wing-bars", "pale", "mf"),
-            ("tertials", "dark", "mf"), ("back", "mid", "mf"), ("scapulars", "mid", "mf"),
+            ("speculum", "wing", "f"), ("tertials", "dark", "mf"), ("back", "mid", "mf"), ("scapulars", "mid", "mf"),
             ("nape", "mid", "mf"), ("crown", "mid", "mf"), ("supercilium", "pale", "mf"), ("upper-mandible", "bill", "mf")]
     lines = R(W.lines(n_sec=9, n_prim=9).difference(W.pc_shape()).difference(up["alula"])).union(tail_lines())
     build("songbird-above", final, meta, [m[0] for m in meta], VB, dx=0, dy=0,
@@ -86,17 +89,20 @@ def below():
     utc = BODY.intersection(mirror(poly("M380,262 Q404,256 450,250 L450,350 L380,350 Z"))).union(
         mirror(poly("M380,282 L406,282 C408,300 404,318 398,328 Q390,334 380,334 Z")))
     belly = BODY.intersection(mirror(poly("M380,190 Q400,188 412,182 L412,268 L380,268 Z"))).difference(breast).difference(utc)
-    flanks = BODY.difference(throat).difference(chin).difference(malar).difference(breast).difference(belly).difference(utc)
+    # a band across the belly just below the breast, so the belly stays one piece (td-2a2f94)
+    belly_band = belly.intersection(box(0, 0, 999, 226))
+    belly = belly.difference(belly_band)
+    flanks = BODY.difference(throat).difference(chin).difference(malar).difference(breast).difference(belly).difference(belly_band).difference(utc)
     tail = TAIL.difference(utc)
     R = mirror
     final = {k: R(v) for k, v in un.items()}
-    final.update({"chin": chin, "malar": malar, "throat": throat, "breast": breast, "belly": belly,
+    final.update({"chin": chin, "malar": malar, "throat": throat, "breast": breast, "belly": belly, "belly-band": belly_band,
                   "flanks": flanks, "undertail-coverts": utc, "tail": tail, "lower-mandible": BILL})
     for k in ("secondaries", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
     meta = [("tail", "mid", "m"), ("secondaries", "mid", "m"), ("primaries", "mid", "m"),
             ("underwing-coverts", "light", "m"), ("axillaries", "light", "m"), ("flanks", "light", "m"),
-            ("belly", "pale", "m"), ("breast", "light", "m"), ("undertail-coverts", "light", "m"),
+            ("belly", "pale", "m"), ("belly-band", "pale", "m"), ("breast", "light", "m"), ("undertail-coverts", "light", "m"),
             ("throat", "pale", "m"), ("malar", "dark", "m"), ("chin", "pale", "m"), ("lower-mandible", "bill", "m")]
     lines = R(W.lines(n_sec=9, n_prim=9, sec_to=0.46).difference(un["underwing-coverts"])).union(tail_lines())
     build("songbird-below", final, meta, [m[0] for m in meta], VB, dx=0, dy=0,

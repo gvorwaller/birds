@@ -83,7 +83,10 @@ for pid, rough in reversed(body_rough):
 final["crest"] = CREST.difference(COMB)
 final["comb"] = COMB
 final["ruff"] = RUFF.intersection(SIL).difference(WOUT)
-final["bill"] = BILL
+# the base of the upper bill, where a curassow's coloured cere sits; feathered over on a grouse (td-2a2f94)
+CERE = BILL.intersection(poly("M156,280 L200,280 L200,309 L162,311 Z"))
+final["bill"] = BILL.difference(CERE)
+final["cere"] = CERE
 final["tarsus"] = TARSUS
 final["toes"] = TOES
 final["subterminal-band"] = BAND
@@ -159,7 +162,9 @@ EYE_O = F(Point(*EYE).buffer(13))
 EYE_C, EYE_R = (665.04, 93.2), 7.54
 eye_disk = Point(*EYE_C).buffer(EYE_R)
 HEAD_AREAS = [
-    ("eye-ring", Point(*EYE_C).buffer(10).difference(eye_disk)),
+    # the bare skin right around the eye, inside the feathered eye-ring (td-2a2f94)
+    ("orbital-ring", Point(*EYE_C).buffer(9.3).difference(eye_disk)),
+    ("eye-ring", Point(*EYE_C).buffer(11.5).difference(eye_disk)),
     ("lores", poly("M673,86 L714,90 L714,106 L673,102 Z")),
     ("eye-line", poly("M606,88 L668,88 L668,101 L606,101 Z")),   # its front edge follows the eye-ring
     ("supercilium", poly("M606,72 L710,72 L716,92 L606,92 Z")),
@@ -195,8 +200,8 @@ META = [
     ("undertail-coverts", "light", "mf"), ("belly", "light", "mf"), ("flanks", "light", "mf"), ("breast", "mid", "mf"),
     ("rump", "dark", "mf"), ("uppertail-coverts", "dark", "mf"), ("back", "dark", "mf"), ("nape", "dark", "mf"), ("throat", "light", "mf"),
     ("ear-coverts", "mid", "mf"), ("malar", "mid", "mf"), ("supercilium", "mid", "mf"), ("eye-line", "mid", "mf"),
-    ("lores", "mid", "mf"), ("eye-ring", "mid", "mf"),
-    ("crest", "dark", "mf"), ("ruff", "eye", "mf"), ("comb", "orange", "mf"), ("bill", "eye", "mf"),
+    ("lores", "mid", "mf"), ("eye-ring", "mid", "mf"), ("orbital-ring", "mid", "mf"),
+    ("crest", "dark", "mf"), ("ruff", "eye", "mf"), ("comb", "orange", "mf"), ("bill", "eye", "mf"), ("cere", "eye", "mf"),
     ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"), ("greater-coverts", "dark", "f"),
     ("secondaries", "darker", "mf"), ("scapulars", "dark", "mf"), ("tertials", "wing", "mf"), ("primaries", "darker", "mf"),
 ]

@@ -82,19 +82,23 @@ def above():
                   "outer-tail-feathers": OTF.difference(rump).difference(utc), "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
+    # the white-spotted tips of the greater and median coverts, two rows that read as wing bars, drawn over them (td-2a2f94)
+    r0, r1, _ = W.rows
+    final["wing-bars"] = unary_union([mirror(W.arm.band(0, 1, r0 - 0.01, r0 + 0.08)).intersection(final["greater-coverts"]),
+                                      mirror(W.arm.band(0, 1, r1 - 0.01, r1 + 0.07)).intersection(final["median-coverts"])])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
     meta = [("tail", "eye", "mf"), ("outer-tail-feathers", "pale", "mf"), ("uppertail-coverts", "eye", "mf"), ("rump", "eye", "mf"),
             ("secondaries", "eye", "mf"), ("primaries", "eye", "mf"),
             ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"),
             ("greater-coverts", "eye", "f"), ("primary-coverts", "eye", "f"), ("alula", "eye", "f"),
-            ("tertials", "eye", "mf"), ("back", "pale", "mf"), ("scapulars", "eye", "mf"),
+            ("wing-bars", "eye", "mf"), ("tertials", "eye", "mf"), ("back", "pale", "mf"), ("scapulars", "eye", "mf"),
             ("nape", "eye", "mf"), ("crown", "eye", "mf"), ("nape-patch", "accent", "mf"), ("supercilium", "pale", "mf"),
             ("bill", "linegray", "mf")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines().difference(W.pc_shape()).difference(up["alula"]))
     wing_spots = [(SPOTS, "pale")]
-    marks = {k: wing_spots for k in ("secondaries", "primaries", "wing-coverts", "median-coverts", "greater-coverts", "tertials")}
+    marks = {k: wing_spots for k in ("secondaries", "primaries", "wing-coverts", "median-coverts", "greater-coverts", "wing-bars", "tertials")}
     marks["outer-tail-feathers"] = [(TAIL_BARS, "eye")]
     build("woodpecker-above", final, meta, order, VB, dx=0, dy=0,
           wing_view_box=wing_view_box(VB),

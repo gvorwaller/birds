@@ -56,6 +56,8 @@ final["bill"] = BILL.difference(UNGUIS).difference(TUBES)
 # the areas around the eye, cut from the face, crown, throat and nape (td-93f86b). The bill points left here, so
 # the lores lie at smaller x than the eye. Highest priority first; the eye itself is not a part.
 EYE_AREAS = [
+    # the bare orbital ring right around the eye, then the feathered eye-ring outside it (td-2a2f94)
+    ("orbital-ring", Point(*EYE).buffer(10.5).difference(Point(*EYE).buffer(8.5))),
     ("eye-ring", Point(*EYE).buffer(13).difference(Point(*EYE).buffer(8.5))),
     # a band from the bill base back past the eye, over the eye-line; its top takes a strip of the crown
     ("supercilium", poly("M176,260 L176,250 L192,240 L230,230 L270,224 L350,226 L350,246 L330,244 L262,243 L240,249 L196,266 L180,262 Z")),
@@ -98,6 +100,8 @@ for k in ("tertials", "scapulars", "secondaries", "greater-coverts", "median-cov
     g = final[k].buffer(0)
     if g.geom_type != "Polygon": raise SystemExit(f"tubenose: {k} is in {len(g.geoms)} pieces")
     final[k] = g
+# where a pale wing bar shows on birds that have one: the tips of the greater coverts (td-2a2f94)
+final["wing-bars"] = row(28, 40).intersection(final["greater-coverts"])
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")]).buffer(0.5).buffer(-0.5).intersection(WOUT)
 
 # level, scale and mirror everything; then clip at the waterline
@@ -126,15 +130,15 @@ META = [
     ("flanks", "darker", "mf"), ("breast", "dark", "mf"), ("throat", "dark", "mf"), ("nape", "darker", "mf"),
     ("face", "darker", "mf"), ("crown", "darker", "mf"),
     ("malar", "darker", "mf"), ("ear-coverts", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"),
-    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"),
+    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"), ("orbital-ring", "darker", "mf"), ("wing-bars", "darker", "mf"),
     ("tail", "eye", "mf"), ("scapulars", "darker", "mf"), ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"),
     ("median-coverts", "darker", "f"), ("greater-coverts", "darker", "f"), ("secondaries", "darker", "mf"),
     ("tertials", "darker", "mf"), ("primaries", "eye", "mf"),
     ("bill", "linegray", "mf"), ("unguis", "linegray", "mf"), ("nostril-tubes", "linegray", "mf"),
 ]
 order = ["tail", "flanks", "breast", "throat", "nape", "face", "crown",
-         "malar", "ear-coverts", "supercilium", "eye-line", "lores", "eye-ring",
-         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries",
+         "malar", "ear-coverts", "supercilium", "eye-line", "lores", "eye-ring", "orbital-ring",
+         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars", "secondaries", "scapulars", "tertials", "primaries",
          "bill", "unguis", "nostril-tubes"]
 build("tubenose", final, META, order, [0, 0, 760, 452], dx=0, dy=0,
       raw_base=[(HEAD_I, "darker")],

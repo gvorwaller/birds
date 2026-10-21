@@ -78,6 +78,14 @@ export const tubenose: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor: "The ring of bare skin right around the eye, inside the feathered eye-ring. Dark on a Sooty Shearwater, like the eye-ring.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "eye-line",
       name: "Eye-line",
       aka: "eyestripe",
@@ -130,6 +138,15 @@ export const tubenose: DiagramText = {
       lookFor: "The hook at the tip of the upper bill is a plate of its own, one of the horny plates the bill is made of.",
       visibility: "Easiest to see in the close-up.",
     },
+    {
+      id: "legs",
+      name: "Legs",
+      aka: "tarsus and toes",
+      group: "Bill & legs",
+      lookFor:
+        "The legs and feet; the lower leg is the tarsus. In flight they are tucked under the tail, the toes about reaching its tip on a Sooty Shearwater. A Wilson's Storm-Petrel's feet may reach past its tail in level flight, and it has yellow webs between its toes, hard to see.",
+      visibility: "Under the water on a swimming bird; seen in flight from below.",
+    },
     // Upperparts
     {
       id: "back",
@@ -165,6 +182,14 @@ export const tubenose: DiagramText = {
       name: "Wing coverts",
       group: "Wing",
       lookFor: "The rows of smaller feathers covering the wing, shown here as one area. Dark brown on a Sooty Shearwater.",
+    },
+    {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor:
+        "Where a pale bar crosses the wing on birds that have one: along the tips of the greater coverts. A Sooty Shearwater has none; its coverts are plain dark brown.",
     },
     {
       id: "lesser-coverts",

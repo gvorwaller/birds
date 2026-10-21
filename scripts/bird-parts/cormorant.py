@@ -75,7 +75,9 @@ def O(g):
     """Plate coordinates (where the head was laid out, facing right) -> tracing coordinates (facing left)."""
     return affinity.translate(affinity.scale(g, -1, 1, origin=(560, 0)), 0, 120)
 HEAD_AREAS = [
-    ("eye-ring", Point(*EYE).buffer(9.5).difference(Point(*EYE).buffer(6))),
+    # the bare skin right around the eye (td-2a2f94), then the feathered eye-ring just outside it
+    ("orbital-ring", Point(*EYE).buffer(8).difference(Point(*EYE).buffer(6))),
+    ("eye-ring", Point(*EYE).buffer(9.8).difference(Point(*EYE).buffer(8))),   # wider, and the forehead's edge would cut it in two
     ("supercilium", O(poly("M594,91 Q588,82 570,80 L548,78 L548,86 Q566,88 579,89 Z"))),
     ("eye-line", O(poly("M578,90 L550,88 L550,97 L578,99 Z"))),
     ("ear-coverts", O(poly("M576,99 L548,97 L546,110 Q560,113 572,111 L572,102 Z"))),
@@ -109,27 +111,36 @@ for k in ("lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
     final["tertials"] = final["tertials"].union(final[k].difference(main))
     final[k] = main
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")])
+# marks this adult lacks but relatives sharing the drawing show (td-2a2f94), cut where they sit: a bar across the median
+# coverts' tips (a frigatebird's pale wing bar; drawn over the coverts) and a band across the belly below the breast
+final["wing-bars"] = fband(WING, 0.27, 0.32, -1.9, 1.9, scallops=4, amp=0.012, skew=-0.06).intersection(final["median-coverts"])
+final["belly-band"] = final["belly"].intersection(poly("M640,500 L770,500 L770,700 L640,700 Z"))
+final["belly"] = final["belly"].difference(final["belly-band"])
+for k in ("wing-bars", "belly-band", "belly"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"cormorant: {k} is in {len(g.geoms)} pieces")
+    final[k] = g
 
 META = [
-    ("belly", "darker", "mf"), ("flanks", "darker", "mf"), ("breast", "darker", "mf"), ("undertail-coverts", "darker", "mf"), ("tail", "darker", "mf"),
+    ("belly", "darker", "mf"), ("belly-band", "darker", "mf"), ("flanks", "darker", "mf"), ("breast", "darker", "mf"), ("undertail-coverts", "darker", "mf"), ("tail", "darker", "mf"),
     ("neck", "darker", "mf"), ("nape", "darker", "mf"), ("face", "darker", "mf"),
     ("crown", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"), ("ear-coverts", "darker", "mf"),
-    ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("crests", "linegray", "mf"),
+    ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("orbital-ring", "darker", "mf"), ("crests", "linegray", "mf"),
     ("lores", "orange", "mf"), ("gular-skin", "orange", "mf"), ("bill", "bill", "mf"),
     ("scapulars", "dark", "mf"), ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
-    ("greater-coverts", "dark", "f"), ("secondaries", "darker", "mf"), ("tertials", "dark", "mf"), ("primaries", "darker", "mf"),
+    ("greater-coverts", "dark", "f"), ("wing-bars", "dark", "mf"), ("secondaries", "darker", "mf"), ("tertials", "dark", "mf"), ("primaries", "darker", "mf"),
     ("tarsus", "eye", "mf"), ("toes", "eye", "mf"),
 ]
-order = ["tarsus", "toes", "tail", "undertail-coverts", "belly", "flanks", "breast", "neck", "nape", "face", "crown",
-         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "crests",
+order = ["tarsus", "toes", "tail", "undertail-coverts", "belly", "belly-band", "flanks", "breast", "neck", "nape", "face", "crown",
+         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "orbital-ring", "crests",
          "lores", "gular-skin", "bill",
-         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries"]
+         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars", "secondaries", "scapulars", "tertials", "primaries"]
 # the black edges that make the bronze-brown scapulars and coverts look scaly (never tap targets)
 def edges(g, n=10, w=2.2):
     lines = [stroke(f"M{x},{y} Q{x + 14},{y + 10} {x + 30},{y + 6}", w) for x, y in
              [(620 + 26 * i + 13 * (j % 2), 320 + 22 * j + 6 * i) for i in range(n) for j in range(8)]]
     return unary_union(lines).intersection(g)
-marks = {k: [(edges(final[k]), "darker")] for k in ("scapulars", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts")}
+marks = {k: [(edges(final[k]), "darker")] for k in ("scapulars", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars")}
 # the four toes inside each webbed foot (the webs join all four)
 TOE_LINES = unary_union([stroke(d, 1.6) for d in ("M700,672 L648,686", "M702,674 L690,690", "M704,674 L742,690",
                                                    "M776,684 L748,694", "M778,686 L784,698", "M780,686 L814,696")])

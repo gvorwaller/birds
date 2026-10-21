@@ -58,13 +58,17 @@ def above():
     # Main parts: the coverts as one area over the mantle, as on the other birds (td-93f86b)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                          "primary-coverts", "alula")])
+    # td-2a2f94: the carpal bar of young gulls and kittiwakes, from the wrist diagonally back across the inner wing's
+    # coverts; plain grey on this adult
+    bar = ARM.band(0.1, 1.0, lambda s: 0.42 + 0.36 * s, lambda s: min(0.58 + 0.36 * s, 0.99))
+    final["wing-bars"] = R(bar).difference(final["tertials"]).difference(final["scapulars"]).difference(BODY)
     meta = [("tail", "pale", "mf"), ("uppertail-coverts", "pale", "mf"), ("rump", "pale", "mf"),
             ("secondaries", "gullgray", "mf"),
             # after the primaries: the band runs on across the inner primaries' tips
             ("primaries", "gullgray", "mf"), ("trailing-edge", "pale", "mf"), ("apical-spots", "pale", "mf"), ("mirrors", "pale", "mf"),
             ("mantle", "gullgray", "m"), ("wing-coverts", "gullgray", "m"), ("back", "gullgray", "f"), ("lesser-coverts", "gullgray", "f"),
             ("median-coverts", "gullgray", "f"), ("greater-coverts", "gullgray", "f"), ("primary-coverts", "gullgray", "f"),
-            ("alula", "gullgray", "f"), ("tertials", "gullgray", "f"), ("tertial-crescent", "pale", "mf"),
+            ("alula", "gullgray", "f"), ("wing-bars", "gullgray", "mf"), ("tertials", "gullgray", "f"), ("tertial-crescent", "pale", "mf"),
             ("scapulars", "gullgray", "f"), ("nape", "pale", "mf"), ("crown", "pale", "mf"), ("bill", "billyellow", "mf")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines().difference(W.pc_shape()).difference(alula))

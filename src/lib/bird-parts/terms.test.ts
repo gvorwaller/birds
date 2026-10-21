@@ -44,6 +44,27 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("pale tarsi", "hummingbird")).toEqual(["tarsi→hummingbird-toes"]);
   });
 
+  it("keeps the marks only some birds show on the page's own drawing (td-2a2f94)", () => {
+    // Phrases from species text in the test snapshot that opened another bird's drawing after td-93f86b.
+    expect(links("a dark bill with a white cere", "songbird")).toEqual(["cere→songbird-cere"]);
+    expect(links("a narrow red orbital ring rather than yellow", "songbird")).toEqual(["orbital ring→songbird-orbital-ring"]);
+    expect(links("long primary projection and a peaked crown", "songbird")).toEqual(["primary projection→songbird-primary-projection"]);
+    expect(links("an obvious orange speculum in flight", "songbird")).toEqual(["speculum→songbird-speculum"]);
+    expect(links("a chestnut or black belly band", "songbird")).toEqual(["belly band→songbird-belly-band"]);
+    expect(links("puffy lemon yellow feathers on their tibiae", "songbird")).toEqual(["tibiae→songbird-tibia"]);
+    expect(links("a heavier gonys", "songbird")).toEqual(["gonys→songbird-gonys"]);
+    expect(links("golden brown nasal tuft feathers", "songbird")).toEqual(["nasal tuft→songbird-nasal-tufts"]);
+    expect(links("lacks the bold white wingbar", "shorebird")).toEqual(["wingbar→shorebird-wing-bars"]);
+    expect(links("a lot of tibia shows", "shorebird")).toEqual(["tibia→shorebird-tibia"]);
+    expect(links("a dark carpal wing bar", "gull")).toEqual(["wing bar→gull-wing-bars"]);
+    expect(links("a bold white wing bar", "duck")).toEqual(["wing bar→duck-wing-bars"]);
+    expect(links("a red cere and blue wattle", "gamebird")).toEqual(["cere→gamebird-cere"]);
+    expect(links("a broad belly band", "woodpecker")).toEqual(["belly band→woodpecker-belly-band"]);
+    expect(links("posterior black lines down the tarsi", "tubenose")).toEqual(["tarsi→tubenose-legs"]);
+    expect(links("a rufous patch on the tertials", "hummingbird")).toEqual(["tertials→hummingbird-tertials"]);
+    for (const own of DIAGRAM_ORDER) expect(links("a yellow orbital ring", own)).toEqual([`orbital ring→${own}-orbital-ring`]);
+  });
+
   it("keeps the songbird's legs and every bird's own tail for tarsus and rectrices (td-d32fd3)", () => {
     expect(links("pale pinkish tarsi and toes", "songbird")).toEqual(["tarsi→songbird-legs"]);
     expect(links("bare tarsi are red", "auk")).toEqual(["tarsi→auk-tarsus"]);
@@ -182,17 +203,18 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("in winter it has a dark carpal bar", "gull")).toEqual([]);
     expect(links("a dark red bill with a dark subterminal band", "gull")).toEqual([]);
     expect(links("the dinosaurian finger claws and fingers", "songbird")).toEqual([]);
-    // Words every bird shares still link from any page, to the hawk that draws them.
-    expect(links("a dark bill with a white cere", "songbird")).toEqual(["cere→raptor-cere"]);
+    // Words every bird shares still link from any page, to the hawk that draws them; the songbird outlines its own
+    // cere and belly band since td-2a2f94.
+    expect(links("a dark bill with a white cere", "loon")).toEqual(["cere→raptor-cere"]);
     // The songbird draws the tarsus as its "legs" (td-d32fd3).
     expect(links("bare (unfeathered) on the tarsi", "songbird")).toEqual(["tarsi→songbird-legs"]);
-    expect(links("a rufous belly band", "songbird")).toEqual(["belly band→raptor-belly-band"]);
+    expect(links("a rufous belly band", "gull")).toEqual(["belly band→raptor-belly-band"]);
   });
 
   it("links the heron terms production text uses, the neck words only on heron-group pages (td-46e6e3)", () => {
     // Phrases from species_similar notes and Description sections in the test snapshot.
     expect(links("Greater Adjutant's upper shank (tibia) is pinkish", "heron")).toEqual(["tibia→heron-tibia"]);
-    expect(links("a dull red tibia", "shorebird")).toEqual(["tibia→heron-tibia"]);
+    expect(links("a dull red tibia", "gull")).toEqual(["tibia→heron-tibia"]);
     expect(links("a black face and foreneck with a broad white stripe", "heron")).toEqual(["foreneck→heron-foreneck"]);
     expect(links("contrasting with dark crown and hindneck", "heron")).toEqual(["hindneck→heron-hindneck"]);
     expect(links("fine head plumes and back aigrettes", "heron")).toEqual(["head plumes→heron-head-plumes"]);
@@ -250,7 +272,7 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("the Topknot Pigeon with its bushy crest", "songbird")).toEqual([]);
     // Shared parts open the bird's own drawing where it has them; a hummingbird's wing has no alula or tertials.
     expect(links("a long dark malar stripe and white secondaries", "woodpecker")).toEqual(["malar stripe→woodpecker-malar", "secondaries→woodpecker-secondaries"]);
-    expect(links("the alula and tertials", "hummingbird")).toEqual(["alula→songbird-alula", "tertials→songbird-tertials"]);
+    expect(links("the alula and tertials", "hummingbird")).toEqual(["alula→songbird-alula", "tertials→hummingbird-tertials"]);
     expect(links("feathered tarsi", "gamebird")).toEqual(["tarsi→gamebird-tarsus"]);
     expect(links("black-and-white scapulars", "loon")).toEqual(["scapulars→loon-scapulars"]);
     expect(links("black lores", "grebe")).toEqual(["lores→grebe-lores"]);
@@ -282,10 +304,12 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("totipalmate feet", "songbird")).toEqual([]);
   });
 
-  it("uses the bird's own drawing when it has the part, otherwise the first that does", () => {
+  it("uses the bird's own drawing when it has the part, otherwise the drawing that shows it", () => {
     expect(links("a blue speculum", "duck")).toEqual(["speculum→duck-speculum"]);
-    expect(links("a blue speculum", "songbird")).toEqual(["speculum→duck-speculum"]);
-    expect(links("two wing bars", "duck")).toEqual(["wing bars→songbird-wing-bars"]);
+    expect(links("a blue speculum", "gull")).toEqual(["speculum→duck-speculum"]);
+    // The first drawing that has it is the songbird, which only outlines where a speculum would sit (td-2a2f94).
+    expect(links("a heavier gonys and a rufous patch on the speculum", "loon")).toEqual(["gonys→gull-gonys", "speculum→duck-speculum"]);
+    expect(links("two wing bars", "loon")).toEqual(["wing bars→songbird-wing-bars"]);
     expect(links("pale wing coverts", "gull")).toEqual(["wing coverts→gull-wing-coverts"]);
     expect(links("white-tipped tertials", "gull")).toEqual(["tertials→gull-tertials"]);
   });

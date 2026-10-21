@@ -60,6 +60,15 @@ export const shorebird: DiagramText = {
       lookFor: "A pale ring around the eye. On some species, such as Solitary Sandpiper, a bold white eye-ring is a key mark.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "A thin ring of bare skin right around the eye, inside the feathered eye-ring. Not a field mark on a Lesser Yellowlegs.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Ear coverts",
       aka: "auriculars",
@@ -102,6 +111,14 @@ export const shorebird: DiagramText = {
       group: "Bill & legs",
       lookFor:
         "Judge its length against the head and note its shape: straight, drooping or upturned. A Lesser Yellowlegs' straight bill is about as long as its head; a Greater Yellowlegs' is longer.",
+    },
+    {
+      id: "tibia",
+      name: "Tibia",
+      aka: "upper leg",
+      group: "Bill & legs",
+      lookFor:
+        "The bare upper part of the leg, between the belly feathers and the joint that bends backward (the bird's ankle; its knee is hidden in the body feathers). Long-legged shorebirds show a lot of it. Yellow on a Lesser Yellowlegs, like the rest of the leg.",
     },
     {
       id: "legs",
@@ -167,6 +184,15 @@ export const shorebird: DiagramText = {
       lookFor:
         "Coverts lying over the bases of the primaries, on the outer wing. Usually dark on shorebirds.",
       visibility: "Mostly hidden on a standing bird; seen in flight.",
+    },
+    {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar, wing stripe",
+      group: "Wing",
+      lookFor:
+        "A pale stripe along the upperwing in flight, on the tips of the greater coverts and primary coverts. A Lesser Yellowlegs has none: its wings are plain dark from above, and its white is on the uppertail coverts.",
+      visibility: "Seen in flight from above.",
     },
     {
       id: "alula",

@@ -8,7 +8,7 @@ wings that are nearly all hand: the long primaries reach the tail, and the secon
 from geom import *
 from common import build
 from shapely import affinity
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 from shapely.ops import unary_union
 
 K, X0, Y0 = 0.75, 1165, -205
@@ -86,6 +86,23 @@ for k, _ in head_rough:
     if g.geom_type != "Polygon": raise SystemExit(f"hummingbird: {k} is in {len(g.geoms)} pieces")
     final[k] = g
 
+# Step 3 (td-2a2f94): the marks species texts name that this drawing lacked. Drawn in tracing coordinates.
+# The tibia: the feathered upper leg just above the front foot, where some hummingbirds have white leg puffs.
+TIBIA = affinity.scale(Point(1004, 738).buffer(1), 20, 17).intersection(SIL).difference(WOUT).difference(FEET)
+# The belly band: across the top of the belly, from the breast back to the folded wing.
+BBAND = poly("M880,684 L1080,684 L1080,716 L880,716 Z").intersection(final["belly"]).difference(TIBIA)
+# The scapulars: a strip of the back along the top of the folded wing.
+SCAP = LineString(pts("M1012,500 C1060,498 1120,520 1160,560 C1180,600 1200,660 1240,700")).buffer(20, cap_style=2)
+SCAP = SCAP.intersection(final["back"]).difference(WOUT)
+for k in ("belly", "breast", "flanks", "undertail-coverts"):
+    final[k] = final[k].difference(TIBIA).difference(BBAND)
+final["back"] = final["back"].difference(SCAP)
+final.update({"tibia": TIBIA, "belly-band": BBAND, "scapulars": SCAP})
+for k in ("belly", "breast", "flanks", "undertail-coverts", "back", "tibia", "belly-band", "scapulars"):
+    g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
+    if g.geom_type != "Polygon": raise SystemExit(f"hummingbird: {k} is in {len(g.geoms)} pieces: {[(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]}")
+    final[k] = g
+
 final = {k: F(v) for k, v in final.items()}
 
 # The face areas field guides name, so a species page's "lores" or "supercilium" opens this bird (td-93f86b).
@@ -94,7 +111,9 @@ final = {k: F(v) for k, v in final.items()}
 EYE_C, EYE_R = (495.25, 65.75), 11.25
 eye_disk = Point(*EYE_C).buffer(EYE_R)
 HEAD_AREAS = [
-    ("eye-ring", Point(*EYE_C).buffer(14.5).difference(eye_disk)),
+    # the bare orbital ring right around the eye, then the feathered eye-ring outside it (td-2a2f94)
+    ("orbital-ring", Point(*EYE_C).buffer(12.75).difference(eye_disk)),
+    ("eye-ring", Point(*EYE_C).buffer(15).difference(eye_disk)),
     ("lores", poly("M506,56 L568,60 L568,80 L506,76 Z")),
     ("eye-line", poly("M418,56 L490,57 L490,74 L418,74 Z")),   # its front edge follows the eye-ring
     # the next two reach into the areas already taken, so no strip of face is left between them
@@ -137,14 +156,15 @@ META = [
     ("flanks", "mallardgreen", "mf"), ("breast", "pale", "mf"), ("back", "mallardgreen", "mf"), ("nape", "mallardgreen", "mf"),
     ("gorget", "accent", "mf"), ("crown", "mallardgreen", "mf"),
     ("ear-coverts", "darker", "mf"), ("malar", "darker", "mf"), ("supercilium", "mallardgreen", "mf"), ("eye-line", "darker", "mf"),
-    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"), ("post-ocular-spot", "pale", "mf"),
+    ("lores", "darker", "mf"), ("eye-ring", "darker", "mf"), ("orbital-ring", "darker", "mf"), ("post-ocular-spot", "pale", "mf"),
+    ("tibia", "light", "mf"), ("belly-band", "light", "mf"), ("scapulars", "mallardgreen", "mf"),
     ("uppertail-coverts", "mallardgreen", "mf"),
     ("wing-coverts", "mallardgreen", "m"), ("lesser-coverts", "mallardgreen", "f"), ("median-coverts", "mallardgreen", "f"),
     ("greater-coverts", "mallardgreen", "f"), ("secondaries", "dark", "mf"), ("primaries", "dark", "mf"),
     ("bill", "eye", "mf"), ("toes", "eye", "mf"),
 ]
 order = ["tail", "rump", "uppertail-coverts", "undertail-coverts", "belly", "flanks", "breast", "back", "nape", "gorget", "crown",
-         "ear-coverts", "malar", "supercilium", "eye-line", "lores", "eye-ring", "post-ocular-spot", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "primaries",
+         "ear-coverts", "malar", "supercilium", "eye-line", "lores", "eye-ring", "orbital-ring", "post-ocular-spot", "tibia", "belly-band", "scapulars", "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "primaries",
          "bill", "toes"]
 # feather edges on the folded primaries (never tap targets)
 PLINES = unary_union([stroke(d, 1.6) for d in ("M1100,742 L1384,846", "M1140,722 L1386,842", "M1180,706 L1388,838")]).intersection(WOUT)

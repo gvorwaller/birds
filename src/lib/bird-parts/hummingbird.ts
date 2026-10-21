@@ -90,6 +90,14 @@ export const hummingbird: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor: "The ring of bare skin right around the eye, inside the feathered eye-ring. Dark on a Ruby-throated, so it does not show against the eye.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Ear coverts",
       aka: "auriculars",
@@ -137,6 +145,14 @@ export const hummingbird: DiagramText = {
       lookFor:
         "Short legs with three toes pointing forward and one back; the short lower leg is the tarsus. A Ruby-throated can only shuffle along a branch, not walk or hop, though it can preen by scratching with its feet. A Common Swift's very short legs are used mainly for clinging to vertical surfaces.",
     },
+    {
+      id: "tibia",
+      name: "Tibia",
+      group: "Bill & legs",
+      lookFor:
+        "The feathered leg between the knee and the feet. On a perched Ruby-throated it is hidden among the grayish-white belly feathers.",
+      visibility: "Small; easiest to pick from the list.",
+    },
     // Upperparts
     {
       id: "back",
@@ -144,6 +160,12 @@ export const hummingbird: DiagramText = {
       group: "Upperparts",
       lookFor:
         "Metallic green on a Ruby-throated; a female is golden-green above. A male Rufous Hummingbird is bright coppery rufous above, while a male Allen's has a green back. Some male Rufous are green-backed too, and are hard to tell from Allen's.",
+    },
+    {
+      id: "scapulars",
+      name: "Scapulars",
+      group: "Upperparts",
+      lookFor: "The feathers over the base of the wing, along each side of the back. Metallic green on a Ruby-throated, like the back.",
     },
     {
       id: "rump",
@@ -192,6 +214,14 @@ export const hummingbird: DiagramText = {
         "The flight feathers of the inner wing. Hummingbirds and swifts evolved long wings with a short, stout upper-arm bone.",
     },
     {
+      id: "tertials",
+      name: "Tertials",
+      group: "Wing",
+      lookFor:
+        "Feathers at the inner end of the wing, next to the body, that cover the folded flight feathers. Near-black on a Ruby-throated, like the rest of the wing.",
+      visibility: "Small; seen in flight from above.",
+    },
+    {
       id: "primaries",
       name: "Primaries",
       group: "Wing",
@@ -234,6 +264,12 @@ export const hummingbird: DiagramText = {
       name: "Belly",
       group: "Underparts",
       lookFor: "Grayish white on a Ruby-throated. A female Anna's is dingy gray below.",
+    },
+    {
+      id: "belly-band",
+      name: "Belly band",
+      group: "Underparts",
+      lookFor: "A band across the belly. Plain grayish white on a Ruby-throated, like the rest of the belly.",
     },
     {
       id: "undertail-coverts",

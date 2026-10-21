@@ -6,7 +6,8 @@ side, its tip falls short of the tail tip, and the bare tarsus and talons grip t
 """
 from geom import *
 from common import build
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
+import math
 from shapely import affinity
 
 # body, head and tail (the folded wing is added below)
@@ -53,14 +54,16 @@ body_rough = [
     ("eye-line", poly("M503,216 L476,218 L478,231 L503,229 Z")),
     ("supercilium", poly("M547,213 Q530,202 510,202 Q492,203 481,210 L483,217 Q496,211 510,211 Q528,211 547,215 Z")),
     ("lores", poly("M520,214 Q536,206 556,207 L556,238 Q538,238 520,229 Z")),
-    ("eye-ring", Point(*EYE).buffer(10).difference(Point(*EYE).buffer(7))),
+    ("eye-ring", Point(*EYE).buffer(10).difference(Point(*EYE).buffer(8.3))),
+    # td-2a2f94: the bare orbital ring, right around the iris and inside the feathered eye-ring
+    ("orbital-ring", Point(*EYE).buffer(8.3).difference(Point(*EYE).buffer(7))),
 ]
 final = {}
 claimed = WOUT.union(Point(*EYE).buffer(7)).union(BILL).union(CERE)
 for pid, rough in reversed(body_rough):
     final[pid] = rough.intersection(SIL).difference(claimed)
     claimed = claimed.union(rough.intersection(SIL))
-for k in ("nape", "ear-coverts", "throat", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring"):
+for k in ("nape", "ear-coverts", "throat", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring", "orbital-ring"):
     g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
     if g.geom_type != "Polygon": raise SystemExit(f"raptor: {k} is in {len(g.geoms)} pieces: " + str([(round(q.area), [round(v) for v in q.bounds]) for q in g.geoms]))
     final[k] = g
@@ -88,6 +91,17 @@ for k in ("lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
     final[k] = main
 # Main parts shows the covert rows as one area; the exposed secondaries below them stay their own part.
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")])
+# td-2a2f94: where a wing bar runs, along the greater coverts' tips (none on an adult Red-tail, so the coverts' tone)
+final["wing-bars"] = largest(final["greater-coverts"].difference(fband(WING, -1, 0.36, -1.8, 1.6, skew=-0.06)))
+# the primary projection: the primaries beyond the tertials' tips, cut square to the wing's axis
+_ax = ((WING_T := (142, 792))[0] - 410, WING_T[1] - 300); _n = math.hypot(*_ax); _ax = (_ax[0] / _n, _ax[1] / _n)
+_tip = max(((x - 410) * _ax[0] + (y - 300) * _ax[1]) for x, y in final["tertials"].exterior.coords) if final["tertials"].geom_type == "Polygon" \
+    else max(((x - 410) * _ax[0] + (y - 300) * _ax[1]) for g in final["tertials"].geoms for x, y in g.exterior.coords)
+_c = (410 + _ax[0] * _tip, 300 + _ax[1] * _tip)
+_beyond = Polygon([(_c[0] - _ax[1] * 400, _c[1] + _ax[0] * 400), (_c[0] + _ax[1] * 400, _c[1] - _ax[0] * 400),
+                   (_c[0] + _ax[1] * 400 + _ax[0] * 600, _c[1] - _ax[0] * 400 + _ax[1] * 600),
+                   (_c[0] - _ax[1] * 400 + _ax[0] * 600, _c[1] + _ax[0] * 400 + _ax[1] * 600)])
+final["primary-projection"] = largest(final["primaries"].intersection(_beyond))
 
 # tail: below the wingtips, with the dark band near its tip
 TAIL = final["belly"].intersection(poly("M100,700 L270,700 L250,900 L100,900 Z"))
@@ -104,13 +118,14 @@ META = [
     ("tail", "chestnut", "mf"), ("subterminal-band", "darker", "mf"),
     ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
     ("greater-coverts", "dark", "f"), ("secondaries", "wing", "mf"), ("scapulars", "wing", "mf"),
-    ("tertials", "dark", "mf"), ("primaries", "darker", "mf"), ("wingtip-vs-tail", "darker", "m"),
+    ("tertials", "dark", "mf"), ("primaries", "darker", "mf"), ("wing-bars", "dark", "mf"),
+    ("primary-projection", "darker", "m"), ("wingtip-vs-tail", "darker", "m"), ("orbital-ring", "dark", "mf"),
     ("bill", "bill", "mf"), ("cere", "billyellow", "mf"), ("tarsus", "legyellow", "mf"), ("talons", "legyellow", "mf"),
 ]
 order = ["tarsus", "talons", "belly", "undertail-coverts", "leg-feathers", "belly-band", "breast", "tail", "subterminal-band",
-         "throat", "nape", "ear-coverts", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring", "iris",
-         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials",
-         "primaries", "wingtip-vs-tail", "bill", "cere"]
+         "throat", "nape", "ear-coverts", "crown", "malar", "eye-line", "supercilium", "lores", "eye-ring", "orbital-ring", "iris",
+         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars", "secondaries", "scapulars", "tertials",
+         "primaries", "primary-projection", "wingtip-vs-tail", "bill", "cere"]
 DX, DY = 100, 170
 # dark streaks across the belly band, drawn over it (never tap targets)
 STREAKS = unary_union([affinity.rotate(affinity.scale(Point(x, y).buffer(1), 3.2, 9), -18, origin=(x, y))

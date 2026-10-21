@@ -78,7 +78,9 @@ def O(g):
     """Plate coordinates (where the head was laid out) -> tracing coordinates."""
     return affinity.translate(g, 40, 125)
 HEAD_AREAS = [
-    ("eye-ring", Point(*EYE).buffer(9.5).difference(Point(*EYE).buffer(6))),
+    # the bare skin right around the eye (td-2a2f94), then the feathered eye-ring just outside it
+    ("orbital-ring", Point(*EYE).buffer(8.5).difference(Point(*EYE).buffer(6))),
+    ("eye-ring", Point(*EYE).buffer(11).difference(Point(*EYE).buffer(8.5))),
     ("supercilium", O(poly("M601,50 Q586,44 562,45 L545,48 L546,56 Q566,53 584,55 L600,57 Z"))),
     ("eye-line", O(poly("M572,57 L544,57 L544,66 L572,67 Z"))),
     ("ear-coverts", O(poly("M572,67 L540,66 L537,86 Q556,90 574,86 L578,72 Z"))),
@@ -120,6 +122,8 @@ _crumbs = unary_union([g for g in getattr(final["belly"], "geoms", []) if g.area
 final["flank-stripe"] = final["flank-stripe"].union(_crumbs)
 final["belly"] = final["belly"].difference(_crumbs)
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")])
+# the tips of the greater coverts, where a stork's or crane's wing bar runs (td-2a2f94); plain on this heron, drawn over the coverts
+final["wing-bars"] = fband(WING, 0.44, 0.50, -1.9, 1.9, scallops=5, amp=0.012, skew=-0.06).intersection(final["greater-coverts"])
 
 
 META = [
@@ -127,16 +131,16 @@ META = [
     ("flank-stripe", "darker", "mf"), ("breast-plumes", "light", "mf"), ("foreneck", "pale", "mf"),
     ("hindneck", "gullgray", "mf"), ("throat", "pale", "mf"), ("face", "pale", "mf"), ("crown", "pale", "mf"),
     ("supercilium", "pale", "mf"), ("eye-line", "pale", "mf"), ("ear-coverts", "pale", "mf"), ("malar", "pale", "mf"),
-    ("eye-ring", "pale", "mf"), ("head-plumes", "darker", "mf"), ("lores", "bill", "mf"), ("bill", "billyellow", "mf"),
+    ("eye-ring", "pale", "mf"), ("orbital-ring", "pale", "mf"), ("head-plumes", "darker", "mf"), ("lores", "bill", "mf"), ("bill", "billyellow", "mf"),
     ("wing-coverts", "gullgray", "m"), ("lesser-coverts", "gullgray", "f"), ("median-coverts", "gullgray", "f"),
-    ("greater-coverts", "gullgray", "f"), ("secondaries", "linegray", "mf"), ("back-plumes", "gullpale", "mf"),
+    ("greater-coverts", "gullgray", "f"), ("wing-bars", "gullgray", "mf"), ("secondaries", "linegray", "mf"), ("back-plumes", "gullpale", "mf"),
     ("tertials", "gullgray", "mf"), ("primaries", "darker", "mf"),
     ("tibia", "linegray", "mf"), ("tarsus", "linegray", "mf"), ("toes", "linegray", "mf"),
 ]
 order = ["tibia", "tarsus", "toes", "belly", "thighs", "flank-stripe", "breast-plumes",
          "hindneck", "foreneck", "throat", "face", "crown",
-         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "head-plumes", "lores", "bill",
-         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "tertials",
+         "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "orbital-ring", "head-plumes", "lores", "bill",
+         "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "wing-bars", "secondaries", "tertials",
          "primaries", "back-plumes"]
 # the black-and-white streaks down the foreneck, drawn over it (never tap targets)
 STREAKS = unary_union([stroke(f"M{x},{y} L{x + 4},{y + 34}", 3) for x, y in

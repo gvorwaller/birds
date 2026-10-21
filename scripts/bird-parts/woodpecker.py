@@ -50,6 +50,8 @@ EYE_RING = Point(*EYE).buffer(14).difference(Point(*EYE).buffer(10.5))
 
 head_rough = [
     ("belly", SIL),
+    # a band across the belly between the breast and the lower belly, where an aracari's red band runs (td-2a2f94)
+    ("belly-band", poly("M540,630 L800,630 L800,724 Q680,716 540,728 Z")),   # its top meets the breast
     ("undertail-coverts", poly("M600,872 Q700,880 800,868 L800,1000 L600,1000 Z")),
     ("flanks", poly("M552,560 L636,560 Q644,720 690,880 L600,900 L552,800 Z")),
     ("breast", poly("M540,412 L800,412 L800,650 Q700,636 600,646 L540,646 Z")),
@@ -79,6 +81,8 @@ for k, _ in head_rough:
     g = unary_union([q for q in getattr(final[k], "geoms", [final[k]]) if q.area >= 1])
     if g.geom_type != "Polygon": raise SystemExit(f"woodpecker: {k} is in {len(g.geoms)} pieces")
     final[k] = g
+# the grey bare skin right around the eye, inside the black feathered eye-ring (td-2a2f94)
+final["orbital-ring"] = Point(*EYE).buffer(10.5).difference(Point(*EYE).buffer(8))
 final["nasal-tufts"] = TUFTS.intersection(SIL).difference(BILL)
 final["bill"] = BILL
 # the tail is the whole tail, the outer feathers drawn over it as its own part, so 'rectrices' opens all of it (CODEX1, td-d32fd3)
@@ -111,6 +115,9 @@ for k in ("scapulars", "tertials", "lesser-coverts", "median-coverts", "greater-
     if g.geom_type != "Polygon": raise SystemExit(f"woodpecker: {k} is in {len(g.geoms)} pieces")
     final[k] = g
 final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts")]).buffer(0.5).buffer(-0.5).intersection(WOUT)
+# the white-spotted tips of the median and greater coverts, two rows that read as wing bars, drawn over them (td-2a2f94)
+final["wing-bars"] = unary_union([band(504, 530).intersection(final["median-coverts"]),
+                                  band(576, 602).intersection(final["greater-coverts"])])
 
 
 # the white spots on the black wing: a row at the tips of the median and greater coverts, and rows
@@ -150,28 +157,28 @@ TOES_I = unary_union([stroke(f"M{J[0]},{J[1]} L176,780 L182,740", 14), stroke("M
 
 META = [
     ("tail", "eye", "mf"), ("outer-tail-feathers", "pale", "mf"), ("undertail-coverts", "pale", "mf"), ("belly", "pale", "mf"),
-    ("flanks", "pale", "mf"), ("breast", "pale", "mf"), ("throat", "pale", "mf"), ("back", "pale", "mf"),
+    ("belly-band", "pale", "mf"), ("flanks", "pale", "mf"), ("breast", "pale", "mf"), ("throat", "pale", "mf"), ("back", "pale", "mf"),
     ("nape", "eye", "mf"), ("malar", "eye", "mf"), ("submoustachial", "pale", "mf"), ("ear-coverts", "eye", "mf"),
     ("eye-line", "eye", "mf"), ("lores", "eye", "mf"),
-    ("supercilium", "pale", "mf"), ("nape-patch", "accent", "mf"), ("crown", "eye", "mf"), ("eye-ring", "eye", "mf"),
+    ("supercilium", "pale", "mf"), ("nape-patch", "accent", "mf"), ("crown", "eye", "mf"), ("eye-ring", "eye", "mf"), ("orbital-ring", "linegray", "mf"),
     ("nasal-tufts", "light", "mf"),
     ("bill", "linegray", "mf"),
-    ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"), ("greater-coverts", "eye", "f"),
+    ("wing-coverts", "eye", "m"), ("lesser-coverts", "eye", "f"), ("median-coverts", "eye", "f"), ("greater-coverts", "eye", "f"), ("wing-bars", "eye", "mf"),
     ("secondaries", "eye", "mf"), ("scapulars", "eye", "mf"), ("tertials", "eye", "mf"), ("primaries", "eye", "mf"),
     ("tarsus", "linegray", "mf"), ("toes", "linegray", "mf"),
 ]
 order = [m[0] for m in META]
 wing_marks = [(SPOTS, "pale")]
-marks = {k: wing_marks for k in ("wing-coverts", "median-coverts", "greater-coverts", "secondaries", "tertials", "primaries")}
+marks = {k: wing_marks for k in ("wing-coverts", "median-coverts", "greater-coverts", "wing-bars", "secondaries", "tertials", "primaries")}
 marks["outer-tail-feathers"] = [(TAIL_BARS, "eye")]
 DX, DY = 150, 210
-eye = Point(*EYE).buffer(10.5)
+
 build("woodpecker", final, META, order, [0, 0, 760, 980], dx=DX, dy=DY,
       base_under=[(TRUNK.intersection(box(0, DY, DX + 760, DY + 980)), "perch"),
                   (CRACKS.intersection(TRUNK).intersection(box(0, DY, DX + 760, DY + 980)), "dark")],
       raw_base=[(BARK_I, "perch"), (BARK_I_LINES, "dark")],
       extra_raw={"toes": TOES_I, "tarsus": TARSUS_I},
       insets=[{"cx": IC[0], "cy": IC[1], "r": IR, "label": "Foot, close up"}],
-      base_over=[(eye, "linegray"), (Point(*EYE).buffer(8), "eye")],
+      base_over=[(Point(*EYE).buffer(8), "eye")],
       marks=marks,
       outline=unary_union([SIL, BILL, TAIL]))

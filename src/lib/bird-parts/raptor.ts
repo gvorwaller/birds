@@ -80,6 +80,15 @@ export const raptor: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "A thin ring of bare skin right around the eye, inside the feathered eye-ring. Dark and hard to see on an adult Red-tailed Hawk. An immature Peregrine Falcon's is pale bluish, like its cere.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Cheek",
       aka: "ear coverts",
@@ -194,6 +203,14 @@ export const raptor: DiagramText = {
       visibility: "Hidden on a perched hawk; seen in flight.",
     },
     {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor:
+        "A pale or dark bar along the tips of the greater coverts, on the folded wing and on the upperwing in flight. An adult Red-tailed Hawk has none.",
+    },
+    {
       id: "alula",
       name: "Alula",
       group: "Wing",
@@ -228,6 +245,13 @@ export const raptor: DiagramText = {
       lookFor:
         "The outer primaries narrow toward their tips (emarginations), so they spread apart in flight like fingers. Long, spread fingers mark soaring hawks and eagles; falcons have pointed wingtips.",
       visibility: "Seen in flight.",
+    },
+    {
+      id: "primary-projection",
+      name: "Primary projection",
+      group: "Wing",
+      lookFor:
+        "How far the primaries reach beyond the tertials' tips on the folded wing. Short on a Red-tailed Hawk, whose shorter primaries leave the wingtips short of the tail tip. A Rough-legged Hawk's reach the tail tip or pass it.",
     },
     {
       id: "wingtip-vs-tail",

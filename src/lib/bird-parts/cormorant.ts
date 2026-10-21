@@ -67,6 +67,15 @@ export const cormorant: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "The bare skin right around the eye, inside the feathered eye-ring. Drawn black on this adult, like the face around it.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "supercilium",
       name: "Supercilium",
       aka: "eyebrow",
@@ -168,6 +177,14 @@ export const cormorant: DiagramText = {
         "The rows of smaller feathers covering the wing, shown here as one area. On an adult Double-crested Cormorant each has a dark grayish centre and a black edge, so the folded wing looks scaly against the black body.",
     },
     {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor:
+        "Where a wing bar runs: across the wing coverts, here at the tips of the median coverts. None on an adult Double-crested Cormorant; its scaly coverts make no bar.",
+    },
+    {
       id: "lesser-coverts",
       name: "Lesser coverts",
       group: "Wing",
@@ -260,6 +277,12 @@ export const cormorant: DiagramText = {
       name: "Belly",
       group: "Underparts",
       lookFor: "Black on an adult, like the rest of the underparts.",
+    },
+    {
+      id: "belly-band",
+      name: "Belly band",
+      group: "Underparts",
+      lookFor: "A band across the belly, just behind the breast. Black on an adult, like the rest of the underparts.",
     },
     {
       id: "undertail-coverts",

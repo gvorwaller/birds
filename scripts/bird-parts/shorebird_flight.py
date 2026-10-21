@@ -50,11 +50,18 @@ def above():
         final[k] = final[k].difference(final["scapulars"])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                          "primary-coverts", "alula")])
+    # td-2a2f94: where a wing stripe runs on many shorebirds: along the greater coverts' tips, and on the hand along the
+    # primary coverts' tips. A Lesser Yellowlegs has none, so it keeps the coverts' tone.
+    s1, f0, k = W.pc
+    t = lambda s: max(0.0, (s - 0.75) / 0.25)   # near the wrist the arm's stripe bends forward to meet the hand's
+    bar = unary_union([ARM.band(0, 1, 0.30, lambda s: 0.47 + 0.09 * t(s)).intersection(up["greater-coverts"]),
+                       HAND.band(0, s1, lambda s: f0 + k * s - 0.01, lambda s: min(f0 + k * s + 0.08, 1.0)).intersection(up["primary-coverts"])]).buffer(0.6).buffer(-0.6)   # joined at the wrist
+    final["wing-bars"] = R(bar).difference(final["tertials"]).difference(final["scapulars"]).difference(BODY)
     meta = [("legs", "legyellow", "mf"), ("tail", "light", "mf"), ("uppertail-coverts", "pale", "mf"), ("rump", "mid", "mf"),
             ("secondaries", "dark", "mf"), ("primaries", "darker", "mf"),
             ("wing-coverts", "wing", "m"), ("lesser-coverts", "wing", "f"), ("median-coverts", "wing", "f"),
             ("greater-coverts", "dark", "f"), ("primary-coverts", "dark", "f"), ("alula", "dark", "f"),
-            ("tertials", "dark", "mf"), ("back", "mid", "mf"), ("scapulars", "mid", "mf"),
+            ("wing-bars", "dark", "mf"), ("tertials", "dark", "mf"), ("back", "mid", "mf"), ("scapulars", "mid", "mf"),
             ("nape", "light", "mf"), ("crown", "mid", "mf"), ("bill", "darker", "mf")]
     lines = R(W.lines(n_sec=11, n_prim=10).difference(W.pc_shape()).difference(up["alula"]))
     build("shorebird-above", final, meta, [m[0] for m in meta], VB, dx=0, dy=0,

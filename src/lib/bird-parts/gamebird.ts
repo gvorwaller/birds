@@ -98,6 +98,14 @@ export const gamebird: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor: "The bare skin right around the eye, inside the feathered eye-ring. Plain and narrow on this Ruffed Grouse; its bare skin is the comb just above.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "ear-coverts",
       name: "Ear coverts",
       aka: "auriculars",
@@ -140,6 +148,13 @@ export const gamebird: DiagramText = {
       group: "Bill & legs",
       lookFor:
         "Short. A Chukar's is bright coral-red. A Rock Ptarmigan is smaller than a Willow Ptarmigan, with a smaller bill, though the females are very hard to tell apart. A male Wild Turkey has a fleshy flap over the bill, the snood, which swells when he is excited.",
+    },
+    {
+      id: "cere",
+      name: "Cere",
+      group: "Bill & legs",
+      lookFor: "A soft, often coloured patch of skin at the base of the upper bill, on some birds. A Ruffed Grouse has none, so this area only marks where a cere would sit, on its dark bill.",
+      visibility: "Small; easiest to pick from the list.",
     },
     {
       id: "tarsus",
@@ -200,6 +215,14 @@ export const gamebird: DiagramText = {
       name: "Greater coverts",
       group: "Wing",
       lookFor: "The longest row of coverts, just above the secondaries.",
+    },
+    {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor: "Pale bars across the wing, formed by pale feather tips; drawn here along the tips of the greater coverts. Plain on a Ruffed Grouse. A male Black Grouse shows a white line along the wing.",
+      visibility: "Seen in flight from above.",
     },
     {
       id: "primary-coverts",

@@ -42,6 +42,9 @@ def scaly(g, tone="darker"):
 # ---------- from above ----------
 def above():
     up = W.upper()
+    # the median coverts' tips, where a frigatebird's pale wing bar runs (td-2a2f94); plain on this cormorant
+    r1 = W.rows[1]
+    wb = W.arm.band(0, 1, r1, r1 + 0.06, n=60, scallops=10, amp=0.02).intersection(up["median-coverts"])
     crown = HEAD.intersection(box(0, 0, 999, 60))
     nape = HEAD.difference(crown)
     neck = NECK.difference(HEAD)
@@ -54,8 +57,8 @@ def above():
     tail = TAIL.difference(rump).difference(utc)
     final = {k: mirror(v) for k, v in up.items()}
     final.update({"crown": crown, "nape": nape, "neck": neck, "back": back, "scapulars": scap, "rump": rump,
-                  "uppertail-coverts": utc, "tail": tail, "bill": BILL})
-    for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
+                  "uppertail-coverts": utc, "tail": tail, "bill": BILL, "wing-bars": mirror(wb)})
+    for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "wing-bars"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
@@ -63,6 +66,7 @@ def above():
             ("secondaries", "darker", "mf"), ("primaries", "darker", "mf"),
             ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
             ("greater-coverts", "dark", "f"), ("primary-coverts", "darker", "f"), ("alula", "darker", "f"),
+            ("wing-bars", "dark", "mf"),
             ("tertials", "dark", "mf"), ("back", "dark", "mf"), ("scapulars", "dark", "mf"), ("neck", "darker", "mf"),
             ("nape", "darker", "mf"), ("crown", "darker", "mf"), ("bill", "bill", "mf")]
     order = [m[0] for m in meta]
@@ -70,7 +74,7 @@ def above():
     build("cormorant-above", final, meta, order, VB, dx=0, dy=0,
           wing_view_box=wing_view_box(VB),
           marks={k: scaly(final[k]) for k in ("wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts",
-                                              "back", "scapulars")},
+                                              "back", "scapulars", "wing-bars")},
           base_over=[(lines, "linegray"), (EYES, "eye")],
           outline=SIL.union(BILL))
 
@@ -86,16 +90,19 @@ def below():
     breast = body.intersection(box(0, 0, 999, 250))
     utc = mirror(poly("M380,290 L404,290 C404,306 400,320 392,328 Q386,332 380,332 Z"))
     belly = body.difference(breast).difference(utc)
+    # a band across the belly just behind the breast (td-2a2f94); a juvenile frigatebird's is dark
+    belly_band = belly.intersection(box(0, 250, 999, 272))
+    belly = belly.difference(belly_band)
     tail = TAIL.difference(utc)
     final = {k: mirror(v) for k, v in un.items()}
-    final.update({"gular-skin": gular, "face": face, "neck": neck, "breast": breast, "belly": belly,
+    final.update({"gular-skin": gular, "face": face, "neck": neck, "breast": breast, "belly": belly, "belly-band": belly_band,
                   "undertail-coverts": utc, "tail": tail, "bill": BILL, "tarsus": TARSUS.difference(BODY), "toes": FEET})
     # the body is nearer the viewer than the wing roots
     for k in ("secondaries", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
     meta = [("tail", "darker", "m"), ("secondaries", "darker", "m"), ("primaries", "darker", "m"),
             ("underwing-coverts", "dark", "m"), ("axillaries", "dark", "m"),
-            ("belly", "darker", "m"), ("undertail-coverts", "darker", "m"), ("breast", "darker", "m"),
+            ("belly", "darker", "m"), ("belly-band", "darker", "m"), ("undertail-coverts", "darker", "m"), ("breast", "darker", "m"),
             ("tarsus", "eye", "m"), ("toes", "eye", "m"),
             ("neck", "darker", "m"), ("face", "darker", "m"), ("gular-skin", "orange", "m"), ("bill", "bill", "m")]
     order = [m[0] for m in meta]

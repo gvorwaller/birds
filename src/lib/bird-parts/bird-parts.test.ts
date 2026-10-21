@@ -45,9 +45,8 @@ function pathIsValid(d: string): boolean {
 
 /** The swimming loon and grebe hide their folded wings, so their standing view has one layer (td-a3a17d, td-7adea3). */
 const WINGS_HIDDEN = new Set(["loon", "grebe"]);
-/** Feather groups a bird's open wing or body really lacks: a hummingbird's wing has no alula (its scapulars and tertials are
- * not drawn), and a grebe has almost no tail. */
-const LACKS: Record<string, string[]> = { hummingbird: ["alula", "tertials", "scapulars"], grebe: ["tail"] };
+/** Feather groups a bird's open wing or body really lacks: a hummingbird's wing has no alula, and a grebe has almost no tail. */
+const LACKS: Record<string, string[]> = { hummingbird: ["alula"], grebe: ["tail"] };
 
 /** The rings of an absolute M/L/Z path, as point lists. */
 function rings(d: string): number[][][] {
@@ -67,8 +66,9 @@ function inside(d: string, x: number, y: number): boolean {
   return hit;
 }
 
-/** The share of a grid of points inside path `a` that are also inside path `b`. */
-function coveredShare(a: string, b: string): number {
+/** The share of a grid of points inside path `a` that are also inside path `b` (or any of the paths `b`). */
+function coveredShare(a: string, b: string | string[]): number {
+  const bs = typeof b === "string" ? [b] : b;
   const pts = rings(a).flat();
   const [x0, y0, x1, y1] = [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
   let n = 0, both = 0;
@@ -76,7 +76,7 @@ function coveredShare(a: string, b: string): number {
     const x = x0 + ((x1 - x0) * i) / 60, y = y0 + ((y1 - y0) * j) / 60;
     if (!inside(a, x, y)) continue;
     n++;
-    if (inside(b, x, y)) both++;
+    if (bs.some((d) => inside(d, x, y))) both++;
   }
   return n ? both / n : 1;
 }
@@ -354,7 +354,9 @@ describe("Parts of a Bird data", () => {
     const h = DIAGRAMS.find((d) => d.id === "hummingbird")!;
     expect(getView(h, "standing").parts.find((p) => p.id === "gorget")!.tone).toBe("accent");
     expect(viewsDrawing(h, "post-ocular-spot").map((v) => v.id)).toContain("standing");
-    for (const id of ["alula", "scapulars", "tertials"]) expect(h.glossary.some((p) => p.id === id), id).toBe(false);
+    expect(h.glossary.some((p) => p.id === "alula")).toBe(false);
+    // Its tiny tertials show only on the open wing (td-2a2f94).
+    expect(viewsDrawing(h, "tertials").map((v) => v.id)).toEqual(["above"]);
     expect(viewsDrawing(h, "underwing-coverts").map((v) => v.id)).toEqual(["below"]);
   });
 
@@ -383,6 +385,21 @@ describe("Parts of a Bird data", () => {
     // A grebe has almost no tail; nothing in its glossary is the tail.
     expect(g.glossary.some((p) => p.id === "tail")).toBe(false);
     expect(viewsDrawing(g, "toes").map((v) => v.id)).toEqual(["standing", "above", "below"]);
+  });
+
+  it("keeps every wing bar inside the bird's combined wing coverts, which a bar only marks (CODEX1, td-2a2f94)", () => {
+    // A bar is the pale or dark tips of a covert row, drawn over the coverts as its own part; cutting it out of the
+    // combined area left a stripe of holes. The duck's bars border the speculum: the greater coverts' tips (drawn apart
+    // from its combined coverts) and the secondaries' tips.
+    for (const d of DIAGRAMS) {
+      for (const v of d.views) {
+        const bars = v.parts.find((p) => p.id === "wing-bars");
+        const coverts = v.parts.find((p) => p.id === "wing-coverts");
+        if (!bars || !coverts) continue;
+        const under = d.id === "duck" ? v.parts.filter((p) => ["wing-coverts", "greater-coverts", "secondaries", "speculum"].includes(p.id)).map((p) => p.d) : coverts.d;
+        expect(coveredShare(bars.d, under), `${d.id}/${v.id}`).toBeGreaterThan(0.97);
+      }
+    }
   });
 
   it("gives 'rectrices' the whole tail where a bird's tail stands in for them (CODEX1, td-d32fd3)", () => {

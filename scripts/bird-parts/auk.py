@@ -66,7 +66,9 @@ def O(g):
     """Plate coordinates (where the head was laid out) -> tracing coordinates."""
     return affinity.translate(g, 150, 400)
 HEAD_AREAS = [
-    ("eye-ring", Point(*EYE).buffer(11).difference(Point(*EYE).buffer(8))),
+    # the bare skin right around the eye (td-2a2f94), then the feathered eye-ring just outside it
+    ("orbital-ring", Point(*EYE).buffer(10.5).difference(Point(*EYE).buffer(8))),
+    ("eye-ring", Point(*EYE).buffer(13.5).difference(Point(*EYE).buffer(10.5))),
     ("lores", O(poly("M412,82 Q460,76 512,78 L512,104 Q460,100 412,94 Z"))),
     ("supercilium", O(poly("M512,70 Q470,64 420,66 Q385,68 355,76 L356,84 Q385,77 404,75 Q460,72 512,76 Z"))),
     ("eye-line", O(poly("M391,82 L350,84 L350,94 L391,93 Z"))),
@@ -114,13 +116,13 @@ META = [
     ("tail", "darker", "mf"), ("undertail-coverts", "pale", "mf"), ("belly", "pale", "mf"), ("flanks", "pale", "mf"),
     ("breast", "pale", "mf"), ("throat", "darker", "mf"), ("nape", "darker", "mf"), ("face", "darker", "mf"),
     ("crown", "darker", "mf"), ("lores", "darker", "mf"), ("supercilium", "darker", "mf"), ("eye-line", "darker", "mf"),
-    ("ear-coverts", "darker", "mf"), ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("bill", "eye", "mf"),
+    ("ear-coverts", "darker", "mf"), ("malar", "darker", "mf"), ("eye-ring", "darker", "mf"), ("orbital-ring", "darker", "mf"), ("bill", "eye", "mf"),
     ("scapulars", "darker", "mf"), ("wing-coverts", "darker", "m"), ("lesser-coverts", "darker", "f"), ("median-coverts", "darker", "f"),
     ("greater-coverts", "darker", "f"), ("secondaries", "darker", "mf"), ("tertials", "darker", "mf"), ("primaries", "darker", "mf"),
     ("tarsus", "eye", "mf"), ("toes", "eye", "mf"),
 ]
 order = ["tail", "undertail-coverts", "belly", "flanks", "breast", "throat", "nape", "face", "crown",
-         "lores", "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "bill",
+         "lores", "supercilium", "eye-line", "ear-coverts", "malar", "eye-ring", "orbital-ring", "bill",
          "wing-coverts", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "scapulars", "tertials", "primaries",
          "tarsus", "toes"]
 # the dark streaks along the white flanks, next to the wing (never tap targets)

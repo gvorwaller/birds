@@ -77,6 +77,14 @@ export const duck: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor: "The bare skin right around the eye, inside the feathered eye-ring. A drake Mallard shows none: the green feathers reach the eye.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "malar",
       name: "Malar",
       aka: "moustache area",
@@ -102,6 +110,13 @@ export const duck: DiagramText = {
       group: "Bill & legs",
       lookFor:
         "Note its shape (broad, narrow, spoon-like) and colour. A drake Mallard's is yellow; a female's is orange and black.",
+    },
+    {
+      id: "cere",
+      name: "Cere",
+      group: "Bill & legs",
+      lookFor: "A soft, often coloured patch of skin at the base of the upper bill, where it meets the forehead, on some birds. A drake Mallard has none, so this area only marks where a cere would sit, on its plain yellow bill.",
+      visibility: "Small; easiest to pick from the list.",
     },
     {
       id: "nail",
@@ -221,6 +236,14 @@ export const duck: DiagramText = {
       group: "Wing",
       lookFor: "The row of coverts just in front of the speculum. On a Mallard their white tips make the white bar on the speculum's front edge.",
       visibility: "Often partly hidden on a swimming duck.",
+    },
+    {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor: "Pale bars across the wing, formed by pale feather tips. A Mallard's speculum has a white bar on each side: the greater coverts' tips in front and the secondaries' tips behind. On the swimming duck only the rear bar is its own area; Flight, above, shows both.",
+      visibility: "Often partly hidden on a swimming duck; clearest in flight.",
     },
     {
       id: "underwing-coverts",

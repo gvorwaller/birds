@@ -37,6 +37,9 @@ VB = [0, 0, 760, 470]
 # ---------- from above ----------
 def above():
     up = W.upper()
+    # the tips of the greater coverts, where a stork's or crane's wing bar runs (td-2a2f94); plain on this heron
+    r0 = W.rows[0]
+    wb = ARM.band(0, 1, r0, r0 + 0.06, n=60, scallops=10, amp=0.02).intersection(up["greater-coverts"])
     crown = HEAD.intersection(mirror(poly("M380,40 L400,40 L400,62 Q390,70 380,72 Z")))
     # the black stripes from above each eye back to the nape plumes
     plumes = mirror(stroke("M388,50 Q392,64 388,84", 4)).intersection(HEAD.union(NECK))
@@ -53,8 +56,9 @@ def above():
     final = {k: R(v) for k, v in up.items()}
     # From above, the tibiae lie hidden behind the rump and tail; only the tarsi and toes trail past it.
     final.update({"crown": crown, "head-plumes": plumes, "hindneck": hindneck, "back": back, "scapulars": scap, "rump": rump,
-                  "uppertail-coverts": utc, "tail": tail, "bill": BILL, "toes": TOES, "tarsus": LEGS["tarsus"].difference(TAIL)})
-    for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
+                  "uppertail-coverts": utc, "tail": tail, "bill": BILL, "toes": TOES, "tarsus": LEGS["tarsus"].difference(TAIL),
+                  "wing-bars": R(wb)})
+    for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries", "wing-bars"):
         final[k] = final[k].difference(BODY).difference(scap)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
@@ -63,6 +67,7 @@ def above():
             ("secondaries", "linegray", "mf"), ("primaries", "darker", "mf"),
             ("wing-coverts", "gullgray", "m"), ("lesser-coverts", "gullgray", "f"), ("median-coverts", "gullgray", "f"),
             ("greater-coverts", "gullgray", "f"), ("primary-coverts", "linegray", "f"), ("alula", "linegray", "f"),
+            ("wing-bars", "gullgray", "mf"),
             ("tertials", "gullgray", "mf"), ("back", "gullgray", "mf"), ("scapulars", "gullgray", "mf"), ("hindneck", "gullgray", "mf"),
             ("crown", "pale", "mf"), ("head-plumes", "darker", "mf"), ("bill", "billyellow", "mf")]
     order = [m[0] for m in meta]

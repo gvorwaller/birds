@@ -65,6 +65,15 @@ export const heron: DiagramText = {
       visibility: "Small; easiest to pick from the list.",
     },
     {
+      id: "orbital-ring",
+      name: "Orbital ring",
+      aka: "bare eye-ring",
+      group: "Head",
+      lookFor:
+        "The bare skin right around the eye, inside the feathered eye-ring. Drawn in the face's pale tone on this adult Great Blue Heron.",
+      visibility: "Small; easiest to pick from the list.",
+    },
+    {
       id: "supercilium",
       name: "Supercilium",
       aka: "eyebrow",
@@ -179,6 +188,14 @@ export const heron: DiagramText = {
       group: "Wing",
       lookFor:
         "The rows of smaller feathers covering the wing, shown here as one area. Gray on an adult Great Blue Heron, paler than the slaty flight feathers, so the open wing looks two-toned.",
+    },
+    {
+      id: "wing-bars",
+      name: "Wing bars",
+      aka: "wingbar",
+      group: "Wing",
+      lookFor:
+        "Where a wing bar runs: across the wing at the tips of the greater coverts. None on an adult Great Blue Heron, whose coverts are plain gray.",
     },
     {
       id: "lesser-coverts",

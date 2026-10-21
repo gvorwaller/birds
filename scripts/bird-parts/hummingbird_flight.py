@@ -28,10 +28,13 @@ VB = [0, 0, 760, 550]
 
 
 def merged(t):
-    """A hummingbird's wing has no alula (Wikipedia, Hummingbird), and this drawing shows no separate
-    tertials: fold those bands into the primary coverts and the secondaries."""
+    """A hummingbird's wing has no alula (Wikipedia, Hummingbird): fold that band into the primary coverts.
+    The few short tertials are drawn at the root of the arm, where they show beside the body (td-2a2f94)."""
     t = dict(t)
-    t["secondaries"] = t["secondaries"].union(t.pop("tertials"))
+    ter = W.arm.band(0, 0.46, -0.02, 0.40).difference(BODY)
+    for k in ("secondaries", "greater-coverts", "median-coverts", "lesser-coverts"):
+        t[k] = t[k].union(t["tertials"]).difference(ter) if k == "secondaries" else t[k].difference(ter)
+    t["tertials"] = ter
     if "alula" in t: t["primary-coverts"] = t["primary-coverts"].union(t.pop("alula"))
     return t
 
@@ -53,14 +56,17 @@ def above():
     up = merged(raw)
     crown = HEAD.intersection(box(0, 0, 999, 152))
     nape = BODY.intersection(box(0, 152, 999, 214)).difference(crown)
-    back = BODY.intersection(box(0, 214, 999, 360))
+    # the scapulars along each side of the back, over the base of the wing (td-2a2f94)
+    scap = mirror(poly("M412,200 C422,220 427,246 428,272 C429,290 426,304 421,314 L415,312 C415,280 415,240 412,200 Z")).intersection(BODY)
+    back = BODY.intersection(box(0, 214, 999, 360)).difference(scap)
     rump = BODY.intersection(box(0, 360, 999, 394))
     # the uppertail coverts lie over the base of the tail, below the rump (td-93f86b)
     utc = BODY.union(TAIL).intersection(box(0, 394, 999, 446))
     tail = TAIL.difference(rump).difference(utc)
     final = {k: mirror(v) for k, v in up.items()}
-    final.update({"crown": crown, "nape": nape, "back": back, "rump": rump, "uppertail-coverts": utc, "tail": tail, "bill": BILL})
-    one_piece(final, ("crown", "nape", "back", "rump", "uppertail-coverts", "tail"))
+    final.update({"crown": crown, "nape": nape.difference(scap), "back": back, "scapulars": scap, "rump": rump.difference(scap),
+                  "uppertail-coverts": utc, "tail": tail, "bill": BILL})
+    one_piece(final, ("crown", "nape", "back", "scapulars", "rump", "uppertail-coverts", "tail"))
     for k in ("lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY)
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
@@ -69,9 +75,11 @@ def above():
             ("secondaries", "dark", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "mallardgreen", "m"), ("lesser-coverts", "mallardgreen", "f"), ("median-coverts", "mallardgreen", "f"),
             ("greater-coverts", "mallardgreen", "f"), ("primary-coverts", "mallardgreen", "f"),
-            ("back", "mallardgreen", "mf"), ("nape", "mallardgreen", "mf"), ("crown", "mallardgreen", "mf"), ("bill", "eye", "mf")]
+            ("tertials", "dark", "mf"),
+            ("back", "mallardgreen", "mf"), ("scapulars", "mallardgreen", "mf"), ("nape", "mallardgreen", "mf"),
+            ("crown", "mallardgreen", "mf"), ("bill", "eye", "mf")]
     order = [m[0] for m in meta]
-    lines = mirror(W.lines(n_sec=6, n_prim=10).difference(W.pc_shape()).difference(raw["alula"]))
+    lines = mirror(W.lines(n_sec=6, n_prim=10).difference(W.pc_shape()).difference(raw["alula"]).difference(up["tertials"]))
     build("hummingbird-above", final, meta, order, VB, dx=0, dy=0,
           wing_view_box=wing_view_box(VB),
           base_over=[(lines, "darker"), (EYES, "eye")],
@@ -89,19 +97,22 @@ def below():
     # the belly is the centre of the underside; the flanks take both sides all the way down beside the
     # undertail coverts, so no corner of the body is left over (CODEX1: belly had stray pieces there)
     belly = body.intersection(mirror(poly("M380,240 L410,240 C414,290 414,340 410,370 L380,370 Z"))).difference(breast).difference(utc)
-    flanks = body.difference(breast).difference(utc).difference(belly)
+    # the belly band: the lower belly, between the belly and the undertail coverts (td-2a2f94)
+    bband = belly.intersection(box(0, 318, 999, 999))
+    belly = belly.difference(bband)
+    flanks = body.difference(breast).difference(utc).difference(belly).difference(bband)
     # the body (undertail coverts and flanks) lies over the base of the tail
     tail = TAIL.difference(BODY)
     final = {k: mirror(v) for k, v in un.items()}
-    final.update({"face": face, "gorget": gorget, "breast": breast, "flanks": flanks, "belly": belly,
+    final.update({"face": face, "gorget": gorget, "breast": breast, "flanks": flanks, "belly": belly, "belly-band": bband,
                   "undertail-coverts": utc, "tail": tail, "bill": BILL})
-    one_piece(final, ("face", "gorget", "breast", "flanks", "belly", "undertail-coverts", "tail"))
+    one_piece(final, ("face", "gorget", "breast", "flanks", "belly", "belly-band", "undertail-coverts", "tail"))
     # the body is nearer the viewer than the wing roots
     for k in ("secondaries", "underwing-coverts", "axillaries"):
         final[k] = final[k].difference(BODY)
     meta = [("tail", "darker", "m"), ("secondaries", "dark", "m"), ("primaries", "dark", "m"),
             ("underwing-coverts", "darker", "m"), ("axillaries", "darker", "m"),
-            ("belly", "light", "m"), ("flanks", "mallardgreen", "m"), ("undertail-coverts", "pale", "m"), ("breast", "pale", "m"),
+            ("belly", "light", "m"), ("belly-band", "light", "m"), ("flanks", "mallardgreen", "m"), ("undertail-coverts", "pale", "m"), ("breast", "pale", "m"),
             ("gorget", "accent", "m"), ("face", "darker", "m"), ("bill", "eye", "m")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines(n_sec=6, n_prim=10, sec_to=0.46).difference(un["underwing-coverts"]))

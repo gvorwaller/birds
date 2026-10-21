@@ -53,13 +53,17 @@ def above():
                   "tail": tail, "subterminal-band": BAND.difference(rump), "bill": BILL})
     for k in ("tertials", "lesser-coverts", "median-coverts", "greater-coverts", "secondaries"):
         final[k] = final[k].difference(BODY).difference(scap)
+    # the tips of the greater coverts, drawn over them as their own part: where a Black Grouse's white wing bar runs;
+    # plain on a Ruffed Grouse (td-2a2f94)
+    r0 = W.rows[0]
+    final["wing-bars"] = mirror(W.arm.band(0, 1, r0 - 0.01, r0 + 0.09)).intersection(final["greater-coverts"])
     final["wing-coverts"] = unary_union([final[k] for k in ("lesser-coverts", "median-coverts", "greater-coverts",
                                                              "primary-coverts", "alula")])
     meta = [("tail", "chestnut", "mf"), ("subterminal-band", "eye", "mf"), ("rump", "dark", "mf"), ("uppertail-coverts", "dark", "mf"),
             ("secondaries", "darker", "mf"), ("primaries", "dark", "mf"),
             ("wing-coverts", "dark", "m"), ("lesser-coverts", "dark", "f"), ("median-coverts", "dark", "f"),
             ("greater-coverts", "dark", "f"), ("primary-coverts", "dark", "f"), ("alula", "dark", "f"),
-            ("tertials", "wing", "mf"), ("back", "dark", "mf"), ("scapulars", "dark", "mf"),
+            ("wing-bars", "dark", "mf"), ("tertials", "wing", "mf"), ("back", "dark", "mf"), ("scapulars", "dark", "mf"),
             ("nape", "dark", "mf"), ("crest", "dark", "mf"), ("bill", "eye", "mf")]
     order = [m[0] for m in meta]
     lines = mirror(W.lines(n_prim=10).difference(W.pc_shape()).difference(up["alula"]))
