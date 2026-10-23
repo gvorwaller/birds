@@ -44,7 +44,11 @@ const PUBLIC_PATHS = ['/login', '/api/health', '/api/internal/trip-places'];
 // Token-authenticated public pages: the URL token IS the credential (trip
 // share links, td-8b959f follow-up). Prefix-matched; bare '/share' stays
 // private (nothing lives there).
-const PUBLIC_PREFIXES = ['/share/'];
+// '/api/ingest/' (td-eec7db): external-source connectors authenticate with
+// their own bearer token in every route (external-sources/http.ts); there is
+// no session. The trailing slash keeps look-alikes such as '/api/ingestx'
+// behind login.
+const PUBLIC_PREFIXES = ['/share/', '/api/ingest/'];
 
 /** Exported for unit tests — the public surface is worth pinning. */
 export function isPublicPath(path: string): boolean {

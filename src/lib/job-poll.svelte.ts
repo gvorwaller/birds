@@ -26,6 +26,7 @@ import {
 	isStaleNow,
 	jobAffectsRoute,
 	nextIntervalMs,
+	POLL_ACTIVE_MS,
 	type InvalidateState
 } from '$lib/job-poll-core';
 
@@ -81,9 +82,32 @@ export interface JobInfo {
 	};
 }
 
+/**
+ * An external-source load (td-eec7db) as /api/jobs reports it: the signed-in
+ * user's own, in its own list (uuid ids, no cancel route). Presentation
+ * states are the eBird chip's, so the chip words them the same way.
+ */
+export interface ExternalJobInfo {
+	id: string;
+	sourceId: string;
+	regionCode: string;
+	displayName: string;
+	status: string;
+	startedAt: string | null;
+	finishedAt: string | null;
+	error: string | null;
+	progress: { unitsTotal?: number; unitsDone?: number; currentUnit?: { name: string } };
+	presentation: { state: string; explanation?: string };
+}
+
+const EXTERNAL_ACTIVE = new Set(['queued', 'leased', 'staging']);
+/** Pages that show external-source data and so reload when a load ends. */
+const EXTERNAL_ROUTES = /^\/(admin|forecast|reports)(\/|$)/;
+
 class JobsPoll {
 	worker = $state<WorkerInfo | null>(null);
 	jobs = $state<JobInfo[]>([]);
+	external = $state<ExternalJobInfo[]>([]);
 	/** Set while polls are failing; null when the last poll succeeded. */
 	staleSince = $state<number | null>(null);
 	/**
@@ -122,6 +146,18 @@ class JobsPoll {
 	}
 	get recent(): JobInfo[] {
 		return this.jobs.filter((j) => !isOutstanding(j));
+	}
+	get externalActive(): ExternalJobInfo[] {
+		return this.external.filter((l) => EXTERNAL_ACTIVE.has(l.status));
+	}
+
+	/** An external load ended while a refresh could not run (navigating). */
+	#externalOwed = false;
+
+	#drainExternal(): void {
+		if (!this.#externalOwed || navigating.to != null) return;
+		this.#externalOwed = false;
+		if (EXTERNAL_ROUTES.test(location.pathname)) void invalidateAll();
 	}
 
 	/** Only jobs that change this page's server data reload it (td-543431). */
@@ -178,6 +214,7 @@ class JobsPoll {
 		);
 		this.#invalidate = step.state;
 		if (step.fire) void invalidateAll();
+		this.#drainExternal();
 	}
 
 	async cancel(jobId: number): Promise<void> {
@@ -221,8 +258,13 @@ class JobsPoll {
 			const looksJson = text.trimStart().startsWith('{');
 			parsed = classifyPollResponse(res.status, res.headers.get('content-type'), looksJson);
 			if (parsed.kind === 'ok') {
-				const data = JSON.parse(text) as { worker: WorkerInfo; jobs: JobInfo[] };
+				const data = JSON.parse(text) as { worker: WorkerInfo; jobs: JobInfo[]; external?: ExternalJobInfo[] };
 				const prev = this.jobs;
+				const wasActive = this.externalActive.map((l) => l.id);
+				this.external = data.external ?? [];
+				// Ended = now terminal, or no longer listed at all.
+				const nowActive = new Set(this.externalActive.map((l) => l.id));
+				if (wasActive.some((id) => !nowActive.has(id))) this.#externalOwed = true;
 				this.#lastLocCodes = new Map(
 					prev.filter((job) => job.locCodes?.length).map((job) => [job.id, job.locCodes ?? []])
 				);
@@ -252,6 +294,7 @@ class JobsPoll {
 				);
 				this.#invalidate = step.state;
 				if (step.fire) void invalidateAll();
+				this.#drainExternal();
 			}
 		} catch {
 			parsed = { kind: 'error' };
@@ -272,7 +315,8 @@ class JobsPoll {
 			this.isStale = isStaleNow(this.staleSince, Date.now());
 		}
 
-		const interval = nextIntervalMs(this.jobs);
+		// External loads poll at the active cadence while any is outstanding.
+		const interval = nextIntervalMs(this.jobs) ?? (this.externalActive.length ? POLL_ACTIVE_MS : null);
 		if (interval == null && parsed.kind === 'ok') {
 			if (this.#graceDone) {
 				this.#running = false;

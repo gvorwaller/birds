@@ -16,6 +16,7 @@
   import SystemHealthPanel from "$components/admin/SystemHealthPanel.svelte";
   import EbirdTrafficPanel from "$components/admin/EbirdTrafficPanel.svelte";
   import SlowPagesPanel from "$components/admin/SlowPagesPanel.svelte";
+  import SourcesPanel from "$components/admin/SourcesPanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -37,7 +38,7 @@
   // purely local UI state — the status poller above never reads it, so
   // switching tabs never pauses live worker polling.
   type Surface = "enrichment" | "familyEnrichment" | "guidance" | "tagDraft";
-  const ADMIN_TABS = ["status", "ai", "tags", "users", "health", "metrics"] as const;
+  const ADMIN_TABS = ["status", "ai", "tags", "users", "sources", "health", "metrics"] as const;
   type AdminTab = (typeof ADMIN_TABS)[number];
   // ?tab=tags lets a tag page's back link land on the Tags tab.
   const requestedTab = page.url.searchParams.get("tab");
@@ -365,6 +366,19 @@
       onkeydown={onAdminTabKeydown}
     >
       Users
+    </button>
+    <button
+      type="button"
+      role="tab"
+      id="admin-tab-sources"
+      aria-controls="admin-panel-sources"
+      aria-selected={activeTab === "sources"}
+      tabindex={activeTab === "sources" ? 0 : -1}
+      class:active={activeTab === "sources"}
+      onclick={() => (activeTab = "sources")}
+      onkeydown={onAdminTabKeydown}
+    >
+      Sources
     </button>
     <button
       type="button"
@@ -1051,6 +1065,11 @@
     {:else}
       <p class="error" role="alert">Account usage is unavailable right now.</p>
     {/if}
+  </div>
+  {:else if activeTab === "sources"}
+  <div id="admin-panel-sources" role="tabpanel" aria-labelledby="admin-tab-sources">
+    <!-- td-eec7db: external sightings sources (Artsobservasjoner via GBIF). -->
+    <SourcesPanel sources={data.sources} form={form?.kind === "sources" ? form : null} />
   </div>
   {:else if activeTab === "metrics"}
   <div id="admin-panel-metrics" role="tabpanel" aria-labelledby="admin-tab-metrics">

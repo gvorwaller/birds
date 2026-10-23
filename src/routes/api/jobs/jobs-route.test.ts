@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   listJobs: vi.fn(),
   workerHealth: vi.fn(),
   familyControl: vi.fn(),
+  externalLoadsForUser: vi.fn(),
 }));
 
 vi.mock("$server/jobs", () => ({
@@ -11,6 +12,7 @@ vi.mock("$server/jobs", () => ({
   workerHealth: mocks.workerHealth,
 }));
 vi.mock("$server/family-enrichment", () => ({ familyControl: mocks.familyControl }));
+vi.mock("$server/external-sources/jobs", () => ({ externalLoadsForUser: mocks.externalLoadsForUser }));
 
 import { GET } from "./+server";
 
@@ -37,6 +39,7 @@ const job = (overrides: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  mocks.externalLoadsForUser.mockReset().mockResolvedValue([]);
   mocks.workerHealth.mockReset().mockResolvedValue({
     alive: true,
     state: "idle",
@@ -58,18 +61,18 @@ beforeEach(() => {
 describe("GET /api/jobs", () => {
   it("reads category control once for the entire snapshot and requests the disclosed history window", async () => {
     mocks.listJobs.mockResolvedValue([job(), job({ id: 13, type: "load_hotspots" })]);
-    await GET({} as never);
+    await GET({ locals: {} } as never);
     expect(mocks.familyControl).toHaveBeenCalledTimes(1);
     expect(mocks.listJobs).toHaveBeenCalledWith(15);
   });
 
   it("fails the snapshot if category state is unavailable instead of claiming queued work", async () => {
     mocks.familyControl.mockRejectedValue(new Error("category state unavailable"));
-    await expect(GET({} as never)).rejects.toThrow("category state unavailable");
+    await expect(GET({ locals: {} } as never)).rejects.toThrow("category state unavailable");
   });
 
   it("returns safe worker pause state and category-aware presentation", async () => {
-    const response = await GET({} as never);
+    const response = await GET({ locals: {} } as never);
     const body = await response.json();
     expect(body.snapshotAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(body.worker).toMatchObject({ alive: true, state: "idle", pauseRequested: false });
@@ -86,7 +89,21 @@ describe("GET /api/jobs", () => {
 
   it("does not let family pause relabel frequency loads", async () => {
     mocks.listJobs.mockResolvedValue([job({ type: "load_hotspots", label: "1 hotspot — Celery Fields" })]);
-    const body = await (await GET({} as never)).json();
+    const body = await (await GET({ locals: {} } as never)).json();
     expect(body.jobs[0].presentation.state).toBe("queued");
+  });
+
+  it("lists the signed-in user's external-source loads separately from eBird jobs (td-eec7db)", async () => {
+    mocks.listJobs.mockResolvedValue([]);
+    const load = { id: "0b6f1f9e-4c1b-4c55-9a3e-7d2b1c0a9e11", status: "queued", presentation: { state: "queued" } };
+    mocks.externalLoadsForUser.mockResolvedValue([load]);
+    const body = await (await GET({ locals: { user: { id: 42 } } } as never)).json();
+    expect(mocks.externalLoadsForUser).toHaveBeenCalledWith(42);
+    expect(body.external).toEqual([load]);
+    expect(body.jobs).toEqual([]);
+    mocks.externalLoadsForUser.mockClear();
+    const anon = await (await GET({ locals: {} } as never)).json();
+    expect(mocks.externalLoadsForUser).not.toHaveBeenCalled();
+    expect(anon.external).toEqual([]);
   });
 });

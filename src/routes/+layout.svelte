@@ -50,8 +50,11 @@
 		// Account usage (td-c8e6a3): a page shown without an error counts.
 		reportPageUse(data.user?.id, $page.route.id, $page.status, $page.error != null);
 	});
+	// External-source loads (td-eec7db) join the chip beside eBird jobs; they
+	// share its presentation states and fields.
+	const chipJobs = $derived([...jobsPoll.active, ...jobsPoll.externalActive]);
 	const activeJob = $derived.by(() => {
-		const visible = jobsPoll.active.filter((j) =>
+		const visible = chipJobs.filter((j) =>
 			['running', 'queued', 'retry-scheduled', 'cancelling', 'waiting-worker'].includes(j.presentation?.state ?? '')
 		);
 		return visible.find((j) => j.presentation?.state === 'running') ??
@@ -61,7 +64,7 @@
 	});
 	const jobChipText = $derived.by(() => {
 		if (!activeJob) return '';
-		const activeCount = jobsPoll.active.filter((j) =>
+		const activeCount = chipJobs.filter((j) =>
 			['running', 'queued', 'retry-scheduled', 'cancelling', 'waiting-worker'].includes(j.presentation?.state ?? '')
 		).length;
 		const quietCount = quietJobs.length;
@@ -78,8 +81,15 @@
 		}
 		return `${jobPresentationText(activeJob.presentation, p)} — ${activeJob.displayName}${extra}`;
 	});
+	// Until the Norway pages exist (td-eec7db Phase 3), an external load's
+	// progress lives in Admin → Sources.
+	const jobChipHref = $derived(
+		activeJob && 'sourceId' in activeJob && data.user?.role === 'admin'
+			? '/admin?tab=sources'
+			: '/forecast/data#background-work'
+	);
 	const quietJobs = $derived(
-		jobsPoll.active.filter((j) => ['paused', 'scheduled', 'waiting'].includes(j.presentation?.state ?? ''))
+		chipJobs.filter((j) => ['paused', 'scheduled', 'waiting'].includes(j.presentation?.state ?? ''))
 	);
 
 	// Explicit collections, not a slice of one array: primary tabs render in the
@@ -395,7 +405,7 @@
 		<div class="ro-banner">👀 Read-only family view — exploring Gaylon's birds.</div>
 	{/if}
 	{#if data.user && activeJob && !$page.url.pathname.startsWith('/forecast')}
-		<a class="job-chip" href="/forecast/data#background-work">⏳ {jobChipText}</a>
+		<a class="job-chip" href={jobChipHref}>⏳ {jobChipText}</a>
 	{:else if data.user && quietJobs.length > 0 && !$page.url.pathname.startsWith('/forecast')}
 		<a class="job-chip quiet-job" href="/forecast/data#background-work">Background work is paused or scheduled ({quietJobs.length})</a>
 	{/if}

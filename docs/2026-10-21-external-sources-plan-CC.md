@@ -291,13 +291,13 @@ All of these tables are separate from the eBird tables. Composite foreign keys a
 
 | Call | Body | Answer |
 |---|---|---|
-| `POST loads/claim` | `{contract_version, idempotency_key}` | 200 `{load: {id, region_code, attempt, lease_token, lease_expires_at, window_months}}` · 204 no work |
+| `POST loads/claim` | `{contract_version, idempotency_key}` | 200 `{load: {id, region_code, attempt, lease_token, lease_expires_at, window_months, window_ends}}` · 204 no work |
 | `POST loads/{id}/heartbeat` | `{…, progress: {phase, done, total}}` | 200 `{lease_expires_at}` |
 | `POST loads/{id}/chunks` | `{…, chunk_id, kind, sha256, rows: […]}` | 200 `{status: "stored" \| "duplicate"}` · 409 different digest |
 | `POST loads/{id}/finish` | `{…, manifest}` | 200 `{status: "done", result}`. A repeated call returns the same result. |
 | `POST loads/{id}/fail` | `{…, reason, retryable}` | 200. No effect on a load that is already done. |
 
-`window_months` (24) comes from the source registry. The app checks that the window in the manifest spans exactly that many months.
+`window_months` (24) comes from the source registry. `window_ends` (added in Phase 1 after review; additive) lists the window ends the load accepts, latest first. They are frozen when the load is queued: the last day of the month before, or of the month before that. The connector uses the latest one its source copy fully covers. The app checks that the manifest's window ends on one of them and spans exactly `window_months` months.
 
 **Row shapes, by `kind`.** Unknown fields are rejected, and every field is required unless marked `|null`.
 
@@ -342,7 +342,11 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
 - the registry and connector health: last seen, the age of the oldest queued load, and leases that are overdue;
 - loads, with their status, attempts and result;
 - unmatched taxa, each with a "Match to species" override, modelled on the `/photos` override action;
-- a Revoke button for connectors.
+- a Revoke button for connectors;
+- **Reference docs (owner request, 2026-10-23; built in Phase 2):** a "Reference" line at the top of the tab, so the background is found from the place where imports are run. It links to:
+  - the sources survey, `docs/2026-10-22-bird-sightings-sources-survey.md` (which countries' portals out-record eBird, and candidate connectors);
+  - this plan, `docs/2026-10-21-external-sources-plan-CC.md` (the contract and the Phase 0 findings).
+  - The links go to the files on `main` in the public GitHub repo, opening in a new tab. The repo path is shown as text too, so it can still be found if the repo moves.
 
 ### Token creation
 `scripts/connector-token.mjs` is run by agents on the droplet.
@@ -376,7 +380,37 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
 - `/api/jobs` also returns the current user's active and recently finished `external_loads`, in the same shape. The layout's progress chip and `jobsPoll` (`src/lib/job-poll.svelte.ts`) then show the load and refresh the page when it finishes, exactly as eBird loads do.
 - The exact mapping is pinned against `src/routes/api/jobs/+server.ts` at implementation time.
 
+### Phase 1 as built (td-53b207, 2026-10-22): differences from the plan above
+- **No foreign key from species codes to `taxonomy_cache`.** Taxonomy sync deletes and reinserts the whole table (`taxonomy-sync.ts` `writeTaxonomy`), so a code dropped by a split would make the eBird sync fail. Codes are checked when written, and species rows are re-derived from `external_taxon_month` ("Re-match species" in Admin → Sources).
+- **Name matching** uses the gallery matcher's `normalizeName`, but has its own scientific-name map, so a name shared by two eBird species is reported as `ambiguous` and never guessed. `buildMatcher` would silently keep one of them.
+- **`external_recent_reports` is keyed by (source, region, record)**, not (source, record). The swap is per region, so a record that a later load places in the neighbouring county can't collide.
+- **`external_unmatched` has a `reason`:** `no_match`, `ambiguous` or `override_code_missing`.
+- **`external_region_map.upstream_key`** holds the upstream id (`NOR.10_1`). This keeps it apart from the app-side `place_key` (`NO-18:Nesna`).
+- **Finish requires a total for every place × month,** with 0 for empty months. A share is then never computed against a missing denominator.
+- **A finished load keeps its lease token,** so a repeated finish is recognised and returns the stored result.
+- **Job chip:** `/api/jobs` returns the user's loads in a separate `external` list, because their IDs are uuids and they have no cancel route. The chip shows them in the eBird states, and links to Admin → Sources until the Phase 3 pages exist.
+- **Admin → Sources** also has "Queue load" for a region, which the first prod run needs. It also has "Remove match" and "Re-match species".
+- **`scripts/connector-token.mjs`** takes `--out` for the env-file path. Node takes `--env-file` for itself even when it comes after the script name.
+- **Rate limit:** 20 requests a second per connector, per app process, answered with a 429 and `Retry-After`.
+- **CODEX1 code review (2026-10-22, high effort): no P1s; ten P2s and two P3s, all fixed, each with a regression test.**
+  - **Claims:** retries with the same idempotency key run one at a time (an advisory lock on connector and key), plus a unique index on (connector, key) for live leases.
+  - **Revocation:** every writing transaction re-checks the connector and source under `FOR SHARE`. A revoke that commits first gets a 401; a later one waits for the write in flight.
+  - **One lock per source:** finish, re-match and saving or removing an override share it, taken before any read.
+  - **Matching** is keyed by (upstream ID, name), so a county loaded at another upstream snapshot can't change another county's matches.
+  - **The window rule is enforced.** A load's window must end with the last complete month before the month it was queued in, or the month before that, because GBIF's weekly copy may lag at the start of a month. This is fixed by the load's creation date and can't drift on a retry.
+  - **Counts and dates:** unmatched report totals are `bigint`. Dates must be in 1900 through next year, and date errors are a 422.
+  - **Job chip:** every active load is always listed, and finished ones are capped separately.
+  - **Queue:** it retries if the conflicting active load finishes at that moment.
+  - **Token rotation** installs the new file before revoking the old token.
+  - **Connector notes** are all kept in `external_load_diagnostics`, and the result holds exact totals per code.
+  - **The revoke dialog** is a native `<dialog>`, and focus is returned by hand because WebKit doesn't restore it.
+- **CODEX1 re-review (2026-10-22): the 12 fixes are confirmed; two new P2s and one P3, all fixed.**
+  - **The claim answer carries `window_ends`,** the frozen ends the load accepts, so the connector never builds a window the app will refuse (for example, queued Oct 31 and claimed Nov 1).
+  - **`connector-token.mjs`** holds database session locks per source+label and per output file across the whole operation, so concurrent rotations run one after another. Four parallel rotations left exactly one live token, the installed one.
+  - **The test fixtures** take their window from the database clock, so they don't age out at a month boundary. A queued-Oct-31 regression test covers the rollover.
+
 ## Phase 2: Norway connector (`connectors/gbif-artsobs/`)
+- **Admin → Sources reference links** (owner request, 2026-10-23): add the "Reference" line described under Phase 1's Admin → "Sources" tab, linking the sources survey and this plan.
 - **Process:** a standalone Node program, bundled in `npm run build` the same way as `scripts/build-worker.mjs`. It runs as its own PM2 app (one instance, a memory cap via `max_memory_restart`, a graceful stop that releases or finishes the load). It never touches the database.
 - **Health** [A-P3-1]: the connector is **not** added to `process_memory_samples` or `ProcessName`. Its health shows as `last_seen_at` and the heartbeat in Admin → Sources. Memory on prod is read with `pm2 jlist` (read-only).
 - **Polling:** it POSTs a claim every 10 s.

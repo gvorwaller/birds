@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listJobs, workerHealth } from '$server/jobs';
 import { familyControl } from '$server/family-enrichment';
+import { externalLoadsForUser } from '$server/external-sources/jobs';
 import {
 	displayName,
 	durationMs,
@@ -91,9 +92,15 @@ function decorate(
  * them (viewers included — read-only). Auth is hooks-level (401 JSON for
  * expired sessions on /api/*).
  */
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async ({ locals }) => {
 	const now = new Date();
-	const [worker, jobs, family] = await Promise.all([workerHealth(), listJobs(15), familyControl()]);
+	const [worker, jobs, family, external] = await Promise.all([
+		workerHealth(),
+		listJobs(15),
+		familyControl(),
+		// External-source loads (td-eec7db): this user's own, in their own list.
+		locals.user ? externalLoadsForUser(locals.user.id) : Promise.resolve([])
+	]);
 	return json(
 		{
 			snapshotAt: now.toISOString(),
@@ -107,7 +114,8 @@ export const GET: RequestHandler = async () => {
 				currentJobId: worker.currentJobId,
 				pauseRequested: worker.pauseRequested
 			},
-			jobs: jobs.map((j) => decorate(j, now, worker, family))
+			jobs: jobs.map((j) => decorate(j, now, worker, family)),
+			external
 		},
 		// Safari heuristically caches authenticated GETs — never this one
 		// (hooks set it too when unset; explicit per GROK #12).

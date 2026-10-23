@@ -20,6 +20,16 @@ import {
   type CallEnvelope,
 } from "$server/ai-models";
 import { CONFIG_KEYS, getConfig, setConfig } from "$server/app-config";
+import {
+  adminSources,
+  OverrideError,
+  rematchSource,
+  removeTaxonOverride,
+  revokeConnector,
+  setTaxonOverride,
+} from "$server/external-sources/admin";
+import { IngestError, queueExternalLoad } from "$server/external-sources/lifecycle";
+import { isRegionCode } from "$server/external-sources/contract";
 import { usageAggregates } from "$server/ai-usage";
 import { meteredAiCall } from "$server/ai-call";
 import { setWorkerPauseRequested } from "$server/jobs";
@@ -146,9 +156,15 @@ export const load: PageServerLoad = async ({ locals }) => {
     // Users tab (td-c8e6a3); a failure shows "unavailable" in that tab only.
     usageReport().catch(() => null),
   ]);
+  // Sources tab (td-eec7db); a failure shows "unavailable" in that tab only.
+  const sources = await adminSources().catch((err) => {
+    console.error(`[admin] sources unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
   return {
     health,
     accountUsage,
+    sources,
     tagOverview,
     tagHealth,
     hotspotCoordinates,
@@ -252,7 +268,68 @@ export interface CompareColumn {
   aborted: boolean;
 }
 
+/** Sources tab (td-eec7db): one result shape for every action. */
+function sourcesResult(ok: boolean, message: string, status = 400) {
+  const body = { kind: "sources" as const, ok, message };
+  return ok ? body : fail(status, body);
+}
+
 export const actions: Actions = {
+  queue_external_load: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const f = await request.formData();
+    const sourceId = String(f.get("source_id") ?? "");
+    const regionCode = String(f.get("region_code") ?? "");
+    if (!sourceId || !isRegionCode(regionCode)) return sourcesResult(false, "Pick a region.");
+    try {
+      const r = await queueExternalLoad({ sourceId, regionCode, requestedBy: locals.user.id });
+      return sourcesResult(
+        true,
+        r.created ? `Load queued for ${regionCode}.` : `A load for ${regionCode} is already queued or running.`,
+      );
+    } catch (err) {
+      if (err instanceof IngestError) return sourcesResult(false, err.message, err.status === 404 ? 404 : 400);
+      throw err;
+    }
+  },
+  revoke_connector: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const id = Number((await request.formData()).get("connector_id"));
+    if (!Number.isInteger(id) || id <= 0) return sourcesResult(false, "Unknown connector.");
+    return (await revokeConnector(id))
+      ? sourcesResult(true, "Token revoked. The connector is refused from its next call.")
+      : sourcesResult(false, "That token was already revoked.");
+  },
+  set_taxon_override: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const f = await request.formData();
+    try {
+      const r = await setTaxonOverride({
+        sourceId: String(f.get("source_id") ?? ""),
+        upstreamTaxonId: String(f.get("upstream_taxon_id") ?? ""),
+        species: String(f.get("species") ?? ""),
+        userId: locals.user.id,
+      });
+      return sourcesResult(true, `Matched ${r.canonicalName} → ${r.speciesCode}. Loaded data updated.`);
+    } catch (err) {
+      if (err instanceof OverrideError) return sourcesResult(false, err.message);
+      throw err;
+    }
+  },
+  remove_taxon_override: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const f = await request.formData();
+    return (await removeTaxonOverride(String(f.get("source_id") ?? ""), String(f.get("upstream_taxon_id") ?? "")))
+      ? sourcesResult(true, "Match removed. The taxon is matched by its scientific name again.")
+      : sourcesResult(false, "That match was already removed.");
+  },
+  rematch_source: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const sourceId = String((await request.formData()).get("source_id") ?? "");
+    if (!sourceId) return sourcesResult(false, "Unknown source.");
+    await rematchSource(sourceId);
+    return sourcesResult(true, "Species re-matched for every loaded region.");
+  },
   // Tags tab (td-894144 B3): pull the nightly consistency check forward.
   run_tag_consistency: async ({ locals }) => {
     if (locals.user?.role !== "admin")

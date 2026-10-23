@@ -20,6 +20,7 @@
  */
 import type pg from 'pg';
 import { query, queryTimed } from '$lib/db';
+import { sweepExternalStaging } from '$server/external-sources/lifecycle';
 import {
 	assertNotInOwnClaimTx,
 	boundedQueueWrite,
@@ -760,6 +761,8 @@ export interface PruneScope {
 	pageTimingIds?: readonly number[];
 	alertUserId?: number;
 	cacheKeyLike?: string;
+	/** td-eec7db: limit the external-source staging sweep to these loads. */
+	externalLoadIds?: readonly string[];
 }
 
 export async function pruneHistory(scope?: PruneScope): Promise<void> {
@@ -824,6 +827,9 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 		]);
 	}
 	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);
+	// External-source staging (td-eec7db): overdue leases go back to the queue,
+	// and staging no live lease holds is removed after 7 days.
+	if (!scope || scope.externalLoadIds) await sweepExternalStaging(scope?.externalLoadIds);
 }
 
 /**
