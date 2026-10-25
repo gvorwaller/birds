@@ -100,6 +100,19 @@
   let refreshBusy = $state(false);
   let ribbonExpanded = $state(true);
   let similarExpanded = $state(true);
+  // Every other card folds too (td-d16c18), open on each new species.
+  const allCardsOpen = () => ({
+    recorded: true,
+    photos: true,
+    identification: true,
+    finding: true,
+    bestTime: true,
+    recent: true,
+    nearest: true,
+    about: true,
+    learnMore: true,
+  });
+  let cardOpen = $state(allCardsOpen());
   let disclosureSpecies: string | undefined;
   $effect(() => {
     const code = data.taxon.species_code;
@@ -107,6 +120,7 @@
       disclosureSpecies = code;
       ribbonExpanded = true;
       similarExpanded = true;
+      cardOpen = allCardsOpen();
     }
   });
   const en = $derived(data.enrichment);
@@ -501,6 +515,9 @@
     await tick();
     const target = document.getElementById(id);
     if (!target) return;
+    // A folded card opens before the jump; its bind:open follows the toggle.
+    const fold = target.closest("details");
+    if (fold && !fold.open) fold.open = true;
     // SvelteKit's replaceState replaces the native history entry while retaining
     // page.state, which is where PathNavigation keeps the return trail.
     replaceState(sectionHref(page.url.pathname, page.url.search, id), page.state);
@@ -511,12 +528,20 @@
     target.focus({ preventScroll: true });
   }
 
+  // A fold heading is also a jump target (focusable, outlined on focus). Tapping
+  // it to fold or unfold must not focus it, or the jump outline appears.
+  function keepFoldHeadingUnfocused(event: MouseEvent) {
+    if ((event.target as Element | null)?.closest?.("summary > .section-target")) event.preventDefault();
+  }
+
   function onSectionLinkClick(event: MouseEvent, section: OnPageSection) {
     if (!shouldEnhanceSectionLink(event)) return;
     event.preventDefault();
     void navigateToSection(section.id, section.reveal);
   }
 </script>
+
+<svelte:document onmousedown={keepFoldHeadingUnfocused} />
 
 <svelte:head>
   <title>{data.taxon.com_name} — birds</title>
@@ -563,24 +588,24 @@
   </nav>
 
   {#if data.seen}
-    <section class="card recorded-card">
-      <h2>{isViewer ? "Family list recorded sighting" : "Your recorded sighting"}</h2>
+    <details class="card fold recorded-card" bind:open={cardOpen.recorded}>
+      <summary><h2>{isViewer ? "Family list recorded sighting" : "Your recorded sighting"}</h2></summary>
       <p class="muted">
         This is your first-seen life-list record, not a complete checklist history
         or a public accepted report.
       </p>
       <RecordedSightingRow row={{ speciesCode: data.taxon.species_code, comName: data.taxon.com_name, firstSeen: data.seen.first_seen, locationName: data.seen.location_name, obsCount: data.seen.obs_count, subId: data.seen.sub_id, lat: data.seen.lat, lng: data.seen.lng }} {distanceUnit} />
-    </section>
+    </details>
   {/if}
 
   {#if data.hasGallery}
-    <section class="card">
-      <h2>
+    <details class="card fold" bind:open={cardOpen.photos}>
+      <summary><h2>
         Your photos
         <span class="muted">
           {data.photos.length} on gaylon.photos
         </span>
-      </h2>
+      </h2></summary>
       {#if data.photos.length === 0}
         <p class="muted">
           No photos of this species yet — new uploads to gaylon.photos appear
@@ -596,7 +621,7 @@
           {/each}
         </div>
       {/if}
-    </section>
+    </details>
   {/if}
 
   {#if hasMedia || data.sampleMedia.audioStatus === "restricted" || (data.isAdmin && data.sampleMedia.status != null)}
@@ -604,6 +629,7 @@
       media={data.sampleMedia}
       comName={data.taxon.com_name}
       isAdmin={data.isAdmin}
+      bind:open={cardOpen.identification}
     />
   {/if}
 
@@ -621,8 +647,8 @@
   />
 
   {#if hasFieldCraft}
-    <section class="card">
-      <h2 id="finding-this-bird" class="section-target" tabindex="-1">Finding this bird</h2>
+    <details class="card fold" bind:open={cardOpen.finding}>
+      <summary><h2 id="finding-this-bird" class="section-target" tabindex="-1">Finding this bird</h2></summary>
       {#if form && "message" in form && form.message}
         <p class="ok" role="status">{form.message}</p>
       {/if}
@@ -709,7 +735,7 @@
           </button>
         </form>
       {/if}
-    </section>
+    </details>
   {/if}
 
   <!-- Migration ribbon (build spec td-59c2d0 TD-C): a discriminated loader
@@ -733,16 +759,16 @@
       />
     </details>
   {:else if !data.ribbon.ok}
-    <section class="card">
-      <h2 id="seasonal-distribution" class="section-target" tabindex="-1">Where it is through the year</h2>
+    <details class="card fold" bind:open={ribbonExpanded}>
+      <summary><h2 id="seasonal-distribution" class="section-target" tabindex="-1">Where it is through the year</h2></summary>
       <p class="muted">The migration chart could not be loaded.</p>
-    </section>
+    </details>
   {/if}
 
   {#if selectedPeer}
     {@const ft = data.forecastTeaser}
-    <section class="card">
-      <h2 id="best-time" class="section-target" tabindex="-1">Best time of year</h2>
+    <details class="card fold" bind:open={cardOpen.bestTime}>
+      <summary><h2 id="best-time" class="section-target" tabindex="-1">Best time of year</h2></summary>
       <!-- Both picks as equal peers (plan Phase 5; AGY: a TABLIST, not a
            radiogroup — this selects which region's data a panel displays).
            The honesty qualifier lives IN the row label ("Best of N loaded
@@ -848,7 +874,7 @@
           </a>
         </p>
       </div>
-    </section>
+    </details>
   {/if}
 
   {#snippet storedAlertLines(rows: StoredAlertReport[])}
@@ -880,19 +906,17 @@
     {/if}
   {/snippet}
 
-  <section class="card">
-    <div class="card-head">
-      <h2 id="recent-reports" class="section-target" tabindex="-1">
-        Recent reports near {originName} — {windowPhrase(data.backDays)}
-        {#if nearbyView.current?.ok && nearbyView.current.data.stale}<Badge
-            kind="stale"
-            label="cached"
-          />{/if}
-      </h2>
-      <div class="unit-control">
-        <span>Units</span>
-        <DistanceUnitToggle bind:unit={distanceUnit} />
-      </div>
+  <details class="card fold" bind:open={cardOpen.recent}>
+    <summary><h2 id="recent-reports" class="section-target" tabindex="-1">
+      Recent reports near {originName} — {windowPhrase(data.backDays)}
+      {#if nearbyView.current?.ok && nearbyView.current.data.stale}<Badge
+          kind="stale"
+          label="cached"
+        />{/if}
+    </h2></summary>
+    <div class="unit-control">
+      <span>Units</span>
+      <DistanceUnitToggle bind:unit={distanceUnit} />
     </div>
     {#if nearbyView.current?.ok && nearbyView.current.data.partial && nearbyView.current.data.rows.length > 0}
       <p class="muted">Some checked feeds were incomplete or unavailable; the reports shown may not be the closest.</p>
@@ -979,20 +1003,20 @@
       {/each}
     {/if}
     {@render storedAlertLines(nearbyAlertLines)}
-  </section>
+  </details>
 
   {#if hasNearestReports}
     <!-- Nearest reports (td-a6c322): ON-DEMAND — the ?nearest=1 link makes it
          an SSR fetch the default page load never pays for (GROK pin). Any
          species, seen or not (td-27e137); measured from the saved home. -->
-    <section class="card">
-      <h2 id="nearest-reports" class="section-target" tabindex="-1">
+    <details class="card fold" bind:open={cardOpen.nearest}>
+      <summary><h2 id="nearest-reports" class="section-target" tabindex="-1">
         Nearest reports — {data.nearestKm === "any" ? "any distance" : `within ${formatDistance(Number(data.nearestKm), distanceUnit)}`}
         {#if nearestView.current?.ok && nearestView.current.data.stale}<Badge
             kind="stale"
             label="cached"
           />{/if}
-      </h2>
+      </h2></summary>
       <form method="GET" class="nearest-controls">
         <input type="hidden" name="nearest" value="1" />
         {#each nearestContextParams as [name, value]}
@@ -1115,12 +1139,12 @@
           {/if}
         </p>
       {/if}
-    </section>
+    </details>
   {/if}
 
   {#if data.taxon.category === "species"}
-    <section class="card">
-      <h2 id="about" class="section-target" tabindex="-1">
+    <details class="card fold" bind:open={cardOpen.about}>
+      <summary><h2 id="about" class="section-target" tabindex="-1">
         About {data.taxon.com_name}
         {#if en?.iucn_status}
           <span
@@ -1130,7 +1154,7 @@
             {en.iucn_status} · {IUCN_LABELS[en.iucn_status] ?? "IUCN status"}
           </span>
         {/if}
-      </h2>
+      </h2></summary>
       <!-- Refresh flash lives with the refresh button: here only when the
            Finding card (which owns the button then) doesn't exist (GROK). -->
       {#if !hasFieldCraft}
@@ -1280,11 +1304,11 @@
           </button>
         </form>
       {/if}
-    </section>
+    </details>
   {/if}
 
-  <section class="card">
-    <h2 id="learn-more" class="section-target" tabindex="-1">Learn more</h2>
+  <details class="card fold" bind:open={cardOpen.learnMore}>
+    <summary><h2 id="learn-more" class="section-target" tabindex="-1">Learn more</h2></summary>
     {#each links as l (l.href)}
       <div class="obs">
         <div class="grow">
@@ -1295,7 +1319,7 @@
         </div>
       </div>
     {/each}
-  </section>
+  </details>
 
   <p class="attribution">
     Data from <a href="https://ebird.org" target="_blank" rel="noopener"
@@ -1478,6 +1502,34 @@
   }
   .card h2 {
     font-size: 1.05rem;
+    margin-bottom: 10px;
+  }
+  /* Folding cards (td-d16c18): the whole heading row is the 48px control,
+     with the same chevron as Similar species. */
+  .fold > summary {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .fold > summary::-webkit-details-marker {
+    display: none;
+  }
+  .fold > summary::after {
+    content: "▸";
+    margin-left: auto;
+    padding-left: 12px;
+    color: var(--accent);
+    font-size: 1.1em;
+  }
+  .fold[open] > summary::after {
+    content: "▾";
+  }
+  .fold > summary h2 {
+    margin: 0;
+  }
+  .fold[open] > summary {
     margin-bottom: 10px;
   }
   /* --- About card (species enrichment) --- */
@@ -1698,21 +1750,11 @@
     border-color: var(--muted);
     cursor: not-allowed;
   }
-  .card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-  }
-  .card-head h2 {
-    margin-bottom: 0;
-  }
   .unit-control {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-bottom: 10px;
     color: var(--muted);
     font-size: 0.83rem;
     font-weight: 600;

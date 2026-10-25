@@ -42,11 +42,14 @@
 	let {
 		media,
 		comName,
-		isAdmin = false
+		isAdmin = false,
+		/** The card folds (td-d16c18); the species page opens it on a section jump. */
+		open = $bindable(true)
 	}: {
 		media: SampleMedia;
 		comName: string;
 		isAdmin?: boolean;
+		open?: boolean;
 	} = $props();
 
 	// CLS prevention (spec invariant #11): aspect-ratio from the stored
@@ -79,11 +82,11 @@
 	const lastGood = $derived(!!media.photo || media.sounds.length > 0);
 </script>
 
-<section class="card">
-	<h2 id="identification" class="section-target" tabindex="-1">
+<details class="card fold" bind:open>
+	<summary><h2 id="identification" class="section-target" tabindex="-1">
 		Identification
 		{#if subtitle}<span class="muted">{subtitle}</span>{/if}
-	</h2>
+	</h2></summary>
 	{#if isAdmin && media.status === 'error'}
 		<p class="notice err" role="alert">
 			Media refresh failed{media.mediaError ? `: ${media.mediaError}` : '.'}
@@ -149,7 +152,7 @@
 			{/if}
 		</div>
 	{/if}
-</section>
+</details>
 
 <style>
 	.card {
@@ -161,6 +164,33 @@
 	}
 	.card h2 {
 		font-size: 1.05rem;
+		margin-bottom: 10px;
+	}
+	/* Same fold as the species page's other cards. */
+	.fold > summary {
+		display: flex;
+		align-items: center;
+		min-height: 48px;
+		cursor: pointer;
+		list-style: none;
+	}
+	.fold > summary::-webkit-details-marker {
+		display: none;
+	}
+	.fold > summary::after {
+		content: '▸';
+		margin-left: auto;
+		padding-left: 12px;
+		color: var(--accent);
+		font-size: 1.1em;
+	}
+	.fold[open] > summary::after {
+		content: '▾';
+	}
+	.fold > summary h2 {
+		margin: 0;
+	}
+	.fold[open] > summary {
 		margin-bottom: 10px;
 	}
 	.section-target {
