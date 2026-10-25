@@ -490,3 +490,33 @@ The owner asked for the last 384 cross-drawing links to be fixed too, for comple
 - **Location-only areas:** the songbird stands in for every family without a drawing (pigeons, parrots, cuckoos, kingfishers…), so it outlines where a pigeon's cere or a parrot's speculum would sit, and its text says a songbird has none; the duck's and grouse's ceres work the same way. Elsewhere the area is the bird's own, painted in the surrounding tone where the model shows no mark.
 - **`home` on a term:** the drawing to open when a page's own drawing has neither the part nor a same-as (cere → raptor, speculum → duck, gonys → gull, tibia → heron, belly band → raptor, nasal tufts → woodpecker, primary projection → shorebird), since the songbird now comes first in `drawnIn` but only marks where those sit. "Tarsus" on tubenose pages opens its legs.
 - **Wing bars are covert tips drawn over the coverts:** CODEX1 found the heron's and cormorant's flight wing coverts with the bars cut out, a stripe of holes, and the songbird's flight coverts (step 1) had the same; a coverage test now keeps every bar inside the combined coverts (the duck's bars also cover the greater coverts' and secondaries' tips).
+
+## Addendum (2026-10-25): the pigeon and the parrot (td-72fe55)
+
+Drawings fifteen and sixteen (`scripts/bird-parts/{pigeon,parrot}.py` and `{bird}_flight.py`; text in `src/lib/bird-parts/{pigeon,parrot}.ts`). Pigeons and parrots used to fall back to the songbird, which only outlined where a cere or speculum would sit.
+
+- **Models:** production read-only: pigeons and doves have 353 species (273 with text), parrots 410 across four families (366 with text). Rock Pigeon is on two life lists, and Rose-ringed Parakeet is the only parrot on any.
+  - pigeon: an adult wild-type (blue-bar) Rock Pigeon, standing;
+  - parrot: an adult male Rose-ringed Parakeet of the subspecies borealis, perched.
+- **New parts:**
+  - pigeon: neck patch (the purple sheen is a mark) and tail band (drawn over the whole tail);
+  - parrot: neck ring.
+  - Both draw the cere, the orbital ring, the tarsus and the toes as real marks.
+  - The parakeet's speculum and wing bars are location-only, in the tone of the feathers they sit on, and the text says it has neither.
+- **Insets:** both standing views have a "Head, close up" that draws the small head parts again under the same ids (the tubenose's machinery), because the parakeet's tall plate is only about 285 px wide and the pigeon's eye skin was under 10 px. The parakeet also has a "Foot, close up" of its two-forward, two-back foot.
+- **Facts:**
+  - A Rock Pigeon's two bars are the black tips of the greater coverts and of the inner secondaries (National Geographic), so its rear bar lies on the secondaries. The shared wing-bar test allows that for the pigeon, as for the duck, and checks that the bars really cross both.
+  - borealis has a reddish lower mandible; manillensis and the nominate have a mostly black one.
+- **New gates in the scripts:**
+  - the pigeon's bill joins the head in both flight views, and the outline is one polygon;
+  - each part copied into a close-up is one piece there and on the bird;
+  - the foot close-up has exactly two toe pieces;
+  - the close-up eye sits inside the close-up head.
+- **Term links:**
+  - Columbidae → pigeon; Psittacidae, Psittaculidae, Cacatuidae and Strigopidae → parrot.
+  - cere, tarsus and toes are now drawn on both birds, and speculum on the parrot.
+  - New: "neck patch", linked only on pigeon pages (68 links in production text), and "neck ring", only on parrot pages (23). A pheasant's neck ring is another mark.
+  - "zygodactyl" now links on parrot pages too.
+  - "totipalmate" and "zygodactyl" became separate records, because they name different feet: totipalmate links only on cormorant pages, zygodactyl on woodpecker and parrot pages. CODEX1 found "Unlike totipalmate birds, parrots have zygodactyl feet" linking the wrong word.
+  - In production text, every cere, speculum, zygodactyl, neck-patch and neck-ring link on pigeon and parrot pages opens the page's own drawing.
+- **Tone:** a new fixed `parakeet` green (#6fae4a).

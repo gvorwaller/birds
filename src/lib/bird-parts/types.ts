@@ -20,7 +20,7 @@ export type PartGroup = (typeof PART_GROUPS)[number];
 export type Tone =
   | "pale" | "light" | "mid" | "wing" | "dark" | "darker" | "bill" | "leg" | "legyellow" | "billyellow"
   | "accent2" | "water" | "gullgray" | "legpink" | "eye" | "perch" | "accent" | "orbital" | "mallardgreen" | "chestnut"
-  | "gullpale" | "linegray" | "orange";
+  | "gullpale" | "linegray" | "orange" | "parakeet";
 
 export interface PartText {
   id: string;

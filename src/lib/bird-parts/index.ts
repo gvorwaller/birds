@@ -41,6 +41,12 @@ import loonBelow from "./geometry/loon-below.json";
 import grebeGeometry from "./geometry/grebe.json";
 import grebeAbove from "./geometry/grebe-above.json";
 import grebeBelow from "./geometry/grebe-below.json";
+import pigeonGeometry from "./geometry/pigeon.json";
+import pigeonAbove from "./geometry/pigeon-above.json";
+import pigeonBelow from "./geometry/pigeon-below.json";
+import parrotGeometry from "./geometry/parrot.json";
+import parrotAbove from "./geometry/parrot-above.json";
+import parrotBelow from "./geometry/parrot-below.json";
 import { songbird } from "./songbird";
 import { shorebird } from "./shorebird";
 import { duck } from "./duck";
@@ -55,6 +61,8 @@ import { hummingbird } from "./hummingbird";
 import { gamebird } from "./gamebird";
 import { loon } from "./loon";
 import { grebe } from "./grebe";
+import { pigeon } from "./pigeon";
+import { parrot } from "./parrot";
 
 export type ViewGeometries = Record<View, DiagramGeometry>;
 
@@ -110,6 +118,8 @@ export const DIAGRAMS: BirdDiagram[] = [
   joinDiagram(gamebird, { standing: g(gamebirdGeometry), above: g(gamebirdAbove), below: g(gamebirdBelow) }),
   joinDiagram(loon, { standing: g(loonGeometry), above: g(loonAbove), below: g(loonBelow) }),
   joinDiagram(grebe, { standing: g(grebeGeometry), above: g(grebeAbove), below: g(grebeBelow) }),
+  joinDiagram(pigeon, { standing: g(pigeonGeometry), above: g(pigeonAbove), below: g(pigeonBelow) }),
+  joinDiagram(parrot, { standing: g(parrotGeometry), above: g(parrotAbove), below: g(parrotBelow) }),
 ];
 
 export function getView(diagram: BirdDiagram, view: View): DiagramView {

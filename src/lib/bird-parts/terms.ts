@@ -10,11 +10,12 @@
 
 export type DiagramId =
   | "songbird" | "shorebird" | "duck" | "gull" | "raptor" | "heron" | "cormorant" | "auk" | "tubenose"
-  | "woodpecker" | "hummingbird" | "gamebird" | "loon" | "grebe";
+  | "woodpecker" | "hummingbird" | "gamebird" | "loon" | "grebe" | "pigeon" | "parrot";
 
 /** Fallback order when the bird's own drawing lacks a part: the order of the Parts of a Bird page. */
 export const DIAGRAM_ORDER: readonly DiagramId[] = [
   "songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe",
+  "pigeon", "parrot",
 ];
 
 const SHOREBIRD_FAMILIES = new Set([
@@ -85,6 +86,9 @@ const HUMMINGBIRD_FAMILIES = new Set(["Trochilidae", "Apodidae", "Hemiprocnidae"
 /** Grouse, ptarmigan, pheasants, partridges, turkeys, New World quail, guineafowl, curassows and guans, and megapodes (td-71be07). */
 const GAMEBIRD_FAMILIES = new Set(["Phasianidae", "Odontophoridae", "Numididae", "Cracidae", "Megapodiidae"]);
 
+/** The parrots: true parrots, Old World parrots and parakeets, cockatoos, and the New Zealand parrots (td-72fe55). */
+const PARROT_FAMILIES = new Set(["Psittacidae", "Psittaculidae", "Cacatuidae", "Strigopidae"]);
+
 /** The drawing a species' links prefer, by scientific family name. Everything else is the songbird. */
 export function diagramForFamily(familySciName: string | null | undefined): DiagramId {
   if (familySciName === "Anatidae") return "duck";
@@ -100,6 +104,9 @@ export function diagramForFamily(familySciName: string | null | undefined): Diag
   // Loons (divers, td-a3a17d) and grebes (td-7adea3).
   if (familySciName === "Gaviidae") return "loon";
   if (familySciName === "Podicipedidae") return "grebe";
+  // Pigeons and doves, and the parrots (td-72fe55).
+  if (familySciName === "Columbidae") return "pigeon";
+  if (familySciName && PARROT_FAMILIES.has(familySciName)) return "parrot";
   if (familySciName === "Laridae" || familySciName === "Stercorariidae") return "gull";
   if (familySciName && SHOREBIRD_FAMILIES.has(familySciName)) return "shorebird";
   return "songbird";
@@ -143,7 +150,7 @@ export const TERMS: PartTerm[] = [
   { part: "ear-coverts", forms: [`ear${COVERTS}`, "auriculars?"], drawnIn: ALL.filter((d) => d !== "duck"), sameAs: { duck: "cheek" } },
   { part: "submoustachial", forms: ["submoustachial(?: stripes?)?"], drawnIn: ["songbird", "woodpecker"] },
   { part: "malar", forms: ["malar(?: stripes?)?"], drawnIn: ALL },
-  { part: "cere", forms: ["ceres?"], drawnIn: ["songbird", "duck", "raptor", "gamebird"], home: "raptor" },
+  { part: "cere", forms: ["ceres?"], drawnIn: ["songbird", "duck", "raptor", "gamebird", "pigeon", "parrot"], home: "raptor" },
   { part: "orbital-ring", forms: ["orbital[- ]rings?"], drawnIn: ALL },
   { part: "gonydeal-spot", forms: ["gonydeal spots?"], drawnIn: ["gull"] },
   { part: "gonys", forms: ["gonys"], drawnIn: ["songbird", "gull"], home: "gull" },
@@ -167,7 +174,7 @@ export const TERMS: PartTerm[] = [
   { part: "primaries", forms: ["primaries"], drawnIn: ALL },
   { part: "wing-bars", forms: ["wing[- ]?bars?"], drawnIn: ALL.filter((d) => !["auk", "hummingbird", "loon", "grebe"].includes(d)) },
   { part: "axillaries", forms: ["axillaries", "axillars", "axillary"], drawnIn: ALL },
-  { part: "speculum", forms: ["speculum", "speculums", "specula"], drawnIn: ["songbird", "duck"], home: "duck" },
+  { part: "speculum", forms: ["speculum", "speculums", "specula"], drawnIn: ["songbird", "duck", "parrot"], home: "duck" },
   { part: "apical-spots", forms: ["apical spots?"], drawnIn: ["gull"] },
   { part: "mirrors", forms: ["mirrors?"], drawnIn: ["gull"], onlyFor: ["gull"] },
   { part: "undertail-coverts", forms: [`under[- ]?tail${COVERTS}`], drawnIn: ALL },
@@ -178,7 +185,7 @@ export const TERMS: PartTerm[] = [
   {
     part: "tarsus",
     forms: ["tarsus", "tarsi"],
-    drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe"],
+    drawnIn: ["raptor", "heron", "cormorant", "auk", "woodpecker", "gamebird", "loon", "grebe", "pigeon", "parrot"],
     sameAs: { songbird: "legs", shorebird: "legs", duck: "legs", gull: "legs", tubenose: "legs", hummingbird: "toes" },
   },
   { part: "tibia", forms: ["tibiae?", "tibias"], drawnIn: ["songbird", "shorebird", "heron", "hummingbird"], home: "heron" },
@@ -189,12 +196,20 @@ export const TERMS: PartTerm[] = [
   // Storks, cranes, gamebirds and hummingbirds use "gular" and "throat pouch" for other throat marks, and a heron's
   // toes are not webbed, so only the cormorant group's pages link these.
   { part: "gular-skin", forms: ["gular(?: (?:pouch(?:es)?|skin|sacs?|patch(?:es)?))?", "throat[- ](?:pouch(?:es)?|sacs?)", "pouch(?:es)?"], drawnIn: ["cormorant"], onlyFor: ["cormorant"] },
-  // Parrots, cuckoos and owls have zygodactyl feet too, but only the woodpecker drawing shows them.
+  // Webbed and two-forward, two-back feet are different feet, so each word links only where the drawing shows it
+  // (CODEX1, td-72fe55: "Unlike totipalmate birds, parrots have zygodactyl feet" linked the wrong word). Cuckoos and
+  // owls have zygodactyl feet too, but only the woodpecker and parrot drawings show them.
   {
     part: "toes",
-    forms: ["totipalmate(?: feet| foot)?", "zygodactyl(?: feet| foot| toes)?"],
-    drawnIn: ["heron", "cormorant", "auk", "woodpecker", "hummingbird", "gamebird", "loon", "grebe"],
-    onlyFor: ["cormorant", "woodpecker"],
+    forms: ["totipalmate(?: feet| foot)?"],
+    drawnIn: ["heron", "cormorant", "auk", "woodpecker", "hummingbird", "gamebird", "loon", "grebe", "pigeon", "parrot"],
+    onlyFor: ["cormorant"],
+  },
+  {
+    part: "toes",
+    forms: ["zygodactyl(?: feet| foot| toes)?"],
+    drawnIn: ["heron", "cormorant", "auk", "woodpecker", "hummingbird", "gamebird", "loon", "grebe", "pigeon", "parrot"],
+    onlyFor: ["woodpecker", "parrot"],
   },
   // "nasal" alone is a call ("nasal kip"); only the tube words, and only on tubenose pages.
   { part: "nostril-tubes", forms: ["naricorns?", "nasal tubes?", "tubular nostrils?", "tube[- ]?nosed?"], drawnIn: ["tubenose"], onlyFor: ["tubenose"] },
@@ -215,6 +230,10 @@ export const TERMS: PartTerm[] = [
   { part: "crest", forms: ["top[- ]?knots?"], drawnIn: ["gamebird"], onlyFor: ["gamebird"] },
   // Grebes (td-7adea3): owls have "ear tufts" and many birds "horns".
   { part: "ear-tufts", forms: ["ear[- ]?tufts?", "ear[- ]?plumes?", "ear[- ]?fans?", "horns"], drawnIn: ["grebe"], onlyFor: ["grebe"] },
+  // Pigeons and parrots (td-72fe55): a pigeon's iridescent or white neck patch, and a ring-necked parakeet's neck
+  // ring. A pheasant's "neck ring" and other birds' neck patches are other marks, so each links only on its own pages.
+  { part: "neck-patch", forms: ["neck[- ]patch(?:es)?"], drawnIn: ["pigeon"], onlyFor: ["pigeon"] },
+  { part: "neck-ring", forms: ["neck[- ]?rings?"], drawnIn: ["parrot"], onlyFor: ["parrot"] },
   // The tail feathers: every drawing but the songbird's (and the grebe's, which has almost no tail) draws them as the tail.
   {
     part: "rectrices",

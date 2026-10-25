@@ -22,7 +22,7 @@ import songbirdBelow from "./geometry/songbird-below.json";
 const TONES = new Set([
   "pale", "light", "mid", "wing", "dark", "darker", "bill", "leg", "legyellow", "billyellow",
   "accent2", "water", "gullgray", "legpink", "eye", "perch", "accent", "orbital", "mallardgreen", "chestnut",
-  "gullpale", "linegray", "orange",
+  "gullpale", "linegray", "orange", "parakeet",
 ]);
 
 // Absolute M/L/Z only (what scripts/bird-parts/geom.py:to_d writes).
@@ -82,9 +82,10 @@ function coveredShare(a: string, b: string | string[]): number {
 }
 
 describe("Parts of a Bird data", () => {
-  it("has the fourteen diagrams in order, each standing and in flight from above and below", () => {
+  it("has the sixteen diagrams in order, each standing and in flight from above and below", () => {
     expect(DIAGRAMS.map((d) => d.id)).toEqual([
       "songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe",
+      "pigeon", "parrot",
     ]);
     for (const d of DIAGRAMS) expect(d.views.map((v) => v.id)).toEqual(["standing", "above", "below"]);
     expect(VIEWS.map((v) => v.label)).toEqual(["Standing", "Flight, above", "Flight, below"]);
@@ -387,18 +388,99 @@ describe("Parts of a Bird data", () => {
     expect(viewsDrawing(g, "toes").map((v) => v.id)).toEqual(["standing", "above", "below"]);
   });
 
+  it("draws the pigeon's cere, bare eye skin, neck sheen, wing bars and tail band (td-72fe55)", () => {
+    const p = DIAGRAMS.find((d) => d.id === "pigeon")!;
+    const standing = getView(p, "standing");
+    // The Rock Pigeon's own marks, drawn on the standing bird: none of them is a stand-in.
+    for (const id of ["cere", "orbital-ring", "neck-patch", "wing-bars", "tail-band", "tarsus", "toes"]) {
+      expect(viewsDrawing(p, id).map((v) => v.id), id).toContain("standing");
+    }
+    // The purple part of the neck sheen is a mark over the green patch, never a tap target of its own.
+    expect(standing.parts.find((q) => q.id === "neck-patch")!.marks?.length).toBe(1);
+    // The dark tail band shows in every view; the white rump from above.
+    expect(viewsDrawing(p, "tail-band").map((v) => v.id)).toEqual(["standing", "above", "below"]);
+    expect(viewsDrawing(p, "rump").map((v) => v.id)).toContain("above");
+    expect(standing.parts.find((q) => q.id === "wing-coverts")!.layers).toEqual(["main"]);
+    // The cere and the bare skin round the eye are drawn again, larger, in a head close-up.
+    expect(standing.insets.map((i) => i.label)).toEqual(["Head, close up"]);
+    const [head] = standing.insets;
+    for (const id of ["cere", "orbital-ring", "eye-ring", "lores", "bill"]) {
+      const inHead = rings(standing.parts.find((q) => q.id === id)!.d).filter((ring) => ring.every(([x, y]) => Math.hypot(x - head.cx, y - head.cy) <= head.r));
+      expect(inHead.length, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("draws the parakeet's neck ring, hooked bill and cere, and its two-forward, two-back foot (td-72fe55)", () => {
+    const p = DIAGRAMS.find((d) => d.id === "parrot")!;
+    const standing = getView(p, "standing");
+    expect(standing.insets.map((i) => i.label)).toEqual(["Foot, close up", "Head, close up"]);
+    expect(viewsDrawing(p, "neck-ring").map((v) => v.id)).toEqual(["standing", "above", "below"]);
+    for (const id of ["cere", "orbital-ring", "bill", "tarsus", "throat"]) {
+      expect(viewsDrawing(p, id).map((v) => v.id), id).toContain("standing");
+    }
+    const ringsIn = (d: string, c: { cx: number; cy: number; r: number }) =>
+      rings(d).filter((ring) => ring.every(([x, y]) => Math.hypot(x - c.cx, y - c.cy) <= c.r));
+    // The small head parts are drawn again, larger, in the head close-up: one part, two places.
+    const head = standing.insets.find((i) => i.label === "Head, close up")!;
+    for (const id of ["cere", "orbital-ring", "lores", "eye-ring", "bill"]) {
+      const d = standing.parts.find((q) => q.id === id)!.d;
+      expect(ringsIn(d, head).length, id).toBeGreaterThan(0);
+      expect(rings(d).length, id).toBeGreaterThan(ringsIn(d, head).length);
+    }
+    // Two toes forward and two back: in the foot close-up (the bird faces right), a scan line just below the tarsus's
+    // lower end crosses two separate toes ahead of it and two behind it (CODEX1). The toe pairs join at their base, so
+    // counting pieces would not prove this.
+    const foot = standing.insets.find((i) => i.label === "Foot, close up")!;
+    const [tarsus] = ringsIn(standing.parts.find((q) => q.id === "tarsus")!.d, foot);
+    const end = tarsus.reduce((a, c) => (c[1] > a[1] ? c : a));
+    const toesOn = (d: string, y: number, ahead: boolean) => {
+      let runs = 0, prev = false;
+      for (let x = foot.cx - foot.r; x <= foot.cx + foot.r; x += 0.5) {
+        const hit = (ahead ? x > end[0] : x < end[0]) && inside(d, x, y);
+        if (hit && !prev) runs++;
+        prev = hit;
+      }
+      return runs;
+    };
+    const twoAndTwo = (d: string) => Array.from({ length: 30 }, (_, i) => end[1] + 4 + i * 2).some((y) => toesOn(d, y, true) >= 2 && toesOn(d, y, false) >= 2);
+    expect(twoAndTwo(standing.parts.find((q) => q.id === "toes")!.d)).toBe(true);
+    // The check itself: one toe forward and one back fails it.
+    const bar = (x0: number) => `M${x0},${end[1] + 4}L${x0 + 6},${end[1] + 4}L${x0 + 6},${end[1] + 60}L${x0},${end[1] + 60}Z`;
+    expect(twoAndTwo(bar(end[0] + 15) + bar(end[0] - 21))).toBe(false);
+    // A Rose-ringed Parakeet has no speculum or wing bars: each area only marks where they sit, in the tone of the
+    // feathers it lies on, and the text says the bird has none.
+    for (const [id, on] of [["speculum", "secondaries"], ["wing-bars", "wing-coverts"]]) {
+      expect(standing.parts.find((q) => q.id === id)!.tone, id).toBe(standing.parts.find((q) => q.id === on)!.tone);
+      expect(p.glossary.find((q) => q.id === id)!.lookFor, id).toMatch(/A Rose-ringed Parakeet has none/);
+    }
+    // The perched parakeet's long tail makes its plate taller than wide.
+    const [, , w, h] = standing.viewBox.split(" ").map(Number);
+    expect(h).toBeGreaterThan(w);
+  });
+
   it("keeps every wing bar inside the bird's combined wing coverts, which a bar only marks (CODEX1, td-2a2f94)", () => {
     // A bar is the pale or dark tips of a covert row, drawn over the coverts as its own part; cutting it out of the
     // combined area left a stripe of holes. The duck's bars border the speculum: the greater coverts' tips (drawn apart
-    // from its combined coverts) and the secondaries' tips.
+    // from its combined coverts) and the secondaries' tips. A Rock Pigeon's two black bars are the tips of the greater
+    // coverts and of the inner secondaries (CODEX1, td-72fe55), so its rear bar lies on the secondaries.
     for (const d of DIAGRAMS) {
       for (const v of d.views) {
         const bars = v.parts.find((p) => p.id === "wing-bars");
         const coverts = v.parts.find((p) => p.id === "wing-coverts");
         if (!bars || !coverts) continue;
-        const under = d.id === "duck" ? v.parts.filter((p) => ["wing-coverts", "greater-coverts", "secondaries", "speculum"].includes(p.id)).map((p) => p.d) : coverts.d;
+        const under =
+          d.id === "duck" ? v.parts.filter((p) => ["wing-coverts", "greater-coverts", "secondaries", "speculum"].includes(p.id)).map((p) => p.d)
+          : d.id === "pigeon" ? v.parts.filter((p) => ["wing-coverts", "secondaries"].includes(p.id)).map((p) => p.d)
+          : coverts.d;
         expect(coveredShare(bars.d, under), `${d.id}/${v.id}`).toBeGreaterThan(0.97);
       }
+    }
+    // The pigeon's bars really do cross both: neither the coverts nor the secondaries alone hold them.
+    for (const id of ["standing", "above"] as const) {
+      const v = getView(DIAGRAMS.find((d) => d.id === "pigeon")!, id);
+      const bars = v.parts.find((p) => p.id === "wing-bars")!.d;
+      expect(coveredShare(bars, v.parts.find((p) => p.id === "secondaries")!.d), id).toBeGreaterThan(0.3);
+      expect(coveredShare(bars, v.parts.find((p) => p.id === "wing-coverts")!.d), id).toBeGreaterThan(0.3);
     }
   });
 

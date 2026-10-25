@@ -5,7 +5,7 @@ export const songbird: DiagramText = {
   title: "Songbird",
   model: { species: "Song Sparrow", age: "adult", pose: "perched" },
   intro:
-    "A typical songbird, shaped after an adult Song Sparrow. Some marks, such as the two wing bars, are drawn to show where they appear on the many songbirds that have them. A few marks of other birds, such as a pigeon's cere or a duck's speculum, are outlined to show where they would sit.",
+    "A typical songbird, shaped after an adult Song Sparrow. Some marks, such as the two wing bars, are drawn to show where they appear on the many songbirds that have them. A few marks of other birds, such as a hawk's cere or a duck's speculum, are outlined to show where they would sit.",
   sources: [
     {
       label: "Song sparrow in Prospect Park (93031).jpg (reference photo, proportions only)",

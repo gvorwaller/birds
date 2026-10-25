@@ -91,13 +91,15 @@ describe("part terms (td-e4c6dd)", () => {
       tarsus: "tarsi", tibia: "tibia", foreneck: "foreneck", hindneck: "hindneck", "head-plumes": "head plumes",
       "gular-skin": "gular pouch", toes: "totipalmate", "nostril-tubes": "naricorns", "nasal-tufts": "nasal tufts",
       "nape-patch": "nape patch", gorget: "gorget", "post-ocular-spot": "postocular spot", comb: "eye-comb", ruff: "ruff", crest: "topknot",
-      "ear-tufts": "ear tufts",
+      "ear-tufts": "ear tufts", "neck-patch": "neck patch", "neck-ring": "neck ring",
     };
-    expect(Object.keys(sample).sort()).toEqual(TERMS.map((t) => t.part).sort());
+    expect(Object.keys(sample).sort()).toEqual([...new Set(TERMS.map((t) => t.part))].sort());
     for (const t of TERMS) {
       for (const own of DIAGRAM_ORDER) {
         if (t.onlyFor && !t.onlyFor.includes(own)) continue;
-        const [seg] = linkPartTerms([sample[t.part]], own)[0];
+        // The toes have two words, each scoped to its own feet.
+        const text = t.forms[0].startsWith("zygodactyl") ? "zygodactyl" : sample[t.part];
+        const [seg] = linkPartTerms([text], own)[0];
         const part = t.drawnIn.includes(own) ? t.part : (t.sameAs?.[own] ?? t.part);
         expect(seg.part, `${t.part} on ${own}`).toBe(part);
         const href = partHref(seg.diagram!, seg.part!);
@@ -129,6 +131,8 @@ describe("part terms (td-e4c6dd)", () => {
     for (const f of ["Phasianidae", "Odontophoridae", "Numididae", "Cracidae", "Megapodiidae"]) expect(diagramForFamily(f), f).toBe("gamebird");
     expect(diagramForFamily("Gaviidae")).toBe("loon");
     expect(diagramForFamily("Podicipedidae")).toBe("grebe");
+    expect(diagramForFamily("Columbidae")).toBe("pigeon");
+    for (const f of ["Psittacidae", "Psittaculidae", "Cacatuidae", "Strigopidae"]) expect(diagramForFamily(f), f).toBe("parrot");
     expect(diagramForFamily(null)).toBe("songbird");
   });
 
@@ -302,6 +306,33 @@ describe("part terms (td-e4c6dd)", () => {
     expect(links("a bare red throat pouch", "heron")).toEqual([]);
     expect(links("an iridescent gular patch", "songbird")).toEqual([]);
     expect(links("totipalmate feet", "songbird")).toEqual([]);
+  });
+
+  it("links the pigeon and parrot terms production text uses, on their own drawings (td-72fe55)", () => {
+    // Phrases from production's pigeon and parrot Description sections and Similar species notes.
+    expect(links("the grey-black bill with a small off-white cere", "pigeon")).toEqual(["cere→pigeon-cere"]);
+    expect(links("a glossy green neck patch, and a squeakier song", "pigeon")).toEqual(["neck patch→pigeon-neck-patch"]);
+    expect(links("lacking the Stock Dove's iridescent green/purple neck patch and dark wingbars", "pigeon")).toEqual([
+      "neck patch→pigeon-neck-patch",
+      "wingbars→pigeon-wing-bars",
+    ]);
+    expect(links("the skin around the eyes and the ceres are magenta", "pigeon")).toEqual(["ceres→pigeon-cere"]);
+    expect(links("the cere, eye-rings, and legs are grey", "parrot")).toEqual(["cere→parrot-cere", "eye-rings→parrot-eye-ring"]);
+    expect(links("adult males have a pink and black neck ring", "parrot")).toEqual(["neck ring→parrot-neck-ring"]);
+    expect(links("an orange-yellow wing speculum, red undertail", "parrot")).toEqual(["speculum→parrot-speculum"]);
+    expect(links("zygodactyl feet, two toes pointing forward", "parrot")).toEqual(["zygodactyl feet→parrot-toes"]);
+    expect(links("pale tarsi", "pigeon")).toEqual(["tarsi→pigeon-tarsus"]);
+    expect(links("pale tarsi", "parrot")).toEqual(["tarsi→parrot-tarsus"]);
+    // A pheasant's neck ring and other birds' neck patches are other marks; zygodactyl stays plain on a pigeon page.
+    expect(links("a white neck ring", "gamebird")).toEqual([]);
+    expect(links("a white neck patch", "songbird")).toEqual([]);
+    expect(links("a pink neck ring", "pigeon")).toEqual([]);
+    expect(links("zygodactyl feet", "pigeon")).toEqual([]);
+    // Webbed and zygodactyl feet are different: each word links only where the drawing shows that foot (CODEX1).
+    expect(links("Unlike totipalmate birds, parrots have zygodactyl feet.", "parrot")).toEqual(["zygodactyl feet→parrot-toes"]);
+    expect(links("totipalmate feet", "woodpecker")).toEqual([]);
+    expect(links("zygodactyl feet", "cormorant")).toEqual([]);
+    expect(links("zygodactyl feet", "woodpecker")).toEqual(["zygodactyl feet→woodpecker-toes"]);
   });
 
   it("uses the bird's own drawing when it has the part, otherwise the drawing that shows it", () => {

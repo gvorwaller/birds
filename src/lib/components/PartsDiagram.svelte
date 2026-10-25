@@ -101,7 +101,7 @@
     bill: "#8c8172", leg: "#c49a7a", legyellow: "#e0b23a", billyellow: "#d9c05a", accent2: "#5b5fa8",
     water: "#6c8fb0", gullgray: "#a9b1ba", legpink: "#d9a79b", eye: "#1c1c1c", perch: "#9b9286",
     accent: "#c0392b", orbital: "#e08a2c", mallardgreen: "#3c5f45", chestnut: "#7a4a35",
-    gullpale: "#d3d8de", linegray: "#6f7780", orange: "#e0893a",
+    gullpale: "#d3d8de", linegray: "#6f7780", orange: "#e0893a", parakeet: "#6fae4a",
   };
 </script>
 

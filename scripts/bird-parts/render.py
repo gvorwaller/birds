@@ -13,7 +13,8 @@ TONES = {"pale": "#f4efe6", "light": "#e6dccb", "mid": "#b9a68a", "wing": "#a18c
          "darker": "#4a3d30", "bill": "#8c8172", "leg": "#c49a7a", "legyellow": "#e0b23a", "billyellow": "#d9c05a",
          "accent2": "#5b5fa8", "water": "#6c8fb0", "gullgray": "#a9b1ba", "legpink": "#d9a79b", "eye": "#1c1c1c",
          "perch": "#9b9286", "accent": "#c0392b", "orbital": "#e08a2c",
-         "mallardgreen": "#3c5f45", "chestnut": "#7a4a35", "gullpale": "#d3d8de", "linegray": "#6f7780", "orange": "#e0893a"}
+         "mallardgreen": "#3c5f45", "chestnut": "#7a4a35", "gullpale": "#d3d8de", "linegray": "#6f7780", "orange": "#e0893a",
+         "parakeet": "#6fae4a"}
 
 
 def svg(d, layer, highlight=None, width=900, title=None):
@@ -68,4 +69,4 @@ def main(outdir, birds):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2:] or ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe"])
+    main(sys.argv[1], sys.argv[2:] or ["songbird", "shorebird", "duck", "gull", "raptor", "heron", "cormorant", "auk", "tubenose", "woodpecker", "hummingbird", "gamebird", "loon", "grebe", "pigeon", "parrot"])
