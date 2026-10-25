@@ -154,6 +154,19 @@ for i in $(seq 1 12); do
     worker=$(printf '%s' "${body}" | sed -n 's/.*"worker":"\([^"]*\)".*/\1/p')
     if [[ "${db}" == "ok" && "${worker}" == "ok" ]]; then
       echo "==> health OK (db=${db} worker=${worker})"
+      # Hotspot search index (td-877997): the web process builds it at startup;
+      # wait for it so the first search after the deploy does not. A slow
+      # build only warns; searches still work (the first one waits for it).
+      echo "==> waiting for the hotspot search index"
+      for j in $(seq 1 36); do
+        state=$(curl -fsS "${HEALTH_URL_INTERNAL}" | sed -n 's/.*"hub_index":"\([^"]*\)".*/\1/p' || true)
+        if [[ "${state}" == "ready" ]]; then
+          echo "==> hotspot search index ready (~$(( (j - 1) * 5 )) s after health OK)"
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "!! hotspot search index not ready after 180 s (state=${state:-?}); searches will build it" >&2
       exit 0
     fi
   fi

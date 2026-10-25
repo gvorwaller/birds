@@ -22,6 +22,7 @@ import {
 	type TimingBag
 } from '$server/request-timing';
 import { requestStarted, startFreezeWatch } from '$server/freeze-watch';
+import { startHubIndexWarmer } from '$server/hub-discovery';
 
 
 // Server health (td-7739c2): sample this process's memory for the admin page.
@@ -30,6 +31,9 @@ if (!building && !process.env.VITEST) startMemorySampler('web');
 // Server freezes (td-b07462): notice when this process stops responding, and
 // record which requests and operations were running.
 if (!building && !process.env.VITEST) startFreezeWatch(__GIT_SHA__);
+// Hotspot search index (td-877997): build it now, not on the first search
+// after a deploy, and rebuild it within a minute of a data change.
+if (!building && !process.env.VITEST) startHubIndexWarmer();
 // eBird traffic metric (td-009031): flush this process's counts every minute
 // and once more when adapter-node shuts down cleanly.
 if (!building && !process.env.VITEST) {

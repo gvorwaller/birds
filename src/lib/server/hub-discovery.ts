@@ -17,7 +17,7 @@
  *    promoted. `ebird_locations` alone is never evidence and is never indexed.
  */
 import { error } from "@sveltejs/kit";
-import { query } from "$lib/db";
+import { query, withReadSnapshot } from "$lib/db";
 import { haversineKm, MILES_TO_KM } from "$lib/geo";
 import { guideHotspotParent } from "$lib/guide-location";
 import { isHotspotLocId } from "$lib/loc-id";
@@ -155,6 +155,8 @@ export class HotspotStore {
   readonly state: (string | null)[] = [];
   readonly country: (string | null)[] = [];
   readonly sources: number[] = [];
+  /** fold(name ?? id), computed once at build time instead of on every search (td-877997). */
+  readonly folded: string[] = [];
 
   get size(): number {
     return this.ids.length;
@@ -212,6 +214,22 @@ export class HotspotStore {
   }
 }
 
+/**
+ * Lets other requests run between slices of the index build and of a search
+ * scan (td-877997): Node runs every request on one thread, so one long loop
+ * over ~186k hotspots stopped the whole server for seconds on production.
+ */
+const breathe = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** Loop iterations between breaths. */
+const SLICE = 2048;
+/**
+ * Hotspots per row of the list query, read one row per round trip through a
+ * cursor: the driver parses every row that arrives in one network read in a
+ * single stretch (545 ms locally for the whole list), so rows must also arrive
+ * apart.
+ */
+const LIST_CHUNK = 2000;
+
 const finite = (v: unknown, min: number, max: number): number | null =>
   typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null;
 
@@ -237,8 +255,91 @@ function chain(code: string | null | undefined): string[] {
   return out;
 }
 
+/** One row of the hotspot list query: LIST_CHUNK hotspots as column arrays. */
+interface ListChunk {
+  ids: string[] | null;
+  names: (string | null)[] | null;
+  lats: (number | null)[] | null;
+  lngs: (number | null)[] | null;
+  s1: (string | null)[] | null;
+  s2: (string | null)[] | null;
+  cc: (string | null)[] | null;
+}
+
+function addListChunk(hotspots: HotspotStore, lists: ListChunk): void {
+  const ids = lists.ids ?? [];
+  for (let k = 0; k < ids.length; k++) {
+    const i = hotspots.ensure(ids[k]);
+    hotspots.sources[i] |= SRC_LIST;
+    hotspots.names[i] = lists.names?.[k]?.trim() || hotspots.names[i];
+    let lat = finite(lists.lats?.[k], -90, 90);
+    let lng = finite(lists.lngs?.[k], -180, 180);
+    if (lat == null || lng == null) lat = lng = null;
+    hotspots.lat[i] = lat;
+    hotspots.lng[i] = lng;
+    const s2 = lists.s2?.[k];
+    const s1 = lists.s1?.[k];
+    const cc = lists.cc?.[k];
+    if (s2 && parseRegionCode(s2)?.level === "subnational2") hotspots.county[i] = hotspots.intern(s2);
+    if (s1 && parseRegionCode(s1)?.level === "subnational1") hotspots.state[i] = hotspots.intern(s1);
+    if (cc && parseRegionCode(cc)?.level === "country") hotspots.country[i] = hotspots.intern(cc);
+  }
+}
+
 async function loadEvidence() {
-  const [loadedRes, attemptRes, listRes, infoRes, coordRes, reference] = await Promise.all([
+  // Verified hotspot union, deduplicated by exact eBird location ID.
+  const hotspots = new HotspotStore();
+  // Official hotspot lists only (regional and point-radius). The copy from the
+  // list whose content changed most recently wins; entries carry their own
+  // official ancestry codes. Returned as column arrays rather than ~186k row
+  // objects (td-7f03b6), LIST_CHUNK hotspots per row so the driver parses them
+  // in pieces with other requests running in between (td-877997).
+  // Set when a sibling read fails: the cursor stops at its next batch, and the
+  // build fails only after it has closed, so a failed build never leaves a
+  // cursor running beside the next one (CODEX1).
+  let stopLists = false;
+  const listsRead = withReadSnapshot(async (db) => {
+    await db.query(
+      `DECLARE hub_lists NO SCROLL CURSOR FOR
+       SELECT array_agg(loc_id ORDER BY loc_id) AS ids,
+              array_agg(loc_name ORDER BY loc_id) AS names,
+              array_agg(lat ORDER BY loc_id) AS lats,
+              array_agg(lng ORDER BY loc_id) AS lngs,
+              array_agg(s1 ORDER BY loc_id) AS s1,
+              array_agg(s2 ORDER BY loc_id) AS s2,
+              array_agg(cc ORDER BY loc_id) AS cc
+         FROM (
+           SELECT y.*, (row_number() OVER (ORDER BY y.loc_id) - 1) / ${LIST_CHUNK} AS chunk
+             FROM (
+               SELECT DISTINCT ON (x.loc_id) x.loc_id, x.loc_name, x.lat, x.lng, x.s1, x.s2, x.cc
+                 FROM (
+                   SELECT h->>'locId' AS loc_id, h->>'locName' AS loc_name,
+                          CASE WHEN jsonb_typeof(h->'lat') = 'number' THEN (h->>'lat')::float8 END AS lat,
+                          CASE WHEN jsonb_typeof(h->'lng') = 'number' THEN (h->>'lng')::float8 END AS lng,
+                          h->>'subnational1Code' AS s1, h->>'subnational2Code' AS s2,
+                          h->>'countryCode' AS cc, coalesce(c.content_changed_at, c.fetched_at) AS changed_at,
+                          c.cache_key
+                     FROM ebird_cache c
+                    CROSS JOIN LATERAL jsonb_array_elements(
+                           CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
+                    WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
+                      AND jsonb_typeof(h) = 'object'
+                      AND h->>'locId' ~ '^L[0-9]+$'
+                 ) x
+                ORDER BY x.loc_id, x.changed_at DESC, x.cache_key
+             ) y
+         ) z
+        GROUP BY chunk
+        ORDER BY chunk`,
+    );
+    while (!stopLists) {
+      const { rows } = await db.query<ListChunk>("FETCH 1 FROM hub_lists");
+      if (rows.length === 0) break;
+      addListChunk(hotspots, rows[0]);
+      await breathe();
+    }
+  });
+  const othersRead = Promise.all([
     query<LoadedRow>(
       `SELECT loc_code, loc_kind, loc_name, region_code, begin_year, end_year, n_species
          FROM frequency_fetch`,
@@ -248,43 +349,6 @@ async function loadEvidence() {
          FROM frequency_fetch_attempts a
         WHERE a.status = 'error'
           AND NOT EXISTS (SELECT 1 FROM frequency_fetch f WHERE f.loc_code = a.loc_code)`,
-    ),
-    // Official hotspot lists only (regional and point-radius). The newest copy of
-    // an ID wins; entries carry their own official ancestry codes. Returned as
-    // seven column arrays rather than ~186k row objects (td-7f03b6).
-    query<{
-      ids: string[] | null;
-      names: (string | null)[] | null;
-      lats: (number | null)[] | null;
-      lngs: (number | null)[] | null;
-      s1: (string | null)[] | null;
-      s2: (string | null)[] | null;
-      cc: (string | null)[] | null;
-    }>(
-      `SELECT array_agg(loc_id ORDER BY loc_id) AS ids,
-              array_agg(loc_name ORDER BY loc_id) AS names,
-              array_agg(lat ORDER BY loc_id) AS lats,
-              array_agg(lng ORDER BY loc_id) AS lngs,
-              array_agg(s1 ORDER BY loc_id) AS s1,
-              array_agg(s2 ORDER BY loc_id) AS s2,
-              array_agg(cc ORDER BY loc_id) AS cc
-         FROM (
-           SELECT DISTINCT ON (x.loc_id) x.loc_id, x.loc_name, x.lat, x.lng, x.s1, x.s2, x.cc
-             FROM (
-               SELECT h->>'locId' AS loc_id, h->>'locName' AS loc_name,
-                      CASE WHEN jsonb_typeof(h->'lat') = 'number' THEN (h->>'lat')::float8 END AS lat,
-                      CASE WHEN jsonb_typeof(h->'lng') = 'number' THEN (h->>'lng')::float8 END AS lng,
-                      h->>'subnational1Code' AS s1, h->>'subnational2Code' AS s2,
-                      h->>'countryCode' AS cc, c.fetched_at
-                 FROM ebird_cache c
-                CROSS JOIN LATERAL jsonb_array_elements(
-                       CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
-                WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
-                  AND jsonb_typeof(h) = 'object'
-                  AND h->>'locId' ~ '^L[0-9]+$'
-             ) x
-            ORDER BY x.loc_id, x.fetched_at DESC
-         ) y`,
     ),
     query<{ cache_key: string; payload: unknown }>(
       `SELECT cache_key, payload FROM ebird_cache WHERE cache_key LIKE 'hotspotInfo:%'`,
@@ -298,31 +362,18 @@ async function loadEvidence() {
     ),
     allReferenceRegions(),
   ]);
+  othersRead.catch(() => {
+    stopLists = true;
+  });
+  const [others, lists] = await Promise.allSettled([othersRead, listsRead]);
+  if (others.status === "rejected") throw others.reason;
+  if (lists.status === "rejected") throw lists.reason;
+  const [loadedRes, attemptRes, infoRes, coordRes, reference] = others.value;
 
   const loaded = new Map<string, LoadedRow>(loadedRes.rows.map((r) => [r.loc_code, r]));
   const attempts = new Map<string, AttemptRow>(attemptRes.rows.map((r) => [r.loc_code, r]));
   const refByCode = new Map(reference.map((r) => [r.code, r]));
 
-  // Verified hotspot union, deduplicated by exact eBird location ID.
-  const hotspots = new HotspotStore();
-  const lists = listRes.rows[0];
-  const ids = lists?.ids ?? [];
-  for (let k = 0; k < ids.length; k++) {
-    const i = hotspots.ensure(ids[k]);
-    hotspots.sources[i] |= SRC_LIST;
-    hotspots.names[i] = lists!.names?.[k]?.trim() || hotspots.names[i];
-    let lat = finite(lists!.lats?.[k], -90, 90);
-    let lng = finite(lists!.lngs?.[k], -180, 180);
-    if (lat == null || lng == null) lat = lng = null;
-    hotspots.lat[i] = lat;
-    hotspots.lng[i] = lng;
-    const s2 = lists!.s2?.[k];
-    const s1 = lists!.s1?.[k];
-    const cc = lists!.cc?.[k];
-    if (s2 && parseRegionCode(s2)?.level === "subnational2") hotspots.county[i] = hotspots.intern(s2);
-    if (s1 && parseRegionCode(s1)?.level === "subnational1") hotspots.state[i] = hotspots.intern(s1);
-    if (cc && parseRegionCode(cc)?.level === "country") hotspots.country[i] = hotspots.intern(cc);
-  }
   for (const x of infoRes.rows) {
     const id = x.cache_key.slice("hotspotInfo:".length);
     if (!isHotspotLocId(id)) continue;
@@ -340,8 +391,11 @@ async function loadEvidence() {
     if (!hotspots.state[i] && meta.stateCode && parseRegionCode(meta.stateCode)?.level === "subnational1")
       hotspots.state[i] = hotspots.intern(meta.stateCode);
   }
+  await breathe();
   const coords = new Map(coordRes.rows.map((r) => [r.loc_id, r]));
+  let n = 0;
   for (const row of loadedRes.rows) {
+    if (++n % SLICE === 0) await breathe();
     if (row.loc_kind !== "hotspot" || !isHotspotLocId(row.loc_code)) continue;
     const i = hotspots.ensure(row.loc_code);
     hotspots.sources[i] |= SRC_LOADED;
@@ -361,11 +415,13 @@ async function loadEvidence() {
     if (rc && !hotspots.country[i]) hotspots.country[i] = hotspots.intern(rc.country);
   }
   for (let i = 0; i < hotspots.size; i++) {
+    if (i % SLICE === 0) await breathe();
     if (hotspots.county[i] && !hotspots.state[i]) hotspots.state[i] = hotspots.intern(parentOf(hotspots.county[i]!));
     if (!hotspots.country[i])
       hotspots.country[i] = hotspots.intern(
         parseRegionCode(hotspots.county[i] ?? hotspots.state[i] ?? "")?.country ?? null,
       );
+    hotspots.folded[i] = fold(hotspots.names[i] ?? hotspots.ids[i]);
   }
 
   // Loaded rows recorded beneath each country/region (own row excluded).
@@ -388,110 +444,174 @@ export type Evidence = Awaited<ReturnType<typeof loadEvidence>>;
 
 /**
  * A cheap fingerprint of everything loadEvidence() reads, so the index is
- * rebuilt only when an input changes: loaded rows, failed attempts, hotspot
- * list/info cache rows, hotspot coordinates, and the last complete year.
+ * rebuilt only when an input changes, in two parts:
+ * - `lists`: the cached official hotspot lists and info, by when their CONTENT
+ *   last changed (migration 0095's trigger fingerprints only the fields the
+ *   index reads), not by when they were last fetched: a refetch of the same
+ *   hotspots used to rebuild everything (td-877997);
+ * - `loaded`: loaded rows, failed attempts, coordinates of downloaded hotspots
+ *   and the last complete year (the fields used, not their fetch or modification times).
  */
-async function evidenceRevision(): Promise<string> {
-  const { rows } = await query<{ revision: string }>(
-    `SELECT concat_ws('/',
+interface Revision {
+  lists: string;
+  loaded: string;
+}
+async function evidenceRevision(): Promise<Revision> {
+  const { rows } = await query<{ lists: string | null; loaded: string }>(
+    `SELECT
+       (SELECT md5(string_agg(jsonb_build_array(cache_key, coalesce(content_changed_at, fetched_at))::text,
+                 ',' ORDER BY cache_key COLLATE "C"))
+          FROM ebird_cache
+         WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
+            OR cache_key LIKE 'hotspotInfo:%') AS lists,
+       concat_ws('/',
        (SELECT md5(string_agg(jsonb_build_array(loc_code, loc_kind, loc_name, region_code,
-                 begin_year, end_year, n_species, fetched_at)::text, ',' ORDER BY loc_code COLLATE "C"))
+                 begin_year, end_year, n_species)::text, ',' ORDER BY loc_code COLLATE "C"))
           FROM frequency_fetch),
        (SELECT md5(string_agg(jsonb_build_array(a.loc_code, a.loc_kind, a.loc_name, a.region_code, a.error)::text,
                  ',' ORDER BY a.loc_code COLLATE "C"))
           FROM frequency_fetch_attempts a
          WHERE a.status = 'error'
            AND NOT EXISTS (SELECT 1 FROM frequency_fetch f WHERE f.loc_code = a.loc_code)),
-       (SELECT md5(string_agg(jsonb_build_array(cache_key, fetched_at)::text,
-                 ',' ORDER BY cache_key COLLATE "C"))
-          FROM ebird_cache
-         WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
-            OR cache_key LIKE 'hotspotInfo:%'),
-       (SELECT md5(string_agg(jsonb_build_array(e.loc_id, e.lat, e.lng, e.updated_at)::text,
+       (SELECT md5(string_agg(jsonb_build_array(e.loc_id, e.lat, e.lng)::text,
                  ',' ORDER BY e.loc_id COLLATE "C"))
           FROM ebird_locations e
          WHERE e.loc_id = ANY (${DOWNLOADED_HOTSPOT_IDS}))
-     ) AS revision`,
+       ) AS loaded`,
   );
-  return `${rows[0]?.revision ?? ""}|${lastCompleteYear()}`;
+  return { lists: rows[0]?.lists ?? "", loaded: `${rows[0]?.loaded ?? ""}|${lastCompleteYear()}` };
 }
 
+const sameRevision = (a: Revision, b: Revision) => a.lists === b.lists && a.loaded === b.loaded;
+
 /**
- * Evidence + eager candidates, reused until an input changes. td-9eae4f kept
- * the ORIGINAL index (one object per hotspot, plus a candidate each: ~194 MB
- * on the test snapshot, more in production), which helped push production
- * past PM2's 600 MB limit, so it was dropped on 2026-09-26. The compact store
- * (td-7f03b6) holds the same evidence in ~64 MB (160k hotspots), which is
- * affordable to keep under the 384 MB heap cap and makes repeat searches
- * fast. Concurrent callers share one in-flight build.
+ * Evidence + eager candidates. td-9eae4f kept the ORIGINAL index (one object
+ * per hotspot, plus a candidate each: ~194 MB on the test snapshot, more in
+ * production), which helped push production past PM2's 600 MB limit, so it
+ * was dropped on 2026-09-26. The compact store (td-7f03b6) holds the same
+ * evidence in ~64 MB (160k hotspots), which is affordable to keep under the
+ * 384 MB heap cap and makes repeat searches fast.
+ *
+ * td-877997: the index is built when the web process starts and checked for
+ * changes every minute (startHubIndexWarmer), so a search rarely waits for
+ * one. While a new one builds, the current one keeps answering if only the
+ * cached hotspot lists changed (eBird added or renamed hotspots); a change to
+ * loaded data (the owner's own load) waits for the new index, so the search
+ * shows it. One build at a time; the build breathes, so other requests keep
+ * being answered while it runs.
  */
 type DiscoveryIndex = { ev: Evidence; candidates: Candidate[]; helpers: CandidateHelpers };
-let discoveryCache: { revision: string; value: Promise<DiscoveryIndex> } | undefined;
-async function discoveryIndex(): Promise<DiscoveryIndex> {
-  const revision = await evidenceRevision();
-  if (discoveryCache?.revision === revision) return discoveryCache.value;
-  // Named for Admin → Metrics → Server freezes (td-b07462, td-877997).
-  const value = trackBusy("hotspot search index rebuild", () =>
-    loadEvidence().then((ev) => {
-      const helpers = candidateHelpers(ev);
-      return { ev, candidates: buildCandidates(ev, helpers), helpers };
-    }),
-  );
-  discoveryCache = { revision, value };
-  // A failed build must not be served to the next search.
-  value.catch(() => {
-    if (discoveryCache?.value === value) discoveryCache = undefined;
+let ready: { rev: Revision; value: DiscoveryIndex } | undefined;
+let building: { rev: Revision; promise: Promise<DiscoveryIndex> } | undefined;
+let builds = 0;
+
+function startBuild(rev: Revision, reason: string): Promise<DiscoveryIndex> {
+  if (building) return building.promise;
+  builds += 1;
+  const started = performance.now();
+  // Named for Admin → Metrics → Server freezes (td-b07462).
+  const promise = trackBusy("hotspot search index rebuild", async () => {
+    const ev = await loadEvidence();
+    await breathe();
+    const helpers = candidateHelpers(ev);
+    const candidates = buildCandidates(ev, helpers);
+    return { ev, candidates, helpers };
   });
-  return value;
+  const entry = { rev, promise };
+  building = entry;
+  // Cleared in the same step that publishes the result, so a caller waiting on
+  // this build sees it finished when it checks again.
+  promise.then(
+    (value) => {
+      if (building === entry) building = undefined;
+      ready = { rev, value };
+      console.log(
+        `[hub-index] built ${value.ev.hotspots.size} hotspots in ${Math.round(performance.now() - started)} ms (${reason})`,
+      );
+    },
+    (err) => {
+      if (building === entry) building = undefined;
+      console.error("[hub-index] build failed:", err instanceof Error ? err.message : err);
+    },
+  );
+  return promise;
 }
 
 /**
- * The IDs of verified hotspots (in an official hotspot list, or with valid
- * official hotspot info): a lean Set of short strings, kept until those cache
- * rows change. This is all the Hotspots & data page needs to label failed
- * loads, without building or retaining the whole discovery index.
+ * An index whose revision `fits` the current one. A build already running may
+ * be for an older revision (it started before the owner's load), so a caller
+ * waits for it, then checks again, and builds again if it still does not fit
+ * (CODEX1); after WAIT_ROUNDS it takes the newest index there is.
  */
-let verifiedIdsCache: { revision: string; value: Promise<Set<string>> } | undefined;
-async function verifiedHotspotIds(): Promise<Set<string>> {
-  const { rows } = await query<{ revision: string }>(
-    `SELECT count(*) || ':' || coalesce(max(fetched_at)::text, '') AS revision
-       FROM ebird_cache
-      WHERE cache_key LIKE 'hotspots:%' OR cache_key LIKE 'hotspotsRegion:%'
-         OR cache_key LIKE 'hotspotInfo:%'`,
-  );
-  const revision = rows[0]?.revision ?? "";
-  if (verifiedIdsCache?.revision === revision) return verifiedIdsCache.value;
-  const value = trackBusy("verified hotspot list rebuild", async () => {
-    const [lists, info] = await Promise.all([
-      query<{ loc_id: string }>(
-        `SELECT DISTINCT h->>'locId' AS loc_id
-           FROM ebird_cache c
-          CROSS JOIN LATERAL jsonb_array_elements(
-                 CASE WHEN jsonb_typeof(c.payload) = 'array' THEN c.payload ELSE '[]'::jsonb END) h
-          WHERE (c.cache_key LIKE 'hotspots:%' OR c.cache_key LIKE 'hotspotsRegion:%')
-            AND jsonb_typeof(h) = 'object' AND h->>'locId' ~ '^L[0-9]+$'`,
-      ),
-      query<{ cache_key: string; payload: unknown }>(
-        `SELECT cache_key, payload FROM ebird_cache WHERE cache_key LIKE 'hotspotInfo:%'`,
-      ),
-    ]);
-    const ids = new Set(lists.rows.map((r) => r.loc_id));
-    for (const row of info.rows) {
-      const id = row.cache_key.slice("hotspotInfo:".length);
-      if (isHotspotLocId(id) && parseOfficialHotspotInfo(row.payload, id)) ids.add(id);
+const WAIT_ROUNDS = 3;
+async function indexThatFits(fits: (built: Revision, now: Revision) => boolean): Promise<DiscoveryIndex> {
+  for (let round = 1; ; round++) {
+    const rev = await evidenceRevision();
+    if (ready && fits(ready.rev, rev)) return ready.value;
+    if (round > WAIT_ROUNDS && ready) return ready.value;
+    if (building) {
+      await building.promise.catch(() => undefined);
+      continue;
     }
-    return ids;
-  });
-  verifiedIdsCache = { revision, value };
-  value.catch(() => {
-    if (verifiedIdsCache?.value === value) verifiedIdsCache = undefined;
-  });
-  return value;
+    const reason = !ready ? "first use" : ready.rev.loaded !== rev.loaded ? "loaded data changed" : "hotspot lists changed";
+    try {
+      await startBuild(rev, reason);
+    } catch (err) { // stale-safe: web-request index build, never under a job claim; rethrows unless an older index can answer
+      if (round >= WAIT_ROUNDS) {
+        if (ready) return ready.value;
+        throw err;
+      }
+    }
+  }
+}
+
+async function discoveryIndex(): Promise<DiscoveryIndex> {
+  const rev = await evidenceRevision();
+  const current = ready;
+  if (current && sameRevision(current.rev, rev)) return current.value;
+  // Only the cached hotspot lists changed: answer from the current index and rebuild beside it.
+  if (current && current.rev.loaded === rev.loaded) {
+    void startBuild(rev, "hotspot lists changed").catch(() => undefined);
+    return current.value;
+  }
+  // Loaded data changed (or there is no index yet): wait for one that includes it.
+  return indexThatFits((built, now) => built.loaded === now.loaded);
+}
+
+/** "ready" once an index exists (a newer one may be building), for /api/health and the deploy. */
+export function hubIndexState(): "ready" | "building" | "cold" {
+  return ready ? "ready" : building ? "building" : "cold";
+}
+
+let warmerStarted = false;
+/**
+ * Builds the index when the web process starts (so the first search after a
+ * deploy does not wait) and rebuilds it within a minute of a change, before
+ * anyone searches (hooks.server.ts; not in builds or tests).
+ */
+export function startHubIndexWarmer(everyMs = 60_000): void {
+  if (warmerStarted) return;
+  warmerStarted = true;
+  const refresh = async (reason: string) => {
+    try {
+      const rev = await evidenceRevision();
+      if (!ready || !sameRevision(ready.rev, rev)) await startBuild(rev, reason);
+    } catch (err) { // stale-safe: web-process background refresh, never under a job claim; logs and retries next minute
+      console.error("[hub-index] refresh failed:", err instanceof Error ? err.message : err);
+    }
+  };
+  void refresh("startup");
+  setInterval(() => void refresh("data changed"), everyMs).unref();
 }
 
 export function __resetDiscoveryCacheForTests(): void {
-  discoveryCache = undefined;
-  verifiedIdsCache = undefined;
+  ready = undefined;
+  building = undefined;
+}
+
+/** Tests: how many builds have started, and the one running (if any). */
+export function __hubIndexForTests(): { builds: number; building: Promise<unknown> | undefined } {
+  return { builds, building: building?.promise };
 }
 
 const EVIDENCE_LABEL = {
@@ -743,10 +863,18 @@ export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candid
 export async function verifiedHotspotIdsAmong(ids: readonly string[]): Promise<Set<string>> {
   const wanted = [...new Set(ids.filter((id) => isHotspotLocId(id)))];
   if (wanted.length === 0) return new Set();
-  // Same rule as before (official hotspot list or valid hotspot info), from a
-  // lean cached ID set instead of re-expanding every cached list per load.
-  const verified = await verifiedHotspotIds();
-  return new Set(wanted.filter((id) => verified.has(id)));
+  // Same rule as before (official hotspot list or valid hotspot info), read from
+  // the discovery index's store (td-877997) instead of a second full build of
+  // the same lists. Only the lists matter here, so a loaded-data change never
+  // makes this wait.
+  const index = await indexThatFits((built, now) => built.lists === now.lists);
+  const store = index.ev.hotspots as HotspotStore;
+  return new Set(
+    wanted.filter((id) => {
+      const i = store.indexOf(id);
+      return i !== undefined && (store.sources[i] & (SRC_LIST | SRC_INFO)) !== 0;
+    }),
+  );
 }
 
 const emptyCounts = (): Record<HubResultType, number> => ({
@@ -820,16 +948,17 @@ export async function hubDiscover(
       if (rank !== -1) ranked.push(pack(i, false, rank));
     }
     for (let i = 0; i < store.size; i++) {
+      // ~186k hotspots: let other requests run between slices (td-877997).
+      if (i % SLICE === 0) await breathe();
       const id = store.ids[i];
       const row = ev.loaded.get(id);
       const loadedRow = row?.loc_kind === "hotspot" ? row : undefined;
-      const name = store.names[i] ?? id;
       hotspotEvidenceRanks[i] = loadedRow ? 0 : ev.attempts.has(id) ? 2 : 1;
       let rank = -1;
       if (id.toUpperCase() === code) rank = 0;
       else {
         // Same rule as an eager candidate: best of its names, then its context.
-        rank = nameRank(fold(name));
+        rank = nameRank(store.folded[i]);
         if (loadedRow != null) {
           const r = nameRank(fold(loadedRow.loc_name));
           if (r !== -1 && (rank === -1 || r < rank)) rank = r;
@@ -886,6 +1015,7 @@ export async function hubDiscover(
   const milesByIndex = new Float64Array(store.size);
   let evaluated = 0;
   for (let i = 0; i < store.size; i++) {
+    if (i % SLICE === 0) await breathe();
     const lat = store.lat[i];
     const lng = store.lng[i];
     if (lat == null || lng == null) continue;
