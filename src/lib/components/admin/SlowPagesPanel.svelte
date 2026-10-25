@@ -124,6 +124,11 @@
 							{n(row.count)} slow ({n(row.previousCount)} the week before) · typical {fmtMs(row.medianTotalMs)} · worst {fmtMs(row.worstTotalMs)}
 							· first part ready in {fmtMs(row.medianShellMs)} · largest {fmtBytes(row.worstBytes)}
 						</p>
+						{#if row.frozenCount > 0}
+							<p class="line frozen">
+								{n(row.frozenCount)} of them overlapped a server freeze: their time includes it, whether they caused it or waited on it.
+							</p>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -144,6 +149,11 @@
 						<p class="line">
 							{fmtWhen(q.at)} · status {q.status} · {fmtBytes(q.bytes)} · {where(q)} · deploy {shortVersion(q.version)}
 						</p>
+						{#if q.freezeMs != null}
+							<p class="line frozen">
+								Overlapped a {fmtMs(q.freezeMs)} server freeze: its time includes it, whether it caused it or waited on it.
+							</p>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -224,6 +234,10 @@
 	.line {
 		font-size: 0.88rem;
 		margin: 4px 0 0;
+	}
+	.frozen {
+		color: var(--text);
+		font-weight: 600;
 	}
 	.more {
 		min-height: 48px;

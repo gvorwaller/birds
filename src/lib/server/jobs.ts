@@ -760,6 +760,8 @@ export interface PruneScope {
 	/** td-67b481: limit the slow-request sweep to these rows. */
 	pageTimingIds?: readonly number[];
 	/** td-1cb094: limit the stuck-page sweep to these accounts. */
+	/** td-b07462: limit the server-freeze sweep to these rows. */
+	serverFreezeIds?: readonly number[];
 	clientStallUserIds?: readonly number[];
 	alertUserId?: number;
 	cacheKeyLike?: string;
@@ -826,6 +828,14 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 	} else if (scope.pageTimingIds) {
 		await query(`DELETE FROM page_timing WHERE at < NOW() - interval '30 days' AND id = ANY($1::bigint[])`, [
 			[...scope.pageTimingIds]
+		]);
+	}
+	// Server freezes (td-b07462): 30 days.
+	if (!scope) {
+		await query(`DELETE FROM server_freezes WHERE started_at < NOW() - interval '30 days'`);
+	} else if (scope.serverFreezeIds) {
+		await query(`DELETE FROM server_freezes WHERE started_at < NOW() - interval '30 days' AND id = ANY($1::bigint[])`, [
+			[...scope.serverFreezeIds]
 		]);
 	}
 	// Stuck-page reports from browsers (td-1cb094): 30 days.

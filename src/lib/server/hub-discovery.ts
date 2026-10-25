@@ -25,6 +25,7 @@ import { parentOf, parseRegionCode } from "$lib/region-code";
 import { HUB_FIND_MIN, HUB_PAGE_SIZE, type HubDiscoveryState, type HubTarget } from "$lib/hub-discovery";
 import { lastCompleteYear } from "$server/barchart";
 import { countyMeta } from "$server/county-meta";
+import { trackBusy } from "$server/freeze-watch";
 import { DOWNLOADED_HOTSPOT_IDS } from "$server/hotspot-coordinates";
 import { parseOfficialHotspotInfo } from "$server/hotspot-page";
 import { allReferenceRegions } from "$server/regions";
@@ -429,10 +430,13 @@ let discoveryCache: { revision: string; value: Promise<DiscoveryIndex> } | undef
 async function discoveryIndex(): Promise<DiscoveryIndex> {
   const revision = await evidenceRevision();
   if (discoveryCache?.revision === revision) return discoveryCache.value;
-  const value = loadEvidence().then((ev) => {
-    const helpers = candidateHelpers(ev);
-    return { ev, candidates: buildCandidates(ev, helpers), helpers };
-  });
+  // Named for Admin → Metrics → Server freezes (td-b07462, td-877997).
+  const value = trackBusy("hotspot search index rebuild", () =>
+    loadEvidence().then((ev) => {
+      const helpers = candidateHelpers(ev);
+      return { ev, candidates: buildCandidates(ev, helpers), helpers };
+    }),
+  );
   discoveryCache = { revision, value };
   // A failed build must not be served to the next search.
   value.catch(() => {
@@ -457,7 +461,7 @@ async function verifiedHotspotIds(): Promise<Set<string>> {
   );
   const revision = rows[0]?.revision ?? "";
   if (verifiedIdsCache?.revision === revision) return verifiedIdsCache.value;
-  const value = (async () => {
+  const value = trackBusy("verified hotspot list rebuild", async () => {
     const [lists, info] = await Promise.all([
       query<{ loc_id: string }>(
         `SELECT DISTINCT h->>'locId' AS loc_id
@@ -477,7 +481,7 @@ async function verifiedHotspotIds(): Promise<Set<string>> {
       if (isHotspotLocId(id) && parseOfficialHotspotInfo(row.payload, id)) ids.add(id);
     }
     return ids;
-  })();
+  });
   verifiedIdsCache = { revision, value };
   value.catch(() => {
     if (verifiedIdsCache?.value === value) verifiedIdsCache = undefined;

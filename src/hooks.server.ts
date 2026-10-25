@@ -21,11 +21,15 @@ import {
 	serverTimingHeader,
 	type TimingBag
 } from '$server/request-timing';
+import { requestStarted, startFreezeWatch } from '$server/freeze-watch';
 
 
 // Server health (td-7739c2): sample this process's memory for the admin page.
 // Not during a build, and not under Vitest (tests import hooks directly).
 if (!building && !process.env.VITEST) startMemorySampler('web');
+// Server freezes (td-b07462): notice when this process stops responding, and
+// record which requests and operations were running.
+if (!building && !process.env.VITEST) startFreezeWatch(__GIT_SHA__);
 // eBird traffic metric (td-009031): flush this process's counts every minute
 // and once more when adapter-node shuts down cleanly.
 if (!building && !process.env.VITEST) {
@@ -123,15 +127,24 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Latency accounting (refactor plan Phase 1): the bag rides the request
 	// via AsyncLocalStorage; db/eBird/Google/AI chokepoints record into it.
 	const bag = newTimingBag();
-	const response = await runWithTiming(bag, () => resolve(event, {
-		transformPageChunk: ({ html }) => {
-			// Read AFTER actions run, so a normal form POST paints the saved theme.
-			const theme = event.locals.user?.theme ?? DEFAULT_THEME;
-			return html.replace('%birds.theme%', theme)
-				.replace('%birds.theme-style%', themeStyle(theme))
-				.replace('%birds.theme-color%', themeDefinition(theme).colors.bg);
-		}
-	}));
+	// In flight until the body finishes (or fails, or is cancelled), so a server
+	// freeze can list what was running (td-b07462).
+	const ended = requestStarted(event.route?.id ?? null, event.request.method);
+	let response: Response;
+	try {
+		response = await runWithTiming(bag, () => resolve(event, {
+			transformPageChunk: ({ html }) => {
+				// Read AFTER actions run, so a normal form POST paints the saved theme.
+				const theme = event.locals.user?.theme ?? DEFAULT_THEME;
+				return html.replace('%birds.theme%', theme)
+					.replace('%birds.theme-style%', themeStyle(theme))
+					.replace('%birds.theme-color%', themeDefinition(theme).colors.bg);
+			}
+		}));
+	} catch (err) {
+		ended();
+		throw err;
+	}
 	// SSR responses previously carried NO Cache-Control, which let browsers
 	// (Safari especially) reuse them heuristically from disk cache — stale
 	// pages after data changed, and authenticated content on shared disks.
@@ -150,7 +163,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	return withBodyCompletionLog(response, event.url.pathname, bag, shellMs, {
 		routeId: event.route?.id ?? null,
 		method: event.request.method
-	});
+	}, ended);
 };
 
 /** Performance panel (td-67b481): persist slow requests, not in builds/tests. */
@@ -180,7 +193,8 @@ function withBodyCompletionLog(
 	pathname: string,
 	bag: TimingBag,
 	shellMs: number,
-	request: { routeId: string | null; method: string }
+	request: { routeId: string | null; method: string },
+	ended: () => void = () => {}
 ): Response {
 	// Document weight, the third cost hiding inside "the page is slow": server
 	// time (shell=), transfer+parse (bytes=), and hydration — which scales with
@@ -195,6 +209,7 @@ function withBodyCompletionLog(
 	const fire = () => {
 		if (fired) return;
 		fired = true;
+		ended();
 		const totalMs = Date.now() - bag.startedAt;
 		const memory = process.memoryUsage();
 		if (dev || totalMs > PERF_LOG_SLOW_MS) {
@@ -219,7 +234,8 @@ function withBodyCompletionLog(
 				bag,
 				rssBytes: memory.rss,
 				heapBytes: memory.heapUsed,
-				version: __GIT_SHA__
+				version: __GIT_SHA__,
+				finishedAt: bag.startedAt + totalMs
 			});
 		}
 	};

@@ -35,6 +35,12 @@ export interface SlowRequest {
   rssBytes: number;
   heapBytes: number;
   version: string;
+  /**
+   * When the response finished (epoch ms; default: now). Stored as `at`, so a
+   * write that waited for a database connection does not shift the request's
+   * window (Slow pages' server-freeze overlap, td-b07462).
+   */
+  finishedAt?: number;
 }
 
 let writesInFlight = 0;
@@ -53,8 +59,8 @@ export function recordSlowRequest(r: SlowRequest): Promise<void> {
     `INSERT INTO page_timing
        (route, method, status, shell_ms, total_ms, bytes, tags,
         db_n, db_ms, ebird_n, ebird_ms, google_n, google_ms, ai_n, ai_ms,
-        rss_mb, heap_mb, version)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+        rss_mb, heap_mb, version, at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, to_timestamp($19 / 1000.0))`,
     [
       r.routeId ?? "(none)",
       r.method,
@@ -74,6 +80,7 @@ export function recordSlowRequest(r: SlowRequest): Promise<void> {
       mb(r.rssBytes),
       mb(r.heapBytes),
       r.version,
+      r.finishedAt ?? Date.now(),
     ],
     WRITE_TIMEOUT_MS,
   )
@@ -99,6 +106,8 @@ export interface RecentSlow {
   google: { n: number; ms: number };
   ai: { n: number; ms: number };
   version: string;
+  /** The longest server freeze (td-b07462) that overlapped this request, if any: time it spent stuck, not working. */
+  freezeMs: number | null;
 }
 
 export interface RouteRollup {
@@ -112,6 +121,8 @@ export interface RouteRollup {
    * row to compare against, so a climbing route stands out. */
   previousCount: number;
   previousMedianTotalMs: number | null;
+  /** How many of this window's slow requests overlapped a server freeze. */
+  frozenCount: number;
 }
 
 export interface DeployVersion {
@@ -129,6 +140,13 @@ export interface PageTimingReport {
   versions: DeployVersion[];
   retentionDays: number;
 }
+
+/**
+ * A server freeze (td-b07462) overlapped slow request `pt`: the freeze began before the request
+ * finished and ended after it started. `at` is when the request finished.
+ */
+const OVERLAPS = `f.started_at < pt.at
+  AND f.started_at + make_interval(secs => f.duration_ms / 1000.0) > pt.at - make_interval(secs => pt.total_ms / 1000.0)`;
 
 const iso = (v: Date | string) => (v instanceof Date ? v : new Date(v)).toISOString();
 
@@ -154,12 +172,14 @@ export async function pageTimingReport(thresholdMs: number, version: string | nu
       ai_n: number;
       ai_ms: number;
       version: string;
+      freeze_ms: number | null;
     }>(
-      `SELECT at, route, method, status, shell_ms, total_ms, bytes, db_n, db_ms,
-              ebird_n, ebird_ms, google_n, google_ms, ai_n, ai_ms, version
-         FROM page_timing
-        WHERE ($1::text IS NULL OR version = $1)
-        ORDER BY at DESC, id DESC
+      `SELECT pt.at, pt.route, pt.method, pt.status, pt.shell_ms, pt.total_ms, pt.bytes, pt.db_n, pt.db_ms,
+              pt.ebird_n, pt.ebird_ms, pt.google_n, pt.google_ms, pt.ai_n, pt.ai_ms, pt.version,
+              (SELECT MAX(f.duration_ms) FROM server_freezes f WHERE ${OVERLAPS}) AS freeze_ms
+         FROM page_timing pt
+        WHERE ($1::text IS NULL OR pt.version = $1)
+        ORDER BY pt.at DESC, pt.id DESC
         LIMIT $2`,
       [version, RECENT_LIMIT],
       REPORT_TIMEOUT_MS,
@@ -173,14 +193,16 @@ export async function pageTimingReport(thresholdMs: number, version: string | nu
       worst_bytes: number;
       prev_count: number;
       prev_median_total: number | null;
+      frozen: number;
     }>(
       `WITH cur AS (
          SELECT route, COUNT(*)::int AS count,
+                (COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM server_freezes f WHERE ${OVERLAPS})))::int AS frozen,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms)::float8 AS median_total,
                 MAX(total_ms) AS worst_total,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY shell_ms)::float8 AS median_shell,
                 MAX(bytes) AS worst_bytes
-           FROM page_timing
+           FROM page_timing pt
           WHERE at > NOW() - interval '7 days' AND ($1::text IS NULL OR version = $1)
           GROUP BY route
        ), prev AS (
@@ -190,7 +212,7 @@ export async function pageTimingReport(thresholdMs: number, version: string | nu
           WHERE at > NOW() - interval '14 days' AND at <= NOW() - interval '7 days'
           GROUP BY route
        )
-       SELECT cur.route, cur.count, cur.median_total, cur.worst_total, cur.median_shell,
+       SELECT cur.route, cur.count, cur.frozen, cur.median_total, cur.worst_total, cur.median_shell,
               cur.worst_bytes, COALESCE(prev.count, 0) AS prev_count,
               prev.median_total AS prev_median_total
          FROM cur LEFT JOIN prev USING (route)
@@ -224,6 +246,7 @@ export async function pageTimingReport(thresholdMs: number, version: string | nu
       google: { n: r.google_n, ms: r.google_ms },
       ai: { n: r.ai_n, ms: r.ai_ms },
       version: r.version,
+      freezeMs: r.freeze_ms,
     })),
     routes: routes.rows.map((r) => ({
       route: r.route,
@@ -234,6 +257,7 @@ export async function pageTimingReport(thresholdMs: number, version: string | nu
       worstBytes: r.worst_bytes,
       previousCount: r.prev_count,
       previousMedianTotalMs: r.prev_median_total == null ? null : Math.round(r.prev_median_total),
+      frozenCount: r.frozen,
     })),
     versions: versions.rows.map((v) => ({ version: v.version, firstSeen: iso(v.first_seen), count: v.count })),
   };

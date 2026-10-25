@@ -115,6 +115,7 @@ describe.skipIf(!dbUp)("page_timing on birds_test", () => {
       worstBytes: 1000,
       previousCount: 1,
       previousMedianTotalMs: 500,
+      frozenCount: 0,
     });
     const a = await pageTimingReport(750, VERSION_A);
     expect(a.routes.find((x) => x.route === ROUTE)).toMatchObject({ count: 2, medianTotalMs: 2000, worstTotalMs: 3000 });
