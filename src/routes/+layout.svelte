@@ -1,7 +1,8 @@
 <script lang="ts">
 	import '../app.css';
-	import { afterNavigate } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { afterNavigate, onNavigate } from '$app/navigation';
+	import { browser } from '$app/environment';
+	import { navigating, page } from '$app/stores';
 	import { tick, untrack } from 'svelte';
 	import NavProgress from '$components/NavProgress.svelte';
 	import { bottomNavViewportCorrection } from '$lib/bottom-nav';
@@ -12,6 +13,7 @@
 	import { DEFAULT_THEME, themeDefinition } from '$lib/themes';
 	import { navigationAfterNavigate } from '$lib/navigation-context.svelte';
 	import { reportPageUse } from '$lib/usage-report';
+	import { navWatch } from '$lib/nav-watch';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -44,7 +46,19 @@
 	});
 	// Drains an owed page refresh (job finished while navigating/off-forecast
 	// and the poller has since gone quiet) on forecast arrival — td-671082.
+	// Stuck pages (td-1cb094): the browser times each navigation (start →
+	// ready to draw → finished) and reports the slow, unfinished and frozen
+	// ones to Admin → Metrics, including a hang that ended with the app being
+	// killed. The start comes from the `navigating` store, not beforeNavigate,
+	// which SvelteKit skips while another navigation is still loading.
+	const watch = browser ? navWatch(__GIT_SHA__) : null;
+	if (watch) {
+		$effect(() => navigating.subscribe((navigation) => navigation && watch.begin(navigation)));
+		onNavigate((navigation) => watch.dataReady(navigation));
+	}
+	$effect(() => watch?.setUser(data.user?.id ?? null));
 	afterNavigate((navigation) => {
+		watch?.shown(navigation, $page.route.id, $page.url.pathname);
 		queueMicrotask(() => navigationAfterNavigate(data.user?.id, navigation.type));
 		if (data.user) jobsPoll.onNavigated();
 		// Account usage (td-c8e6a3): a page shown without an error counts.

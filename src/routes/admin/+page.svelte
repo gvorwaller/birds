@@ -16,6 +16,7 @@
   import SystemHealthPanel from "$components/admin/SystemHealthPanel.svelte";
   import EbirdTrafficPanel from "$components/admin/EbirdTrafficPanel.svelte";
   import SlowPagesPanel from "$components/admin/SlowPagesPanel.svelte";
+  import StuckPagesPanel from "$components/admin/StuckPagesPanel.svelte";
   import SourcesPanel from "$components/admin/SourcesPanel.svelte";
   import type { ActionData, PageData } from "./$types";
 
@@ -1074,6 +1075,7 @@
   {:else if activeTab === "metrics"}
   <div id="admin-panel-metrics" role="tabpanel" aria-labelledby="admin-tab-metrics">
     <!-- td-009031 / td-67b481: trends over days, read when the tab opens. -->
+    <StuckPagesPanel />
     <SlowPagesPanel />
     <EbirdTrafficPanel />
   </div>

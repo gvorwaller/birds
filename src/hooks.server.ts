@@ -11,6 +11,7 @@ import { startMemorySampler } from '$server/process-health';
 import { flushEbirdTrafficOnShutdown, startEbirdTrafficFlusher } from '$server/ebird-traffic';
 import { recordSlowRequest } from '$server/page-timing';
 import { isActivityRequest } from '$lib/usage-features';
+import { isClientStallsRequest } from '$lib/client-stalls';
 import { DEFAULT_THEME, isAppearanceRequest, themeDefinition, themeStyle } from '$lib/themes';
 import {
 	newTimingBag,
@@ -112,7 +113,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path.startsWith('/species/') &&
 			firstAction === '/load_enrichment';
 		// Keep private settings/actions blocked; appearance changes only this user.
-		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method) && !isHomeSearchRequest(path, method, firstAction) && !isTripVisitedRequest(path, method, firstAction) && !isActivityRequest(path, method)) {
+		if (method !== 'GET' && method !== 'HEAD' && path !== '/login' && !isLoadEnrichment && !isAppearance && !isSpeciesViewsRequest(path, method, firstAction) && !isSpecialInterestRequest(path, method) && !isHomeSearchRequest(path, method, firstAction) && !isTripVisitedRequest(path, method, firstAction) && !isActivityRequest(path, method) && !isClientStallsRequest(path, method)) {
 			return new Response('Read-only viewer — this action is not allowed.', { status: 403 });
 		}
 		// The separate appearance page never loads the credential-bearing page.

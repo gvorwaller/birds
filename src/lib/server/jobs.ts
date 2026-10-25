@@ -759,6 +759,8 @@ export interface PruneScope {
 	trafficOrigin?: string;
 	/** td-67b481: limit the slow-request sweep to these rows. */
 	pageTimingIds?: readonly number[];
+	/** td-1cb094: limit the stuck-page sweep to these accounts. */
+	clientStallUserIds?: readonly number[];
 	alertUserId?: number;
 	cacheKeyLike?: string;
 	/** td-eec7db: limit the external-source staging sweep to these loads. */
@@ -824,6 +826,14 @@ export async function pruneHistory(scope?: PruneScope): Promise<void> {
 	} else if (scope.pageTimingIds) {
 		await query(`DELETE FROM page_timing WHERE at < NOW() - interval '30 days' AND id = ANY($1::bigint[])`, [
 			[...scope.pageTimingIds]
+		]);
+	}
+	// Stuck-page reports from browsers (td-1cb094): 30 days.
+	if (!scope) {
+		await query(`DELETE FROM client_stalls WHERE occurred_at < NOW() - interval '30 days'`);
+	} else if (scope.clientStallUserIds) {
+		await query(`DELETE FROM client_stalls WHERE occurred_at < NOW() - interval '30 days' AND user_id = ANY($1::int[])`, [
+			[...scope.clientStallUserIds]
 		]);
 	}
 	if (!scope || scope.cacheKeyLike) await pruneEbirdCache(scope?.cacheKeyLike);
