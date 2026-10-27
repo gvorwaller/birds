@@ -88,6 +88,40 @@ module.exports = {
 				NODE_ENV: 'production',
 				BIRDS_ENV: 'production'
 			}
+		},
+		{
+			// The Norway sightings connector (docs/2026-10-21-external-sources-plan-CC.md,
+			// Phase 2 rev B). It reads Artskart and talks to the app only through /api/ingest/;
+			// it gets no database settings (no --env-file=.env). Its own env file
+			// holds INGEST_URL and INGEST_TOKEN (scripts/connector-token.mjs) and is
+			// re-read before every claim; without a token it idles.
+			name: 'birds-connector-artsobs',
+			script: 'build/connector-artsobs.js',
+			node_args: '--max-old-space-size=320',
+			cwd: '/opt/birds',
+
+			instances: 1,
+			exec_mode: 'fork',
+
+			autorestart: true,
+			restart_delay: 10000,
+			max_restarts: 10,
+			min_uptime: '30s',
+			// Owner, 2026-10-27: the largest county (Rogaland, 425,795 records)
+			// peaked at 487 MB RSS in a live load; 450M would restart it mid-load.
+			max_memory_restart: '600M',
+			// On stop it hands an in-flight load back to the queue (one fail call).
+			kill_timeout: 15000,
+
+			out_file: '/var/log/pm2/birds-connector-artsobs.out.log',
+			error_file: '/var/log/pm2/birds-connector-artsobs.err.log',
+			merge_logs: true,
+			time: true,
+
+			env: {
+				NODE_ENV: 'production',
+				CONNECTOR_ENV_FILE: '/opt/birds/.local/connectors/artsobs.env'
+			}
 		}
 	]
 };

@@ -22,6 +22,20 @@
 		superseded: { label: 'Replaced', tone: 'neutral' },
 		failed: { label: 'Failed', tone: 'error' }
 	};
+	// Owner request (2026-10-23): the background docs, findable from where imports are run.
+	const REPO_DOCS = 'https://github.com/gvorwaller/birds/blob/main/';
+	const REFERENCE_DOCS = [
+		{
+			title: 'Sightings sources survey',
+			about: 'Where local portals out-record eBird, country by country, and which could get a connector next.',
+			path: 'docs/2026-10-22-bird-sightings-sources-survey.md'
+		},
+		{
+			title: 'External sources plan',
+			about: 'How imports work: the ingest contract, the Norway connector, and what the GBIF checks found.',
+			path: 'docs/2026-10-21-external-sources-plan-CC.md'
+		}
+	];
 	const REASON: Record<string, string> = {
 		no_match: 'no eBird species with this scientific name',
 		ambiguous: 'more than one eBird species has this scientific name',
@@ -83,6 +97,16 @@
 		data and sends it here; nothing on this tab contacts the source directly. These are counts of
 		reports, never eBird likelihoods.
 	</p>
+	<h3 class="ref-title">Reference</h3>
+	<ul class="refs">
+		{#each REFERENCE_DOCS as d (d.path)}
+			<li>
+				<a href={`${REPO_DOCS}${d.path}`} target="_blank" rel="noopener">{d.title} ↗</a>
+				<span class="muted">{d.about}</span>
+				<code>{d.path}</code>
+			</li>
+		{/each}
+	</ul>
 	{#if form?.kind === 'sources'}
 		<p class={form.ok ? 'notice' : 'error'} role={form.ok ? 'status' : 'alert'}>{form.message}</p>
 	{/if}
@@ -211,7 +235,8 @@
 									{monthYear(l.result.window.start)} – {monthYear(l.result.window.end)} · {n(l.result.places)} places
 									· {n(l.result.species)} species · {n(l.result.counts.taxon_month ?? 0)} taxon rows · {n(
 										l.result.counts.recent ?? 0
-									)} recent reports
+									)} recent reports{#if l.result.counts.observers}
+										· {n(l.result.counts.observers)} observer rows{/if}
 								</p>
 								{#if l.result.unmatched_taxa > 0}
 									<p class="muted">
@@ -337,6 +362,33 @@
 </dialog>
 
 <style>
+	.ref-title {
+		margin: 16px 0 4px;
+		font-size: 1rem;
+	}
+	.refs {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.refs li {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 4px 0 8px;
+	}
+	.refs a {
+		align-self: flex-start;
+		display: inline-flex;
+		align-items: center;
+		min-height: 48px;
+		font-weight: 600;
+	}
+	.refs code {
+		font-size: 0.85rem;
+		color: var(--muted);
+		overflow-wrap: anywhere;
+	}
 	.source h3 {
 		margin: 0;
 	}

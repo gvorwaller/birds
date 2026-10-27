@@ -117,6 +117,26 @@ describe('rows', () => {
 		expect(() => validateRow('recent', recent({ locality: 'a\nb' }), 0, ctx)).toThrow(ContractError);
 	});
 
+	it('accepts subspecies-rank taxa (Phase 2 rev B)', () => {
+		const row = { place_key: 'NO-18', month: 4, upstream_taxon_id: '225778', canonical_name: 'Anas crecca carolinensis', raw_name: 'Anas crecca subsp. carolinensis', rank: 'SUBSPECIES', reports: 1 };
+		expect(validateRow('taxon_month', row, 0, ctx).rank).toBe('SUBSPECIES');
+	});
+
+	it('observers rows: only from a source that stores observers, with days, species and localities within reports', () => {
+		const obs = (over: Record<string, unknown> = {}) => ({ place_key: 'NO-18:Nesna', rank: 1, observer: 'Kari Nordmann', days: 3, species: 2, localities: 1, reports: 5, ...over });
+		expect(err(() => validateRow('observers', obs(), 0, ctx)).code).toBe('observer');
+		const on = { ...ctx, storeObservers: true };
+		expect(validateRow('observers', obs(), 0, on)).toEqual(obs());
+		expect(() => validateRow('observers', obs({ days: 6 }), 0, on)).toThrow(/exceed reports/);
+		expect(() => validateRow('observers', obs({ species: 6 }), 0, on)).toThrow(/exceed reports/);
+		expect(() => validateRow('observers', obs({ days: 0, reports: 0, species: 0, localities: 0 }), 0, on)).toThrow(/at least one/);
+		expect(() => validateRow('observers', obs({ rank: 0 }), 0, on)).toThrow(ContractError);
+		expect(() => validateRow('observers', obs({ observer: ' ' }), 0, on)).toThrow(ContractError);
+		expect(err(() => validateRow('observers', obs({ place_key: 'NO-19:Harstad' }), 0, on)).code).toBe('region');
+		const rows = [obs(), obs({ observer: 'Ola Nordmann' })];
+		expect(() => validateChunkRows('observers', rows, rowsDigest(rows), on)).toThrow(/duplicate/);
+	});
+
 	it('refuses an observer name unless the source stores observers', () => {
 		const e = err(() => validateRow('recent', recent({ observer: 'Kari Nordmann' }), 0, ctx));
 		expect(e.code).toBe('observer');

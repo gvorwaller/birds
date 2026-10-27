@@ -144,6 +144,42 @@ if ! pm2 jlist | grep -q '"name":"birds-worker"'; then
   echo "!! birds-worker missing from pm2 process list" >&2
   exit 1
 fi
+# The Norway sightings connector (external sources Phase 2) idles without a
+# token, so it must always be present and online. Present is not enough: it
+# must stay online for 35 s, past PM2's min_uptime of 30 s (ecosystem.config.cjs),
+# within 90 s. pm2 can print warnings such as "[PM2][WARN] …" before the JSON,
+# so the list is the first "[" from which the rest parses as a JSON array.
+connector_state() {
+  pm2 jlist | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let list = null;
+      for (let i = s.indexOf("["); i >= 0 && !list; i = s.indexOf("[", i + 1)) {
+        try {
+          const v = JSON.parse(s.slice(i));
+          if (Array.isArray(v)) list = v;
+        } catch {}
+      }
+      if (!list) return console.log("unreadable 0");
+      const p = list.find((x) => x.name === "birds-connector-artsobs");
+      if (!p) return console.log("missing 0");
+      const up = p.pm2_env.status === "online" ? Math.floor((Date.now() - p.pm2_env.pm_uptime) / 1000) : 0;
+      console.log(`${String(p.pm2_env.status).replace(/\s+/g, "_")} ${up}`);
+    });'
+}
+conn_ok=0
+for i in $(seq 1 18); do
+  read -r conn_status conn_up < <(connector_state || echo "unreadable 0")
+  if [[ "${conn_status}" == "online" && "${conn_up}" -ge 35 ]]; then
+    echo "==> birds-connector-artsobs online (${conn_up}s)"
+    conn_ok=1
+    break
+  fi
+  sleep 5
+done
+if [[ "${conn_ok}" != 1 ]]; then
+  echo "!! birds-connector-artsobs not staying online (status=${conn_status:-?} uptime=${conn_up:-?}s)" >&2
+  exit 1
+fi
 
 echo "==> health check (internal)"
 for i in $(seq 1 12); do

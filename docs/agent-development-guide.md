@@ -445,8 +445,8 @@ Only begin this section after an explicit instruction to commit or deploy.
    Never perform a manual production deployment. Use `--skip-push` only when
    the intended revision is already on `origin/main` and that mode is needed.
 
-6. Verify the exact deployed revision, migration result, PM2 `birds` and
-   `birds-worker` status, and `/api/health`. Health must include the required
+6. Verify the exact deployed revision, migration result, PM2 `birds`,
+   `birds-worker` and `birds-connector-artsobs` status, and `/api/health`. Health must include the required
    healthy DB/worker state; report gallery status separately rather than hiding
    degradation.
 7. Perform authenticated, read-only production smoke checks on every changed

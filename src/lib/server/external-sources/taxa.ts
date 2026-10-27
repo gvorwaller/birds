@@ -4,16 +4,20 @@
  *
  * Order: this source's override (external_taxon_overrides, keyed on the
  * upstream taxon id) → exact normalized scientific name among eBird
- * `species` → unmatched. The gallery's common-name overrides are never
- * consulted, and nothing is guessed: a scientific name shared by two eBird
- * species is "ambiguous" and stays unmatched. Name normalization is the
- * gallery matcher's (species-match.ts), so both match the same way.
+ * `species` → an eBird `issf` or `form` of that exact name whose `report_as`
+ * is a species (Phase 2 rev B: subspecies such as "Anas crecca carolinensis"
+ * count as the species eBird itself reports them as) → unmatched. The
+ * gallery's common-name overrides are never consulted, and nothing is
+ * guessed: a name that leads to two eBird species is "ambiguous" and stays
+ * unmatched, and a subspecies is never rolled up to its binomial. Name
+ * normalization is the gallery matcher's (species-match.ts), so both match
+ * the same way.
  */
 import type pg from 'pg';
 import { normalizeName } from '$server/species-match';
 
 export type TaxonMatch =
-	| { code: string; method: 'override' | 'scientific' }
+	| { code: string; method: 'override' | 'scientific' | 'subspecies' }
 	| { code: null; reason: 'no_match' | 'ambiguous' | 'override_code_missing' };
 
 export interface UpstreamTaxon {
@@ -39,17 +43,27 @@ export async function matchExternalTaxa(
 ): Promise<Map<string, TaxonMatch>> {
 	const out = new Map<string, TaxonMatch>();
 	if (taxa.length === 0) return out;
-	const species = await db.query<{ species_code: string; sci_name: string }>(
-		`SELECT species_code, sci_name FROM taxonomy_cache WHERE category = 'species'`
+	const taxonomy = await db.query<{ species_code: string; sci_name: string; category: string; report_as: string | null }>(
+		`SELECT species_code, sci_name, category, report_as FROM taxonomy_cache WHERE category IN ('species', 'issf', 'form')`
 	);
 	const codes = new Set<string>();
 	const bySci = new Map<string, string[]>();
-	for (const t of species.rows) {
+	for (const t of taxonomy.rows) {
+		if (t.category !== 'species') continue;
 		codes.add(t.species_code);
 		const key = normalizeName(t.sci_name);
 		const list = bySci.get(key);
 		if (list) list.push(t.species_code);
 		else bySci.set(key, [t.species_code]);
+	}
+	/** issf/form name → the species codes eBird reports it as. */
+	const byInfra = new Map<string, Set<string>>();
+	for (const t of taxonomy.rows) {
+		if (t.category === 'species' || !t.report_as || !codes.has(t.report_as)) continue;
+		const key = normalizeName(t.sci_name);
+		const set = byInfra.get(key);
+		if (set) set.add(t.report_as);
+		else byInfra.set(key, new Set([t.report_as]));
 	}
 	const overrides = await db.query<{ upstream_taxon_id: string; species_code: string }>(
 		`SELECT upstream_taxon_id, species_code FROM external_taxon_overrides
@@ -68,12 +82,18 @@ export async function matchExternalTaxa(
 			);
 			continue;
 		}
-		const hits = bySci.get(normalizeName(t.canonicalName)) ?? [];
+		const name = normalizeName(t.canonicalName);
+		const hits = bySci.get(name) ?? [];
+		if (hits.length > 0) {
+			out.set(key, hits.length === 1 ? { code: hits[0], method: 'scientific' } : { code: null, reason: 'ambiguous' });
+			continue;
+		}
+		const infra = [...(byInfra.get(name) ?? [])];
 		out.set(
 			key,
-			hits.length === 1
-				? { code: hits[0], method: 'scientific' }
-				: { code: null, reason: hits.length === 0 ? 'no_match' : 'ambiguous' }
+			infra.length === 1
+				? { code: infra[0], method: 'subspecies' }
+				: { code: null, reason: infra.length === 0 ? 'no_match' : 'ambiguous' }
 		);
 	}
 	return out;

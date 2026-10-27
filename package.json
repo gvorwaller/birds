@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev --port 5178 --strictPort",
 		"dev:test": "vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test",
-		"build": "vite build && node scripts/build-worker.mjs",
+		"build": "vite build && node scripts/build-worker.mjs && node scripts/build-connector.mjs",
 		"preview": "vite preview --port 5178",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -21,6 +21,7 @@
 		"test:db:migrate": "./scripts/test-db-migrate.sh",
 		"format": "prettier --write .",
 		"lint": "prettier --check .",
+		"connector:dev:test": "node scripts/build-connector.mjs && CONNECTOR_ENV_FILE=$PWD/.local/connectors/artsobs.test.env node build/connector-artsobs.js",
 		"worker:dev:test": "node scripts/build-worker.mjs && BIRDS_ENV=test node --env-file=.env.test build/worker.js",
 		"seed:ribbon-fixture": "node --env-file=.env.test scripts/seed-ribbon-fixture.mjs",
 		"unseed:ribbon-fixture": "node --env-file=.env.test scripts/unseed-ribbon-fixture.mjs"

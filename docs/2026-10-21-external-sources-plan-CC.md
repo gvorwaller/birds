@@ -6,6 +6,7 @@ Status: plan, rev 4 (2026-10-22).
   - Accepted: P1 ×4, P2-2, P2-3, P2-4, P3 ×2.
   - P2-1 (over-engineering) is **rejected**. The owner decides scope; a reviewer's view of the app's scale is not grounds for cutting what the owner asked for. The full rev 2 upload protocol, staging, sweeper and fault tests stay.
 - **Rev 4** (owner, 2026-10-22): **the data window is the most recent 24 complete months, not 2016 onward.** The aim is the most likely current sightings for each species, place and time of year. This replaces rev 3's complete-calendar-years rule (A-P3-2).
+- **Rev 5** (owner, 2026-10-26/27): **the connector reads Artsobservasjoner through Artsdatabanken's Artskart API, not GBIF, and stores observer names.** See "Phase 2 rev B" below; it overrides the GBIF-specific parts of Phase 0 and Phase 2.
 
 ## Context
 eBird has almost nothing in Norway. In Nordland, 2016–2025, it has 6,187 checklists, and its hotspots have a median of 5 checklists each. Norwegian birders report to Artsobservasjoner instead. GBIF holds about 548k Nordland bird records from it (CC BY 4.0). Gaylon may go to Norway in 2027 and wants to know where to look for what, and when.
@@ -18,7 +19,7 @@ eBird has almost nothing in Norway. In Nordland, 2016–2025, it has 6,187 check
 Decided on 2026-10-21:
 - **Connector:** it lives in this repo and runs on the droplet.
 - **Coverage:** all 19 Norwegian counties, each loaded on demand; Nordland first.
-- **Observer names:** not stored for now, but a nullable column is kept for them.
+- **Observer names:** not stored for now, but a nullable column is kept for them. *(Reversed 2026-10-26: stored; see Phase 2 rev B.)*
 - **Effort:** each count also shows its share of all bird reports in that place and month.
 
 **Verified facts:**
@@ -206,6 +207,16 @@ Unless stated otherwise, every probe used dataset `b124e1e0-…`, taxonKey 212 a
       - Paging (Phase 2 table) moves ~10× more data (1–2.6 GB) but **finishes sooner**: 10–15 and 30–45 min.
     - **Conclusion:** the download is lighter on bandwidth and gives a citable DOI per load, but it isn't faster end to end for one county.
     - **Owner decision (2026-10-22): keep paging (option B).** The GBIF login stays local and unused. If GBIF's SQL download becomes generally available, revisit.
+
+14. **GBIF's deep pages stall (measured 2026-10-23, during the first live connector run):**
+    - Search pages are fast (~1.4 s for 300 records) while offset + limit stays within 10,000 (offset 9,900: 3.7 s).
+    - Past that, GBIF starts the answer and then stalls: offsets 10,200, 12,000, 14,700 and 15,000 sent 65–165 KB and no more within 20–40 s. Shallow pages kept answering normally at the same moment.
+    - The first live Nordland load hit this on May 2025 (15,967 records) and failed as retryable after five 30 s timeouts.
+    - **Rule:** a slice is halved until it has at most 9,700 records, so every page ends within the first 10,000. This adds a few count calls, not pages.
+15. **GBIF answers 429 under sustained paging (2026-10-23):** the fourth county read in 30 minutes (~3,000 pages, ~3 GB from one address) got 429s, and five tries over ~30 s were not enough.
+    - The answers carry no usable rate-limit or Retry-After header (`x-varnish-rli`/`x-varnish-rlg` don't count requests).
+    - **Rule:** a 429 pauses every request, for Retry-After or 15 s, 30 s, 60 s … up to 5 min, with up to 8 tries (~25 min) before the load fails as retryable. Other errors keep the 5-try policy.
+    - **Measured with that rule (NO-16, 2026-10-23, before the queued-request fix):** 3,405 requests, 1,579 of them 429s, 4 h 21 min for 516,440 records (estimate: 30–45 min). Peak RSS 344 MB. Paging time on prod therefore depends on GBIF's throttling, not on our page count.
 
 ## Phase 1: Generic ingest foundation (app side)
 
@@ -419,7 +430,7 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
   1. **Which 2024 counties to fetch** for an app county: one cheap facet call per `stateProvince` value, crossed against `gadmLevel1Gid` (finding 11). Every 2024 county holding ≥50 of the app county's GADM-placed records is fetched.
      - For NO-18 that means Nordland plus Troms.
      - Garbled spellings ("Tr��ndelag") are matched after normalizing.
-  2. **Paging:** for each 2024 county, the window is split by month, and halved again while a slice exceeds the 100,000-result search cap (Trøndelag's busiest month has 89,925 records). Records are fetched 300 per page.
+  2. **Paging:** for each 2024 county, the window is split by month, and halved again while a slice has more than 9,700 records. GBIF's documented cap is 100,000 results, but pages past the first 10,000 stall (finding 14). Records are fetched 300 per page.
   3. **Counting:** records are counted as they stream in, never all held in memory, into:
      - (app county, municipality, month, speciesKey) report counts;
      - (place, month) totals and unkeyed counts;
@@ -451,6 +462,98 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
   2. Create the token and env file.
   3. Load Nordland.
   4. Measure the rows, unmatched taxa, gaps, time taken and memory (read-only).
+
+### Phase 2 as built (td-c2913c, 2026-10-23): differences and pinned details
+- **Location: `src/connectors/gbif-artsobs/`**, not `connectors/gbif-artsobs/`, so `npm run check` type-checks it and `npm test` runs its tests.
+  - It imports only the app's pure contract module (`$server/external-sources/contract`), so its rows pass the same validator before they are sent.
+  - `scripts/build-connector.mjs` bundles it to `build/connector-gbif-artsobs.js` (part of `npm run build`). The build fails if the bundle pulls in any other app server or database module.
+- **PM2 app `birds-connector-gbif-artsobs`:**
+  - no `--env-file=.env`, so it never has the database settings;
+  - heap 320 MB, `max_memory_restart` 450 MB, `kill_timeout` 15 s;
+  - the deploy script fails unless the app has been online for 35 s (past PM2's `min_uptime` of 30 s) within 90 s, so a process that keeps restarting fails the deploy. It reads `pm2 jlist` past any `[PM2][WARN]` lines, and a test runs that parser.
+- **Its env file** is `/opt/birds/.local/connectors/gbif-artsobs.env` (gitignored), written by `scripts/connector-token.mjs`.
+  - It is read again before every claim, so creating or rotating the token needs no restart.
+  - With no token, or a refused one, the connector idles and logs why once.
+- **Window:** the latest of the load's `window_ends` that GBIF's latest NORMAL copy fully covers (the last complete month before the copy). If neither end is covered, the load fails without a retry.
+- **Which 2024 counties:** two facet calls, `stateProvince` within the app county's GADM polygon and `stateProvince` across Norway. Spellings are grouped by a letters-only key ("Trøndelag" = "Tr��ndelag"), and every spelling of a qualifying county is read.
+  - A facet answer must carry its facet entry with valid counts. GBIF sends the entry even when there are no records (`"facets":[{"field":"STATE_PROVINCE","counts":[]}]`, checked 2026-10-23), so anything else is a broken answer and the load fails as retryable.
+  - When no 2024 county qualifies, the load fails without a retry and publishes nothing, so a bad answer can never replace a county's rows with zeros.
+- **Slices** hold at most 9,700 records (finding 14), and GBIF errors name the slice and offset.
+- **429s** (finding 15) pause every request, including ones already queued for a slot: a request checks the pause again once it has a slot, and a paused request never holds one. The backoff doubles with each 429 in a row from any request and resets on the next good answer.
+- **Paging completeness:** a date slice counts only once it reads back whole. Every page must give the same count as its first page, and the distinct records read must equal that count.
+  - Until then its records wait in the slice's own buffer, so nothing from a read that changed is counted.
+  - A changed slice is read again from scratch, and split again if it grew past 9,700. Up to three reads; then the load fails as retryable.
+  - A record can also move into a slice already read, when its date changes. The whole group is read again, up to three times and then the load fails as retryable, when:
+    - a record turns up in two date slices, unless it is dated as an interval with exactly the same event date, read under the same spelling, both times (moves that balance out leave every count unchanged). Only an interval rightly matches two date slices of one spelling; it counts once, on its first day; or
+    - once every slice is counted, any slice's count, asked for again (count only, no records), has changed.
+  - This catches every change that shows in counts or record keys, but it is not a snapshot guarantee: GBIF's search offers no snapshot to page through.
+  - Records are de-duplicated by GBIF key across slices.
+  - Across 2024 counties: each counted county keeps its sorted record keys, and a record found in two of them (moved while GBIF was read) fails the load as retryable, dropping both from the cache.
+- **Species names** are looked up two at a time. In every pool of GBIF requests (slices, rechecks, names), the first failure aborts the requests still running beside it.
+- **Placement, pinned:**
+  - The municipality majority counts all of a municipality's GADM-placed records; ties go to the lowest county code.
+  - A GADM gid outside the 19-county map (Sweden, Russia) counts as none.
+  - A record with no municipality is counted at county level only.
+  - When two 2024 counties both put a same-named municipality in one app county, the second becomes "Name (2024 county)", with a `municipality_name_clash` note.
+- **Places have no coordinates** (lat/lon null). Phase 3 links municipalities to maps by name.
+- **Species:** a GBIF species key counts as a species only when its backbone record has rank SPECIES, a `canonicalName` and name type SCIENTIFIC. Anything else counts as unkeyed, with a `non_species_taxon` note naming it, so species plus unkeyed always equal the total exactly.
+  - Found on the first live run: GBIF files hybrids at rank SPECIES, e.g. "Mareca penelope x Anas platyrhynchos" (Eurasian Wigeon × Mallard, 767 Norwegian records, name type HYBRID, no `canonicalName`).
+- **Localities:** the top 25 per municipality (none at county level), ranked by reports, then name.
+  - The pin rule's shares are of all the locality's reports: a report without coordinates is never "near", and one without an uncertainty counts as unbounded.
+  - A "text" locality is sent without coordinates.
+  - The uncertainty sent is the median of the uncertainties the locality's reports give, or null when none give one.
+- **Recent reports:**
+  - the 14 days up to the newest date in the county's placed species records, including species reported only after the window;
+  - species rank only;
+  - newest first, capped at 20,000;
+  - links go to Artsobservasjoner by `catalogNumber`, or to GBIF when there is none.
+- **Connector notes** (`diagnostics`): `unplaced_records`, `split_municipality`, `placed_by_municipality`, `foreign_gadm_county`, `municipality_name_clash`, `non_species_taxon`, `no_uncertainty`, `generalized_coordinates`, `information_withheld`, `outside_window_dates`, `recent_truncated`.
+- **Reuse:** counted 2024 counties are cached for 24 h (at most 2), keyed by spellings, window and GBIF copy.
+- **Stopping:** a lost lease (401, 404, or 409 other than a chunk conflict) stops the load without a fail call. A PM2 stop hands the load back as retryable.
+- **Admin → Sources "Reference" links** (owner request) link the survey and this plan on GitHub, with the repo path shown.
+- **Tests:**
+  - `connector.test.ts` (52) runs on recorded GBIF responses (observer and validator names removed) and a fake GBIF built from them;
+  - `connector-db.test.ts` (3) drives the real connector through the real ingest route handlers into `birds_test`;
+  - `deploy-gate.test.ts` (3) runs the deploy script's `pm2 jlist` parser on sample output.
+- **CODEX1 code review (high, 2026-10-23):** rounds 3, 4 and 5 each found 1 more P2, fixed with tests: records swapping slices without changing any count, first one-day records, then interval records whose dates changed, then unchanged intervals swapping spellings (the rule above). Round 2 found 3 more P2s, all fixed with tests: a record moving into a slice already read (the group recheck above), a failure not aborting the request beside it, and the deploy gate misreading `[PM2][WARN]` lines. Round 1 had 10 findings (P1 ×1, P2 ×9), all accepted and fixed with a regression test each: zero-county publish on a broken facet; re-read keeping deleted records; no cross-county dedupe; recent-only species dropped; pin share ignoring reports without coordinates; queued requests bypassing a 429 pause; a re-read paging past the cap; a large locality overflowing a spread call; a failed name lookup leaving GBIF requests queued; the deploy gate accepting a stopped connector.
+
+## Phase 2 rev B: read Artskart, not GBIF (owner, 2026-10-26/27)
+The owner chose Artsobservasjoner's own source (Artsdatabanken's Artskart public API) over GBIF after the probe in `docs/devlog/2026-10-26.md`. The owner also wants **observer names stored** (reversing "not stored for now"): they are public on Artsobservasjoner, and seeing who birds a county most is interesting and points to people worth looking up. The GBIF connector above is replaced; it stays in `git stash@{0}` until the owner drops it.
+
+**Why (measured 2026-10-26/27, not estimated):**
+- A whole-Nordland pull (2016 on, 723,133 records) took 27 min 31 s: 144 requests, one at a time, no throttling, every window complete. The GBIF paging run for Trøndelag took 4 h 21 min for 516,440 records, 46% of its requests answered 429.
+- No GADM placement: every record carries its county and municipality. The GBIF route's 17% gap was our GADM filter (GBIF's `stateProvince` count agrees within 0.1%).
+- **Artskart filters by the app's own 19 old counties** (`countys[]=1…20`, pre-2020 boundaries). For 2024-10-01…2026-09-30 the 19 sum to 3,393,596, exactly what one query for all 19 returns (no overlap). All of Norway is 3,404,436: Svalbard (21) 6,170, Jan Mayen (22) 115, and 4,555 (0.13%) in no county. `countys[]=18` returns 30 Tjeldsund records, the part that moved to Troms in 2020, so the filter follows the old boundaries. No 2024-county mapping is needed.
+- Changes can be read incrementally later (`afterTrackDateTime`, `observations/Deleted`); v1 still reloads a whole county.
+- **Terms** (artsobservasjoner.no "Brukervilkår", read 2026-10-27): reports "can be used freely by everyone" (§1); the observer's name is public and attached to each report (§3); the data is CC BY 4.0 (§9); use must name Artsobservasjoner as the source with the licence, and say something about data quality (§10). Rejected reports are not in public portals (§4); sensitive breeding sites are screened by Artsdatabanken (§7).
+
+**What a load reads:** `GET https://artskart.artsdatabanken.no/publicapi/api/observations/list` with `countys[]=<old county number>&taxongroups[]=8&collections[]=so2-birds&fromDate=…&toDate=…&pageSize=…&pageIndex=…`.
+- Group 8 is birds; collection `so2-birds` is Artsobservasjoner's birds (institution NOF). Both date bounds are inclusive.
+- **Slices:** calendar months from the window start through today, one request at a time.
+- **A slice counts only once it reads back whole:** every page gives the same `TotalCount`, and the distinct record `Id`s equal it. Artskart repeats a few rows on some pages (605 in 723k), so rows are de-duplicated by `Id`. A slice that changes while read is read again from scratch, up to 3 times, then the load fails as retryable.
+- **Moves:** a record `Id` met in two slices (its date changed mid-read) sends the whole county round again (up to 3 times, then retryable), so nothing counts twice. Known limits (Artskart offers no snapshot; the next load corrects both): a report deleted and another added in the same month while that month is paged leave its count unchanged, so a load may count the deleted one and miss the new one; and a report re-dated from a month not yet read into one already read is in neither slice, so it is missed (CODEX1 rev B finding 4). A record with an unreadable date, or a date outside the month asked for, fails the load as retryable instead of being skipped (finding 1). Slices are **not** counted again after the read, unlike the GBIF connector: Artskart is live (Nordland gains ~160 reports a day), and a report added after its month was read belongs to the next load.
+- **Window:** the latest of the load's `window_ends` (Artskart is live, so there is no copy lag), 24 months back. Recent reports run through today.
+
+**Per record:** `Id`, `TaxonId`, `ScientificName`, `CollectedDate` (dd.mm.yyyy), `Municipality`, `Locality`, `Latitude`/`Longitude` (decimal comma), `Precision` (metres), `Count`, `Collector`, `CatalogNumber`.
+- **Place:** `"{region}:{Municipality}"`; a record with no municipality counts at county level only.
+- **Taxa:** names are trimmed and their spaces collapsed ("Astur gentilis " arrives with a trailing space). Two-part names are rank `SPECIES`. "Genus species subsp.|var.|f. x" is rank `SUBSPECIES`, sent as "Genus species x" with the raw name kept. Anything else (genus or family reports such as *Laridae*, hybrids) counts as unkeyed, with a `non_species_taxon` note. `upstream_taxon_id` is Artskart's `TaxonId` (1:1 with names in the probe).
+- **Localities:** as before (top 25 per municipality, pin rule from Phase 0 finding 6), with `Precision` as the uncertainty.
+- **Recent reports:** as before (14 days up to the newest date, newest first, capped at 20,000), with the record link `https://www.artsobservasjoner.no/Sighting/{CatalogNumber}` and the observers named.
+
+**Observers (new chunk kind `observers`, contract v1, additive):**
+- `Collector` holds the party, separated by `|` (20% of records name 2–13 people). Names are split, trimmed and their spaces collapsed. The API gives no user ID, so two people who share a name count as one.
+- A "report" here is one species at one place on one day, so a busy birder has tens of thousands (the probe's top Nordland observer: 112k reports on 3,873 days). **The ranking leads with days out**, then species, then localities; reports come last.
+- Rows: `place_key`, `rank`, `observer`, `days`, `species`, `localities`, `reports`; the top 25 per place (county and each municipality), over the same 24-month window.
+- The app accepts `observers` rows only from a source with `store_observers` on (else 422 `observer`, like the recent-reports column). The Artskart source has it on; recent reports carry the party as "A, B".
+
+**App side (migration 0096):**
+- Source `artsobs`: Artsobservasjoner via the Artskart public API, CC BY 4.0, `store_observers` on, 24 months, region map `1…20` ↔ `NO-01…NO-20` (the old county numbers, not GADM). `artsobs-gbif` is switched off (`active = false`), its rows kept.
+- `external_stage_observers` and `external_top_observers`, swapped with the other published tables.
+- **Subspecies matching** (`taxa.ts`): after an override and an exact species name, a name that is an eBird `issf` or `form` whose `report_as` is one species matches that species (eBird's own grouping, e.g. *Anas crecca carolinensis* → Green-winged Teal). Nothing else is rolled up; a subspecies eBird has no entry for stays unmatched for "Match species". Measured on the Nordland pull: 99.41% of records match as species, 0.39% more through `report_as`, and 0.20% (genus/family reports and odd forms) do not.
+
+**Memory (measured live, 2026-10-27):** pages of 2,000 rows; Rogaland, the largest county (425,795 records), peaked at 487 MB RSS (macOS) with a ~200 MB heap. The owner set PM2's `max_memory_restart` to **600M** (heap cap stays 320 MB); prod's first load gives the Linux figure.
+
+**Renames:** the connector is `src/connectors/artsobs/`, its PM2 app `birds-connector-artsobs`, its bundle `build/connector-artsobs.js`, its env file `/opt/birds/.local/connectors/artsobs.env`.
 
 ## Phase 3: Show it (pages driven by the registry, all 5 themes)
 - **`forecast/data`, Norwegian county rows:**

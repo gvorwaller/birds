@@ -17,7 +17,7 @@ export const MAX_LOAD_ROWS = 1_000_000;
 export const MAX_LOAD_BYTES = 300 * 1024 * 1024;
 const INT4_MAX = 2_147_483_647;
 
-export const CHUNK_KINDS = ['places', 'totals', 'taxon_month', 'localities', 'recent', 'diagnostics'] as const;
+export const CHUNK_KINDS = ['places', 'totals', 'taxon_month', 'localities', 'recent', 'diagnostics', 'observers'] as const;
 export type ChunkKind = (typeof CHUNK_KINDS)[number];
 
 export interface PlaceRow {
@@ -40,7 +40,8 @@ export interface TaxonMonthRow {
 	upstream_taxon_id: string;
 	canonical_name: string;
 	raw_name: string;
-	rank: 'SPECIES';
+	/** SUBSPECIES (Phase 2 rev B): an infraspecific name, matched through eBird's report_as. */
+	rank: 'SPECIES' | 'SUBSPECIES';
 	reports: number;
 }
 export interface LocalityRow {
@@ -73,6 +74,20 @@ export interface DiagnosticRow {
 	detail: string;
 	count: number;
 }
+/**
+ * The most active observers of a place (Phase 2 rev B, owner 2026-10-26).
+ * Accepted only from a source with store_observers on. A "report" is one
+ * species at one place on one day, so `days` leads the ranking.
+ */
+export interface ObserverRow {
+	place_key: string;
+	rank: number;
+	observer: string;
+	days: number;
+	species: number;
+	localities: number;
+	reports: number;
+}
 export type RowsByKind = {
 	places: PlaceRow;
 	totals: TotalsRow;
@@ -80,6 +95,7 @@ export type RowsByKind = {
 	localities: LocalityRow;
 	recent: RecentRow;
 	diagnostics: DiagnosticRow;
+	observers: ObserverRow;
 };
 
 export interface ManifestChunk {
@@ -248,7 +264,8 @@ const KEYS: Record<ChunkKind, readonly string[]> = {
 		'record_url',
 		'observer'
 	],
-	diagnostics: ['code', 'detail', 'count']
+	diagnostics: ['code', 'detail', 'count'],
+	observers: ['place_key', 'rank', 'observer', 'days', 'species', 'localities', 'reports']
 };
 
 export interface RowContext {
@@ -299,14 +316,16 @@ export function validateRow<K extends ChunkKind>(kind: K, raw: unknown, i: numbe
 			return row as RowsByKind[K];
 		}
 		case 'taxon_month': {
-			if (raw.rank !== 'SPECIES') throw new ContractError(`${where}.rank: only SPECIES rows are accepted`);
+			if (raw.rank !== 'SPECIES' && raw.rank !== 'SUBSPECIES') {
+				throw new ContractError(`${where}.rank: only SPECIES and SUBSPECIES rows are accepted`);
+			}
 			const row: TaxonMonthRow = {
 				place_key: placeKey(raw.place_key, `${where}.place_key`, ctx.region),
 				month: intIn(raw.month, `${where}.month`, 1, 12),
 				upstream_taxon_id: upstreamId(raw.upstream_taxon_id, `${where}.upstream_taxon_id`),
 				canonical_name: text(raw.canonical_name, `${where}.canonical_name`, 200),
 				raw_name: text(raw.raw_name, `${where}.raw_name`, 300),
-				rank: 'SPECIES',
+				rank: raw.rank,
 				reports: count(raw.reports, `${where}.reports`)
 			};
 			return row as RowsByKind[K];
@@ -361,6 +380,29 @@ export function validateRow<K extends ChunkKind>(kind: K, raw: unknown, i: numbe
 				throw new ContractError(`${where}.detail: expected text of up to 300 characters`);
 			}
 			const row: DiagnosticRow = { code: raw.code, detail: raw.detail, count: count(raw.count, `${where}.count`) };
+			return row as RowsByKind[K];
+		}
+		case 'observers': {
+			if (!ctx.storeObservers) {
+				throw new ContractError(`${where}: this source does not store observer names`, 'observer');
+			}
+			const reports = count(raw.reports, `${where}.reports`);
+			const days = count(raw.days, `${where}.days`);
+			const species = count(raw.species, `${where}.species`);
+			const localities = count(raw.localities, `${where}.localities`);
+			if (reports < 1 || days < 1) throw new ContractError(`${where}: an observer has at least one report on one day`);
+			if (days > reports || species > reports || localities > reports) {
+				throw new ContractError(`${where}: days, species and localities can't exceed reports`);
+			}
+			const row: ObserverRow = {
+				place_key: placeKey(raw.place_key, `${where}.place_key`, ctx.region),
+				rank: intIn(raw.rank, `${where}.rank`, 1, 1000),
+				observer: text(raw.observer, `${where}.observer`, 200),
+				days,
+				species,
+				localities,
+				reports
+			};
 			return row as RowsByKind[K];
 		}
 	}
@@ -472,6 +514,8 @@ export function rowIdentity(kind: ChunkKind, row: RowsByKind[ChunkKind]): string
 			return String(r.upstream_record_id);
 		case 'diagnostics':
 			return `${r.code}\u0000${r.detail}`;
+		case 'observers':
+			return `${r.place_key}\u0000${r.rank}`;
 	}
 }
 

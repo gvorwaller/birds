@@ -16,7 +16,7 @@ import { query, withTransaction } from '$lib/db';
 import { newConnectorToken, tokenHash } from './auth';
 import { allowedWindowEnds, rowsDigest, windowStartFor, MAX_BODY_BYTES } from './contract';
 import { resetIngestRateForTest } from './http';
-import { finishLoad, publishedCounts, queueExternalLoad, sweepExternalStaging } from './lifecycle';
+import { finishLoad, publishedCounts, putChunk, queueExternalLoad, sweepExternalStaging } from './lifecycle';
 import { rematchSource, removeTaxonOverride, revokeConnector, setTaxonOverride } from './admin';
 import { lockSourceDerived } from './taxa';
 import { externalLoadsForUser } from './jobs';
@@ -78,6 +78,7 @@ async function cleanLoads(): Promise<void> {
 		'external_place_month_species',
 		'external_unmatched',
 		'external_recent_reports',
+		'external_top_observers',
 		'external_top_localities',
 		'external_taxon_month',
 		'external_place_month_totals',
@@ -294,6 +295,7 @@ async function stagingRows(loadId: string): Promise<number> {
 		      + (SELECT COUNT(*) FROM external_stage_localities WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_stage_recent WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_stage_diagnostics WHERE load_id = $1)
+		      + (SELECT COUNT(*) FROM external_stage_observers WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_load_chunks WHERE load_id = $1) AS n`,
 		[loadId]
 	);
@@ -397,6 +399,7 @@ describe('lifecycle', () => {
 			external_unmatched: 1,
 			external_recent_reports: 2,
 			external_top_localities: 2,
+			external_top_observers: 0,
 			external_taxon_month: 5,
 			external_place_month_totals: 24,
 			external_places: 2
@@ -748,6 +751,131 @@ describe('observer column', () => {
 		expect(r.body!.error).toBe('observer');
 		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
 		expect((await chunk(lease, 'recent-obs', 'recent', [row])).status).toBe(200);
+	});
+});
+
+describe('observers (Phase 2 rev B)', () => {
+	const obs = (place_key: string, rank: number, observer: string, days: number) => ({ place_key, rank, observer, days, species: 1, localities: 1, reports: days * 2 });
+
+	it('are refused from a source that does not store observers', async () => {
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const r = await chunk(lease, 'observers-1', 'observers', [obs(REGION, 1, 'Kari Nordmann', 3)]);
+		expect(r.status).toBe(422);
+		expect(r.body!.error).toBe('observer');
+	});
+
+	it('publish with the county and are replaced whole by the next load', async () => {
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		const send = async (rows: unknown[]) => {
+			await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+			const lease = await claim();
+			const sent = await sendAll(lease);
+			if (rows.length) {
+				expect((await chunk(lease, 'observers-1', 'observers', rows)).status).toBe(200);
+				sent.push({ chunk_id: 'observers-1', kind: 'observers', rows: rows.length, sha256: rowsDigest(rows) });
+			}
+			const f = await finish(lease, manifest(sent));
+			expect(f.status, JSON.stringify(f.body)).toBe(200);
+			return f.body!.result as { counts: Record<string, number> };
+		};
+		const result = await send([obs(REGION, 1, 'Kari Nordmann', 5), obs(REGION, 2, 'Ola Nordmann', 2), obs(`${REGION}:Nesna`, 1, 'Kari Nordmann', 4)]);
+		expect(result.counts.observers).toBe(3);
+		const published = await query<{ place_key: string; observer: string; rank: number }>(
+			`SELECT place_key, observer, rank FROM external_top_observers WHERE source_id = $1 ORDER BY place_key, rank`,
+			[SRC]
+		);
+		expect(published.rows).toEqual([
+			{ place_key: REGION, observer: 'Kari Nordmann', rank: 1 },
+			{ place_key: REGION, observer: 'Ola Nordmann', rank: 2 },
+			{ place_key: `${REGION}:Nesna`, observer: 'Kari Nordmann', rank: 1 }
+		]);
+		await send([]);
+		expect((await query(`SELECT 1 FROM external_top_observers WHERE source_id = $1`, [SRC])).rowCount).toBe(0);
+	});
+
+	it('switched off after the names were staged: finish refuses to publish them (CODEX1 rev B finding 2)', async () => {
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const sent = await sendAll(lease);
+		const rows = [obs(REGION, 1, 'Kari Nordmann', 5)];
+		expect((await chunk(lease, 'observers-1', 'observers', rows)).status).toBe(200);
+		sent.push({ chunk_id: 'observers-1', kind: 'observers', rows: 1, sha256: rowsDigest(rows) });
+		await query(`UPDATE external_sources SET store_observers = false WHERE id = $1`, [SRC]);
+		const f = await finish(lease, manifest(sent));
+		expect(f.status).toBe(422);
+		expect(f.body!.error).toBe('observer');
+		expect((await query(`SELECT 1 FROM external_top_observers WHERE source_id = $1`, [SRC])).rowCount).toBe(0);
+		expect((await query(`SELECT 1 FROM external_places WHERE source_id = $1`, [SRC])).rowCount).toBe(0);
+	});
+
+	it('a recent report naming an observer is refused at finish too once the flag is off', async () => {
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const d = dataset();
+		(d as { recent: unknown[] }).recent = d.recent.map((r, i) => (i === 0 ? { ...r, observer: 'Kari Nordmann' } : r));
+		const sent = await sendAll(lease, d);
+		await query(`UPDATE external_sources SET store_observers = false WHERE id = $1`, [SRC]);
+		const f = await finish(lease, manifest(sent));
+		expect(f.status).toBe(422);
+		expect(f.body!.error).toBe('observer');
+		expect((await query(`SELECT 1 FROM external_recent_reports WHERE source_id = $1`, [SRC])).rowCount).toBe(0);
+	});
+
+	it('a chunk is checked against the flag as it is now, not as it was when the token was read', async () => {
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		// Authentication saw the flag on; it has since been switched off (false in the DB).
+		const stale = { connectorId: tokenId, sourceId: SRC, storeObservers: true };
+		const rows = [obs(REGION, 1, 'Kari Nordmann', 5)];
+		await expect(
+			putChunk(stale, lease.id, { lease_token: lease.lease_token, attempt: lease.attempt }, { chunk_id: 'observers-1', kind: 'observers', sha256: rowsDigest(rows), rows }, 100)
+		).rejects.toMatchObject({ code: 'observer' });
+		expect((await query(`SELECT 1 FROM external_stage_observers WHERE load_id = $1`, [lease.id])).rowCount).toBe(0);
+	});
+
+	it('an observer listed twice for one place is refused', async () => {
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const r = await chunk(lease, 'observers-1', 'observers', [obs(REGION, 1, 'Kari Nordmann', 5), obs(REGION, 2, 'Kari Nordmann', 2)]);
+		expect(r.status).toBe(422);
+		expect(r.body!.error).toBe('duplicate_row');
+	});
+});
+
+describe('subspecies matching (Phase 2 rev B)', () => {
+	it("matches an eBird issf to the species eBird reports it as, and never rolls a subspecies up to its binomial", async () => {
+		const codes = await query<{ sci_name: string; species_code: string }>(
+			`SELECT sci_name, species_code FROM taxonomy_cache WHERE sci_name IN ('Anas crecca', 'Anas crecca carolinensis', 'Somateria mollissima fakeus')`
+		);
+		const by = Object.fromEntries(codes.rows.map((r) => [r.sci_name, r.species_code]));
+		expect(by['Anas crecca carolinensis']).toBeDefined();
+		expect(by['Somateria mollissima fakeus']).toBeUndefined();
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const d = dataset();
+		const sub = (id: string, canonical: string, raw: string) => ({ place_key: REGION, month: 6, upstream_taxon_id: id, canonical_name: canonical, raw_name: raw, rank: 'SUBSPECIES', reports: 1 });
+		d.taxa = [
+			...d.taxa,
+			sub(`teal-${RUN}`, 'Anas crecca carolinensis', 'Anas crecca subsp. carolinensis'),
+			sub(`eidersub-${RUN}`, 'Somateria mollissima fakeus', 'Somateria mollissima subsp. fakeus')
+		] as typeof d.taxa;
+		d.totals = d.totals.map((t) => (t.place_key === REGION && t.month === 6 ? { ...t, reports: t.reports + 2 } : t));
+		const f = await finish(lease, manifest(await sendAll(lease, d)));
+		expect(f.status, JSON.stringify(f.body)).toBe(200);
+		const species = await query<{ species_code: string; reports: number }>(
+			`SELECT species_code, reports FROM external_place_month_species WHERE source_id = $1 AND place_key = $2 AND month = 6`,
+			[SRC, REGION]
+		);
+		expect(species.rows.find((r) => r.species_code === by['Anas crecca'])?.reports).toBe(1);
+		const unmatched = await query<{ canonical_name: string; reason: string }>(
+			`SELECT canonical_name, reason FROM external_unmatched WHERE source_id = $1 AND upstream_taxon_id = $2`,
+			[SRC, `eidersub-${RUN}`]
+		);
+		expect(unmatched.rows).toEqual([{ canonical_name: 'Somateria mollissima fakeus', reason: 'no_match' }]);
 	});
 });
 

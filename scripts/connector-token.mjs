@@ -5,8 +5,8 @@
  * droplet; the owner never handles a token.
  *
  *   node --env-file=/opt/birds/.env scripts/connector-token.mjs \
- *     --source artsobs-gbif --label droplet \
- *     --out /opt/birds/connectors/gbif-artsobs.env \
+ *     --source artsobs --label droplet \
+ *     --out /opt/birds/.local/connectors/artsobs.env \
  *     --ingest-url http://127.0.0.1:3003/api/ingest/ [--rotate]
  *
  * - The token is never printed, logged or passed as an argument. Only its

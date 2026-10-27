@@ -166,7 +166,12 @@ const STAGE: Record<ChunkKind, StageSpec> = {
 		],
 		published: 'external_recent_reports'
 	},
-	diagnostics: { table: 'external_stage_diagnostics', fields: ['code', 'detail', 'count'], published: null }
+	diagnostics: { table: 'external_stage_diagnostics', fields: ['code', 'detail', 'count'], published: null },
+	observers: {
+		table: 'external_stage_observers',
+		fields: ['place_key', 'rank', 'observer', 'days', 'species', 'localities', 'reports'],
+		published: 'external_top_observers'
+	}
 };
 
 /** Published tables in delete order (children before external_places). */
@@ -174,6 +179,7 @@ const PUBLISHED_DELETE_ORDER = [
 	'external_place_month_species',
 	'external_unmatched',
 	'external_recent_reports',
+	'external_top_observers',
 	'external_top_localities',
 	'external_taxon_month',
 	'external_place_month_totals',
@@ -279,10 +285,15 @@ export async function expireLeases(db: Pick<Db, 'query'>, sourceId: string | nul
  * transaction re-checks under FOR SHARE: a revoke or deactivate that commits
  * first is seen here (401), and one that arrives later waits for this
  * transaction, so it takes effect from the next call [CODEX1 Phase 1 P2].
+ *
+ * Returns the source's store_observers flag as read under that lock: chunk
+ * validation and finish use it, never the flag seen at authentication, so
+ * switching it off takes effect for the very next write (CODEX1 rev B
+ * finding 2).
  */
-async function assertConnectorLive(db: Pick<Db, 'query'>, connector: Connector): Promise<void> {
-	const r = await db.query<{ revoked: boolean; active: boolean }>(
-		`SELECT c.revoked_at IS NOT NULL AS revoked, s.active
+async function assertConnectorLive(db: Pick<Db, 'query'>, connector: Connector): Promise<{ storeObservers: boolean }> {
+	const r = await db.query<{ revoked: boolean; active: boolean; store_observers: boolean }>(
+		`SELECT c.revoked_at IS NOT NULL AS revoked, s.active, s.store_observers
 		   FROM external_connectors c JOIN external_sources s ON s.id = c.source_id
 		  WHERE c.id = $1 AND c.source_id = $2
 		    FOR SHARE OF c, s`,
@@ -291,6 +302,7 @@ async function assertConnectorLive(db: Pick<Db, 'query'>, connector: Connector):
 	const row = r.rows[0];
 	if (!row || row.revoked) throw new IngestError(401, 'revoked', 'This token has been revoked.');
 	if (!row.active) throw new IngestError(401, 'inactive', 'This source is switched off.');
+	return { storeObservers: row.store_observers };
 }
 
 // ── Claim ──────────────────────────────────────────────────────────────────
@@ -349,15 +361,15 @@ export async function claimLoad(connector: Connector, idempotencyKey: string): P
 
 // ── Fencing ────────────────────────────────────────────────────────────────
 
-async function lockLoad(db: Db, connector: Connector, loadId: string): Promise<LoadRow> {
+async function lockLoad(db: Db, connector: Connector, loadId: string): Promise<LoadRow & { storeObservers: boolean }> {
 	const r = await db.query<LoadRow>(`SELECT ${LOAD_COLUMNS} FROM external_loads l WHERE l.id = $1 FOR UPDATE`, [loadId]);
 	const load = r.rows[0];
 	if (!load) throw new IngestError(404, 'unknown_load', 'No such load.');
 	if (load.source_id !== connector.sourceId) {
 		throw new IngestError(403, 'wrong_source', 'This load belongs to another source.');
 	}
-	await assertConnectorLive(db, connector);
-	return load;
+	const { storeObservers } = await assertConnectorLive(db, connector);
+	return { ...load, storeObservers };
 }
 
 function sameLease(load: LoadRow, fence: Fence): boolean {
@@ -451,7 +463,7 @@ export async function putChunk(
 		}
 		const rows = validateChunkRows(chunk.kind, chunk.rows, chunk.sha256, {
 			region: load.region_code,
-			storeObservers: connector.storeObservers
+			storeObservers: load.storeObservers
 		});
 		const totals = await c.query<{ rows: string; bytes: string }>(
 			`SELECT COALESCE(SUM(rows), 0) AS rows, COALESCE(SUM(bytes), 0) AS bytes FROM external_load_chunks WHERE load_id = $1`,
@@ -521,6 +533,7 @@ async function verifyManifest(c: Db, load: LoadRow, m: Manifest): Promise<void> 
 		   UNION ALL SELECT place_key, 'taxon_month' FROM external_stage_taxon_month WHERE load_id = $1
 		   UNION ALL SELECT place_key, 'localities' FROM external_stage_localities WHERE load_id = $1
 		   UNION ALL SELECT place_key, 'recent' FROM external_stage_recent WHERE load_id = $1
+		   UNION ALL SELECT place_key, 'observers' FROM external_stage_observers WHERE load_id = $1
 		 ) x
 		 WHERE NOT EXISTS (SELECT 1 FROM external_stage_places p WHERE p.load_id = $1 AND p.place_key = x.place_key)
 		 LIMIT 1`,
@@ -565,6 +578,23 @@ async function checkTotals(c: Db, loadId: string): Promise<{ place_months: numbe
 	return { place_months: Number(r.rows[0].gap_n), reports: Number(r.rows[0].gap_reports) };
 }
 
+/**
+ * Observer names are published only while the source stores them: staged
+ * names from before the flag was switched off are refused, not copied into
+ * the published tables (CODEX1 rev B finding 2).
+ */
+async function checkObserverPolicy(c: Db, load: LoadRow & { storeObservers: boolean }): Promise<void> {
+	if (load.storeObservers) return;
+	const r = await c.query<{ named: boolean }>(
+		`SELECT EXISTS (SELECT 1 FROM external_stage_observers WHERE load_id = $1)
+		     OR EXISTS (SELECT 1 FROM external_stage_recent WHERE load_id = $1 AND observer IS NOT NULL) AS named`,
+		[load.id]
+	);
+	if (r.rows[0].named) {
+		throw new IngestError(422, 'observer', 'This source no longer stores observer names; the load carries some and is not published.');
+	}
+}
+
 /** One upstream taxon id must carry one name across the whole load. */
 async function checkTaxonNames(c: Db, loadId: string): Promise<void> {
 	const r = await c.query<{ upstream_taxon_id: string }>(
@@ -584,7 +614,7 @@ async function publish(c: Db, load: LoadRow): Promise<void> {
 	for (const table of PUBLISHED_DELETE_ORDER) {
 		await c.query(`DELETE FROM ${table} WHERE source_id = $1 AND region_code = $2`, scope);
 	}
-	for (const kind of ['places', 'totals', 'taxon_month', 'localities', 'recent'] as const) {
+	for (const kind of ['places', 'totals', 'taxon_month', 'localities', 'recent', 'observers'] as const) {
 		const spec = STAGE[kind];
 		const cols = spec.fields.join(', ');
 		await c.query(
@@ -629,6 +659,7 @@ export async function finishLoad(
 			throw err;
 		}
 		await verifyManifest(c, load, manifest);
+		await checkObserverPolicy(c, load);
 		await checkTaxonNames(c, load.id);
 		const gaps = await checkTotals(c, load.id);
 
