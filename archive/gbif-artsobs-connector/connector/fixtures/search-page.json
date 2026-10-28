@@ -1,0 +1,2015 @@
+{
+ "offset": 0,
+ "limit": 300,
+ "endOfRecords": false,
+ "count": 11147,
+ "facets": [],
+ "results": [
+  {
+   "key": 5186366308,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:30:18.950+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 12,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "679X7",
+      "name": "Anser anser (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Anser",
+      "specificEpithet": "anser",
+      "formattedName": "<i>Anser</i> <i>anser</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "679X7",
+      "name": "Anser anser (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Anser",
+      "specificEpithet": "anser",
+      "formattedName": "<i>Anser</i> <i>anser</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "PQ",
+       "name": "Anseriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "9H6K5",
+       "name": "Anatidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "X5D",
+       "name": "Anser",
+       "rank": "GENUS"
+      },
+      {
+       "key": "679X7",
+       "name": "Anser anser",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2498036",
+      "name": "Anser anser (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Anser",
+      "specificEpithet": "anser",
+      "formattedName": "<i>Anser</i> <i>anser</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "2498036",
+      "name": "Anser anser (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Anser",
+      "specificEpithet": "anser",
+      "formattedName": "<i>Anser</i> <i>anser</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "1108",
+       "name": "Anseriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "2986",
+       "name": "Anatidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2498016",
+       "name": "Anser",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2498036",
+       "name": "Anser anser",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2498036,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 1108,
+   "familyKey": 2986,
+   "genusKey": 2498016,
+   "speciesKey": 2498036,
+   "acceptedTaxonKey": 2498036,
+   "scientificName": "Anser anser (Linnaeus, 1758)",
+   "scientificNameAuthorship": "(Linnaeus, 1758)",
+   "acceptedScientificName": "Anser anser (Linnaeus, 1758)",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Anseriformes",
+   "family": "Anatidae",
+   "genus": "Anser",
+   "species": "Anser anser",
+   "genericName": "Anser",
+   "specificEpithet": "anser",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 67.207488,
+   "decimalLongitude": 14.358959,
+   "coordinateUncertaintyInMeters": 100.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {
+    "level0": {
+     "gid": "NOR",
+     "name": "Norway"
+    },
+    "level1": {
+     "gid": "NOR.10_1",
+     "name": "Nordland"
+    },
+    "level2": {
+     "gid": "NOR.10.7_1",
+     "name": "Bodø"
+    }
+   },
+   "year": 2025,
+   "month": 6,
+   "day": 8,
+   "eventDate": "2025-06-08",
+   "startDayOfYear": 159,
+   "endDayOfYear": 159,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2026-01-26T11:57:23.000+00:00",
+   "lastInterpreted": "2026-10-11T04:30:18.950+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:020bdd46-aaca-4b25-9eb5-158febaf6bd0"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:020bdd46-aaca-4b25-9eb5-158febaf6bd0",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"Forage\",\"ValidationStatus\":\"Approved Documented\"}",
+   "municipality": "Bodø",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37607886",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Seinesodden, Bodø, No",
+   "identificationVerificationStatus": "validated",
+   "gbifID": "5186366308",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:020bdd46-aaca-4b25-9eb5-158febaf6bd0",
+   "catalogNumber": "37607886",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "2679449",
+   "fieldNotes": "Activity: Forage. Validationstatus: Approved Documented",
+   "identificationRemarks": "[removed from fixture]",
+   "behavior": "feeding"
+  },
+  {
+   "key": 5186366318,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:30:19.768+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 1,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "59PMS",
+      "name": "Turdus pilaris Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Turdus",
+      "specificEpithet": "pilaris",
+      "formattedName": "<i>Turdus</i> <i>pilaris</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "59PMS",
+      "name": "Turdus pilaris Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Turdus",
+      "specificEpithet": "pilaris",
+      "formattedName": "<i>Turdus</i> <i>pilaris</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "3RL",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "T4K9X",
+       "name": "Turdidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "647VS",
+       "name": "Turdus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "59PMS",
+       "name": "Turdus pilaris",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2490737",
+      "name": "Turdus pilaris Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Turdus",
+      "specificEpithet": "pilaris",
+      "formattedName": "<i>Turdus</i> <i>pilaris</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "2490737",
+      "name": "Turdus pilaris Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Turdus",
+      "specificEpithet": "pilaris",
+      "formattedName": "<i>Turdus</i> <i>pilaris</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "729",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "5290",
+       "name": "Turdidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2490714",
+       "name": "Turdus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2490737",
+       "name": "Turdus pilaris",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2490737,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 729,
+   "familyKey": 5290,
+   "genusKey": 2490714,
+   "speciesKey": 2490737,
+   "acceptedTaxonKey": 2490737,
+   "scientificName": "Turdus pilaris Linnaeus, 1758",
+   "scientificNameAuthorship": "Linnaeus, 1758",
+   "acceptedScientificName": "Turdus pilaris Linnaeus, 1758",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Passeriformes",
+   "family": "Turdidae",
+   "genus": "Turdus",
+   "species": "Turdus pilaris",
+   "genericName": "Turdus",
+   "specificEpithet": "pilaris",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 68.278166,
+   "decimalLongitude": 16.740258,
+   "coordinateUncertaintyInMeters": 1.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {
+    "level0": {
+     "gid": "NOR",
+     "name": "Norway"
+    },
+    "level1": {
+     "gid": "NOR.10_1",
+     "name": "Nordland"
+    },
+    "level2": {
+     "gid": "NOR.10.3_1",
+     "name": "Ballangen"
+    }
+   },
+   "year": 2025,
+   "month": 6,
+   "day": 11,
+   "eventDate": "2025-06-11",
+   "startDayOfYear": 162,
+   "endDayOfYear": 162,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2025-06-12T12:22:12.000+00:00",
+   "lastInterpreted": "2026-10-11T04:30:19.768+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:04d09d44-0d25-4f91-9424-60767db2cbe5"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:04d09d44-0d25-4f91-9424-60767db2cbe5",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"InNestingHabitat\"}",
+   "municipality": "Narvik",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37669574",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Reinarhaugen, Narvik, No",
+   "gbifID": "5186366318",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:04d09d44-0d25-4f91-9424-60767db2cbe5",
+   "catalogNumber": "37669574",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "2902045",
+   "fieldNotes": "Activity: InNestingHabitat.",
+   "eventTime": "8.3",
+   "behavior": "possiblereproductive"
+  },
+  {
+   "key": 5186366348,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:28:49.623+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 2,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "78SHD",
+      "name": "Regulus regulus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Regulus",
+      "specificEpithet": "regulus",
+      "formattedName": "<i>Regulus</i> <i>regulus</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "78SHD",
+      "name": "Regulus regulus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Regulus",
+      "specificEpithet": "regulus",
+      "formattedName": "<i>Regulus</i> <i>regulus</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "3RL",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "FL3",
+       "name": "Regulidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "77JH",
+       "name": "Regulus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "78SHD",
+       "name": "Regulus regulus",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2484596",
+      "name": "Regulus regulus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Regulus",
+      "specificEpithet": "regulus",
+      "formattedName": "<i>Regulus</i> <i>regulus</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "2484596",
+      "name": "Regulus regulus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Regulus",
+      "specificEpithet": "regulus",
+      "formattedName": "<i>Regulus</i> <i>regulus</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "729",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "5279",
+       "name": "Regulidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2484589",
+       "name": "Regulus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2484596",
+       "name": "Regulus regulus",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2484596,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 729,
+   "familyKey": 5279,
+   "genusKey": 2484589,
+   "speciesKey": 2484596,
+   "acceptedTaxonKey": 2484596,
+   "scientificName": "Regulus regulus (Linnaeus, 1758)",
+   "scientificNameAuthorship": "(Linnaeus, 1758)",
+   "acceptedScientificName": "Regulus regulus (Linnaeus, 1758)",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Passeriformes",
+   "family": "Regulidae",
+   "genus": "Regulus",
+   "species": "Regulus regulus",
+   "genericName": "Regulus",
+   "specificEpithet": "regulus",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 66.297445,
+   "decimalLongitude": 13.563698,
+   "coordinateUncertaintyInMeters": 1000.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {
+    "level0": {
+     "gid": "NOR",
+     "name": "Norway"
+    },
+    "level1": {
+     "gid": "NOR.10_1",
+     "name": "Nordland"
+    },
+    "level2": {
+     "gid": "NOR.10.28_1",
+     "name": "Rana"
+    }
+   },
+   "year": 2025,
+   "month": 6,
+   "day": 12,
+   "eventDate": "2025-06-12",
+   "startDayOfYear": 163,
+   "endDayOfYear": 163,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2025-06-12T13:14:47.000+00:00",
+   "lastInterpreted": "2026-10-11T04:28:49.623+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:0ca624ef-69c4-4a5a-8ee5-600bfd567560"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:0ca624ef-69c4-4a5a-8ee5-600bfd567560",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"InNestingHabitat\"}",
+   "municipality": "Rana",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37669875",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Utskarpen, Rana, No",
+   "gbifID": "5186366348",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:0ca624ef-69c4-4a5a-8ee5-600bfd567560",
+   "catalogNumber": "37669875",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "392590",
+   "fieldNotes": "Activity: InNestingHabitat.",
+   "behavior": "possiblereproductive"
+  },
+  {
+   "key": 5186366363,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:30:27.620+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 1,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "44Q67",
+      "name": "Muscicapa striata (Pallas, 1764)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Pallas, 1764)",
+      "genericName": "Muscicapa",
+      "specificEpithet": "striata",
+      "formattedName": "<i>Muscicapa</i> <i>striata</i> (Pallas, 1764)"
+     },
+     "acceptedUsage": {
+      "key": "44Q67",
+      "name": "Muscicapa striata (Pallas, 1764)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Pallas, 1764)",
+      "genericName": "Muscicapa",
+      "specificEpithet": "striata",
+      "formattedName": "<i>Muscicapa</i> <i>striata</i> (Pallas, 1764)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "3RL",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "CZN",
+       "name": "Muscicapidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "5VVQ",
+       "name": "Muscicapa",
+       "rank": "GENUS"
+      },
+      {
+       "key": "44Q67",
+       "name": "Muscicapa striata",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2492576",
+      "name": "Muscicapa striata (Pallas, 1764)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Pallas, 1764)",
+      "genericName": "Muscicapa",
+      "specificEpithet": "striata",
+      "formattedName": "<i>Muscicapa</i> <i>striata</i> (Pallas, 1764)"
+     },
+     "acceptedUsage": {
+      "key": "2492576",
+      "name": "Muscicapa striata (Pallas, 1764)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Pallas, 1764)",
+      "genericName": "Muscicapa",
+      "specificEpithet": "striata",
+      "formattedName": "<i>Muscicapa</i> <i>striata</i> (Pallas, 1764)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "729",
+       "name": "Passeriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "9322",
+       "name": "Muscicapidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2483240",
+       "name": "Muscicapa",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2492576",
+       "name": "Muscicapa striata",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2492576,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 729,
+   "familyKey": 9322,
+   "genusKey": 2483240,
+   "speciesKey": 2492576,
+   "acceptedTaxonKey": 2492576,
+   "scientificName": "Muscicapa striata (Pallas, 1764)",
+   "scientificNameAuthorship": "(Pallas, 1764)",
+   "acceptedScientificName": "Muscicapa striata (Pallas, 1764)",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Passeriformes",
+   "family": "Muscicapidae",
+   "genus": "Muscicapa",
+   "species": "Muscicapa striata",
+   "genericName": "Muscicapa",
+   "specificEpithet": "striata",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 66.313181,
+   "decimalLongitude": 14.179044,
+   "coordinateUncertaintyInMeters": 300.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {
+    "level0": {
+     "gid": "NOR",
+     "name": "Norway"
+    },
+    "level1": {
+     "gid": "NOR.10_1",
+     "name": "Nordland"
+    },
+    "level2": {
+     "gid": "NOR.10.28_1",
+     "name": "Rana"
+    }
+   },
+   "year": 2025,
+   "month": 6,
+   "day": 3,
+   "eventDate": "2025-06-03",
+   "startDayOfYear": 154,
+   "endDayOfYear": 154,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2025-06-03T15:00:49.000+00:00",
+   "lastInterpreted": "2026-10-11T04:30:27.620+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:1012137f-d91c-491f-b786-4bda78dd7c6c"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:1012137f-d91c-491f-b786-4bda78dd7c6c",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"InNestingHabitat\"}",
+   "municipality": "Rana",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37551886",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Klokkerhagen elvepark, Rana, No",
+   "gbifID": "5186366363",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:1012137f-d91c-491f-b786-4bda78dd7c6c",
+   "catalogNumber": "37551886",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "422454",
+   "fieldNotes": "Activity: InNestingHabitat.",
+   "behavior": "possiblereproductive"
+  },
+  {
+   "key": 5186366381,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:30:15.717+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 5,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "58VJH",
+      "name": "Tringa totanus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Tringa",
+      "specificEpithet": "totanus",
+      "formattedName": "<i>Tringa</i> <i>totanus</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "58VJH",
+      "name": "Tringa totanus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Tringa",
+      "specificEpithet": "totanus",
+      "formattedName": "<i>Tringa</i> <i>totanus</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "X3",
+       "name": "Charadriiformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "G4X",
+       "name": "Scolopacidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "8288",
+       "name": "Tringa",
+       "rank": "GENUS"
+      },
+      {
+       "key": "58VJH",
+       "name": "Tringa totanus",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2481714",
+      "name": "Tringa totanus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Tringa",
+      "specificEpithet": "totanus",
+      "formattedName": "<i>Tringa</i> <i>totanus</i> (Linnaeus, 1758)"
+     },
+     "acceptedUsage": {
+      "key": "2481714",
+      "name": "Tringa totanus (Linnaeus, 1758)",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "(Linnaeus, 1758)",
+      "genericName": "Tringa",
+      "specificEpithet": "totanus",
+      "formattedName": "<i>Tringa</i> <i>totanus</i> (Linnaeus, 1758)"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "7192402",
+       "name": "Charadriiformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "5282",
+       "name": "Scolopacidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2481709",
+       "name": "Tringa",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2481714",
+       "name": "Tringa totanus",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2481714,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 7192402,
+   "familyKey": 5282,
+   "genusKey": 2481709,
+   "speciesKey": 2481714,
+   "acceptedTaxonKey": 2481714,
+   "scientificName": "Tringa totanus (Linnaeus, 1758)",
+   "scientificNameAuthorship": "(Linnaeus, 1758)",
+   "acceptedScientificName": "Tringa totanus (Linnaeus, 1758)",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Charadriiformes",
+   "family": "Scolopacidae",
+   "genus": "Tringa",
+   "species": "Tringa totanus",
+   "genericName": "Tringa",
+   "specificEpithet": "totanus",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 66.338102,
+   "decimalLongitude": 14.127239,
+   "coordinateUncertaintyInMeters": 704.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {},
+   "year": 2025,
+   "month": 6,
+   "day": 12,
+   "eventDate": "2025-06-12",
+   "startDayOfYear": 163,
+   "endDayOfYear": 163,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2025-06-12T08:18:47.000+00:00",
+   "lastInterpreted": "2026-10-11T04:30:15.717+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:14a9abd1-bccf-4b09-a6a1-f3c1bd10396c"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:14a9abd1-bccf-4b09-a6a1-f3c1bd10396c",
+   "http://unknown.org/crawl_attempt": "499",
+   "footprintWKT": "POLYGON ((460556 7357781, 460537 7357734, 460538 7357689, 460580 7357684, 460603 7357604, 460667 7357602, 461450 7357990, 461489 7358057, 461490 7358107, 461400 7358111, 461354 7358115, 461294 7358111, 461256 7358113, 461255 7358097, 461247 7358098, 461237 7358127, 461124 7358135, 461041 7358138, 460972 7358131, 460943 7358131, 460864 7358117, 460821 7358104, 460724 7358067, 460682 7358033, 460631 7358018, 460629 7357988, 460637 7357953, 460629 7357854, 460597 7357811, 460556 7357781))",
+   "municipality": "Rana",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37663531",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Engasjyen naturreservat, Engasjyen, Rana, No",
+   "gbifID": "5186366381",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:14a9abd1-bccf-4b09-a6a1-f3c1bd10396c",
+   "catalogNumber": "37663531",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "1366779",
+   "eventTime": "7.0/8.0"
+  },
+  {
+   "key": 5186366443,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:28:46.751+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 1,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "4VS4Z",
+      "name": "Scolopax rusticola Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Scolopax",
+      "specificEpithet": "rusticola",
+      "formattedName": "<i>Scolopax</i> <i>rusticola</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "4VS4Z",
+      "name": "Scolopax rusticola Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Scolopax",
+      "specificEpithet": "rusticola",
+      "formattedName": "<i>Scolopax</i> <i>rusticola</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "X3",
+       "name": "Charadriiformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "G4X",
+       "name": "Scolopacidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "6455D",
+       "name": "Scolopax",
+       "rank": "GENUS"
+      },
+      {
+       "key": "4VS4Z",
+       "name": "Scolopax rusticola",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2481700",
+      "name": "Scolopax rusticola Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Scolopax",
+      "specificEpithet": "rusticola",
+      "formattedName": "<i>Scolopax</i> <i>rusticola</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "2481700",
+      "name": "Scolopax rusticola Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Scolopax",
+      "specificEpithet": "rusticola",
+      "formattedName": "<i>Scolopax</i> <i>rusticola</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "7192402",
+       "name": "Charadriiformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "5282",
+       "name": "Scolopacidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2481693",
+       "name": "Scolopax",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2481700",
+       "name": "Scolopax rusticola",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2481700,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 7192402,
+   "familyKey": 5282,
+   "genusKey": 2481693,
+   "speciesKey": 2481700,
+   "acceptedTaxonKey": 2481700,
+   "scientificName": "Scolopax rusticola Linnaeus, 1758",
+   "scientificNameAuthorship": "Linnaeus, 1758",
+   "acceptedScientificName": "Scolopax rusticola Linnaeus, 1758",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Charadriiformes",
+   "family": "Scolopacidae",
+   "genus": "Scolopax",
+   "species": "Scolopax rusticola",
+   "genericName": "Scolopax",
+   "specificEpithet": "rusticola",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 66.325101,
+   "decimalLongitude": 14.378515,
+   "coordinateUncertaintyInMeters": 1.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {
+    "level0": {
+     "gid": "NOR",
+     "name": "Norway"
+    },
+    "level1": {
+     "gid": "NOR.10_1",
+     "name": "Nordland"
+    },
+    "level2": {
+     "gid": "NOR.10.28_1",
+     "name": "Rana"
+    }
+   },
+   "year": 2025,
+   "month": 6,
+   "day": 11,
+   "eventDate": "2025-06-11",
+   "startDayOfYear": 162,
+   "endDayOfYear": 162,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2025-06-12T00:35:11.000+00:00",
+   "lastInterpreted": "2026-10-11T04:28:46.751+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:24c771fc-1e4d-4c75-b5bd-fe9b0e8d0051"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:24c771fc-1e4d-4c75-b5bd-fe9b0e8d0051",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"Display/Song\"}",
+   "municipality": "Rana",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/37657920",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Sør Steinbekktjønna, Rana, No",
+   "gbifID": "5186366443",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:24c771fc-1e4d-4c75-b5bd-fe9b0e8d0051",
+   "catalogNumber": "37657920",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "2896890",
+   "fieldNotes": "Activity: Display/Song.",
+   "behavior": "possiblereproductive"
+  },
+  {
+   "key": 6148338459,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:30:27.447+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 1,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "V2",
+      "name": "Aves",
+      "rank": "CLASS",
+      "code": "ZOOLOGICAL",
+      "formattedName": "<i>Aves</i>"
+     },
+     "acceptedUsage": {
+      "key": "V2",
+      "name": "Aves",
+      "rank": "CLASS",
+      "code": "ZOOLOGICAL",
+      "formattedName": "<i>Aves</i>"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      }
+     ],
+     "issues": [
+      "TAXON_MATCH_HIGHERRANK"
+     ]
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "212",
+      "name": "Aves",
+      "rank": "CLASS",
+      "formattedName": "<i>Aves</i>"
+     },
+     "acceptedUsage": {
+      "key": "212",
+      "name": "Aves",
+      "rank": "CLASS",
+      "formattedName": "<i>Aves</i>"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      }
+     ],
+     "issues": [
+      "TAXON_MATCH_HIGHERRANK"
+     ]
+    }
+   },
+   "taxonKey": 212,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "acceptedTaxonKey": 212,
+   "scientificName": "Aves",
+   "acceptedScientificName": "Aves",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "taxonRank": "CLASS",
+   "taxonomicStatus": "ACCEPTED",
+   "decimalLatitude": 67.288811,
+   "decimalLongitude": 14.38669,
+   "coordinateUncertaintyInMeters": 750.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {},
+   "year": 2026,
+   "month": 2,
+   "day": 6,
+   "eventDate": "2026-02-06",
+   "startDayOfYear": 37,
+   "endDayOfYear": 37,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES",
+    "TAXON_MATCH_HIGHERRANK"
+   ],
+   "modified": "2026-02-25T09:16:52.000+00:00",
+   "lastInterpreted": "2026-10-11T04:30:27.447+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:fa4399fd-d67b-480f-b6ae-c24033a40f5e"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:fa4399fd-d67b-480f-b6ae-c24033a40f5e",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"Forage\"}",
+   "municipality": "Bodø",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/39693120",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Bodø havn, Bodø, No",
+   "gbifID": "6148338459",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:fa4399fd-d67b-480f-b6ae-c24033a40f5e",
+   "catalogNumber": "39693120",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "396499",
+   "fieldNotes": "Activity: Forage. Validationstatus: Report For Rrk Pending",
+   "eventTime": "14.0",
+   "behavior": "feeding"
+  },
+  {
+   "key": 5939303319,
+   "datasetKey": "b124e1e0-4755-430f-9eab-894f25a9b59c",
+   "publishingOrgKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "datasetCategory": [
+    "CitizenScience"
+   ],
+   "installationKey": "7bdf9f6d-317a-45ec-8bb7-7ff61345d6a6",
+   "hostingOrganizationKey": "d3978a37-635a-4ae3-bb85-7b4d41bc0b88",
+   "publishingCountry": "NO",
+   "protocol": "EML",
+   "lastCrawled": "2026-10-11T03:34:17.103+00:00",
+   "lastParsed": "2026-10-11T04:31:33.392+00:00",
+   "crawlId": 499,
+   "extensions": {},
+   "basisOfRecord": "HUMAN_OBSERVATION",
+   "individualCount": 4,
+   "occurrenceStatus": "PRESENT",
+   "classifications": {
+    "7ddf754f-d193-4cc9-b351-99906754a03b": {
+     "usage": {
+      "key": "3ZTRQ",
+      "name": "Mergus serrator Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Mergus",
+      "specificEpithet": "serrator",
+      "formattedName": "<i>Mergus</i> <i>serrator</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "3ZTRQ",
+      "name": "Mergus serrator Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Mergus",
+      "specificEpithet": "serrator",
+      "formattedName": "<i>Mergus</i> <i>serrator</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "CS5HF",
+       "name": "Eukaryota",
+       "rank": "DOMAIN"
+      },
+      {
+       "key": "N",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "CH2",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "8V4V3",
+       "name": "Vertebrata",
+       "rank": "SUBPHYLUM"
+      },
+      {
+       "key": "8V4V5",
+       "name": "Gnathostomata",
+       "rank": "INFRAPHYLUM"
+      },
+      {
+       "key": "8VVWB",
+       "name": "Osteichthyes",
+       "rank": "PARVPHYLUM"
+      },
+      {
+       "key": "9CK8W",
+       "name": "Tetrapoda",
+       "rank": "MEGACLASS"
+      },
+      {
+       "key": "V2",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "PQ",
+       "name": "Anseriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "9H6K5",
+       "name": "Anatidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "5P8Q",
+       "name": "Mergus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "3ZTRQ",
+       "name": "Mergus serrator",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    },
+    "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c": {
+     "usage": {
+      "key": "2498375",
+      "name": "Mergus serrator Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Mergus",
+      "specificEpithet": "serrator",
+      "formattedName": "<i>Mergus</i> <i>serrator</i> Linnaeus, 1758"
+     },
+     "acceptedUsage": {
+      "key": "2498375",
+      "name": "Mergus serrator Linnaeus, 1758",
+      "rank": "SPECIES",
+      "code": "ZOOLOGICAL",
+      "authorship": "Linnaeus, 1758",
+      "genericName": "Mergus",
+      "specificEpithet": "serrator",
+      "formattedName": "<i>Mergus</i> <i>serrator</i> Linnaeus, 1758"
+     },
+     "taxonomicStatus": "ACCEPTED",
+     "classification": [
+      {
+       "key": "1",
+       "name": "Animalia",
+       "rank": "KINGDOM"
+      },
+      {
+       "key": "44",
+       "name": "Chordata",
+       "rank": "PHYLUM"
+      },
+      {
+       "key": "212",
+       "name": "Aves",
+       "rank": "CLASS"
+      },
+      {
+       "key": "1108",
+       "name": "Anseriformes",
+       "rank": "ORDER"
+      },
+      {
+       "key": "2986",
+       "name": "Anatidae",
+       "rank": "FAMILY"
+      },
+      {
+       "key": "2498368",
+       "name": "Mergus",
+       "rank": "GENUS"
+      },
+      {
+       "key": "2498375",
+       "name": "Mergus serrator",
+       "rank": "SPECIES"
+      }
+     ],
+     "iucnRedListCategoryCode": "LC",
+     "issues": []
+    }
+   },
+   "taxonKey": 2498375,
+   "kingdomKey": 1,
+   "phylumKey": 44,
+   "classKey": 212,
+   "orderKey": 1108,
+   "familyKey": 2986,
+   "genusKey": 2498368,
+   "speciesKey": 2498375,
+   "acceptedTaxonKey": 2498375,
+   "scientificName": "Mergus serrator Linnaeus, 1758",
+   "scientificNameAuthorship": "Linnaeus, 1758",
+   "acceptedScientificName": "Mergus serrator Linnaeus, 1758",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "order": "Anseriformes",
+   "family": "Anatidae",
+   "genus": "Mergus",
+   "species": "Mergus serrator",
+   "genericName": "Mergus",
+   "specificEpithet": "serrator",
+   "taxonRank": "SPECIES",
+   "taxonomicStatus": "ACCEPTED",
+   "iucnRedListCategory": "LC",
+   "decimalLatitude": 65.929275,
+   "decimalLongitude": 12.451404,
+   "coordinateUncertaintyInMeters": 750.0,
+   "continent": "EUROPE",
+   "stateProvince": "Nordland",
+   "gadm": {},
+   "year": 2026,
+   "month": 1,
+   "day": 3,
+   "eventDate": "2026-01-03",
+   "startDayOfYear": 3,
+   "endDayOfYear": 3,
+   "issues": [
+    "COORDINATE_ROUNDED",
+    "CONTINENT_DERIVED_FROM_COORDINATES"
+   ],
+   "modified": "2026-01-03T19:53:09.000+00:00",
+   "lastInterpreted": "2026-10-11T04:31:33.392+00:00",
+   "license": "http://creativecommons.org/licenses/by/4.0/legalcode",
+   "isSequenced": false,
+   "identifiers": [
+    {
+     "identifier": "urn:uuid:1c6d80a1-115e-4cbd-9f19-fcc52706dea6"
+    }
+   ],
+   "media": [],
+   "facts": [],
+   "relations": [],
+   "isInCluster": false,
+   "recordedBy": "[removed from fixture]",
+   "dnaSequenceID": [],
+   "nucleotideSequence": [],
+   "geodeticDatum": "WGS84",
+   "class": "Aves",
+   "countryCode": "NO",
+   "recordedByIDs": [],
+   "identifiedByIDs": [],
+   "gbifRegion": "EUROPE",
+   "country": "Norway",
+   "publishedByGbifRegion": "EUROPE",
+   "identifier": "urn:uuid:1c6d80a1-115e-4cbd-9f19-fcc52706dea6",
+   "http://unknown.org/crawl_attempt": "499",
+   "dynamicProperties": "{\"Activity\":\"Forage\"}",
+   "municipality": "Alstahaug",
+   "county": "Nordland",
+   "associatedReferences": "https://mobil.artsobservasjoner.no/sighting/39508801",
+   "http://unknown.org/status": "not_reviewed",
+   "locality": "Søvikfjæra og gruntvatn, Søvika, Alstahaug, No",
+   "gbifID": "5939303319",
+   "collectionCode": "so2-birds",
+   "occurrenceID": "urn:uuid:1c6d80a1-115e-4cbd-9f19-fcc52706dea6",
+   "catalogNumber": "39508801",
+   "http://unknown.org/omitFromScheduledCrawl": "true",
+   "institutionCode": "nbic",
+   "locationID": "1600236",
+   "fieldNotes": "Activity: Forage.",
+   "eventTime": "10.5",
+   "behavior": "feeding"
+  }
+ ]
+}

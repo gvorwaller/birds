@@ -1,0 +1,26 @@
+{
+ "offset": 0,
+ "limit": 0,
+ "endOfRecords": false,
+ "count": 125145,
+ "results": [],
+ "facets": [
+  {
+   "field": "STATE_PROVINCE",
+   "counts": [
+    {
+     "name": "Nordland",
+     "count": 124645
+    },
+    {
+     "name": "Troms",
+     "count": 499
+    },
+    {
+     "name": "Trøndelag",
+     "count": 1
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,200 @@
+diff --git a/ecosystem.config.cjs b/ecosystem.config.cjs
+index 38b0313..c6a9a3a 100644
+--- a/ecosystem.config.cjs
++++ b/ecosystem.config.cjs
+@@ -88,6 +88,38 @@ module.exports = {
+ 				NODE_ENV: 'production',
+ 				BIRDS_ENV: 'production'
+ 			}
++		},
++		{
++			// The Norway sightings connector (docs/2026-10-21-external-sources-plan-CC.md,
++			// Phase 2). It reads GBIF and talks to the app only through /api/ingest/;
++			// it gets no database settings (no --env-file=.env). Its own env file
++			// holds INGEST_URL and INGEST_TOKEN (scripts/connector-token.mjs) and is
++			// re-read before every claim; without a token it idles.
++			name: 'birds-connector-gbif-artsobs',
++			script: 'build/connector-gbif-artsobs.js',
++			node_args: '--max-old-space-size=320',
++			cwd: '/opt/birds',
++
++			instances: 1,
++			exec_mode: 'fork',
++
++			autorestart: true,
++			restart_delay: 10000,
++			max_restarts: 10,
++			min_uptime: '30s',
++			max_memory_restart: '450M',
++			// On stop it hands an in-flight load back to the queue (one fail call).
++			kill_timeout: 15000,
++
++			out_file: '/var/log/pm2/birds-connector-gbif-artsobs.out.log',
++			error_file: '/var/log/pm2/birds-connector-gbif-artsobs.err.log',
++			merge_logs: true,
++			time: true,
++
++			env: {
++				NODE_ENV: 'production',
++				CONNECTOR_ENV_FILE: '/opt/birds/.local/connectors/gbif-artsobs.env'
++			}
+ 		}
+ 	]
+ };
+diff --git a/package.json b/package.json
+index 34a9816..5198d0b 100644
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,7 @@
+ 	"scripts": {
+ 		"dev": "vite dev --port 5178 --strictPort",
+ 		"dev:test": "vite dev --host 127.0.0.1 --port 5178 --strictPort --mode test",
+-		"build": "vite build && node scripts/build-worker.mjs",
++		"build": "vite build && node scripts/build-worker.mjs && node scripts/build-connector.mjs",
+ 		"preview": "vite preview --port 5178",
+ 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+ 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+@@ -21,6 +21,7 @@
+ 		"test:db:migrate": "./scripts/test-db-migrate.sh",
+ 		"format": "prettier --write .",
+ 		"lint": "prettier --check .",
++		"connector:dev:test": "node scripts/build-connector.mjs && CONNECTOR_ENV_FILE=$PWD/.local/connectors/gbif-artsobs.test.env node build/connector-gbif-artsobs.js",
+ 		"worker:dev:test": "node scripts/build-worker.mjs && BIRDS_ENV=test node --env-file=.env.test build/worker.js",
+ 		"seed:ribbon-fixture": "node --env-file=.env.test scripts/seed-ribbon-fixture.mjs",
+ 		"unseed:ribbon-fixture": "node --env-file=.env.test scripts/unseed-ribbon-fixture.mjs"
+diff --git a/scripts/connector-token.mjs b/scripts/connector-token.mjs
+index 76b0a7d..915ba0d 100644
+--- a/scripts/connector-token.mjs
++++ b/scripts/connector-token.mjs
+@@ -6,7 +6,7 @@
+  *
+  *   node --env-file=/opt/birds/.env scripts/connector-token.mjs \
+  *     --source artsobs-gbif --label droplet \
+- *     --out /opt/birds/connectors/gbif-artsobs.env \
++ *     --out /opt/birds/.local/connectors/gbif-artsobs.env \
+  *     --ingest-url http://127.0.0.1:3003/api/ingest/ [--rotate]
+  *
+  * - The token is never printed, logged or passed as an argument. Only its
+diff --git a/scripts/deploy-to-DO.sh b/scripts/deploy-to-DO.sh
+index 2747118..6055b9d 100755
+--- a/scripts/deploy-to-DO.sh
++++ b/scripts/deploy-to-DO.sh
+@@ -144,6 +144,42 @@ if ! pm2 jlist | grep -q '"name":"birds-worker"'; then
+   echo "!! birds-worker missing from pm2 process list" >&2
+   exit 1
+ fi
++# The Norway sightings connector (external sources Phase 2) idles without a
++# token, so it must always be present and online. Present is not enough: it
++# must stay online for 35 s, past PM2's min_uptime of 30 s (ecosystem.config.cjs),
++# within 90 s. pm2 can print warnings such as "[PM2][WARN] …" before the JSON,
++# so the list is the first "[" from which the rest parses as a JSON array.
++connector_state() {
++  pm2 jlist | node -e '
++    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
++      let list = null;
++      for (let i = s.indexOf("["); i >= 0 && !list; i = s.indexOf("[", i + 1)) {
++        try {
++          const v = JSON.parse(s.slice(i));
++          if (Array.isArray(v)) list = v;
++        } catch {}
++      }
++      if (!list) return console.log("unreadable 0");
++      const p = list.find((x) => x.name === "birds-connector-gbif-artsobs");
++      if (!p) return console.log("missing 0");
++      const up = p.pm2_env.status === "online" ? Math.floor((Date.now() - p.pm2_env.pm_uptime) / 1000) : 0;
++      console.log(`${String(p.pm2_env.status).replace(/\s+/g, "_")} ${up}`);
++    });'
++}
++conn_ok=0
++for i in $(seq 1 18); do
++  read -r conn_status conn_up < <(connector_state || echo "unreadable 0")
++  if [[ "${conn_status}" == "online" && "${conn_up}" -ge 35 ]]; then
++    echo "==> birds-connector-gbif-artsobs online (${conn_up}s)"
++    conn_ok=1
++    break
++  fi
++  sleep 5
++done
++if [[ "${conn_ok}" != 1 ]]; then
++  echo "!! birds-connector-gbif-artsobs not staying online (status=${conn_status:-?} uptime=${conn_up:-?}s)" >&2
++  exit 1
++fi
+ 
+ echo "==> health check (internal)"
+ for i in $(seq 1 12); do
+diff --git a/src/lib/components/admin/SourcesPanel.svelte b/src/lib/components/admin/SourcesPanel.svelte
+index 7c36416..0ff1b1c 100644
+--- a/src/lib/components/admin/SourcesPanel.svelte
++++ b/src/lib/components/admin/SourcesPanel.svelte
+@@ -22,6 +22,20 @@
+ 		superseded: { label: 'Replaced', tone: 'neutral' },
+ 		failed: { label: 'Failed', tone: 'error' }
+ 	};
++	// Owner request (2026-10-23): the background docs, findable from where imports are run.
++	const REPO_DOCS = 'https://github.com/gvorwaller/birds/blob/main/';
++	const REFERENCE_DOCS = [
++		{
++			title: 'Sightings sources survey',
++			about: 'Where local portals out-record eBird, country by country, and which could get a connector next.',
++			path: 'docs/2026-10-22-bird-sightings-sources-survey.md'
++		},
++		{
++			title: 'External sources plan',
++			about: 'How imports work: the ingest contract, the Norway connector, and what the GBIF checks found.',
++			path: 'docs/2026-10-21-external-sources-plan-CC.md'
++		}
++	];
+ 	const REASON: Record<string, string> = {
+ 		no_match: 'no eBird species with this scientific name',
+ 		ambiguous: 'more than one eBird species has this scientific name',
+@@ -83,6 +97,16 @@
+ 		data and sends it here; nothing on this tab contacts the source directly. These are counts of
+ 		reports, never eBird likelihoods.
+ 	</p>
++	<h3 class="ref-title">Reference</h3>
++	<ul class="refs">
++		{#each REFERENCE_DOCS as d (d.path)}
++			<li>
++				<a href={`${REPO_DOCS}${d.path}`} target="_blank" rel="noopener">{d.title} ↗</a>
++				<span class="muted">{d.about}</span>
++				<code>{d.path}</code>
++			</li>
++		{/each}
++	</ul>
+ 	{#if form?.kind === 'sources'}
+ 		<p class={form.ok ? 'notice' : 'error'} role={form.ok ? 'status' : 'alert'}>{form.message}</p>
+ 	{/if}
+@@ -337,6 +361,33 @@
+ </dialog>
+ 
+ <style>
++	.ref-title {
++		margin: 16px 0 4px;
++		font-size: 1rem;
++	}
++	.refs {
++		list-style: none;
++		margin: 0;
++		padding: 0;
++	}
++	.refs li {
++		display: flex;
++		flex-direction: column;
++		gap: 2px;
++		padding: 4px 0 8px;
++	}
++	.refs a {
++		align-self: flex-start;
++		display: inline-flex;
++		align-items: center;
++		min-height: 48px;
++		font-weight: 600;
++	}
++	.refs code {
++		font-size: 0.85rem;
++		color: var(--muted);
++		overflow-wrap: anywhere;
++	}
+ 	.source h3 {
+ 		margin: 0;
+ 	}
