@@ -86,3 +86,62 @@ export function reportDate(isoDate: string): string {
 		timeZone: 'UTC'
 	});
 }
+
+/** The trip planner prefilled at a place (trips/plan reads these params). */
+export function tripPlanHref(place: string, lat: number, lon: number): string {
+	const p = new URLSearchParams();
+	p.set('place', place);
+	p.set('lat', lat.toFixed(5));
+	p.set('lng', lon.toFixed(5));
+	return `/trips/plan?${p.toString()}`;
+}
+
+/** The "Where and when to look" view for a source's region (Phase 4). */
+export function whereWhenHref(
+	sourceId: string,
+	regionCode: string,
+	opts: { month?: number | null; place?: string | null; view?: 'month' | 'species'; seen?: 'needs' | 'all' } = {}
+): string {
+	const p = new URLSearchParams();
+	if (opts.view === 'species') p.set('view', 'species');
+	if (opts.place) p.set('place', opts.place);
+	if (opts.month) p.set('month', String(opts.month));
+	if (opts.seen === 'all') p.set('seen', 'all');
+	const q = p.toString();
+	return `/reports/${encodeURIComponent(sourceId)}/${encodeURIComponent(regionCode)}${q ? `?${q}` : ''}`;
+}
+
+interface MonthSpecies {
+	name: string;
+	seen: boolean;
+	months: readonly number[];
+}
+
+/** The species to list: needs only (not seen) or all of them. */
+export function speciesShown<T extends { seen: boolean }>(species: readonly T[], needsOnly: boolean): T[] {
+	return needsOnly ? species.filter((s) => !s.seen) : [...species];
+}
+
+/** Species reported in a month, most reports first (ties by name). */
+export function speciesInMonth<T extends MonthSpecies>(species: readonly T[], month: number): T[] {
+	return species
+		.filter((s) => s.months[month - 1] > 0)
+		.sort((a, b) => b.months[month - 1] - a.months[month - 1] || a.name.localeCompare(b.name));
+}
+
+interface PlaceFigures {
+	name: string;
+	monthSpecies: number;
+	monthNeeds: number;
+	species: number;
+	needs: number;
+}
+
+/**
+ * Municipalities, most needs (or species) first, for the month or the whole
+ * window; ties in Norwegian name order.
+ */
+export function rankPlaces<T extends PlaceFigures>(rows: readonly T[], byMonth: boolean, needsOnly: boolean): T[] {
+	const key = (r: T) => (byMonth ? (needsOnly ? r.monthNeeds : r.monthSpecies) : needsOnly ? r.needs : r.species);
+	return [...rows].sort((a, b) => key(b) - key(a) || a.name.localeCompare(b.name, 'nb'));
+}

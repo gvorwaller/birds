@@ -40,6 +40,7 @@ export const USAGE_FEATURE_LABEL: Record<UsageFeature, string> = {
 const ROUTE_FEATURES: [prefix: string, feature: UsageFeature][] = [
   ["/forecast/data", "hotspots_data"],
   ["/hotspots", "hotspots_data"],
+  ["/reports", "hotspots_data"],
   ["/forecast", "forecast"],
   ["/species", "field_guide"],
   ["/taxonomy", "field_guide"],

@@ -18,6 +18,8 @@
 		monthCaption,
 		reportDate,
 		reportsText,
+		tripPlanHref,
+		whereWhenHref,
 		windowLabel
 	} from '$lib/external-reports';
 	import ReportMonthStrip from './ReportMonthStrip.svelte';
@@ -66,14 +68,6 @@
 	/** The source's locality usually names its municipality already ("Finneset, Kabelvåg, Vågan, No"). */
 	function whereText(r: { locality: string; place: string | null }): string {
 		return r.place && !r.locality.includes(r.place) ? `${r.locality}, ${r.place}` : r.locality;
-	}
-
-	function tripHref(r: { locality: string; lat: number; lon: number }): string {
-		const p = new URLSearchParams();
-		p.set('place', r.locality);
-		p.set('lat', r.lat.toFixed(5));
-		p.set('lng', r.lon.toFixed(5));
-		return `/trips/plan?${p.toString()}`;
 	}
 
 	function submitter(key: string) {
@@ -166,7 +160,7 @@
 								<a href={r.url} target="_blank" rel="noopener">Sighting ↗</a>
 								{#if r.lat != null && r.lon != null}
 									<a href={mapsPlaceUrl(r.lat, r.lon)} target="_blank" rel="noopener">📍 Map</a>
-									<a href={tripHref({ locality: r.locality, lat: r.lat, lon: r.lon })}>Add to trip</a>
+									<a href={tripPlanHref(r.locality, r.lat, r.lon)}>Add to trip</a>
 								{:else}
 									<a href={mapsPlaceUrl({ name: placeQuery(c, whereText(r)) })} target="_blank" rel="noopener"
 										>📍 Map</a
@@ -179,6 +173,11 @@
 			{:else}
 				<p class="muted small">None in the last 14 days with reports when {regionName} was loaded.</p>
 			{/if}
+			<p class="more">
+				<a href={whereWhenHref(c.source.id, regionCode, { month: c.month, seen: 'all' })}
+					>Every species in {regionName} in {MONTH_LONG[c.month - 1]} ›</a
+				>
+			</p>
 		{/if}
 
 		{#if status}
@@ -314,6 +313,14 @@
 	}
 	form {
 		margin-top: 12px;
+	}
+	.more {
+		margin: 8px 0 0;
+	}
+	.more a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 48px;
 	}
 	button.primary,
 	button.secondary {

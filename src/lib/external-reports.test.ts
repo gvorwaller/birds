@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { busiestMonths, externalRegionHref, pickedRegion, monthCaption, reportDate, reportsText, shareText, windowLabel } from './external-reports';
+import {
+	busiestMonths,
+	externalRegionHref,
+	pickedRegion,
+	monthCaption,
+	rankPlaces,
+	reportDate,
+	reportsText,
+	shareText,
+	speciesInMonth,
+	speciesShown,
+	tripPlanHref,
+	whereWhenHref,
+	windowLabel
+} from './external-reports';
 
 describe('external report wording (td-eec7db Phase 3)', () => {
 	it('labels an inclusive window by its months', () => {
@@ -53,5 +67,48 @@ describe('external report wording (td-eec7db Phase 3)', () => {
 
 	it('formats a report date without time-zone drift', () => {
 		expect(reportDate('2026-10-27')).toBe('Tue, Oct 27');
+	});
+});
+
+describe('where and when to look (td-eec7db Phase 4)', () => {
+	const m = (june: number, may = 0) => [0, 0, 0, 0, may, june, 0, 0, 0, 0, 0, 0];
+	const species = [
+		{ code: 'a', name: 'Alpha', seen: true, months: m(5) },
+		{ code: 'b', name: 'Beta', seen: false, months: m(0, 9) },
+		{ code: 'c', name: 'Gamma', seen: false, months: m(12) },
+		{ code: 'd', name: 'Delta', seen: false, months: m(5) }
+	];
+
+	it('lists needs only, or every species', () => {
+		expect(speciesShown(species, true).map((s) => s.code)).toEqual(['b', 'c', 'd']);
+		expect(speciesShown(species, false).map((s) => s.code)).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it("lists a month's species by reports, ties by name, leaving out the month's absentees", () => {
+		expect(speciesInMonth(species, 6).map((s) => s.code)).toEqual(['c', 'a', 'd']);
+		expect(speciesInMonth(species, 5).map((s) => s.code)).toEqual(['b']);
+		expect(speciesInMonth(species, 1)).toEqual([]);
+	});
+
+	it('ranks municipalities by needs or species, for the month or the window', () => {
+		const rows = [
+			{ name: 'Øksnes', monthSpecies: 9, monthNeeds: 2, species: 20, needs: 15 },
+			{ name: 'Bodø', monthSpecies: 5, monthNeeds: 4, species: 30, needs: 10 },
+			{ name: 'Andøy', monthSpecies: 5, monthNeeds: 2, species: 20, needs: 15 }
+		];
+		expect(rankPlaces(rows, true, true).map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
+		expect(rankPlaces(rows, true, false).map((r) => r.name)).toEqual(['Øksnes', 'Andøy', 'Bodø']);
+		expect(rankPlaces(rows, false, true).map((r) => r.name)).toEqual(['Andøy', 'Øksnes', 'Bodø']);
+		expect(rankPlaces(rows, false, false).map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
+	});
+
+	it('links to the view and the trip planner', () => {
+		expect(whereWhenHref('artsobs', 'NO-18')).toBe('/reports/artsobs/NO-18');
+		expect(whereWhenHref('artsobs', 'NO-18', { month: 6, place: 'Bodø', view: 'species' })).toBe(
+			'/reports/artsobs/NO-18?view=species&place=Bod%C3%B8&month=6'
+		);
+		// "Every species" from the species card must not hide species already seen (CODEX1 P3).
+		expect(whereWhenHref('artsobs', 'NO-18', { month: 6, seen: 'all' })).toBe('/reports/artsobs/NO-18?month=6&seen=all');
+		expect(tripPlanHref('Kjerringøy', 67.5, 14.7)).toBe('/trips/plan?place=Kjerring%C3%B8y&lat=67.50000&lng=14.70000');
 	});
 });

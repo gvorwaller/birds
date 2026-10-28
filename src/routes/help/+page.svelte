@@ -511,6 +511,19 @@
 						under <strong>Reported on other sources</strong>.
 					</li>
 					<li>
+						<strong>Where and when to look</strong> (from a loaded county on
+						Hotspots &amp; data, or <strong>Every species in … ›</strong> on the
+						card) shows a whole county or one municipality. <strong>By
+						month</strong> lists the species reported in the chosen month, most
+						reports first, with the municipalities that have the most;
+						<strong>By species</strong> lists them in taxonomic order with their
+						busiest months. <strong>My needs</strong> (the default) leaves out
+						species on your life list. Pick a municipality for its own months,
+						the places in it with the most reports (with <strong>Add to
+						trip</strong> where a place's reports agree on where it is) and its
+						most active birders.
+					</li>
+					<li>
 						Each loaded county on Hotspots &amp; data also lists its <strong>most
 						active birders</strong>, ranked by days with reports. Names are public
 						on Artsobservasjoner. Data: Artsobservasjoner (Norwegian Biodiversity

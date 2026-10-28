@@ -50,6 +50,7 @@ const LABELED_PATHS: [path: string, label: string][] = [
   ["/forecast/data", "Hotspots & data"],
   ["/forecast", "Forecast"],
   ["/trips", "Trips"],
+  ["/reports", "Where and when to look"],
   ["/photos", "Photos"],
 ];
 

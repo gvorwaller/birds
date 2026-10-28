@@ -605,6 +605,18 @@ Phase 2 rev B changed the data underneath Phase 3, so these points override the 
   - "Add to trip" only where a locality has a validated coordinate.
 - It reuses the month strip and a list layout, so no new chart type is needed.
 
+### Phase 4 rev B: as built (td-b6ddfc, 2026-10-28)
+Sized from prod's Nordland load (read-only, 2026-10-28): 41 municipalities; 298 species in the county, 64–216 per municipality; up to 233 species in a county month (median 50 in a municipality month). Against the owner's life list, 229 of the 298 are needs, 78–169 in a month, so "My needs" narrows the lists but doesn't make them short. Top localities are stored **per municipality, all birds** (25 each, 83% with a pin), not per species, so "which places" for a species is its municipalities.
+- **URL:** `/reports/<source>/<region>?view=month|species&place=<municipality>&month=1–12&seen=needs|all`. Defaults: by month, the whole region, this month (the owner's calendar, as on the forecast), My needs. An unknown place reads as the whole region; an unknown or inactive source, or a region it doesn't cover, is 404. One read snapshot per page (`where-when.ts`).
+- **Controls:** a "By month / By species" switch, a "My needs / All species" switch (needs = not in the viewer's `seen_species`, the scope owner for a family viewer), and a Place picker (All of Nordland, then the municipalities in Norwegian order) that navigates on change. A picked municipality gets a 📍 map link by name.
+- **By month:** the place's all-bird month strip (counts, as on Phase 3) with a caption: "N reports of S species in Place in June, Oct 2024 – Sep 2026; K are needs (not on your life list)." Then the species reported that month, most reports first; at county level each names the up to 3 municipalities with the most that month ("Most in Røst, Værøy, Bodø", each picks that municipality). A species links to its Phase 3 card (forecast/species, that month).
+- **By species:** taxonomic order; each row shows its reports and busiest months and opens to its month strip, at county level its top 3 municipalities over the window, and a link to its card.
+- **Folds above the list:** at county level "Municipalities in June (41)": needs, species and reports per municipality, most needs first (most species under All); at municipality level "Places in Bodø with the most reports (25)": 📍 Map by coordinate and **Add to trip only for a pin** (the connector's Phase 0 rule, with ≤1 km uncertainty checked again); the rest map by name. Both levels: "Most active birders in <place>" (the per-municipality lists Phase 3 deferred).
+- **Long lists:** the first 40 rows, then "Show all N".
+- **Not loaded yet:** the page says so and offers the Phase 3 Load button (non-viewers); a load in progress is watched as on the cards.
+- **Links in:** each loaded county on Hotspots & data ("Where and when to look in Nordland ›") and the species card ("Every species in Nordland in June ›"). The species page reaches it through the county card. Back link label "Where and when to look" (`LABELED_PATHS`).
+- **Wording:** the same callout (counts, not frequency or chance; reporting effort; hidden sensitive species) and the source's attribution with its window.
+
 ## Later (separate tickets)
 - A Sweden connector (Artportalen, keyed API).
 - GBIF density map tiles as an overlay (the earlier probe returned 503).

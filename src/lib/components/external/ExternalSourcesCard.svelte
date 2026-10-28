@@ -10,9 +10,10 @@
 	import { watchExternalLoads } from '$lib/external-watch.svelte';
 	import type { ExternalOverviewRegion, ExternalOverviewSource } from '$server/external-sources/reports';
 	import type { ExternalQueued } from '$server/external-sources/queue-action';
-	import { externalRegionId, pickedRegion, reportsText, windowLabel } from '$lib/external-reports';
+	import { externalRegionId, pickedRegion, reportsText, whereWhenHref, windowLabel } from '$lib/external-reports';
 	import ReportMonthStrip from './ReportMonthStrip.svelte';
 	import ExternalAttribution from './ExternalAttribution.svelte';
+	import ObserverTable from './ObserverTable.svelte';
 
 	let {
 		overview,
@@ -166,37 +167,13 @@
 											All bird species together; each cell adds up that month across the whole window. {r.published.places} municipalities.
 										</p>
 									</details>
+									<p class="where">
+										<a href={whereWhenHref(s.source.id, r.code)}>Where and when to look in {r.name} ›</a>
+									</p>
 									{#if r.observers.length > 0}
 										<details class="fold">
 											<summary>Most active birders ({r.observers.length})</summary>
-											<p class="muted small">
-												Ranked by days with reports, then species. A report is one species at one place on one day, so a
-												busy birder has thousands. Names are public on {s.source.name}.
-											</p>
-											<div class="tablewrap">
-												<table>
-													<thead>
-														<tr>
-															<th scope="col">Birder</th>
-															<th scope="col" class="num">Days</th>
-															<th scope="col" class="num">Species</th>
-															<th scope="col" class="num">Places</th>
-															<th scope="col" class="num">Reports</th>
-														</tr>
-													</thead>
-													<tbody>
-														{#each r.observers as o (o.rank)}
-															<tr>
-																<td>{o.observer}</td>
-																<td class="num">{o.days.toLocaleString('en-US')}</td>
-																<td class="num">{o.species.toLocaleString('en-US')}</td>
-																<td class="num">{o.localities.toLocaleString('en-US')}</td>
-																<td class="num">{o.reports.toLocaleString('en-US')}</td>
-															</tr>
-														{/each}
-													</tbody>
-												</table>
-											</div>
+											<ObserverTable observers={r.observers} sourceName={s.source.name} />
 										</details>
 									{/if}
 								{/if}
@@ -332,33 +309,14 @@
 	.fold[open] summary::after {
 		content: '▾';
 	}
-	.tablewrap {
-		overflow-x: auto;
+	.where {
+		margin: 0;
 	}
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.88rem;
-	}
-	th {
-		text-align: left;
-		color: var(--muted);
-		font-weight: 600;
-		font-size: 0.8rem;
-		padding: 6px 8px 6px 0;
-		border-bottom: 1px solid var(--border);
-	}
-	td {
-		padding: 6px 8px 6px 0;
-		border-bottom: 1px solid var(--border);
-	}
-	tr:last-child td {
-		border-bottom: none;
-	}
-	.num {
-		text-align: right;
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
+	.where a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 48px;
+		font-size: 0.92rem;
 	}
 	.loadother {
 		margin-top: 12px;
