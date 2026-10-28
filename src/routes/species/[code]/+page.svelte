@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ExternalSpeciesSummary from "$lib/components/external/ExternalSpeciesSummary.svelte";
   import { decodeRibbonGrid } from "$lib/ribbon-payload";
   import { taxonomyHref } from "$lib/taxonomy";
   import SpecialInterestToggle from "$components/SpecialInterestToggle.svelte";
@@ -107,6 +108,7 @@
     identification: true,
     finding: true,
     bestTime: true,
+    external: true,
     recent: true,
     nearest: true,
     about: true,
@@ -480,6 +482,7 @@
     | "finding-this-bird"
     | "seasonal-distribution"
     | "best-time"
+    | "other-sources"
     | "recent-reports"
     | "nearest-reports"
     | "about"
@@ -503,6 +506,7 @@
         reveal: () => (ribbonExpanded = true),
       });
     if (hasBestTime) sections.push({ id: "best-time", label: "Best time" });
+    if (data.externalSummary.length > 0) sections.push({ id: "other-sources", label: "Other sources" });
     sections.push({ id: "recent-reports", label: "Recent reports" });
     if (hasNearestReports) sections.push({ id: "nearest-reports", label: "Nearest reports" });
     if (hasAbout) sections.push({ id: "about", label: "About" });
@@ -905,6 +909,19 @@
       </div>
     {/if}
   {/snippet}
+
+  {#if data.externalSummary.length > 0}
+    <!-- Reports from other sources (td-eec7db Phase 3): only once a region
+         with reports of this species has been loaded. -->
+    <details class="card fold" bind:open={cardOpen.external}>
+      <summary><h2 id="other-sources" class="section-target" tabindex="-1">Reported on other sources</h2></summary>
+      <ExternalSpeciesSummary
+        summaries={data.externalSummary}
+        speciesCode={data.taxon.species_code}
+        speciesName={data.taxon.com_name}
+      />
+    </details>
+  {/if}
 
   <details class="card fold" bind:open={cardOpen.recent}>
     <summary><h2 id="recent-reports" class="section-target" tabindex="-1">

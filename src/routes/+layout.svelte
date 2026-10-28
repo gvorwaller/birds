@@ -14,6 +14,7 @@
 	import { navigationAfterNavigate } from '$lib/navigation-context.svelte';
 	import { reportPageUse } from '$lib/usage-report';
 	import { navWatch } from '$lib/nav-watch';
+	import { externalRegionHref } from '$lib/external-reports';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -95,12 +96,10 @@
 		}
 		return `${jobPresentationText(activeJob.presentation, p)} — ${activeJob.displayName}${extra}`;
 	});
-	// Until the Norway pages exist (td-eec7db Phase 3), an external load's
-	// progress lives in Admin → Sources.
+	// An external load's progress lives on its region's row in Hotspots &
+	// data's "Reports from other sources" card (td-eec7db Phase 3).
 	const jobChipHref = $derived(
-		activeJob && 'sourceId' in activeJob && data.user?.role === 'admin'
-			? '/admin?tab=sources'
-			: '/forecast/data#background-work'
+		activeJob && 'sourceId' in activeJob ? externalRegionHref(activeJob.regionCode) : '/forecast/data#background-work'
 	);
 	const quietJobs = $derived(
 		chipJobs.filter((j) => ['paused', 'scheduled', 'waiting'].includes(j.presentation?.state ?? ''))

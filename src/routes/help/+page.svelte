@@ -476,6 +476,47 @@
 						eBird.
 					</li>
 				</ul>
+				<h3 id="other-sources">Reports from other sources (Norway)</h3>
+				<ul>
+					<li>
+						eBird has few checklists in Norway, where birders report to
+						<strong>Artsobservasjoner</strong> instead. Its bird reports can be
+						loaded one county at a time: <strong>Hotspots &amp; data</strong> →
+						<strong>Reports from other sources</strong> → <strong>Load reports</strong>,
+						or the <strong>Load … reports</strong> button on a species forecast for a
+						Norwegian county. A load reads the last 24 complete months plus the
+						latest two weeks and takes a few minutes; nothing is fetched while
+						you browse.
+					</li>
+					<li>
+						These are <strong>counts of reports</strong>, not checklist
+						frequencies. A report is one species at one place on one day, as
+						someone sent it in. There are no complete checklists behind them, so
+						"142 reports in June" can't be turned into a chance of seeing the
+						bird. The share shown with the selected month ("1.8% of all 7,890 bird
+						reports in Nordland that month") only compares the species with all
+						birds reported there.
+					</li>
+					<li>
+						Counts follow where and how often people go birding: busy places,
+						weekends and conspicuous birds get more. Some sensitive species are
+						hidden by the source, so "no reports" never means a bird isn't there.
+					</li>
+					<li>
+						A species forecast for a Norwegian county shows a
+						<strong>Reported on Artsobservasjoner</strong> card: reports per month
+						for the whole window, the municipalities with the most reports in the
+						chosen month, and the latest reports with who made them and a link to
+						each sighting. A species page lists the loaded counties with reports
+						under <strong>Reported on other sources</strong>.
+					</li>
+					<li>
+						Each loaded county on Hotspots &amp; data also lists its <strong>most
+						active birders</strong>, ranked by days with reports. Names are public
+						on Artsobservasjoner. Data: Artsobservasjoner (Norwegian Biodiversity
+						Information Centre), CC BY 4.0.
+					</li>
+				</ul>
 			</div>
 		{/if}
 

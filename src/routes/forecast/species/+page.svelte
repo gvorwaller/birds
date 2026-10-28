@@ -12,6 +12,8 @@
   import ProgressBar from "$components/ProgressBar.svelte";
   import Skeleton from "$components/Skeleton.svelte";
   import MonthPicker from "$components/MonthPicker.svelte";
+  import ExternalSpeciesCard from "$lib/components/external/ExternalSpeciesCard.svelte";
+  import ExternalSpeciesSummary from "$lib/components/external/ExternalSpeciesSummary.svelte";
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
@@ -158,6 +160,13 @@
     p.set("loc", h.locName);
     p.set("month", String(data.month));
     return `/forecast?${p.toString()}`;
+  }
+
+  /** This page with another month chosen; every other parameter kept. */
+  function externalMonthHref(m: number): string {
+    const p = new URLSearchParams(page.url.searchParams);
+    p.set("month", String(m));
+    return `?${p.toString()}`;
   }
 
   /** Trip planner prefilled at a hotspot (trips/plan reads these params). */
@@ -485,6 +494,29 @@
         </p>
       {/if}
     </section>
+
+    <!-- Reports from other sources (td-eec7db Phase 3): counts of reports,
+         beside eBird's checklist frequencies above, never mixed into them. -->
+    {#if data.externalCards && data.externalCards.length > 0}
+      <ExternalSpeciesCard
+        cards={data.externalCards}
+        speciesName={data.taxon.com_name}
+        regionCode={data.region.code}
+        regionName={data.region.name}
+        canLoad={!data.isViewer}
+        monthHref={externalMonthHref}
+        result={form && ("externalQueued" in form || "externalError" in form) ? form : null}
+      />
+    {:else if data.externalCountry && data.externalCountry.length > 0}
+      <section class="card">
+        <h2>{data.taxon.com_name} reported in {data.region.name}, by region</h2>
+        <ExternalSpeciesSummary
+          summaries={data.externalCountry}
+          speciesCode={data.taxon.species_code}
+          speciesName={data.taxon.com_name}
+        />
+      </section>
+    {/if}
 
     {#if data.taxon && data.region}
       <section class="card">

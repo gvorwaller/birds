@@ -581,6 +581,19 @@ The owner chose Artsobservasjoner's own source (Artsdatabanken's Artskart public
   - a percentage appears only in full prose next to its denominator, never as a badge [A-P1-4];
   - the source's attribution appears everywhere.
 
+### Phase 3 rev B: what changed since the plan was reviewed (td-6895f6, 2026-10-27)
+Phase 2 rev B changed the data underneath Phase 3, so these points override the list above where they differ.
+- **Observers (owner, 2026-10-27: "County panel now"):** each loaded Norwegian county on Hotspots & data gets a folded "Most active birders" list, from the county-level rows of `external_top_observers`: name, days out, species, places, reports, ranked as stored (days first). The species card's latest reports name the party. The per-municipality lists wait for the Phase 4 view.
+- **Latest reports on the species card:** the last 14 days with data (`external_recent_reports`, 10 newest per species and county): date, count, locality, municipality, party, and "Sighting ↗" to the record on the source. A coordinate map link only when the report is not generalized and its uncertainty is ≤1 km; otherwise 📍 Map by locality and municipality name.
+- **Top municipalities** on the species card are for the selected month, since "where in June" is the trip question. When the species has no reports that month, the card says so and lists the whole window instead.
+- **Link-out:** `artsobs.region_link_template` is NULL. Artskart's map filters by Artsdatabanken's own area ids (Phase 0 finding 10), so there is no county deep link to build from the old county number. The source link goes to `homepage`; each latest report links to its own record. A template-driven county link appears automatically if a source sets one.
+- **Hotspots & data card (changed while building):** Hotspots & data lists a county only once eBird data for it is loaded, so a panel inside the county rows would never appear for a county eBird hasn't loaded. The page instead has its own **"Reports from other sources"** card after "Loaded data": each active source, its loaded, loading and failed regions (row id `ext-NO-xx`) with status, month totals and the birders list, and one "Load a region" picker for the rest. It comes in the page load, a fixed handful of queries in one read snapshot. Every non-viewer can queue a load there or on the species card (`queueExternalLoad`, one active load per source and region, requested by the signed-in user). Admin → Sources keeps its own queue.
+- **Progress and completion:** the user's own load shows live from the jobs poll (the job chip is hidden on /forecast pages). A load someone else started is watched through `GET /api/external/load-state` until it ends, then the page reloads its data.
+- **Job chip:** an external load links to its row on Hotspots & data (`/forecast/data#ext-NO-xx`) for everyone, not Admin → Sources.
+- **Data quality** (Brukervilkår §10): the "Source & license" details say that reports rejected by the source's validation are left out, the rest are as reported, and the counts follow where and how often people report.
+- **Region = Norway** (country) on `forecast/species` shows the per-county summary the species page uses, instead of the card.
+- **Only active sources show.** `artsobs-gbif` is switched off, so its rows (none on prod) never appear.
+
 ## Phase 4: "Where and when to look" view
 - A new route, `/reports/[source]/[region]`, with `<PathNavigation>` and an entry in `LABELED_PATHS` in `src/lib/return-link.ts` [A-P2-4]:
   - **By month:** which species are reported where, by municipality.

@@ -23,6 +23,7 @@
   import ForecastTabs from "$lib/components/ForecastTabs.svelte";
   import ProgressBar from "$components/ProgressBar.svelte";
   import Skeleton from "$components/Skeleton.svelte";
+  import ExternalSourcesCard from "$lib/components/external/ExternalSourcesCard.svelte";
   import type { ActionData, PageData } from "./$types";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
   import { GUIDE_RADIUS_MAX, GUIDE_RADIUS_MIN, guidePlaceListHref } from "$lib/guide-location";
@@ -1934,6 +1935,14 @@
       {/if}
     {/if}
   </section>
+
+  <!-- Reports from other sources (td-eec7db Phase 3): its own card, not the
+       eBird inventory above, so a region eBird hasn't loaded still has one. -->
+  <ExternalSourcesCard
+    overview={data.external}
+    canLoad={!data.isViewer}
+    result={form && ("externalQueued" in form || "externalError" in form) ? form : null}
+  />
 
   {#if data.failed.length > 0}
     <section class="card">

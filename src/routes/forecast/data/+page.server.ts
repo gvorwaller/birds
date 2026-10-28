@@ -34,6 +34,8 @@ import { regionDetail, type RegionDetail } from "$server/region-detail";
 import { geographicAreaForCountry } from "$lib/geographic-areas";
 import { isHotspotLocId } from "$lib/loc-id";
 import { safeReturnTo } from "$lib/return-link";
+import { externalOverview } from "$server/external-sources/reports";
+import { queueExternalLoadAction } from "$server/external-sources/queue-action";
 import {
   parseRegionCode,
   isCountry,
@@ -896,9 +898,24 @@ export async function _hubData(event: HubDataEvent, opts: { expand?: string } = 
   return { ...inventory, speciesCounts };
 }
 
-export const load: PageServerLoad = (event) => _hubData(event);
+export const load: PageServerLoad = async (event) => {
+  // Reports from other sources (td-eec7db Phase 3): a fixed handful of
+  // queries. A failure shows as "couldn't read" on its card, never as
+  // "nothing loaded".
+  const [hub, external] = await Promise.all([
+    _hubData(event),
+    externalOverview().catch((err) => {
+      console.error("[forecast/data] external sources:", err);
+      return null;
+    }),
+  ]);
+  return { ...hub, external };
+};
 
 export const actions: Actions = {
+  /** Queue an external-source load for one region (td-eec7db Phase 3). */
+  queueExternalLoad: (event) => queueExternalLoadAction(event),
+
   /**
    * Load a whole region's frequency data (1 eBird request) — a subnational1
    * region (a US state, a Norwegian fylke) or, for countries with no/coarse

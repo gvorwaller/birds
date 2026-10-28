@@ -1,3 +1,4 @@
+import { externalSpeciesSummary } from "$server/external-sources/reports";
 import { specialInterestFor } from "$server/special-interest";
 import { error, fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
@@ -313,10 +314,16 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
 
   // DB-only (spec invariant #1): never calls Commons/xeno-canto on GET.
   // Independent reads — run in parallel.
-  const [enrichment, sampleMedia, similar] = await Promise.all([
+  const [enrichment, sampleMedia, similar, externalSummary] = await Promise.all([
     getEnrichment(code),
     getSpeciesMedia(code),
     getSimilarSpecies(code, userId),
+    // Reports from other sources (td-eec7db Phase 3): one indexed read; a
+    // failure hides the card rather than the page.
+    externalSpeciesSummary(code).catch((err) => {
+      console.error("[species] external summary:", err);
+      return [];
+    }),
   ]);
 
   // Tides beside the tide tags (td-6a3d2e): only for species with an actionable
@@ -337,6 +344,7 @@ export const load: PageServerLoad = async ({ locals, params, url, request, depen
     enrichment,
     sampleMedia,
     similar,
+    externalSummary,
     /** Carried into similar-species links: without lat/lng the next species
      * page reports around the SAVED HOME rather than the searched place
      * (see the header comment in $lib/species-context). */

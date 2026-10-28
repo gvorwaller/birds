@@ -13,8 +13,8 @@ describe("Species page collapsible cards (td-d16c18)", () => {
   it("folds every card, open by default", () => {
     expect(route).not.toContain('<section class="card');
     const folds = route.match(/<details class="card fold[^"]*" bind:open=\{cardOpen\.\w+\}>/g) ?? [];
-    expect(folds.length).toBe(8);
-    for (const key of ["recorded", "photos", "identification", "finding", "bestTime", "recent", "nearest", "about", "learnMore"])
+    expect(folds.length).toBe(9);
+    for (const key of ["recorded", "photos", "identification", "finding", "bestTime", "external", "recent", "nearest", "about", "learnMore"])
       expect(route).toContain(`${key}: true,`);
     expect(media).toContain('<details class="card fold" bind:open>');
     expect(media).toContain("open = $bindable(true)");

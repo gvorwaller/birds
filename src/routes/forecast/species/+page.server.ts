@@ -23,6 +23,8 @@ import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
 import { returnTrail } from "$lib/return-link";
+import { externalSpeciesInRegion, externalSpeciesSummary } from "$server/external-sources/reports";
+import { queueExternalLoadAction } from "$server/external-sources/queue-action";
 import { streamed, type Streamed } from "$lib/streamed";
 import {
   parseRegionCode,
@@ -231,9 +233,29 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     ? ((await attemptMeta([region.code])).get(region.code) ?? null)
     : null;
 
-  // The month the "where" sections use: explicit choice > best month > current.
+  // Reports from other sources (td-eec7db Phase 3): a card per source for a
+  // first-level region, a per-region summary for a whole country. Without a
+  // chosen month or an eBird best month, the card picks the species' busiest
+  // report month, so a Norwegian region eBird barely covers opens on it.
+  const regionLvl = region ? regionLevel(region.code) : null;
+  const external =
+    taxon && region && regionLvl === "subnational1"
+      ? await externalSpeciesInRegion(
+          region.code,
+          taxon.species_code,
+          monthParam ?? forecast?.best?.month ?? null,
+          calendarMonth(),
+        )
+      : null;
+  const externalCountry =
+    taxon && region && regionLvl === "country"
+      ? await externalSpeciesSummary(taxon.species_code, region.code)
+      : null;
+
+  // The month the "where" sections use: explicit choice > best month >
+  // busiest report month (above) > current.
   const month =
-    monthParam ?? forecast?.best?.month ?? calendarMonth();
+    monthParam ?? forecast?.best?.month ?? external?.month ?? calendarMonth();
 
   // ---- County analysis (cached reads only) ------------------------------
   // "County" here means the region's direct children: subnational2 counties
@@ -467,6 +489,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     county,
     hotspotError,
     countyHotspots,
+    externalCards: external?.cards ?? null,
+    externalCountry,
     hasApiKey: !!apiKey,
     hasLogin,
     isViewer,
@@ -482,6 +506,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
+  /** Queue an external-source load for one region (td-eec7db Phase 3). */
+  queueExternalLoad: (event) => queueExternalLoadAction(event),
+
   /**
    * Fetch/refresh the region-level barchart (1 eBird request). Owner-only
    * (viewers are blocked from POSTs in hooks.server.ts). The region is

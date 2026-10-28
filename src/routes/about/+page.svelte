@@ -73,6 +73,11 @@
 				frequency bar charts.
 			</li>
 			<li>
+				<strong>Artsobservasjoner (Norwegian Biodiversity Information Centre)</strong> — Bird
+				reports for Norwegian counties, loaded on demand through Artsdatabanken's Artskart
+				API and shown as counts of reports, never as eBird frequencies. CC BY 4.0.
+			</li>
+			<li>
 				<strong>Wikipedia &amp; Wikidata</strong> — Provides global taxonomy mapping, IUCN
 				conservation statuses, physical dimensions (mass, wingspan), and natural history
 				articles.
