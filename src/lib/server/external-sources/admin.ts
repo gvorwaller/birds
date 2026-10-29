@@ -243,6 +243,7 @@ export async function setTaxonOverride(opts: {
 		const name = await c.query<{ canonical_name: string }>(
 			`SELECT canonical_name FROM external_unmatched WHERE source_id = $1 AND upstream_taxon_id = $2
 			 UNION SELECT canonical_name FROM external_taxon_month WHERE source_id = $1 AND upstream_taxon_id = $2
+			 UNION SELECT canonical_name FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2 AND rank <> 'OTHER'
 			 LIMIT 1`,
 			[opts.sourceId, opts.upstreamTaxonId]
 		);

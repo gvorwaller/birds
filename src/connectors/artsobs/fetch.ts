@@ -28,6 +28,7 @@
 import { ArtskartError, type ArtskartClient, type SliceQuery } from './artskart';
 import { COUNTY_READS, PAGE_SIZE, SLICE_READS } from './config';
 import { CountyAggregate, addDays, type Window } from './aggregate';
+import type { RecordSpool } from './spool';
 import { compactRecord, recordId, type CompactRecord } from './records';
 
 export interface FetchProgress {
@@ -124,12 +125,15 @@ export async function readCounty(
 	window: Window,
 	progress: FetchProgress,
 	signal: AbortSignal,
-	opts: FetchOptions = {}
+	opts: FetchOptions = {},
+	spool: RecordSpool | null = null
 ): Promise<CountyAggregate> {
 	const ranges = monthRanges(window.start, window.through);
 	let why = '';
 	for (let read = 1; read <= COUNTY_READS; read++) {
-		const agg = new CountyAggregate(regionCode, window);
+		// A fresh read starts the records again too.
+		spool?.reset();
+		const agg = new CountyAggregate(regionCode, window, spool ? (row) => spool.write(row) : null);
 		const seen = new Set<string>();
 		let moved = false;
 		for (const [from, to] of ranges) {

@@ -5,12 +5,14 @@
  * has already moved on).
  */
 import { windowStartFor } from '$server/external-sources/contract';
-import { BIRDS_TAXON_GROUP, COLLECTION, HEARTBEAT_EVERY_MS, REGION_TO_COUNTY } from './config';
+import { BIRDS_TAXON_GROUP, CHUNK_TARGET_BYTES, COLLECTION, HEARTBEAT_EVERY_MS, REGION_TO_COUNTY } from './config';
 import { ArtskartError, type ArtskartClient } from './artskart';
 import type { Window } from './aggregate';
 import { readCounty, type FetchOptions, type FetchProgress } from './fetch';
 import { IngestCallError, type ClaimedLoad, type IngestClient, type Progress } from './ingest';
 import { buildChunks, buildManifest, filterFingerprint } from './payload';
+import { RecordSpool } from './spool';
+import { validateChunkRows, type ManifestChunk } from '$server/external-sources/contract';
 
 export type Log = (event: string, fields?: Record<string, unknown>) => void;
 
@@ -44,6 +46,8 @@ export interface RunDeps {
 	heartbeatMs?: number;
 	/** Test seam: smaller Artskart pages. */
 	fetchOpts?: FetchOptions;
+	/** Test seam: where the record spool's folder goes (default: the OS temp folder). */
+	spoolDir?: string;
 }
 
 export type RunOutcome = 'done' | 'failed' | 'lease_lost' | 'stopped';
@@ -85,6 +89,7 @@ export async function runLoad(deps: RunDeps, load: ClaimedLoad, stop: AbortSigna
 	const timer = setInterval(() => void beat(), deps.heartbeatMs ?? HEARTBEAT_EVERY_MS);
 	const region = load.region_code;
 	log('load_started', { load: load.id, region, attempt: load.attempt });
+	let spool: RecordSpool | null = null;
 
 	try {
 		await beat();
@@ -96,7 +101,8 @@ export async function runLoad(deps: RunDeps, load: ClaimedLoad, stop: AbortSigna
 		progress.phase = 'fetching';
 		const retrievedAt = new Date();
 		const before = { requests: artskart.requests, bytes: artskart.bytes, at: Date.now() };
-		const agg = await readCounty(artskart, region, county, window, pages, signal, deps.fetchOpts);
+		spool = new RecordSpool(deps.spoolDir);
+		const agg = await readCounty(artskart, region, county, window, pages, signal, deps.fetchOpts, spool);
 		log('county_fetched', {
 			load: load.id,
 			region,
@@ -104,6 +110,8 @@ export async function runLoad(deps: RunDeps, load: ClaimedLoad, stop: AbortSigna
 			requests: artskart.requests - before.requests,
 			mb: Math.round((artskart.bytes - before.bytes) / 1e5) / 10,
 			seconds: Math.round((Date.now() - before.at) / 1000),
+			record_rows: spool.rows,
+			spool_mb: Math.round(spool.bytes / 1e5) / 10,
 			heap_mb: Math.round(process.memoryUsage().heapUsed / 1e6),
 			rss_mb: Math.round(process.memoryUsage().rss / 1e6)
 		});
@@ -115,38 +123,54 @@ export async function runLoad(deps: RunDeps, load: ClaimedLoad, stop: AbortSigna
 		}
 
 		const chunks = buildChunks(region, payload);
+		const sent: ManifestChunk[] = [];
+		const sendStarted = Date.now();
 		progress.phase = 'sending';
 		progress.done = 0;
-		progress.total = chunks.length;
+		// Records chunks are counted as they stream; this is the expected number.
+		progress.total = chunks.length + Math.ceil(spool.bytes / CHUNK_TARGET_BYTES);
 		await beat();
 		for (const c of chunks) {
 			await ingest.chunk(load, { chunk_id: c.chunk_id, kind: c.kind, sha256: c.sha256, rows: c.rowData }, signal);
+			sent.push({ chunk_id: c.chunk_id, kind: c.kind, rows: c.rows, sha256: c.sha256 });
 			progress.done++;
 		}
+		for await (const c of spool.chunks(CHUNK_TARGET_BYTES)) {
+			// Checked with the app's own validator first, as buildChunks does.
+			validateChunkRows('records', c.rowData, c.sha256, { region, storeObservers: true });
+			await ingest.chunk(load, { chunk_id: c.chunk_id, kind: c.kind, sha256: c.sha256, rows: c.rowData }, signal);
+			sent.push({ chunk_id: c.chunk_id, kind: c.kind, rows: c.rows, sha256: c.sha256 });
+			progress.done++;
+			progress.total = Math.max(progress.total, progress.done);
+		}
+		const sendSeconds = Math.round((Date.now() - sendStarted) / 1000);
 		const filters = {
 			api: 'artskart-publicapi-v1',
 			collection: COLLECTION,
 			taxon_group: BIRDS_TAXON_GROUP,
 			county
 		};
-		const manifest = buildManifest(payload, chunks, {
+		const manifest = buildManifest(payload, sent, {
 			window_start: window.start,
 			window_end: window.end,
 			retrieved_at: retrievedAt.toISOString(),
 			source_snapshot: { ...filters, through: window.through },
-			filter_fingerprint: filterFingerprint({ ...filters, window_start: window.start, window_end: window.end, placement: 'artskart-municipality/v1' })
+			filter_fingerprint: filterFingerprint({ ...filters, window_start: window.start, window_end: window.end, placement: 'artskart-municipality/v2' })
 		});
 		progress.phase = 'finishing';
 		progress.done = 0;
 		progress.total = 1;
 		await beat();
+		const finishStarted = Date.now();
 		const result = await ingest.finish(load, manifest, signal);
 		log('load_done', {
 			load: load.id,
 			region,
 			stats: payload.stats,
 			rows: manifest.counts,
-			chunks: chunks.length,
+			chunks: sent.length,
+			send_seconds: sendSeconds,
+			finish_seconds: Math.round((Date.now() - finishStarted) / 1000),
 			artskart_requests: artskart.requests - before.requests,
 			seconds: Math.round((Date.now() - started) / 1000),
 			rss_mb: Math.round(process.memoryUsage().rss / 1e6),
@@ -176,6 +200,7 @@ export async function runLoad(deps: RunDeps, load: ClaimedLoad, stop: AbortSigna
 		}
 		return stopped ? 'stopped' : 'failed';
 	} finally {
+		spool?.close();
 		clearInterval(timer);
 		stop.removeEventListener('abort', onStop);
 	}

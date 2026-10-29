@@ -12,12 +12,17 @@ export const CONTRACT_VERSION = 1;
 /** Request body cap for every ingest call, enforced before JSON parsing. */
 export const MAX_BODY_BYTES = 256 * 1024;
 export const MAX_ROWS_PER_CHUNK = 5000;
-/** Caps for one whole load (every chunk of every kind). */
+/**
+ * Caps for one whole load (every chunk of every kind). Since every report is
+ * sent (td-769300): a real Nordland load sent 153,066 records at about 603
+ * bytes each (2026-10-28), so Rogaland, the largest county (425,924 reports
+ * in 24 months), needs about 265 MB; the byte cap leaves room for that.
+ */
 export const MAX_LOAD_ROWS = 1_000_000;
-export const MAX_LOAD_BYTES = 300 * 1024 * 1024;
+export const MAX_LOAD_BYTES = 1024 * 1024 * 1024;
 const INT4_MAX = 2_147_483_647;
 
-export const CHUNK_KINDS = ['places', 'totals', 'taxon_month', 'localities', 'recent', 'diagnostics', 'observers'] as const;
+export const CHUNK_KINDS = ['places', 'totals', 'taxon_month', 'localities', 'recent', 'diagnostics', 'observers', 'taxa', 'records'] as const;
 export type ChunkKind = (typeof CHUNK_KINDS)[number];
 
 export interface PlaceRow {
@@ -27,6 +32,8 @@ export interface PlaceRow {
 	parent_key: string | null;
 	lat: number | null;
 	lon: number | null;
+	/** The source's own id for the place (Artskart's municipality number), which survives renames. */
+	upstream_place_id: string | null;
 }
 export interface TotalsRow {
 	place_key: string;
@@ -88,6 +95,49 @@ export interface ObserverRow {
 	localities: number;
 	reports: number;
 }
+/**
+ * One upstream taxon (td-769300): its local name and Red List status.
+ * Upserted into the source-wide external_taxa; OTHER is a genus, family or
+ * hybrid report, which never gets a species code.
+ */
+export interface TaxonRow {
+	upstream_taxon_id: string;
+	canonical_name: string;
+	raw_name: string;
+	rank: 'SPECIES' | 'SUBSPECIES' | 'OTHER';
+	local_name: string | null;
+	red_list: string | null;
+	red_list_url: string | null;
+}
+export interface RecordPhoto {
+	url: string;
+	by: string | null;
+}
+/** One report, every detail the source gives (td-769300). */
+export interface RecordRow {
+	upstream_record_id: string;
+	place_key: string;
+	upstream_taxon_id: string;
+	canonical_name: string;
+	observed_on: string;
+	count: number | null;
+	locality: string | null;
+	lat: number | null;
+	lon: number | null;
+	uncertainty_m: number | null;
+	/** Empty unless the source stores observer names. */
+	observers: string[];
+	behaviour: string[];
+	activity: string | null;
+	validation: string | null;
+	notes: string | null;
+	sex: string | null;
+	photos: RecordPhoto[] | null;
+	dataset: string | null;
+	record_url: string | null;
+	/** When the source last changed the report, as it states it (no zone). */
+	upstream_modified_at: string | null;
+}
 export type RowsByKind = {
 	places: PlaceRow;
 	totals: TotalsRow;
@@ -96,6 +146,8 @@ export type RowsByKind = {
 	recent: RecentRow;
 	diagnostics: DiagnosticRow;
 	observers: ObserverRow;
+	taxa: TaxonRow;
+	records: RecordRow;
 };
 
 export interface ManifestChunk {
@@ -212,6 +264,48 @@ function uncertainty(v: unknown, where: string): number | null {
 	return v === null ? null : count(v, where);
 }
 
+function optionalText(v: unknown, where: string, max: number): string | null {
+	return v === null ? null : text(v, where, max);
+}
+
+function httpsUrl(v: unknown, where: string): string {
+	const url = text(v, where, 500);
+	if (!/^https:\/\/[^\s]+$/.test(url)) throw new ContractError(`${where}: expected an https link`);
+	return url;
+}
+
+function textList(v: unknown, where: string, maxItems: number, check: (item: unknown, at: string) => string): string[] {
+	if (!Array.isArray(v) || v.length > maxItems) throw new ContractError(`${where}: expected a list of at most ${maxItems}`);
+	const out = v.map((item, i) => check(item, `${where}[${i}]`));
+	if (new Set(out).size !== out.length) throw new ContractError(`${where}: an entry is listed twice`);
+	return out;
+}
+
+const BEHAVIOUR = /^[a-z][a-z0-9_ -]{0,39}$/;
+const RED_LIST = /^[A-Z]{2}$/;
+
+function photos(v: unknown, where: string): RecordPhoto[] | null {
+	if (v === null) return null;
+	if (!Array.isArray(v) || v.length === 0 || v.length > 20) throw new ContractError(`${where}: expected null or 1–20 photos`);
+	return v.map((p, i) => {
+		const at = `${where}[${i}]`;
+		if (!isRecord(p)) throw new ContractError(`${at}: expected an object`);
+		exactKeys(p, ['url', 'by'], at);
+		return { url: httpsUrl(p.url, `${at}.url`), by: optionalText(p.by, `${at}.by`, 200) };
+	});
+}
+
+/** A local date-time with no zone (the source states none), at most microseconds. */
+function localTimestamp(v: unknown, where: string): string | null {
+	if (v === null) return null;
+	const m = typeof v === 'string' ? /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?$/.exec(v) : null;
+	if (!m || Number(m[2]) > 23 || Number(m[3]) > 59 || Number(m[4]) > 59) {
+		throw new ContractError(`${where}: expected null or YYYY-MM-DDTHH:MM:SS[.ffffff] with no zone`);
+	}
+	isoDate(m[1], where);
+	return v as string;
+}
+
 /**
  * A place key is the load's region code ("NO-18") or "<region>:<name>"
  * ("NO-18:Nesna"). A key under another region is a 403, not a 422: the
@@ -245,7 +339,7 @@ function isoDate(v: unknown, where: string): string {
 // ── Rows ───────────────────────────────────────────────────────────────────
 
 const KEYS: Record<ChunkKind, readonly string[]> = {
-	places: ['place_key', 'name', 'level', 'parent_key', 'lat', 'lon'],
+	places: ['place_key', 'name', 'level', 'parent_key', 'lat', 'lon', 'upstream_place_id'],
 	totals: ['place_key', 'month', 'reports', 'unkeyed'],
 	taxon_month: ['place_key', 'month', 'upstream_taxon_id', 'canonical_name', 'raw_name', 'rank', 'reports'],
 	localities: ['place_key', 'rank', 'locality', 'reports', 'lat', 'lon', 'uncertainty_m', 'placement'],
@@ -265,7 +359,30 @@ const KEYS: Record<ChunkKind, readonly string[]> = {
 		'observer'
 	],
 	diagnostics: ['code', 'detail', 'count'],
-	observers: ['place_key', 'rank', 'observer', 'days', 'species', 'localities', 'reports']
+	observers: ['place_key', 'rank', 'observer', 'days', 'species', 'localities', 'reports'],
+	taxa: ['upstream_taxon_id', 'canonical_name', 'raw_name', 'rank', 'local_name', 'red_list', 'red_list_url'],
+	records: [
+		'upstream_record_id',
+		'place_key',
+		'upstream_taxon_id',
+		'canonical_name',
+		'observed_on',
+		'count',
+		'locality',
+		'lat',
+		'lon',
+		'uncertainty_m',
+		'observers',
+		'behaviour',
+		'activity',
+		'validation',
+		'notes',
+		'sex',
+		'photos',
+		'dataset',
+		'record_url',
+		'upstream_modified_at'
+	]
 };
 
 export interface RowContext {
@@ -299,7 +416,8 @@ export function validateRow<K extends ChunkKind>(kind: K, raw: unknown, i: numbe
 				name: text(raw.name, `${where}.name`, 120),
 				level,
 				parent_key: parent,
-				...coords(raw, where)
+				...coords(raw, where),
+				upstream_place_id: raw.upstream_place_id === null ? null : upstreamId(raw.upstream_place_id, `${where}.upstream_place_id`)
 			};
 			return row as RowsByKind[K];
 		}
@@ -402,6 +520,64 @@ export function validateRow<K extends ChunkKind>(kind: K, raw: unknown, i: numbe
 				species,
 				localities,
 				reports
+			};
+			return row as RowsByKind[K];
+		}
+		case 'taxa': {
+			const rank = raw.rank;
+			if (rank !== 'SPECIES' && rank !== 'SUBSPECIES' && rank !== 'OTHER') {
+				throw new ContractError(`${where}.rank: expected SPECIES, SUBSPECIES or OTHER`);
+			}
+			if (raw.red_list !== null && (typeof raw.red_list !== 'string' || !RED_LIST.test(raw.red_list))) {
+				throw new ContractError(`${where}.red_list: expected null or a two-letter category`);
+			}
+			const row: TaxonRow = {
+				upstream_taxon_id: upstreamId(raw.upstream_taxon_id, `${where}.upstream_taxon_id`),
+				canonical_name: text(raw.canonical_name, `${where}.canonical_name`, 200),
+				raw_name: text(raw.raw_name, `${where}.raw_name`, 300),
+				rank,
+				local_name: optionalText(raw.local_name, `${where}.local_name`, 200),
+				red_list: raw.red_list as string | null,
+				red_list_url: raw.red_list_url === null ? null : httpsUrl(raw.red_list_url, `${where}.red_list_url`)
+			};
+			return row as RowsByKind[K];
+		}
+		case 'records': {
+			const observers = textList(raw.observers, `${where}.observers`, 50, (o, at) => text(o, at, 200));
+			if (observers.length > 0 && !ctx.storeObservers) {
+				throw new ContractError(`${where}.observers: this source does not store observer names`, 'observer');
+			}
+			const photoList = photos(raw.photos, `${where}.photos`);
+			// A photo credit names a person too (CODEX1 td-769300 F2).
+			if (!ctx.storeObservers && photoList?.some((p) => p.by !== null)) {
+				throw new ContractError(`${where}.photos: this source does not store observer names, so photos carry no credit`, 'observer');
+			}
+			if (raw.notes !== null && (typeof raw.notes !== 'string' || raw.notes.length > 500 || CONTROL.test(raw.notes))) {
+				throw new ContractError(`${where}.notes: expected null or text of up to 500 characters`);
+			}
+			const row: RecordRow = {
+				upstream_record_id: upstreamId(raw.upstream_record_id, `${where}.upstream_record_id`),
+				place_key: placeKey(raw.place_key, `${where}.place_key`, ctx.region),
+				upstream_taxon_id: upstreamId(raw.upstream_taxon_id, `${where}.upstream_taxon_id`),
+				canonical_name: text(raw.canonical_name, `${where}.canonical_name`, 200),
+				observed_on: isoDate(raw.observed_on, `${where}.observed_on`),
+				count: raw.count === null ? null : count(raw.count, `${where}.count`),
+				locality: optionalText(raw.locality, `${where}.locality`, 300),
+				...coords(raw, where),
+				uncertainty_m: uncertainty(raw.uncertainty_m, `${where}.uncertainty_m`),
+				observers,
+				behaviour: textList(raw.behaviour, `${where}.behaviour`, 10, (b, at) => {
+					if (typeof b !== 'string' || !BEHAVIOUR.test(b)) throw new ContractError(`${at}: expected a short lower-case word`);
+					return b;
+				}),
+				activity: optionalText(raw.activity, `${where}.activity`, 100),
+				validation: optionalText(raw.validation, `${where}.validation`, 100),
+				notes: raw.notes as string | null,
+				sex: optionalText(raw.sex, `${where}.sex`, 50),
+				photos: photoList,
+				dataset: optionalText(raw.dataset, `${where}.dataset`, 200),
+				record_url: raw.record_url === null ? null : httpsUrl(raw.record_url, `${where}.record_url`),
+				upstream_modified_at: localTimestamp(raw.upstream_modified_at, `${where}.upstream_modified_at`)
 			};
 			return row as RowsByKind[K];
 		}
@@ -516,6 +692,10 @@ export function rowIdentity(kind: ChunkKind, row: RowsByKind[ChunkKind]): string
 			return `${r.code}\u0000${r.detail}`;
 		case 'observers':
 			return `${r.place_key}\u0000${r.rank}`;
+		case 'taxa':
+			return `${r.upstream_taxon_id}\u0000${r.canonical_name}`;
+		case 'records':
+			return String(r.upstream_record_id);
 	}
 }
 

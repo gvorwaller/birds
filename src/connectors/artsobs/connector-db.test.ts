@@ -43,6 +43,7 @@ async function ebirdCounts(): Promise<Record<string, number>> {
 }
 
 const PUBLISHED = [
+	'external_records',
 	'external_place_month_species',
 	'external_unmatched',
 	'external_recent_reports',
@@ -55,6 +56,7 @@ const PUBLISHED = [
 
 async function cleanLoads(): Promise<void> {
 	for (const t of PUBLISHED) await query(`DELETE FROM ${t} WHERE source_id = $1`, [SRC]);
+	await query(`DELETE FROM external_taxa WHERE source_id = $1`, [SRC]);
 	await query(`DELETE FROM external_loads WHERE source_id = $1`, [SRC]);
 }
 
@@ -196,6 +198,46 @@ describe('Norway connector → real ingest API → birds_test', () => {
 		const unmatched = await query(`SELECT canonical_name FROM external_unmatched WHERE source_id = $1`, [SRC]);
 		expect(unmatched.rows).toEqual([]);
 		expect((await query(`SELECT 1 FROM external_taxon_month WHERE source_id = $1 AND canonical_name = 'Laridae'`, [SRC])).rowCount).toBe(0);
+
+		// Every record is kept (td-769300): the window's records reproduce each
+		// place-month total exactly, and every record joins to its taxon.
+		const fromRecords = await query<{ place_key: string; month: number; n: number }>(
+			`SELECT place_key, month, SUM(n)::int AS n FROM (
+			   SELECT region_code AS place_key, EXTRACT(MONTH FROM observed_on)::int AS month, COUNT(*) AS n
+			     FROM external_records WHERE source_id = $1 AND observed_on <= $2 GROUP BY 1, 2
+			   UNION ALL
+			   SELECT place_key, EXTRACT(MONTH FROM observed_on)::int, COUNT(*)
+			     FROM external_records WHERE source_id = $1 AND observed_on <= $2 AND place_key <> region_code GROUP BY 1, 2
+			 ) x GROUP BY 1, 2`,
+			[SRC, load.window_end]
+		);
+		const monthTotals = await query<{ place_key: string; month: number; reports: number }>(
+			`SELECT place_key, month, reports FROM external_place_month_totals WHERE source_id = $1 AND reports > 0`,
+			[SRC]
+		);
+		const key = (r: { place_key: string; month: number }) => `${r.place_key}|${r.month}`;
+		expect(Object.fromEntries(fromRecords.rows.map((r) => [key(r), r.n]))).toEqual(Object.fromEntries(monthTotals.rows.map((r) => [key(r), r.reports])));
+		const afterWindow = await query<{ n: string }>(`SELECT COUNT(*) AS n FROM external_records WHERE source_id = $1 AND observed_on > $2`, [SRC, load.window_end]);
+		expect(Number(afterWindow.rows[0].n)).toBeGreaterThan(0);
+		const joined = await query<{ canonical_name: string; rank: string; species_code: string | null; match_reason: string }>(
+			`SELECT DISTINCT t.canonical_name, t.rank, t.species_code, t.match_reason
+			   FROM external_records r JOIN external_taxa t USING (source_id, upstream_taxon_id, canonical_name)
+			  WHERE r.source_id = $1`,
+			[SRC]
+		);
+		const allRecords = await query<{ n: string }>(`SELECT COUNT(*) AS n FROM external_records WHERE source_id = $1`, [SRC]);
+		const joinedRecords = await query<{ n: string }>(
+			`SELECT COUNT(*) AS n FROM external_records r JOIN external_taxa t USING (source_id, upstream_taxon_id, canonical_name) WHERE r.source_id = $1`,
+			[SRC]
+		);
+		expect(joinedRecords.rows[0].n).toBe(allRecords.rows[0].n);
+		expect(joined.rows.find((t) => t.canonical_name === 'Laridae')).toMatchObject({ rank: 'OTHER', species_code: null, match_reason: 'not_species' });
+		expect(joined.rows.find((t) => t.canonical_name === 'Anas crecca carolinensis')).toMatchObject({ species_code: teal, match_reason: 'subspecies' });
+		const placed = await query<{ n: string; numbered: string }>(
+			`SELECT COUNT(*) FILTER (WHERE lat IS NOT NULL) AS n, COUNT(upstream_place_id) AS numbered FROM external_places WHERE source_id = $1 AND level = 'subregion'`,
+			[SRC]
+		);
+		expect(placed.rows[0]).toEqual({ n: '7', numbered: '7' });
 		// Observers: published per place, ranked by days out.
 		const observers = await query<{ observer: string; days: number; rank: number }>(
 			`SELECT observer, days, rank FROM external_top_observers WHERE source_id = $1 AND place_key = $2 ORDER BY rank`,

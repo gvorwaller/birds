@@ -5,8 +5,13 @@
  * Artskart's county filter already gives the app's own county, and every
  * record names its municipality, so there is no placement step: a record
  * counts in the county and in its municipality ("{region}:{Municipality}"),
- * or in the county only when it names none. Raw records are never kept,
- * except recent ones.
+ * or in the county only when it names none.
+ *
+ * Since td-769300 every record of the window and the days after it also goes
+ * to a record sink (the connector's spool on disk) with every detail Artskart
+ * gives, and each taxon is sent once with its Norwegian name and Red List
+ * status. A municipality's location is the median of its window records'
+ * coordinates: where its reports are, not its geographic centre.
  */
 import {
 	LOCALITIES_PER_PLACE,
@@ -20,7 +25,20 @@ import {
 	REGION_NAMES
 } from './config';
 import type { CompactRecord, Taxon } from './records';
-import type { DiagnosticRow, LocalityRow, ObserverRow, PlaceRow, RecentRow, TaxonMonthRow, TotalsRow } from '$server/external-sources/contract';
+import type {
+	DiagnosticRow,
+	LocalityRow,
+	ObserverRow,
+	PlaceRow,
+	RecentRow,
+	RecordRow,
+	TaxonMonthRow,
+	TaxonRow,
+	TotalsRow
+} from '$server/external-sources/contract';
+
+/** Where each record goes besides the counts (the spool). */
+export type RecordSink = (row: RecordRow) => void;
 
 export function addDays(iso: string, days: number): string {
 	const d = new Date(`${iso}T00:00:00Z`);
@@ -57,13 +75,28 @@ interface PlaceAcc {
 	taxa: Map<string, number[]>;
 	localities: Map<string, LocalityAcc>;
 	observers: Map<string, ObserverAcc>;
+	/** Artskart's MunicipalityId, the first one seen. */
+	upstreamId: string | null;
+	/** Window records' coordinates, for the place's location. */
+	lat: number[];
+	lon: number[];
 }
 
 const months13 = () => new Array<number>(13).fill(0);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 function newPlace(name: string): PlaceAcc {
-	return { name, totals: months13(), unkeyed: months13(), taxa: new Map(), localities: new Map(), observers: new Map() };
+	return {
+		name,
+		totals: months13(),
+		unkeyed: months13(),
+		taxa: new Map(),
+		localities: new Map(),
+		observers: new Map(),
+		upstreamId: null,
+		lat: [],
+		lon: []
+	};
 }
 
 export interface RegionPayload {
@@ -74,6 +107,7 @@ export interface RegionPayload {
 	recent: RecentRow[];
 	diagnostics: DiagnosticRow[];
 	observers: ObserverRow[];
+	taxa: TaxonRow[];
 	stats: {
 		records: number;
 		unkeyed: number;
@@ -83,6 +117,8 @@ export interface RegionPayload {
 		observers: number;
 		recentFrom: string | null;
 		recentTo: string | null;
+		/** Records sent to the sink (the window and the days after it). */
+		recordRows: number;
 	};
 }
 
@@ -92,6 +128,9 @@ export class CountyAggregate {
 	/** Taxon id → the name it first arrived under. */
 	private readonly taxa = new Map<string, Taxon>();
 	private readonly notes = new Map<string, DiagnosticRow>();
+	/** Every taxon a record carries, keyed by id and name. */
+	private readonly taxonRows = new Map<string, TaxonRow>();
+	private recordRows = 0;
 	/** Recent candidates: records within RECENT_KEEP_DAYS of the newest date seen. */
 	private recent: { r: CompactRecord; place: string }[] = [];
 	private newest = '';
@@ -100,7 +139,8 @@ export class CountyAggregate {
 
 	constructor(
 		readonly regionCode: string,
-		readonly window: Window
+		readonly window: Window,
+		private readonly sink: RecordSink | null = null
 	) {
 		const name = REGION_NAMES[regionCode];
 		if (!name) throw new Error(`No Norwegian county ${regionCode}`);
@@ -135,15 +175,24 @@ export class CountyAggregate {
 			}
 		}
 		const place = this.placeKey(r.municipality);
-		if (taxon) this.keepRecent({ ...r, taxon }, place);
+		let muni: PlaceAcc | null = null;
+		if (r.municipality) {
+			muni = this.places.get(place) ?? null;
+			if (!muni) this.places.set(place, (muni = newPlace(r.municipality)));
+			if (!muni.upstreamId && r.municipalityId) muni.upstreamId = r.municipalityId;
+		}
+		if (taxon) this.keepRecent(recentFields(r, taxon), place);
+		this.sendRecord(r, taxon, place);
 		if (r.date > this.window.end) return;
 
 		this.stats.records++;
 		const targets = [this.region];
-		if (r.municipality) {
-			let p = this.places.get(place);
-			if (!p) this.places.set(place, (p = newPlace(r.municipality)));
-			targets.push(p);
+		if (muni) {
+			targets.push(muni);
+			if (r.lat !== null && r.lon !== null) {
+				muni.lat.push(r.lat);
+				muni.lon.push(r.lon);
+			}
 		} else this.stats.noMunicipality++;
 
 		for (const t of targets) {
@@ -176,6 +225,57 @@ export class CountyAggregate {
 			}
 			if (r.uncertainty !== null) l.unc.push(r.uncertainty);
 		}
+	}
+
+	/** The record, every detail, to the sink; its taxon once to the taxa rows. */
+	private sendRecord(r: CompactRecord, taxon: Taxon | null, place: string): void {
+		if (!this.sink) return;
+		const id = taxon?.id ?? r.taxonId;
+		if (!id) {
+			this.note('record_without_taxon', 'records with no usable taxon id, not kept', 1);
+			return;
+		}
+		const name = taxon ? taxon.canonical : (r.otherName ?? '(no name)');
+		const key = `${id}\u0000${name}`;
+		const known = this.taxonRows.get(key);
+		if (!known) {
+			this.taxonRows.set(key, {
+				upstream_taxon_id: id,
+				canonical_name: name,
+				raw_name: taxon ? taxon.raw : name,
+				rank: taxon ? taxon.rank : 'OTHER',
+				local_name: r.localName,
+				red_list: r.redList,
+				red_list_url: r.redListUrl
+			});
+		} else {
+			known.local_name ??= r.localName;
+			known.red_list ??= r.redList;
+			known.red_list_url ??= r.redListUrl;
+		}
+		this.recordRows++;
+		this.sink({
+			upstream_record_id: r.id,
+			place_key: place,
+			upstream_taxon_id: id,
+			canonical_name: name,
+			observed_on: r.date,
+			count: r.count,
+			locality: r.locality,
+			lat: r.lat,
+			lon: r.lon,
+			uncertainty_m: r.uncertainty,
+			observers: r.observers.slice(0, 50),
+			behaviour: r.behaviour,
+			activity: r.activity,
+			validation: r.validation,
+			notes: r.notes,
+			sex: r.sex,
+			photos: r.photos,
+			dataset: r.dataset,
+			record_url: r.url,
+			upstream_modified_at: r.modifiedAt
+		});
 	}
 
 	private keepRecent(r: CompactRecord, place: string): void {
@@ -238,10 +338,11 @@ export class CountyAggregate {
 		const localities: LocalityRow[] = [];
 		const observers: ObserverRow[] = [];
 		for (const [key, acc] of all) {
+			const at = acc.lat.length > 0 ? { lat: round3(median(acc.lat)), lon: round3(median(acc.lon)) } : { lat: null, lon: null };
 			places.push(
 				key === region
-					? { place_key: key, name: acc.name, level: 'region', parent_key: null, lat: null, lon: null }
-					: { place_key: key, name: acc.name, level: 'subregion', parent_key: region, lat: null, lon: null }
+					? { place_key: key, name: acc.name, level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null }
+					: { place_key: key, name: acc.name, level: 'subregion', parent_key: region, ...at, upstream_place_id: acc.upstreamId }
 			);
 			for (let m = 1; m <= 12; m++) totals.push({ place_key: key, month: m, reports: acc.totals[m], unkeyed: acc.unkeyed[m] });
 			for (const [id, months] of [...acc.taxa.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -289,6 +390,9 @@ export class CountyAggregate {
 			recent,
 			diagnostics: diagnostics.slice(0, 500),
 			observers,
+			taxa: [...this.taxonRows.values()].sort(
+				(a, b) => a.upstream_taxon_id.localeCompare(b.upstream_taxon_id) || a.canonical_name.localeCompare(b.canonical_name)
+			),
 			stats: {
 				records: sum(this.region.totals),
 				unkeyed: sum(this.region.unkeyed),
@@ -297,10 +401,36 @@ export class CountyAggregate {
 				taxa: this.region.taxa.size,
 				observers: this.region.observers.size,
 				recentFrom: from || null,
-				recentTo: this.newest || null
+				recentTo: this.newest || null,
+				recordRows: this.recordRows
 			}
 		};
 	}
+}
+
+/**
+ * A recent candidate keeps only what "Latest reports" shows: up to 80,000
+ * candidates are held before a prune, and a full record carries notes,
+ * photos and the rest (a live Nordland read peaked at 216 MB heap with full
+ * records as candidates, against 122 MB before td-769300).
+ */
+function recentFields(r: CompactRecord, taxon: Taxon): CompactRecord {
+	return {
+		...r,
+		taxon,
+		localName: null,
+		redList: null,
+		redListUrl: null,
+		behaviour: [],
+		activity: null,
+		validation: null,
+		notes: null,
+		sex: null,
+		photos: null,
+		dataset: null,
+		modifiedAt: null,
+		otherName: null
+	};
 }
 
 /** Days out first, then species, then localities, then reports, then name. */
@@ -328,6 +458,11 @@ export function partyText(names: string[]): string | null {
 	if (kept.length === 0) return names[0].slice(0, 200);
 	const more = names.length - kept.length;
 	return kept.join(', ') + (more > 0 ? ` +${more}` : '');
+}
+
+/** About 100 m: a municipality's location is a point to measure distance from, nothing finer. */
+function round3(x: number): number {
+	return Math.round(x * 1e3) / 1e3;
 }
 
 function median(xs: number[]): number {

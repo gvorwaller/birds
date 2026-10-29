@@ -6,6 +6,12 @@
  * coordinates use a decimal comma, `Precision` is metres, and `Collector`
  * holds the party separated by "|". Observer names are kept (owner,
  * 2026-10-26); nothing else personal is read.
+ *
+ * Every detail of a report is kept since td-769300 (owner 2026-10-28: "keep
+ * the records"). Field fill rates in a 3,000-record Nordland sample
+ * (2026-10-28): Name 99.7%, Red List 98%, Count 94%, Notes 79% (structured
+ * "Activity: …." and "Validationstatus: …"), Behavior 68%, Sex 10%, photos
+ * 9%, DatasetName 0.7%. IdentifiedBy, Habitat and Info were never filled.
  */
 import { sightingUrl } from './config';
 
@@ -40,6 +46,23 @@ export interface CompactRecord {
 	count: number | null;
 	observers: string[];
 	url: string | null;
+	/** Artskart's TaxonId, also for a record that is not a species. */
+	taxonId: string | null;
+	/** The Norwegian name ("grågås"). */
+	localName: string | null;
+	/** Norsk Rødliste 2021 (mainland) category and its page. */
+	redList: string | null;
+	redListUrl: string | null;
+	municipalityId: string | null;
+	behaviour: string[];
+	activity: string | null;
+	validation: string | null;
+	notes: string | null;
+	sex: string | null;
+	photos: { url: string; by: string | null }[] | null;
+	dataset: string | null;
+	/** TrackDateTime as given (no zone stated), cut to microseconds. */
+	modifiedAt: string | null;
 }
 
 export type SkipReason = 'undated';
@@ -104,6 +127,62 @@ export function recordId(raw: unknown): string | null {
 	return typeof id === 'string' && ID.test(id) ? id : null;
 }
 
+const RED_LIST_TYPE = 'Norsk Rødliste 2021';
+
+/** The mainland Red List entry; the Svalbard list is a separate entry and is not this one. */
+export function redList(v: unknown): { category: string; url: string | null } | null {
+	if (!Array.isArray(v)) return null;
+	for (const e of v) {
+		const entry = e as { Type?: unknown; LinkTekst?: unknown; Url?: unknown } | null;
+		if (!entry || entry.Type !== RED_LIST_TYPE || typeof entry.LinkTekst !== 'string' || !/^[A-Z]{2}$/.test(entry.LinkTekst)) continue;
+		const url = typeof entry.Url === 'string' && /^https:\/\/\S+$/.test(entry.Url) && entry.Url.length <= 500 ? entry.Url : null;
+		return { category: entry.LinkTekst, url };
+	}
+	return null;
+}
+
+/** "Activity: Forage. Validationstatus: Approved Documented" → its two parts. */
+export function noteParts(notes: string | null): { activity: string | null; validation: string | null } {
+	if (!notes) return { activity: null, validation: null };
+	const activity = /(?:^|\s)Activity: ([^.]{1,100})\./.exec(notes)?.[1].trim() || null;
+	const validation = /(?:^|\s)Validationstatus: ([^.]{1,100})(?:\.|$)/.exec(notes)?.[1].trim() || null;
+	return { activity, validation };
+}
+
+export function behaviourList(v: unknown): string[] {
+	if (!Array.isArray(v)) return [];
+	const out: string[] = [];
+	for (const b of v) {
+		const word = typeof b === 'string' ? b.trim().toLowerCase() : '';
+		if (/^[a-z][a-z0-9_ -]{0,39}$/.test(word) && !out.includes(word) && out.length < 10) out.push(word);
+	}
+	return out;
+}
+
+export function photoList(v: unknown): { url: string; by: string | null }[] | null {
+	if (!Array.isArray(v)) return null;
+	const out: { url: string; by: string | null }[] = [];
+	for (const p of v) {
+		const photo = p as { ImageUrl?: unknown; Collector?: unknown } | null;
+		const url = typeof photo?.ImageUrl === 'string' ? photo.ImageUrl.trim() : '';
+		if (!/^https:\/\/\S+$/.test(url) || url.length > 500 || out.length >= 20) continue;
+		out.push({ url, by: cleanText(photo?.Collector)?.slice(0, 200) ?? null });
+	}
+	return out.length > 0 ? out : null;
+}
+
+/** "2026-01-26T13:08:14.6031146" → "2026-01-26T13:08:14.603114"; null when unreadable. */
+export function modifiedAt(v: unknown): string | null {
+	const m = typeof v === 'string' ? /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?$/.exec(v.trim()) : null;
+	if (!m || !isoDate(m[1].slice(0, 10).split('-').reverse().join('.'))) return null;
+	return m[1] + (m[2] ? m[2].slice(0, 7) : '');
+}
+
+function shortText(v: unknown, max: number): string | null {
+	const t = cleanText(v);
+	return t && t.length <= max ? t : null;
+}
+
 export function compactRecord(raw: unknown): CompactRecord | SkipReason {
 	const r = raw as Record<string, unknown>;
 	const id = recordId(raw)!;
@@ -125,6 +204,9 @@ export function compactRecord(raw: unknown): CompactRecord | SkipReason {
 	const count = /^\d{1,9}$/.test(countText) ? Number(countText) : null;
 	const municipality = cleanText(r.Municipality);
 	const catalog = typeof r.CatalogNumber === 'string' ? r.CatalogNumber.trim() : null;
+	const notes = typeof r.Notes === 'string' ? (cleanText(r.Notes)?.slice(0, 500) ?? null) : null;
+	const red = redList(r.PropertyUrls);
+	const municipalityId = typeof r.MunicipalityId === 'number' || typeof r.MunicipalityId === 'string' ? String(r.MunicipalityId).trim() : '';
 
 	return {
 		id,
@@ -139,6 +221,18 @@ export function compactRecord(raw: unknown): CompactRecord | SkipReason {
 		uncertainty,
 		count,
 		observers: observerNames(r.Collector),
-		url: sightingUrl(catalog, typeof r.ObsUrl === 'string' ? r.ObsUrl : null)
+		url: sightingUrl(catalog, typeof r.ObsUrl === 'string' ? r.ObsUrl : null),
+		taxonId: taxonId && ID.test(taxonId) ? taxonId : null,
+		localName: shortText(r.Name, 200),
+		redList: red?.category ?? null,
+		redListUrl: red?.url ?? null,
+		municipalityId: /^\d{1,10}$/.test(municipalityId) ? municipalityId : null,
+		behaviour: behaviourList(r.Behavior),
+		...noteParts(notes),
+		notes,
+		sex: shortText(r.Sex, 50),
+		photos: photoList(r.ThumbImgUrls),
+		dataset: shortText(r.DatasetName, 200),
+		modifiedAt: modifiedAt(r.TrackDateTime)
 	};
 }

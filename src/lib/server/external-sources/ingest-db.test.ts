@@ -75,6 +75,7 @@ async function addConnector(source: string, label: string): Promise<{ token: str
 
 async function cleanLoads(): Promise<void> {
 	for (const table of [
+		'external_records',
 		'external_place_month_species',
 		'external_unmatched',
 		'external_recent_reports',
@@ -87,6 +88,7 @@ async function cleanLoads(): Promise<void> {
 		await query(`DELETE FROM ${table} WHERE source_id = ANY($1::text[])`, [[SRC, SRC2]]);
 	}
 	await query(`DELETE FROM external_taxon_overrides WHERE source_id = ANY($1::text[])`, [[SRC, SRC2]]);
+	await query(`DELETE FROM external_taxa WHERE source_id = ANY($1::text[])`, [[SRC, SRC2]]);
 	await query(`DELETE FROM external_loads WHERE source_id = ANY($1::text[])`, [[SRC, SRC2]]);
 }
 
@@ -211,8 +213,8 @@ const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 function dataset(region = REGION) {
 	const sub = `${region}:Nesna`;
 	const places = [
-		{ place_key: region, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null },
-		{ place_key: sub, name: 'Nesna', level: 'subregion', parent_key: region, lat: 66.2, lon: 13.0 }
+		{ place_key: region, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null as string | null },
+		{ place_key: sub, name: 'Nesna', level: 'subregion', parent_key: region, lat: 66.2, lon: 13.0, upstream_place_id: null as string | null }
 	];
 	const taxa = [
 		// June: robin 10 + eider 5 + eider synonym 2 + fake 1 + unkeyed 2 = 20 of 25 → gap of 5
@@ -296,6 +298,8 @@ async function stagingRows(loadId: string): Promise<number> {
 		      + (SELECT COUNT(*) FROM external_stage_recent WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_stage_diagnostics WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_stage_observers WHERE load_id = $1)
+		      + (SELECT COUNT(*) FROM external_stage_taxa WHERE load_id = $1)
+		      + (SELECT COUNT(*) FROM external_stage_records WHERE load_id = $1)
 		      + (SELECT COUNT(*) FROM external_load_chunks WHERE load_id = $1) AS n`,
 		[loadId]
 	);
@@ -395,6 +399,7 @@ describe('lifecycle', () => {
 
 		const counts = await publishedCounts(SRC, REGION);
 		expect(counts).toEqual({
+			external_records: 0,
 			external_place_month_species: 3,
 			external_unmatched: 1,
 			external_recent_reports: 2,
@@ -519,7 +524,7 @@ describe('lifecycle', () => {
 	it('publishes an empty but complete load (zero totals, no taxa)', async () => {
 		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
 		const lease = await claim();
-		const places = [{ place_key: REGION, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null }];
+		const places = [{ place_key: REGION, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null }];
 		const totals = MONTHS.map((month) => ({ place_key: REGION, month, reports: 0, unkeyed: 0 }));
 		const sent: Sent[] = [];
 		for (const [kind, rows] of [['places', places], ['totals', totals]] as const) {
@@ -879,6 +884,243 @@ describe('subspecies matching (Phase 2 rev B)', () => {
 	});
 });
 
+describe('records and taxa (td-769300)', () => {
+	const GULLS_ID = `gulls-${RUN}`;
+	const taxa = () => [
+		{ upstream_taxon_id: ROBIN_ID, canonical_name: 'Erithacus rubecula', raw_name: 'Erithacus rubecula', rank: 'SPECIES', local_name: 'rødstrupe', red_list: 'LC', red_list_url: 'https://artsdatabanken.no/lister/rodlisteforarter/2021/1' },
+		{ upstream_taxon_id: FAKE_ID, canonical_name: 'Nonexistus fakeus', raw_name: 'Nonexistus fakeus', rank: 'SPECIES', local_name: null, red_list: null, red_list_url: null },
+		{ upstream_taxon_id: GULLS_ID, canonical_name: 'Laridae', raw_name: 'Laridae', rank: 'OTHER', local_name: 'måkefamilien', red_list: null, red_list_url: null }
+	];
+	const record = (id: string, over: Record<string, unknown> = {}) => ({
+		upstream_record_id: `${id}-${RUN}`,
+		place_key: `${REGION}:Nesna`,
+		upstream_taxon_id: ROBIN_ID,
+		canonical_name: 'Erithacus rubecula',
+		observed_on: '2026-06-03',
+		count: 2,
+		locality: 'Skogsøy, Nesna, No',
+		lat: 66.2,
+		lon: 13.0,
+		uncertainty_m: 300,
+		observers: [],
+		behaviour: ['feeding'],
+		activity: 'Forage',
+		validation: 'Approved Documented',
+		notes: 'Activity: Forage. Validationstatus: Approved Documented',
+		sex: 'male',
+		photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2026/6/x.jpg', by: null as string | null }],
+		dataset: null,
+		record_url: 'https://www.artsobservasjoner.no/Sighting/9',
+		upstream_modified_at: '2026-06-04T07:01:02.123456',
+		...over
+	});
+	const records = () => [
+		record('rec1'),
+		record('rec2', { place_key: REGION, upstream_taxon_id: FAKE_ID, canonical_name: 'Nonexistus fakeus', count: null, locality: null, lat: null, lon: null, uncertainty_m: null, behaviour: [], activity: null, validation: null, notes: null, sex: null, photos: null, record_url: null, upstream_modified_at: null }),
+		record('rec3', { upstream_taxon_id: GULLS_ID, canonical_name: 'Laridae', photos: null })
+	];
+
+	/** One full load with taxa and records, on top of the usual dataset. */
+	async function publishRecords(opts: { region?: string; taxaRows?: unknown[]; recordRows?: unknown[]; expectStatus?: number; data?: ReturnType<typeof dataset> } = {}) {
+		const region = opts.region ?? REGION;
+		await queueExternalLoad({ sourceId: SRC, regionCode: region, requestedBy: null });
+		const lease = await claim();
+		const sent = await sendAll(lease, opts.data ?? dataset(region));
+		const taxaRows = opts.taxaRows ?? taxa();
+		const recordRows = opts.recordRows ?? records();
+		for (const [kind, rows] of [['taxa', taxaRows], ['records', recordRows]] as const) {
+			if (rows.length === 0) continue;
+			const r = await chunk(lease, `${kind}-1`, kind, rows as unknown[]);
+			expect(r.status, JSON.stringify(r.body)).toBe(200);
+			sent.push({ chunk_id: `${kind}-1`, kind, rows: rows.length, sha256: rowsDigest(rows as unknown[]) });
+		}
+		const f = await finish(lease, manifest(sent, {}, region));
+		expect(f.status, JSON.stringify(f.body)).toBe(opts.expectStatus ?? 200);
+		// A refused finish leaves the load leased; release it so the next one can be claimed.
+		if (f.status !== 200) await call(failRoute, lease.id, { ...fence(lease), reason: 'test', retryable: false });
+		return { lease, f };
+	}
+
+	it('publishes every record with its details, and each taxon once with its species code', async () => {
+		const { lease, f } = await publishRecords();
+		expect(f.body!.result.counts).toMatchObject({ taxa: 3, records: 3 });
+		const rec = await query<Record<string, any>>(
+			`SELECT place_key, observed_on::text, count, locality, lat, lon, uncertainty_m, observers, behaviour, activity, validation,
+			        notes, sex, photos, record_url, upstream_modified_at::text, load_id
+			   FROM external_records WHERE source_id = $1 AND upstream_record_id = $2`,
+			[SRC, `rec1-${RUN}`]
+		);
+		expect(rec.rows[0]).toMatchObject({
+			place_key: `${REGION}:Nesna`,
+			observed_on: '2026-06-03',
+			count: 2,
+			observers: [],
+			behaviour: ['feeding'],
+			activity: 'Forage',
+			validation: 'Approved Documented',
+			sex: 'male',
+			photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2026/6/x.jpg', by: null }],
+			upstream_modified_at: '2026-06-04 07:01:02.123456',
+			load_id: lease.id
+		});
+		const bare = await query<Record<string, any>>(`SELECT count, locality, lat, photos, behaviour FROM external_records WHERE source_id = $1 AND upstream_record_id = $2`, [SRC, `rec2-${RUN}`]);
+		expect(bare.rows[0]).toEqual({ count: null, locality: null, lat: null, photos: null, behaviour: [] });
+
+		const tx = await query<{ upstream_taxon_id: string; rank: string; local_name: string | null; red_list: string | null; species_code: string | null; match_reason: string }>(
+			`SELECT upstream_taxon_id, rank, local_name, red_list, species_code, match_reason FROM external_taxa WHERE source_id = $1 ORDER BY upstream_taxon_id`,
+			[SRC]
+		);
+		const byId = new Map(tx.rows.map((t) => [t.upstream_taxon_id, t]));
+		expect(byId.get(ROBIN_ID)).toMatchObject({ rank: 'SPECIES', local_name: 'rødstrupe', red_list: 'LC', species_code: robin, match_reason: 'scientific' });
+		expect(byId.get(FAKE_ID)).toMatchObject({ species_code: null, match_reason: 'no_match' });
+		expect(byId.get(GULLS_ID)).toMatchObject({ rank: 'OTHER', local_name: 'måkefamilien', species_code: null, match_reason: 'not_species' });
+		expect(await stagingRows(lease.id)).toBe(0);
+	});
+
+	it("stores a place's upstream id and location", async () => {
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const d = dataset();
+		d.places = d.places.map((p) => (p.level === 'subregion' ? { ...p, upstream_place_id: '1828' } : p));
+		const f = await finish(lease, manifest(await sendAll(lease, d)));
+		expect(f.status, JSON.stringify(f.body)).toBe(200);
+		const p = await query<{ upstream_place_id: string | null; lat: number }>(`SELECT upstream_place_id, lat FROM external_places WHERE source_id = $1 AND place_key = $2`, [SRC, `${REGION}:Nesna`]);
+		expect(p.rows[0]).toEqual({ upstream_place_id: '1828', lat: 66.2 });
+	});
+
+	it("replaces a county's records whole on reload, leaves another county alone, and keeps taxa source-wide", async () => {
+		await publishRecords();
+		await publishRecords({ region: OTHER_REGION, recordRows: [record('rec9', { place_key: OTHER_REGION })] });
+		await publishRecords({ taxaRows: [{ ...taxa()[0], local_name: null }], recordRows: [record('rec1')] });
+		const n = await query<{ region_code: string; n: string }>(
+			`SELECT region_code, COUNT(*) AS n FROM external_records WHERE source_id = $1 GROUP BY region_code ORDER BY region_code`,
+			[SRC]
+		);
+		expect(n.rows).toEqual([
+			{ region_code: REGION, n: '1' },
+			{ region_code: OTHER_REGION, n: '1' }
+		]);
+		const tx = await query<{ upstream_taxon_id: string; local_name: string | null }>(`SELECT upstream_taxon_id, local_name FROM external_taxa WHERE source_id = $1`, [SRC]);
+		// The gull family stays although this reload didn't send it; a name left out keeps the known one.
+		expect(tx.rows.map((t) => t.upstream_taxon_id).sort()).toEqual([FAKE_ID, GULLS_ID, ROBIN_ID].sort());
+		expect(tx.rows.find((t) => t.upstream_taxon_id === ROBIN_ID)!.local_name).toBe('rødstrupe');
+	});
+
+	it('refuses records whose taxon or place was never sent, and keeps the previous data', async () => {
+		await publishRecords();
+		const before = await publishedCounts(SRC, REGION);
+		const lost = await publishRecords({ taxaRows: [taxa()[0]], expectStatus: 422 });
+		expect(lost.f.body!.error).toBe('unknown_taxon');
+		const noPlace = await publishRecords({ recordRows: [record('rec5', { place_key: `${REGION}:Vega` })], expectStatus: 422 });
+		expect(noPlace.f.body!.error).toBe('unknown_place');
+		expect(await publishedCounts(SRC, REGION)).toEqual(before);
+	});
+
+	it('refuses observer names in records unless the source stores them, at the chunk and at finish', async () => {
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const named = [record('rec7', { observers: ['Observer A', 'Observer B'] })];
+		const r = await chunk(lease, 'records-1', 'records', named);
+		expect(r.status).toBe(422);
+		expect(r.body!.error).toBe('observer');
+
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		expect((await chunk(lease, 'records-1', 'records', named)).status).toBe(200);
+		expect((await chunk(lease, 'taxa-1', 'taxa', taxa())).status).toBe(200);
+		const sent = await sendAll(lease);
+		sent.push({ chunk_id: 'records-1', kind: 'records', rows: 1, sha256: rowsDigest(named) });
+		sent.push({ chunk_id: 'taxa-1', kind: 'taxa', rows: 3, sha256: rowsDigest(taxa()) });
+		await query(`UPDATE external_sources SET store_observers = false WHERE id = $1`, [SRC]);
+		const f = await finish(lease, manifest(sent));
+		expect(f.status).toBe(422);
+		expect(f.body!.error).toBe('observer');
+	});
+
+	it('refuses a photo credit unless the source stores names, at the chunk and at finish (CODEX1 td-769300 F2)', async () => {
+		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
+		const lease = await claim();
+		const credited = [record('rec8', { photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2026/6/y.jpg', by: 'Photographer A' }] })];
+		const r = await chunk(lease, 'records-1', 'records', credited);
+		expect(r.status).toBe(422);
+		expect(r.body!.error).toBe('observer');
+
+		await query(`UPDATE external_sources SET store_observers = true WHERE id = $1`, [SRC]);
+		expect((await chunk(lease, 'records-1', 'records', credited)).status).toBe(200);
+		expect((await chunk(lease, 'taxa-1', 'taxa', taxa())).status).toBe(200);
+		const sent = await sendAll(lease);
+		sent.push({ chunk_id: 'records-1', kind: 'records', rows: 1, sha256: rowsDigest(credited) });
+		sent.push({ chunk_id: 'taxa-1', kind: 'taxa', rows: 3, sha256: rowsDigest(taxa()) });
+		await query(`UPDATE external_sources SET store_observers = false WHERE id = $1`, [SRC]);
+		const f = await finish(lease, manifest(sent));
+		expect(f.status).toBe(422);
+		expect(f.body!.error).toBe('observer');
+	});
+
+	it('lists a taxon held only in records as unmatched, with its record count, and takes an override for it (CODEX1 td-769300 F3)', async () => {
+		const ONLY_ID = `only-${RUN}`;
+		const MAGPIE_ID = `magpie-${RUN}`;
+		const only = { upstream_taxon_id: ONLY_ID, canonical_name: 'Recordus onlyus', raw_name: 'Recordus onlyus', rank: 'SPECIES', local_name: null, red_list: null, red_list_url: null };
+		// Matched by name and held only in records, so never listed as unmatched.
+		const magpie = { upstream_taxon_id: MAGPIE_ID, canonical_name: 'Pica pica', raw_name: 'Pica pica', rank: 'SPECIES', local_name: 'skjære', red_list: 'LC', red_list_url: null };
+		const rows = [
+			...records(),
+			record('rec10', { upstream_taxon_id: ONLY_ID, canonical_name: 'Recordus onlyus', observed_on: '2026-10-02' }),
+			record('rec11', { upstream_taxon_id: ONLY_ID, canonical_name: 'Recordus onlyus', observed_on: '2026-10-03' }),
+			record('rec12', { upstream_taxon_id: MAGPIE_ID, canonical_name: 'Pica pica', observed_on: '2026-10-04' })
+		];
+		// One of the two records is also a recent report: it must be counted once.
+		const data = dataset();
+		data.recent = [
+			...data.recent,
+			{ ...data.recent[0], upstream_record_id: `rec11-${RUN}`, upstream_taxon_id: ONLY_ID, canonical_name: 'Recordus onlyus', observed_on: '2026-10-03' }
+		];
+		await publishRecords({ taxaRows: [...taxa(), only, magpie], recordRows: rows, data });
+		const listed = await query<{ reason: string; reports: string }>(
+			`SELECT reason, reports FROM external_unmatched WHERE source_id = $1 AND region_code = $2 AND upstream_taxon_id = $3`,
+			[SRC, REGION, ONLY_ID]
+		);
+		expect(listed.rows).toEqual([{ reason: 'no_match', reports: '2' }]);
+		// The fake species keeps its window count (1), not that plus its record and recent report.
+		const fake = await query<{ reports: string }>(`SELECT reports FROM external_unmatched WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, FAKE_ID]);
+		expect(fake.rows[0].reports).toBe('1');
+		// The gull family is not a species and is never listed.
+		expect((await query(`SELECT 1 FROM external_unmatched WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, GULLS_ID])).rowCount).toBe(0);
+
+		const r = await setTaxonOverride({ sourceId: SRC, upstreamTaxonId: ONLY_ID, species: otherCode, userId });
+		expect(r.canonicalName).toBe('Recordus onlyus');
+		expect((await query(`SELECT 1 FROM external_unmatched WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, ONLY_ID])).rowCount).toBe(0);
+		const t = await query<{ species_code: string }>(`SELECT species_code FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, ONLY_ID]);
+		expect(t.rows[0].species_code).toBe(otherCode);
+		await expect(setTaxonOverride({ sourceId: SRC, upstreamTaxonId: GULLS_ID, species: otherCode, userId })).rejects.toThrow(/not in any loaded data/);
+		const m = await setTaxonOverride({ sourceId: SRC, upstreamTaxonId: MAGPIE_ID, species: robin, userId });
+		expect(m.canonicalName).toBe('Pica pica');
+		const mt = await query<{ species_code: string; match_reason: string }>(`SELECT species_code, match_reason FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, MAGPIE_ID]);
+		expect(mt.rows[0]).toEqual({ species_code: robin, match_reason: 'override' });
+	});
+
+	it("an override updates the taxon's species code, so records join to the new species", async () => {
+		await publishRecords();
+		await setTaxonOverride({ sourceId: SRC, upstreamTaxonId: FAKE_ID, species: otherCode, userId });
+		const joined = await query<{ species_code: string }>(
+			`SELECT t.species_code FROM external_records r
+			   JOIN external_taxa t USING (source_id, upstream_taxon_id, canonical_name)
+			  WHERE r.source_id = $1 AND r.upstream_record_id = $2`,
+			[SRC, `rec2-${RUN}`]
+		);
+		expect(joined.rows[0].species_code).toBe(otherCode);
+		const reason = await query<{ match_reason: string }>(`SELECT match_reason FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, FAKE_ID]);
+		expect(reason.rows[0].match_reason).toBe('override');
+	});
+
+	it('refuses a species taxon sent under two names, but not a genus or hybrid', async () => {
+		const renamed = [...taxa(), { ...taxa()[0], canonical_name: 'Erithacus rubeculus', raw_name: 'Erithacus rubeculus' }];
+		const conflict = await publishRecords({ taxaRows: renamed, expectStatus: 422 });
+		expect(conflict.f.body!.error).toBe('taxon_name_conflict');
+		const otherTwice = [...taxa(), { ...taxa()[2], canonical_name: 'Larus' }];
+		await publishRecords({ taxaRows: otherTwice });
+	});
+});
+
 describe('job chip', () => {
 	it("lists the requester's own active and recently finished loads in the chip's states", async () => {
 		const { loadId } = await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: userId });
@@ -988,7 +1230,7 @@ describe('CODEX1 review regressions', () => {
 	it('publishes unmatched totals beyond int4 instead of failing the finish', async () => {
 		await queueExternalLoad({ sourceId: SRC, regionCode: REGION, requestedBy: null });
 		const lease = await claim();
-		const places = [{ place_key: REGION, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null }];
+		const places = [{ place_key: REGION, name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null }];
 		const big = 2147483647;
 		const totals = MONTHS.map((month) => ({ place_key: REGION, month, reports: month === 1 ? big : month === 2 ? 1 : 0, unkeyed: 0 }));
 		const taxa = [1, 2].map((month) => ({ place_key: REGION, month, upstream_taxon_id: FAKE_ID, canonical_name: 'Nonexistus fakeus', raw_name: 'Nonexistus fakeus', rank: 'SPECIES', reports: month === 1 ? big : 1 }));

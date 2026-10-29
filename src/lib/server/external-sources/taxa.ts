@@ -147,6 +147,10 @@ export async function deriveSpecies(db: Db, sourceId: string, regionCode: string
 		   UNION ALL
 		   SELECT upstream_taxon_id, canonical_name FROM external_recent_reports
 		    WHERE source_id = $1 AND ($2::text IS NULL OR region_code = $2)
+		   UNION ALL
+		   -- A taxon may be held only in records (reported after the window and
+		   -- before the last 14 days): it is matched and listed too (CODEX1 td-769300 F3).
+		   SELECT upstream_taxon_id, canonical_name FROM external_taxa WHERE source_id = $1 AND rank <> 'OTHER'
 		 ) t`,
 		[sourceId, regionCode]
 	);
@@ -176,26 +180,69 @@ export async function deriveSpecies(db: Db, sourceId: string, regionCode: string
 	);
 	await db.query(`DELETE FROM external_unmatched WHERE ${scope}`, [sourceId, regionCode]);
 	// Reports come from the region-level place only, so a county's municipal
-	// rows are not counted twice. A taxon seen only in recent reports is
-	// listed with the reports it has there.
+	// rows are not counted twice. A taxon outside the window's counts is
+	// listed with its records (which include the recent ones), else with its
+	// recent reports; the three sources are never added together.
 	await db.query(
 		`INSERT INTO external_unmatched (source_id, region_code, upstream_taxon_id, canonical_name, reason, reports, load_id)
 		 SELECT u.source_id, u.region_code, u.upstream_taxon_id, MIN(u.canonical_name), MIN(m.reason),
-		        COALESCE(SUM(u.reports) FILTER (WHERE u.kind = 'taxon'), SUM(u.reports)),
+		        COALESCE(SUM(u.reports) FILTER (WHERE u.kind = 'taxon'), SUM(u.reports) FILTER (WHERE u.kind = 'record'), SUM(u.reports)),
 		        MIN(u.load_id::text)::uuid
 		   FROM (
-		     SELECT source_id, region_code, upstream_taxon_id, canonical_name, reports, load_id, 'taxon' AS kind
+		     SELECT source_id, region_code, upstream_taxon_id, canonical_name, reports::bigint AS reports, load_id, 'taxon' AS kind
 		       FROM external_taxon_month
 		      WHERE source_id = $1 AND ($2::text IS NULL OR region_code = $2) AND place_key = region_code
 		     UNION ALL
 		     SELECT source_id, region_code, upstream_taxon_id, canonical_name, 1, load_id, 'recent'
 		       FROM external_recent_reports
 		      WHERE source_id = $1 AND ($2::text IS NULL OR region_code = $2)
+		     UNION ALL
+		     SELECT r.source_id, r.region_code, r.upstream_taxon_id, r.canonical_name, COUNT(*), MIN(r.load_id::text)::uuid, 'record'
+		       FROM external_records r
+		       JOIN external_taxa t USING (source_id, upstream_taxon_id, canonical_name)
+		      WHERE r.source_id = $1 AND ($2::text IS NULL OR r.region_code = $2) AND t.rank <> 'OTHER'
+		      GROUP BY r.source_id, r.region_code, r.upstream_taxon_id, r.canonical_name
 		   ) u
 		   JOIN unnest($3::text[], $4::text[], $5::text[]) AS m(id, name, reason)
 		     ON m.id = u.upstream_taxon_id AND m.name = u.canonical_name
 		  WHERE m.reason IS NOT NULL
 		  GROUP BY u.source_id, u.region_code, u.upstream_taxon_id`,
 		[sourceId, regionCode, ids, names, reasons]
+	);
+	await deriveTaxa(db, sourceId);
+}
+
+/**
+ * The species code of every taxon the source has sent (td-769300), whichever
+ * region it came from: records join to species through external_taxa. The
+ * same match as the species rows; a genus or hybrid is 'not_species'.
+ */
+export async function deriveTaxa(db: Db, sourceId: string): Promise<void> {
+	const all = await db.query<{ upstream_taxon_id: string; canonical_name: string }>(
+		`SELECT upstream_taxon_id, canonical_name FROM external_taxa WHERE source_id = $1 AND rank <> 'OTHER'`,
+		[sourceId]
+	);
+	const pairs = all.rows.map((t) => ({ upstreamTaxonId: t.upstream_taxon_id, canonicalName: t.canonical_name }));
+	const matches = await matchExternalTaxa(db, sourceId, pairs);
+	const ids = pairs.map((t) => t.upstreamTaxonId);
+	const names = pairs.map((t) => t.canonicalName);
+	const codes: (string | null)[] = [];
+	const reasons: string[] = [];
+	for (const t of pairs) {
+		const m = matches.get(taxonKey(t.upstreamTaxonId, t.canonicalName))!;
+		codes.push(m.code);
+		reasons.push(m.code === null ? m.reason : m.method);
+	}
+	await db.query(
+		`UPDATE external_taxa t SET species_code = m.code, match_reason = m.reason, updated_at = now()
+		   FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS m(id, name, code, reason)
+		  WHERE t.source_id = $1 AND t.upstream_taxon_id = m.id AND t.canonical_name = m.name
+		    AND (t.species_code IS DISTINCT FROM m.code OR t.match_reason IS DISTINCT FROM m.reason)`,
+		[sourceId, ids, names, codes, reasons]
+	);
+	await db.query(
+		`UPDATE external_taxa SET species_code = NULL, match_reason = 'not_species', updated_at = now()
+		  WHERE source_id = $1 AND rank = 'OTHER' AND match_reason IS DISTINCT FROM 'not_species'`,
+		[sourceId]
 	);
 }

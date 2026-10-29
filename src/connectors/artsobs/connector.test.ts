@@ -3,11 +3,14 @@
  * Artskart records and a fake Artskart built from them. No network, no
  * database.
  */
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ContractError, validateChunkRows } from '$server/external-sources/contract';
+import { ContractError, rowsDigest as rowsDigestOf, validateChunkRows } from '$server/external-sources/contract';
 import { REGION_NAMES, REGION_TO_COUNTY, sightingUrl } from './config';
-import { classifyName, compactRecord, decimal, isoDate, observerNames, recordId, type CompactRecord } from './records';
+import { classifyName, compactRecord, decimal, isoDate, modifiedAt, noteParts, observerNames, recordId, type CompactRecord } from './records';
+import { RecordSpool } from './spool';
 import { ArtskartClient, ArtskartError, retryAfterMs } from './artskart';
 import { CountyAggregate, partyText, placeLocality, type RegionPayload } from './aggregate';
 import { monthRanges, readCounty, readSlice } from './fetch';
@@ -501,8 +504,8 @@ describe('one load (fake app)', () => {
 		});
 		return { ingest, calls };
 	}
-	const run = (artskart: ArtskartClient, ingest: IngestClient, stop = never, logs: string[] = []) =>
-		runLoad({ artskart, ingest, log: (e) => void logs.push(e), now: () => TODAY }, LOAD, stop);
+	const run = (artskart: ArtskartClient, ingest: IngestClient, stop = never, logs: string[] = [], spoolDir?: string) =>
+		runLoad({ artskart, ingest, log: (e) => void logs.push(e), now: () => TODAY, spoolDir }, LOAD, stop);
 
 	it('sends every chunk and a manifest that adds up, then finishes', async () => {
 		const { artskart } = client();
@@ -571,5 +574,189 @@ describe('one load (fake app)', () => {
 
 	it('the dates in a recorded record are what the fake serves', () => {
 		expect(ddmmyyyy('2025-04-01')).toBe('01.04.2025');
+	});
+
+	it('sends every record and its taxa, counted in the manifest, and removes the spool after (td-769300)', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'birds-spool-test-'));
+		try {
+			const { artskart } = client();
+			const { ingest, calls } = fakeApp();
+			expect(await run(artskart, ingest, never, [], dir)).toBe('done');
+			const recordChunks = calls.filter((c) => c.path.endsWith('/chunks') && c.body.kind === 'records');
+			const sentRecords = recordChunks.flatMap((c) => c.body.rows as { upstream_record_id: string }[]);
+			const manifest = calls.find((c) => c.path.endsWith('/finish'))!.body.manifest as { counts: Record<string, number> };
+			expect(sentRecords.length).toBe(inCountyThrough().length);
+			expect(new Set(sentRecords.map((r) => r.upstream_record_id)).size).toBe(sentRecords.length);
+			expect(manifest.counts.records).toBe(sentRecords.length);
+			expect(manifest.counts.taxa).toBeGreaterThan(0);
+			expect(readdirSync(dir)).toEqual([]);
+
+			// A failed load removes it too.
+			const down = new ArtskartClient({ sleep: noSleep, fetch: async () => new Response('x', { status: 503 }) });
+			expect(await run(down, fakeApp().ingest, never, [], dir)).toBe('failed');
+			expect(readdirSync(dir)).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+/** The scenario's NO-18 records from the window start through today, as the connector reads them. */
+function inCountyThrough(records = nordlandRecords()): CompactRecord[] {
+	return records
+		.filter((r) => r.__county === 18)
+		.map((r) => compactRecord(r) as CompactRecord)
+		.filter((r) => r.date >= WINDOW.start && r.date <= WINDOW.through);
+}
+
+describe('every detail of a record (td-769300)', () => {
+	it('reads the Norwegian name, the mainland Red List entry, behaviour, sex, municipality number and modified time', () => {
+		// The recorded subspecies lists the Svalbard Red List (NA) before the mainland one (LC).
+		const teal = compactRecord(RECORDED.subsp) as CompactRecord;
+		expect(teal).toMatchObject({
+			localName: 'amerikakrikkand',
+			redList: 'LC',
+			behaviour: ['stationary'],
+			sex: 'male',
+			municipalityId: String(RECORDED.subsp.MunicipalityId),
+			modifiedAt: '2025-10-07T19:22:18.860437',
+			photos: null,
+			dataset: null,
+			notes: null,
+			activity: null,
+			validation: null
+		});
+		expect(teal.redListUrl).toMatch(/^https:\/\/artsdatabanken\.no\/lister\/rodlisteforarter\/2021\/\d+$/);
+		const gulls = compactRecord(RECORDED.genus) as CompactRecord;
+		expect(gulls).toMatchObject({ taxon: null, taxonId: String(RECORDED.genus.TaxonId), localName: 'måkefamilien', redList: null });
+	});
+
+	it('reads notes, photos and a survey project in the shapes Artskart sends them (sample of 2026-10-28)', () => {
+		const r = compactRecord(
+			makeRecord(RECORDED.species, {
+				Notes: 'Activity: Forage. Validationstatus: Approved Documented',
+				ThumbImgUrls: [
+					{ ThumbId: '13747732', ImageUrl: 'https://www.artsobservasjoner.no/MediaLibrary/2025/3/a_image.jpg', Collector: 'Observer A' },
+					{ ThumbId: '13747733', ImageUrl: 'http://insecure.example/b.jpg', Collector: 'Observer A' }
+				],
+				DatasetName: 'Seapop Saltenfjorden',
+				Behavior: ['Feeding', 'feeding', '!!']
+			})
+		) as CompactRecord;
+		expect(r).toMatchObject({
+			activity: 'Forage',
+			validation: 'Approved Documented',
+			notes: 'Activity: Forage. Validationstatus: Approved Documented',
+			photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2025/3/a_image.jpg', by: 'Observer A' }],
+			dataset: 'Seapop Saltenfjorden',
+			behaviour: ['feeding']
+		});
+	});
+
+	it('splits the structured notes and keeps unknown text only as notes', () => {
+		expect(noteParts('Validationstatus: Approved Documented')).toEqual({ activity: null, validation: 'Approved Documented' });
+		expect(noteParts('Activity: Display/Song.')).toEqual({ activity: 'Display/Song', validation: null });
+		expect(noteParts('Seen from the ferry')).toEqual({ activity: null, validation: null });
+		expect(noteParts(null)).toEqual({ activity: null, validation: null });
+	});
+
+	it('keeps the modified time as given, cut to microseconds, and drops an unreadable one', () => {
+		expect(modifiedAt('2026-01-26T13:08:14.6031146')).toBe('2026-01-26T13:08:14.603114');
+		expect(modifiedAt('2026-01-26T13:08:14')).toBe('2026-01-26T13:08:14');
+		expect(modifiedAt('2026-02-30T13:08:14.1')).toBeNull();
+		expect(modifiedAt('yesterday')).toBeNull();
+	});
+
+	it('every in-county record from the window start through today goes to the spool, each taxon once', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'birds-spool-test-'));
+		const spool = new RecordSpool(dir);
+		try {
+			const records = nordlandRecords();
+			const { artskart } = client(records);
+			const agg = await readCounty(artskart, 'NO-18', 18, WINDOW, { pagesDone: 0, pagesTotal: 0 }, never, {}, spool);
+			const p = agg.payload();
+			const rows: { upstream_record_id: string; place_key: string; upstream_taxon_id: string; canonical_name: string }[] = [];
+			for await (const c of spool.chunks(200 * 1024)) {
+				validateChunkRows('records', c.rowData, c.sha256, { region: 'NO-18', storeObservers: true });
+				rows.push(...(c.rowData as typeof rows));
+			}
+			const expected = inCountyThrough(records);
+			expect(rows.map((r) => r.upstream_record_id).sort()).toEqual(expected.map((r) => r.id).sort());
+			expect(p.stats.recordRows).toBe(expected.length);
+			// Records after the window end are kept too (the counts stop at the window end).
+			expect(expected.some((r) => r.date > WINDOW.end)).toBe(true);
+			validateChunkRows('taxa', p.taxa, rowsDigestOf(p.taxa), { region: 'NO-18', storeObservers: true });
+			const keys = p.taxa.map((t) => `${t.upstream_taxon_id}|${t.canonical_name}`);
+			expect(new Set(keys).size).toBe(keys.length);
+			for (const r of rows) expect(keys).toContain(`${r.upstream_taxon_id}|${r.canonical_name}`);
+			expect(p.taxa.find((t) => t.canonical_name === 'Laridae')).toMatchObject({ rank: 'OTHER', local_name: 'måkefamilien' });
+			expect(p.taxa.find((t) => t.canonical_name === 'Anas crecca carolinensis')).toMatchObject({ rank: 'SUBSPECIES', red_list: 'LC' });
+		} finally {
+			spool.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("places a municipality at the median of its window records and keeps Artskart's number for it", async () => {
+		const records = nordlandRecords();
+		const p = await nordland(records);
+		const region = p.places.find((x) => x.place_key === 'NO-18')!;
+		expect(region).toMatchObject({ lat: null, lon: null, upstream_place_id: null });
+		const bodo = p.places.find((x) => x.place_key === 'NO-18:Bodø')!;
+		expect(bodo.upstream_place_id).toBe(String(RECORDED.species.MunicipalityId));
+		const lats = records
+			.filter((r) => r.__county === 18 && r.Municipality === 'Bodø')
+			.map((r) => compactRecord(r) as CompactRecord)
+			.filter((r) => r.date >= WINDOW.start && r.date <= WINDOW.end && r.lat !== null)
+			.map((r) => r.lat!)
+			.sort((a, b) => a - b);
+		const mid = lats.length >> 1;
+		const median = lats.length % 2 ? lats[mid] : (lats[mid - 1] + lats[mid]) / 2;
+		expect(bodo.lat).toBe(Math.round(median * 1e3) / 1e3);
+	});
+
+	// Guards the behaviour, not the explicit close: Node 22 and 24 release the
+	// file on an early exit even without it (probe 2026-10-28).
+	it('a send that stops after the first chunk releases the file it was reading (CODEX1 td-769300 F1)', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'birds-spool-test-'));
+		const spool = new RecordSpool(dir);
+		try {
+			const row = (i: number) => ({ upstream_record_id: `r${i}`, place_key: 'NO-18', upstream_taxon_id: '1', canonical_name: 'Anser anser', observed_on: '2025-01-01', count: 1, locality: 'x'.repeat(200), lat: null, lon: null, uncertainty_m: null, observers: [], behaviour: [], activity: null, validation: null, notes: null, sex: null, photos: null, dataset: null, record_url: null, upstream_modified_at: null });
+			for (let i = 0; i < 6000; i++) spool.write(row(i));
+			const before = readdirSync('/dev/fd').length;
+			const chunks = spool.chunks(2000);
+			const first = await chunks.next();
+			expect(first.done).toBe(false);
+			expect(readdirSync('/dev/fd').length).toBeGreaterThan(before - 1);
+			await chunks.return(undefined);
+			// The writer's descriptor closed when reading began; the reader's closes asynchronously.
+			for (let i = 0; i < 50 && readdirSync('/dev/fd').length > before - 1; i++) await new Promise((r) => setTimeout(r, 10));
+			expect(readdirSync('/dev/fd').length).toBeLessThanOrEqual(before - 1);
+		} finally {
+			spool.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('the spool starts empty on every county read, splits under the byte target and leaves nothing behind', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'birds-spool-test-'));
+		const spool = new RecordSpool(dir);
+		try {
+			const row = (i: number) => ({ upstream_record_id: `r${i}`, place_key: 'NO-18', upstream_taxon_id: '1', canonical_name: 'Anser anser', observed_on: '2025-01-01', count: 1, locality: 'x'.repeat(200), lat: null, lon: null, uncertainty_m: null, observers: [], behaviour: [], activity: null, validation: null, notes: null, sex: null, photos: null, dataset: null, record_url: null, upstream_modified_at: null });
+			for (let i = 0; i < 5; i++) spool.write(row(i));
+			spool.reset();
+			for (let i = 10; i < 30; i++) spool.write(row(i));
+			const chunks = [];
+			for await (const c of spool.chunks(2000)) chunks.push(c);
+			expect(chunks.flatMap((c) => (c.rowData as { upstream_record_id: string }[]).map((r) => r.upstream_record_id))).toEqual(Array.from({ length: 20 }, (_, i) => `r${i + 10}`));
+			expect(chunks.length).toBeGreaterThan(1);
+			expect(chunks.map((c) => c.chunk_id)).toEqual(chunks.map((_, i) => `records-${i + 1}`));
+			for (const c of chunks.slice(0, -1)) expect(Buffer.byteLength(JSON.stringify(c.rowData))).toBeLessThanOrEqual(2000 + c.rows);
+		} finally {
+			spool.close();
+			spool.close();
+			expect(readdirSync(dir)).toEqual([]);
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

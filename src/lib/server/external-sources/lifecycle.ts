@@ -124,12 +124,14 @@ interface StageSpec {
 	fields: string[];
 	/** Published table and its columns (same names), or null (diagnostics). */
 	published: string | null;
+	/** Fields sent to PostgreSQL as JSON text (JSONB columns). */
+	json?: string[];
 }
 
 const STAGE: Record<ChunkKind, StageSpec> = {
 	places: {
 		table: 'external_stage_places',
-		fields: ['place_key', 'name', 'level', 'parent_key', 'lat', 'lon'],
+		fields: ['place_key', 'name', 'level', 'parent_key', 'lat', 'lon', 'upstream_place_id'],
 		published: 'external_places'
 	},
 	totals: {
@@ -171,11 +173,45 @@ const STAGE: Record<ChunkKind, StageSpec> = {
 		table: 'external_stage_observers',
 		fields: ['place_key', 'rank', 'observer', 'days', 'species', 'localities', 'reports'],
 		published: 'external_top_observers'
+	},
+	// Source-wide: upserted at finish, never swapped per region (upsertTaxa).
+	taxa: {
+		table: 'external_stage_taxa',
+		fields: ['upstream_taxon_id', 'canonical_name', 'raw_name', 'rank', 'local_name', 'red_list', 'red_list_url'],
+		published: 'external_taxa'
+	},
+	records: {
+		table: 'external_stage_records',
+		fields: [
+			'upstream_record_id',
+			'place_key',
+			'upstream_taxon_id',
+			'canonical_name',
+			'observed_on',
+			'count',
+			'locality',
+			'lat',
+			'lon',
+			'uncertainty_m',
+			'observers',
+			'behaviour',
+			'activity',
+			'validation',
+			'notes',
+			'sex',
+			'photos',
+			'dataset',
+			'record_url',
+			'upstream_modified_at'
+		],
+		published: 'external_records',
+		json: ['photos']
 	}
 };
 
 /** Published tables in delete order (children before external_places). */
 const PUBLISHED_DELETE_ORDER = [
+	'external_records',
 	'external_place_month_species',
 	'external_unmatched',
 	'external_recent_reports',
@@ -430,7 +466,12 @@ async function insertStageRows<K extends ChunkKind>(
 		const params: unknown[] = [];
 		const values = slice.map((row) => {
 			const rec = row as unknown as Record<string, unknown>;
-			const vals = [loadId, chunkId, ...(withRegion ? [region] : []), ...spec.fields.map((f) => rec[f])];
+			const vals = [
+				loadId,
+				chunkId,
+				...(withRegion ? [region] : []),
+				...spec.fields.map((f) => (spec.json?.includes(f) && rec[f] !== null ? JSON.stringify(rec[f]) : rec[f]))
+			];
 			const start = params.length;
 			params.push(...vals);
 			return `(${vals.map((_, j) => `$${start + j + 1}`).join(',')})`;
@@ -534,6 +575,7 @@ async function verifyManifest(c: Db, load: LoadRow, m: Manifest): Promise<void> 
 		   UNION ALL SELECT place_key, 'localities' FROM external_stage_localities WHERE load_id = $1
 		   UNION ALL SELECT place_key, 'recent' FROM external_stage_recent WHERE load_id = $1
 		   UNION ALL SELECT place_key, 'observers' FROM external_stage_observers WHERE load_id = $1
+		   UNION ALL SELECT place_key, 'records' FROM external_stage_records WHERE load_id = $1
 		 ) x
 		 WHERE NOT EXISTS (SELECT 1 FROM external_stage_places p WHERE p.load_id = $1 AND p.place_key = x.place_key)
 		 LIMIT 1`,
@@ -541,6 +583,18 @@ async function verifyManifest(c: Db, load: LoadRow, m: Manifest): Promise<void> 
 	);
 	if (orphan.rows[0]) {
 		throw new IngestError(422, 'unknown_place', `A ${orphan.rows[0].kind} row names place "${orphan.rows[0].place_key}", which was never sent.`);
+	}
+	// Every record's taxon arrives in this load's taxa rows (td-769300).
+	const untaxed = await c.query<{ upstream_record_id: string }>(
+		`SELECT r.upstream_record_id FROM external_stage_records r
+		  WHERE r.load_id = $1
+		    AND NOT EXISTS (SELECT 1 FROM external_stage_taxa t
+		                     WHERE t.load_id = $1 AND t.upstream_taxon_id = r.upstream_taxon_id AND t.canonical_name = r.canonical_name)
+		  LIMIT 1`,
+		[load.id]
+	);
+	if (untaxed.rows[0]) {
+		throw new IngestError(422, 'unknown_taxon', `Record ${untaxed.rows[0].upstream_record_id} names a taxon that was never sent.`);
 	}
 	// Every place has a total for every month, empty months as 0: a share is
 	// then never computed against a missing denominator.
@@ -587,7 +641,10 @@ async function checkObserverPolicy(c: Db, load: LoadRow & { storeObservers: bool
 	if (load.storeObservers) return;
 	const r = await c.query<{ named: boolean }>(
 		`SELECT EXISTS (SELECT 1 FROM external_stage_observers WHERE load_id = $1)
-		     OR EXISTS (SELECT 1 FROM external_stage_recent WHERE load_id = $1 AND observer IS NOT NULL) AS named`,
+		     OR EXISTS (SELECT 1 FROM external_stage_recent WHERE load_id = $1 AND observer IS NOT NULL)
+		     OR EXISTS (SELECT 1 FROM external_stage_records WHERE load_id = $1 AND cardinality(observers) > 0)
+		     OR EXISTS (SELECT 1 FROM external_stage_records
+		                 WHERE load_id = $1 AND photos IS NOT NULL AND jsonb_path_exists(photos, '$[*] ? (@.by != null)')) AS named`,
 		[load.id]
 	);
 	if (r.rows[0].named) {
@@ -595,12 +652,17 @@ async function checkObserverPolicy(c: Db, load: LoadRow & { storeObservers: bool
 	}
 }
 
-/** One upstream taxon id must carry one name across the whole load. */
+/**
+ * One upstream taxon id must carry one name across the whole load. A genus
+ * or hybrid (taxa rank OTHER) is never matched to a species, so only the
+ * species-level taxa rows take part.
+ */
 async function checkTaxonNames(c: Db, loadId: string): Promise<void> {
 	const r = await c.query<{ upstream_taxon_id: string }>(
 		`SELECT upstream_taxon_id FROM (
 		   SELECT upstream_taxon_id, canonical_name FROM external_stage_taxon_month WHERE load_id = $1
 		   UNION SELECT upstream_taxon_id, canonical_name FROM external_stage_recent WHERE load_id = $1
+		   UNION SELECT upstream_taxon_id, canonical_name FROM external_stage_taxa WHERE load_id = $1 AND rank <> 'OTHER'
 		 ) x GROUP BY upstream_taxon_id HAVING COUNT(DISTINCT canonical_name) > 1 LIMIT 1`,
 		[loadId]
 	);
@@ -609,12 +671,34 @@ async function checkTaxonNames(c: Db, loadId: string): Promise<void> {
 	}
 }
 
+/**
+ * Taxa are source-wide (td-769300): a load adds or refreshes its own and
+ * never removes another county's. A value the source left out this time
+ * keeps the one already known. Species codes are deriveSpecies's.
+ */
+async function upsertTaxa(c: Db, load: LoadRow): Promise<void> {
+	await c.query(
+		`INSERT INTO external_taxa (source_id, upstream_taxon_id, canonical_name, raw_name, rank, local_name, red_list, red_list_url, load_id)
+		 SELECT $2, upstream_taxon_id, canonical_name, raw_name, rank, local_name, red_list, red_list_url, load_id
+		   FROM external_stage_taxa WHERE load_id = $1
+		 ON CONFLICT (source_id, upstream_taxon_id, canonical_name) DO UPDATE
+		    SET raw_name = EXCLUDED.raw_name, rank = EXCLUDED.rank,
+		        local_name = COALESCE(EXCLUDED.local_name, external_taxa.local_name),
+		        red_list = COALESCE(EXCLUDED.red_list, external_taxa.red_list),
+		        red_list_url = COALESCE(EXCLUDED.red_list_url, external_taxa.red_list_url),
+		        load_id = EXCLUDED.load_id, updated_at = now()`,
+		[load.id, load.source_id]
+	);
+}
+
 async function publish(c: Db, load: LoadRow): Promise<void> {
 	const scope = [load.source_id, load.region_code];
 	for (const table of PUBLISHED_DELETE_ORDER) {
 		await c.query(`DELETE FROM ${table} WHERE source_id = $1 AND region_code = $2`, scope);
 	}
-	for (const kind of ['places', 'totals', 'taxon_month', 'localities', 'recent', 'observers'] as const) {
+	await upsertTaxa(c, load);
+	// Records go in after the taxa they reference.
+	for (const kind of ['places', 'totals', 'taxon_month', 'localities', 'recent', 'observers', 'records'] as const) {
 		const spec = STAGE[kind];
 		const cols = spec.fields.join(', ');
 		await c.query(

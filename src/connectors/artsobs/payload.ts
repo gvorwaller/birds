@@ -43,9 +43,12 @@ export function chunkRows(kind: ChunkKind, rows: unknown[], targetBytes = CHUNK_
 	return out;
 }
 
+/** Every kind but records, which stream from the spool (sendRecordChunks). */
+export const PAYLOAD_KINDS = CHUNK_KINDS.filter((k): k is Exclude<ChunkKind, 'records'> => k !== 'records');
+
 export function buildChunks(region: string, payload: RegionPayload): Chunk[] {
 	const chunks: Chunk[] = [];
-	for (const kind of CHUNK_KINDS) {
+	for (const kind of PAYLOAD_KINDS) {
 		const rows = payload[kind] as unknown[];
 		for (const c of chunkRows(kind, rows)) {
 			// The source stores observers (migration 0096); the app checks its own flag again.
@@ -60,13 +63,14 @@ export function filterFingerprint(filters: Record<string, unknown>): string {
 	return createHash('sha256').update(canonicalJson(filters)).digest('hex');
 }
 
+/** Counts come from the chunks sent, records included. */
 export function buildManifest(
 	payload: RegionPayload,
-	chunks: Chunk[],
+	chunks: ManifestChunk[],
 	m: Pick<Manifest, 'window_start' | 'window_end' | 'retrieved_at' | 'source_snapshot' | 'filter_fingerprint'>
 ): Manifest {
 	const counts: Partial<Record<ChunkKind, number>> = {};
-	for (const kind of CHUNK_KINDS) counts[kind] = (payload[kind] as unknown[]).length;
+	for (const kind of CHUNK_KINDS) counts[kind] = chunks.filter((c) => c.kind === kind).reduce((a, c) => a + c.rows, 0);
 	return {
 		...m,
 		chunks: chunks.map(({ chunk_id, kind, rows, sha256 }) => ({ chunk_id, kind, rows, sha256 })),

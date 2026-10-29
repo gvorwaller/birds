@@ -61,8 +61,8 @@ describe('canonical JSON and digest', () => {
 
 describe('rows', () => {
 	it('accepts each kind in its contract shape', () => {
-		expect(validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null }, 0, ctx).level).toBe('region');
-		expect(validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'subregion', parent_key: 'NO-18', lat: 66.2, lon: 13 }, 0, ctx).parent_key).toBe('NO-18');
+		expect(validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null }, 0, ctx).level).toBe('region');
+		expect(validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'subregion', parent_key: 'NO-18', lat: 66.2, lon: 13, upstream_place_id: null }, 0, ctx).parent_key).toBe('NO-18');
 		expect(validateRow('totals', { place_key: 'NO-18', month: 6, reports: 10, unkeyed: 1 }, 0, ctx).reports).toBe(10);
 		expect(
 			validateRow('taxon_month', { place_key: 'NO-18', month: 1, upstream_taxon_id: '2490266', canonical_name: 'Erithacus rubecula', raw_name: 'Erithacus rubecula (Linnaeus, 1758)', rank: 'SPECIES', reports: 3 }, 0, ctx).reports
@@ -89,16 +89,16 @@ describe('rows', () => {
 		const e = err(() => validateRow('totals', { place_key: 'NO-19', month: 1, reports: 1, unkeyed: 0 }, 0, ctx));
 		expect(e.code).toBe('region');
 		expect(err(() => validateRow('totals', { place_key: 'NO-180:X', month: 1, reports: 1, unkeyed: 0 }, 0, ctx)).code).toBe('region');
-		expect(err(() => validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'subregion', parent_key: 'NO-19', lat: null, lon: null }, 0, ctx)).code).toBe('region');
+		expect(err(() => validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'subregion', parent_key: 'NO-19', lat: null, lon: null, upstream_place_id: null }, 0, ctx)).code).toBe('region');
 	});
 
 	it('keeps the region and subregion levels straight', () => {
-		expect(() => validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'region', parent_key: null, lat: null, lon: null }, 0, ctx)).toThrow(/only the place/);
-		expect(() => validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: 'NO-18', lat: null, lon: null }, 0, ctx)).toThrow(/no parent/);
+		expect(() => validateRow('places', { place_key: 'NO-18:Nesna', name: 'Nesna', level: 'region', parent_key: null, lat: null, lon: null, upstream_place_id: null }, 0, ctx)).toThrow(/only the place/);
+		expect(() => validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: 'NO-18', lat: null, lon: null, upstream_place_id: null }, 0, ctx)).toThrow(/no parent/);
 	});
 
 	it('needs lat and lon together, and coordinates for a pin', () => {
-		expect(() => validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: null, lat: 66, lon: null }, 0, ctx)).toThrow(/both/);
+		expect(() => validateRow('places', { place_key: 'NO-18', name: 'Nordland', level: 'region', parent_key: null, lat: 66, lon: null, upstream_place_id: null }, 0, ctx)).toThrow(/both/);
 		expect(() => validateRow('localities', { place_key: 'NO-18', rank: 1, locality: 'X', reports: 1, lat: null, lon: null, uncertainty_m: null, placement: 'pin' }, 0, ctx)).toThrow(/pin needs/);
 		expect(() => validateRow('recent', recent({ lat: 91 }), 0, ctx)).toThrow(ContractError);
 		expect(() => validateRow('recent', recent({ lat: Number.NaN }), 0, ctx)).toThrow(ContractError);
@@ -141,6 +141,91 @@ describe('rows', () => {
 		const e = err(() => validateRow('recent', recent({ observer: 'Kari Nordmann' }), 0, ctx));
 		expect(e.code).toBe('observer');
 		expect(validateRow('recent', recent({ observer: 'Kari Nordmann' }), 0, { ...ctx, storeObservers: true }).observer).toBe('Kari Nordmann');
+	});
+});
+
+describe('taxa and records rows (td-769300)', () => {
+	const taxon = (over: Record<string, unknown> = {}) => ({
+		upstream_taxon_id: '3436',
+		canonical_name: 'Anser anser',
+		raw_name: 'Anser anser',
+		rank: 'SPECIES',
+		local_name: 'grågås',
+		red_list: 'LC',
+		red_list_url: 'https://artsdatabanken.no/lister/rodlisteforarter/2021/31886',
+		...over
+	});
+	const record = (over: Record<string, unknown> = {}) => ({
+		upstream_record_id: 'urn:uuid:b4d7ce83-7654-42c9-bdf7-4e7ab3b371b8',
+		place_key: 'NO-18:Bodø',
+		upstream_taxon_id: '3436',
+		canonical_name: 'Anser anser',
+		observed_on: '2025-03-19',
+		count: 1,
+		locality: 'Seinesvika, Bodø, No',
+		lat: 67.212527,
+		lon: 14.372757,
+		uncertainty_m: 300,
+		observers: [],
+		behaviour: ['feeding'],
+		activity: 'Forage',
+		validation: 'Approved Documented',
+		notes: 'Activity: Forage. Validationstatus: Approved Documented',
+		sex: null,
+		photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2025/3/x.jpg', by: null }],
+		dataset: null,
+		record_url: 'https://www.artsobservasjoner.no/Sighting/36763185',
+		upstream_modified_at: '2026-01-26T13:08:14.603114',
+		...over
+	});
+
+	it('accepts a taxon of any rank, including a genus or hybrid (OTHER)', () => {
+		expect(validateRow('taxa', taxon(), 0, ctx).local_name).toBe('grågås');
+		expect(validateRow('taxa', taxon({ rank: 'OTHER', canonical_name: 'Laridae', raw_name: 'Laridae', red_list: null, red_list_url: null }), 0, ctx).rank).toBe('OTHER');
+		expect(() => validateRow('taxa', taxon({ rank: 'GENUS' }), 0, ctx)).toThrow(/rank/);
+		expect(() => validateRow('taxa', taxon({ red_list: 'least concern' }), 0, ctx)).toThrow(/red_list/);
+		expect(() => validateRow('taxa', taxon({ red_list_url: 'http://artsdatabanken.no/x' }), 0, ctx)).toThrow(/https/);
+	});
+
+	it('accepts a record with every detail, and one with only the required ones', () => {
+		expect(validateRow('records', record(), 0, ctx).photos).toHaveLength(1);
+		const bare = record({ count: null, locality: null, lat: null, lon: null, uncertainty_m: null, behaviour: [], activity: null, validation: null, notes: null, photos: null, record_url: null, upstream_modified_at: null });
+		expect(validateRow('records', bare, 0, ctx).locality).toBeNull();
+	});
+
+	it('checks each detail: lists, photos, links, the modified time and dates', () => {
+		expect(() => validateRow('records', record({ behaviour: ['Feeding!'] }), 0, ctx)).toThrow(/lower-case/);
+		expect(() => validateRow('records', record({ behaviour: ['feeding', 'feeding'] }), 0, ctx)).toThrow(/twice/);
+		expect(() => validateRow('records', record({ photos: [] }), 0, ctx)).toThrow(/1–20 photos/);
+		expect(() => validateRow('records', record({ photos: [{ url: 'https://x.no/a.jpg' }] }), 0, ctx)).toThrow(/missing field "by"/);
+		expect(() => validateRow('records', record({ record_url: 'javascript:alert(1)' }), 0, ctx)).toThrow(/https/);
+		expect(() => validateRow('records', record({ upstream_modified_at: '2026-01-26T13:08:14Z' }), 0, ctx)).toThrow(/no zone/);
+		expect(() => validateRow('records', record({ upstream_modified_at: '2026-02-30T13:08:14' }), 0, ctx)).toThrow(/calendar/);
+		expect(() => validateRow('records', record({ observed_on: '19.03.2025' }), 0, ctx)).toThrow(/YYYY-MM-DD/);
+		expect(() => validateRow('records', record({ notes: 'x'.repeat(501) }), 0, ctx)).toThrow(/500/);
+		expect(() => validateRow('records', record({ lat: 67, lon: null }), 0, ctx)).toThrow(/both/);
+		expect(err(() => validateRow('records', record({ place_key: 'NO-19:Tromsø' }), 0, ctx)).code).toBe('region');
+	});
+
+	it('refuses observer names in a record unless the source stores them', () => {
+		const named = record({ observers: ['Observer A', 'Observer B'] });
+		expect(err(() => validateRow('records', named, 0, ctx)).code).toBe('observer');
+		expect(validateRow('records', named, 0, { ...ctx, storeObservers: true }).observers).toEqual(['Observer A', 'Observer B']);
+		expect(() => validateRow('records', record({ observers: ['A', 'A'] }), 0, { ...ctx, storeObservers: true })).toThrow(/twice/);
+	});
+
+	it('refuses a photo credit unless the source stores observer names (CODEX1 td-769300 F2)', () => {
+		const credited = record({ photos: [{ url: 'https://www.artsobservasjoner.no/MediaLibrary/2025/3/x.jpg', by: 'Observer A' }] });
+		expect(err(() => validateRow('records', credited, 0, ctx)).code).toBe('observer');
+		expect(validateRow('records', credited, 0, { ...ctx, storeObservers: true }).photos![0].by).toBe('Observer A');
+		expect(validateRow('records', record(), 0, ctx).photos![0].by).toBeNull();
+	});
+
+	it('finds duplicates by record id and by taxon id and name', () => {
+		const r = record();
+		expect(() => validateChunkRows('records', [r, r], rowsDigest([r, r]), ctx)).toThrow(/duplicate/);
+		const t = [taxon(), taxon({ canonical_name: 'Anser anser rubrirostris', rank: 'SUBSPECIES' })];
+		expect(validateChunkRows('taxa', t, rowsDigest(t), ctx)).toHaveLength(2);
 	});
 });
 
