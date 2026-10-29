@@ -13,6 +13,7 @@
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import type { AdminSource, AdminLoad } from '$server/external-sources/admin';
 	import AdminBadge from './AdminBadge.svelte';
+	import { findTaxa } from '$lib/taxon-find';
 
 	type SourcesForm = { kind: 'sources'; ok: boolean; message: string } | null | undefined;
 	let { sources, form }: { sources: AdminSource[] | null; form: SourcesForm } = $props();
@@ -229,7 +230,8 @@
 	{#each sources as s (s.id)}
 		{@const at = `source-${s.id}`}
 		{@const active = s.connectors.filter((c) => !c.revokedAt)}
-		{@const q = (filter[s.id] ?? '').trim().toLowerCase()}
+		{@const typed = (filter[s.id] ?? '').trim()}
+		{@const found = findTaxa(s.matched, typed, (m) => [m.localName, m.canonicalName, m.comName, m.speciesCode])}
 		<section class="card source" aria-labelledby={at}>
 			<div class="head">
 				<h3 id={at}>{s.name}</h3>
@@ -503,17 +505,27 @@
 							<input
 								type="search"
 								placeholder="Norwegian, scientific or eBird name"
+								autocomplete="off"
+								autocorrect="off"
+								autocapitalize="off"
+								spellcheck="false"
 								value={filter[s.id] ?? ''}
 								oninput={(e) => (filter[s.id] = e.currentTarget.value)}
 							/>
 						</label>
+						{#if found.mode === 'close'}
+							<p class="find-note" role="status">
+								No taxon contains “{typed}”. Closest {found.shown.size === 1 ? 'match' : `${found.shown.size} matches`}:
+							</p>
+						{:else if found.mode === 'none'}
+							<p class="find-note" role="status">No taxon matches “{typed}”. Try fewer letters.</p>
+						{/if}
 					{/if}
 					<ul class="rows">
 						{#each s.matched as m (m.upstreamTaxonId + '\u0000' + m.canonicalName)}
 							{@const chg = `${at}:chg:${m.upstreamTaxonId}\u0000${m.canonicalName}`}
 							<li
-								hidden={q !== '' &&
-									![m.localName, m.canonicalName, m.comName, m.speciesCode].some((v) => v?.toLowerCase().includes(q))}
+								hidden={!found.shown.has(m)}
 							>
 								<div class="line">
 									<strong>{#if m.localName}{`${m.localName} · `}{/if}<i>{m.canonicalName}</i></strong>
@@ -761,6 +773,10 @@
 	}
 	.msg {
 		margin: 8px 0 12px;
+		font-weight: 600;
+	}
+	.find-note {
+		margin: 8px 0 0;
 		font-weight: 600;
 	}
 	.working {
