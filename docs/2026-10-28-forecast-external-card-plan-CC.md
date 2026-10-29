@@ -13,6 +13,88 @@ At Sandnessjøen in October, "What can I see?" within 31 mi gives "0 likely need
 
 The page reads only eBird today. External data reaches three places: Hotspots & data, "Where can I find this bird?" and the species page, plus the new "Where and when to look" page.
 
+## Rev B (2026-10-29): built on the stored reports
+td-769300 now stores every report with its own coordinates (prod: 153,081 Nordland, 82,070 Oslo). The card counts **reports within the radius** directly instead of municipalities whose centre is within it. Rev A below is kept for the record; where they differ, Rev B wins.
+
+**Measured on prod, read-only, 2026-10-29.** Sandnessjøen (66.0217, 12.6316), October, loaded window, owner's life list:
+
+| Radius | Reports | Species | Still needed |
+|---|---|---|---|
+| 5 mi (8 km) | 46 | 25 | 12 |
+| 10 mi (16 km) | 272 | 62 | 37 |
+| 20 mi (32 km) | 673 | 93 | 57 |
+| 31 mi (50 km) | 1,429 | 109 | 70 |
+
+At 31 mi the reports come from 204 named places in 12 municipalities. Every record has coordinates. Uncertainty: 78,544 records ≤ 100 m, 134,126 ≤ 1 km, 21,826 ≤ 5 km, 655 above.
+
+**Query speed:** the planner's first choice walked every taxon's records (500 ms). Filtering the coordinate box first (a materialized CTE) took 68 ms. All of Norway would be 14× the rows, and a latitude band in the south crosses many counties. So migration 0098 swaps the (lat, lon) btree for a GiST index on `point(lon, lat)` (built into PostgreSQL, no extension) and the query uses `<@ box`. Both are measured on real Nordland data in birds_test before choosing.
+
+### What the owner sees
+A separate card after the eBird card, before the eBird credit line:
+
+> **Reported on Artsobservasjoner near Sandnessjøen**
+> *Counts of reports sent to Artsobservasjoner, not checklist frequency or the chance of seeing a bird.*
+> **70** species you still need were reported within 31 mi in October, Oct 2024 – Sep 2026 (1,429 reports of all birds).
+> 1. **European Greenfinch**, 74 reports, in 2 of 2 Octobers
+>    Skogsøy, Nesna, No (49 reports, 21 mi) · Steirostranda, Alstahaug, No (4 reports, 7 mi) · …
+>    *Where in Nordland*
+> 2. …
+> *(the first 25, then "Show all 70" as a `<details>`, so it works without JavaScript)*
+> *39 species you've already seen* (`<details>`: name, reports)
+> **Busiest places near here in October:** the top 5 places for all birds, each with its count and distance, plus 📍 Map and Add to trip (a pin only when the place's best record is within 1 km uncertainty, the same rule as the other cards)
+> **Where and when to look:** Nesna · Alstahaug · Dønna · … (the municipalities the reports fall in, most reports first; each links to that municipality and month)
+> Attribution (the source's own block)
+
+- **"in 2 of 2 Octobers"** tells a regular apart from a one-off: the number of that month's years in the window with a report nearby.
+- **Species name** goes to the species page (as eBird rows do); **"Where in Nordland"** goes to "Where can I find this bird?" for the county with most of its nearby reports.
+- **The pointer** sits under the eBird card's coverage pill: "Artsobservasjoner: 70 needed species reported within 31 mi ↓", jumping to the card. It is never added into the eBird numbers.
+- **No reports within the radius,** with a loaded county nearby: "No Artsobservasjoner reports within 5 mi in October. The nearest is Steirohatten, Alstahaug, No, 7 mi away." The search for the nearest looks up to 3× the radius (at least 30 km).
+- **County not loaded:** once the eBird analysis names the state-level region (Norway's fylke, e.g. NO-19 Troms), an active source that covers it but has nothing published adds "No Artsobservasjoner reports are loaded for Troms yet" and the Load button (not for viewers). This part arrives with the eBird stream; without an eBird key it is simply absent.
+- **No card** when no active source has reports within reach and the region isn't covered (every US place).
+- **Window:** only records inside each county's loaded window count, so the numbers agree with the totals on the other cards. Reports after the window (the latest 4 weeks) are left out; the species card's "Latest reports" covers them.
+
+### Build
+1. **Migration 0098:** drop `external_records_latlon_idx`; add a GiST index on `point(lon, lat)` WHERE lat IS NOT NULL.
+2. **Reader** `src/lib/server/external-sources/near.ts`: `externalNear({ lat, lon, radiusKm, month, userId })`, in one `withReadSnapshot`.
+   - **One aggregate query:** box filter, then the month, the county's published window and the active source. It returns haversine km and is grouped by (source, county, municipality, locality, species_code, year), giving reports, the minimum km and the best-uncertainty point.
+   - **In JS:** species (needs or seen, top 3 places, years), places (all birds), municipalities, the denominator and the window label.
+   - **The nearest-report query** runs only when nothing is within the radius.
+   - Also `externalHintStates(regionCode)`, for the unloaded-county line.
+3. **Page:**
+   - `+page.server.ts` awaits `externalNear` with the location; a failure is logged and the card is left out. The analysis stream adds the hint states for `v.regionCode`. The action gets `queueExternalLoad`.
+4. **UI:** `ExternalNearCard.svelte` (callout, `ExternalAttribution`, `reportsText`, `whereWhenHref`, `tripPlanHref`, `mapsPlaceUrl`, `formatDistance`). Every control is 48 px, and it is checked in all 5 themes.
+5. **Help:** one sentence in the "What can I see?" section.
+
+### Tests and gates
+- **`near-db.test.ts`** (own fixtures) covers:
+  - the radius cut (a record just inside and just outside);
+  - the month and window filters;
+  - an inactive source;
+  - needs vs seen for the user;
+  - top 3 places and their order;
+  - the year count;
+  - the denominator, including non-species taxa;
+  - the nearest fallback;
+  - unpublished hint states.
+- **Render tests** cover the card states (normal, nearest-only, unloaded with and without a viewer) and the wording rules.
+- **Mutation checks** on the radius cut, the window filter and the needs filter.
+- **Live:** load real Nordland into birds_test (own source, dropped after). Sandnessjøen in October at 31 mi must equal a direct SQL count. EXPLAIN on btree vs GiST.
+- **Gates:**
+  - `npm run check` and the full suite;
+  - Playwright on Chromium and WebKit, 5 themes, 320/390/1200 px, plus a JavaScript-off run;
+  - the iOS Simulator pass;
+  - a CODEX1 review at high effort;
+  - `td review`.
+- **Deploy** needs its own go.
+
+### Not in this ticket
+- **Crow names:** Artskart's "Corvus corone" (kråke) matches eBird's Carrion Crow, and "Corvus corone cornix" (gråkråke) is unmatched. In Norway the bird is the Hooded Crow. The fix is an owner override in Admin → Sources; it is raised separately.
+- Locality names keep Artskart's county abbreviation (", No"), as on the other cards.
+
+---
+
+# Rev A (2026-10-28, superseded where Rev B differs)
+
 ## What the owner sees
 A separate card on "What can I see?", below the eBird species lists and above "Loaded hotspots in use". It appears whenever a loaded source has municipalities within the chosen radius:
 

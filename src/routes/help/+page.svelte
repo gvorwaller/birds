@@ -511,6 +511,16 @@
 						under <strong>Reported on other sources</strong>.
 					</li>
 					<li>
+						<strong>What can I see?</strong> near a Norwegian place adds a
+						<strong>Reported on Artsobservasjoner near …</strong> card below the eBird
+						results: the species you still need that were reported within your
+						radius in that month, most reports first, how many of the window's
+						years had one, the places they were reported at with their distance,
+						and the busiest places nearby for all birds. It counts each report by
+						its own location. If the county isn't loaded yet, the card offers to
+						load it.
+					</li>
+					<li>
 						<strong>Where and when to look</strong> (from a loaded county on
 						Hotspots &amp; data, or <strong>Every species in … ›</strong> on the
 						card) shows a whole county or one municipality. <strong>By

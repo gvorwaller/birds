@@ -20,6 +20,9 @@ export const MONTH_LONG = [
 ] as const;
 export const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
+/** "What can I see?": needed species shown before "Show all" (td-46fff6). */
+export const NEAR_SPECIES_SHOWN = 25;
+
 /** "Oct 2024 – Sep 2026" for an inclusive YYYY-MM-DD window. */
 export function windowLabel(start: string, end: string): string {
 	const part = (d: string) => `${MONTH_SHORT[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;

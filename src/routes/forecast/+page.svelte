@@ -16,6 +16,7 @@
   import { speciesLinkHref } from "$lib/species-context";
   import { SPECIES_DEFAULT_BACK_DAYS } from "$lib/time-windows";
   import PathNavigation from "$components/PathNavigation.svelte";
+  import ExternalNearCard from "$components/external/ExternalNearCard.svelte";
   import type { ActionData, PageData } from "./$types";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -52,6 +53,20 @@
   const view = $derived(analysis?.ok ? analysis.data.view : null);
   const countyNeeds = $derived(analysis?.ok ? analysis.data.countyNeeds : []);
   const analysisError = $derived(analysis && !analysis.ok ? analysis.error : null);
+  // Other sources near the point (td-46fff6): the card renders with the
+  // shell; a source covering eBird's region with nothing loaded arrives
+  // with the analysis.
+  const externalUnloaded = $derived(analysis?.ok ? analysis.data.externalUnloaded : []);
+  const externalPointers = $derived(
+    data.externalNear
+      .filter((c) => c.reports > 0)
+      .map((c) => ({
+        id: c.source.id,
+        name: c.source.name,
+        needs: c.species.filter((s) => !s.seen).length,
+        species: c.species.length,
+      })),
+  );
   /** Analysis requested but not yet settled — render reserved space. */
   const analysisPending = $derived(data.analysis != null && analysis == null);
   let showPicker = $state(false);
@@ -555,6 +570,17 @@
           {/if}<a href="/forecast/data">details</a>
         </span>
       </div>
+
+      {#each externalPointers as x (x.id)}
+        <!-- Never added into the eBird numbers (owner rule, td-eec7db). -->
+        <p class="extpointer">
+          <a href="#ext-near-{x.id}"
+            >{x.name}: {x.needs > 0
+              ? `${x.needs} needed species reported within ${formatDistance(data.dist, "mi")}`
+              : `${x.species} species reported within ${formatDistance(data.dist, "mi")}, none you need`} ↓</a
+          >
+        </p>
+      {/each}
 
       {#if loadableCount > 0 && !data.isViewer}
         {#if !data.hasLogin}
@@ -1087,6 +1113,19 @@
     </section>
   {/if}
 
+  {#if data.location && (data.externalNear.length > 0 || externalUnloaded.length > 0)}
+    <ExternalNearCard
+      cards={data.externalNear}
+      unloaded={externalUnloaded}
+      placeLabel={data.location.label}
+      radiusKm={data.dist}
+      month={data.month}
+      canLoad={!data.isViewer}
+      {speciesHref}
+      result={form}
+    />
+  {/if}
+
   <p class="attribution">
     Data from
     <a href="https://ebird.org" target="_blank" rel="noopener">eBird.org</a>
@@ -1094,6 +1133,15 @@
 </div>
 
 <style>
+  .extpointer {
+    margin: 6px 0 0;
+    font-size: 0.92rem;
+  }
+  .extpointer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+  }
   .page {
     max-width: 760px;
     margin: 0 auto;

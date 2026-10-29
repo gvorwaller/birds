@@ -10,6 +10,7 @@ vi.mock("$server/county-meta", () => ({ countyMapQuery: vi.fn(), countySeat: vi.
 vi.mock("$lib/streamed", () => ({ streamed: m.streamed }));
 vi.mock("$server/forecast", () => ({ calendarMonth: () => 9, forecastNeedsNear: m.forecast, majorityRegionCode: vi.fn(), rankCountiesForNeeds: vi.fn(), validateLocSelection: vi.fn() }));
 vi.mock("$server/needs", () => ({ seenSet: m.needs }));
+vi.mock("$server/external-sources/near", () => ({ externalNear: async () => [] }));
 
 import { load } from "./+page.server";
 

@@ -24,6 +24,9 @@ import {
 } from "$lib/near-me-radius";
 import { parsePin } from "$lib/pin-params";
 import { safeReturnTo } from "$lib/return-link";
+import { externalNear, type ExternalNearCard } from "$server/external-sources/near";
+import { externalSourcesForRegion, type ExternalRegionState } from "$server/external-sources/reports";
+import { queueExternalLoadAction } from "$server/external-sources/queue-action";
 
 function parseMonth(raw: string | null, fallback: number): number {
   const n = Number(raw);
@@ -107,6 +110,24 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     originKind = "home";
   }
 
+  // Other sources' reports near the point (td-46fff6). Awaited, not
+  // streamed, so the card renders without JavaScript; it is one indexed
+  // query. A failure leaves the card out and never the eBird results.
+  let externalNearCards: ExternalNearCard[] = [];
+  if (location) {
+    try {
+      externalNearCards = await externalNear({
+        lat: location.lat,
+        lon: location.lng,
+        radiusKm: distKm,
+        month,
+        userId,
+      });
+    } catch (err) {
+      console.error("[forecast] external reports near:", err);
+    }
+  }
+
   let countyNeeds: (CountyNeedsRank & {
     seat: string | null;
     mapQuery: string;
@@ -147,7 +168,19 @@ export const load: PageServerLoad = async ({ locals, url }) => {
                 mapQuery: countyMapQuery(c.code, c.name, stateName),
               }));
             }
-            return { view: v, countyNeeds: counties };
+            // A source that covers eBird's region but has nothing loaded
+            // there yet: the near card offers to load it (td-46fff6).
+            let externalUnloaded: (ExternalRegionState & { regionCode: string; regionName: string })[] = [];
+            if (v.regionCode) {
+              try {
+                externalUnloaded = (await externalSourcesForRegion(v.regionCode))
+                  .filter((s) => !s.published)
+                  .map((s) => ({ ...s, regionCode: v.regionCode!, regionName: v.regionName ?? v.regionCode! }));
+              } catch (err) {
+                console.error("[forecast] external sources for region:", err);
+              }
+            }
+            return { view: v, countyNeeds: counties, externalUnloaded };
           })(),
           (err) =>
             err instanceof EbirdError
@@ -165,6 +198,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     savedRadiusKm: normalizeNearMeRadiusKm(u?.near_me_radius_km),
     radiusOptionsKm: radiusSelectOptionsKm(distKm),
     analysis,
+    externalNear: externalNearCards,
     error,
     needsLocation: !location,
     chooseLocation,
@@ -176,6 +210,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
+  /** Queue an external-source load for the region eBird places the point in (td-46fff6). */
+  queueExternalLoad: (event) => queueExternalLoadAction(event),
   /**
    * Queue barchart loads for explicitly selected hotspots near a point.
    * Owner-only (viewer POSTs are 403'd in hooks.server.ts). Every submitted
