@@ -1,6 +1,95 @@
-# td-eec7db — External sightings sources (first: Norway via GBIF)
+# td-eec7db — External sightings sources (first: Norway, Artsobservasjoner)
 
-Status: plan, rev 4 (2026-10-22).
+**Status (2026-10-29): built and live.** The epic td-eec7db closed on 2026-10-28. Its follow-ups, td-769300 (every report kept) and td-46fff6 ("What can I see?" card), shipped on 2026-10-29. "How it works now" below is current. Everything after it is the plan as it grew, kept as history. The GBIF route (Phase 0 findings, Phase 2) was replaced by Artskart in Phase 2 rev B.
+
+## How it works now (2026-10-29)
+
+**Source:** Artsobservasjoner, Norway's bird-report portal, read through Artsdatabanken's public Artskart API.
+- It is CC BY 4.0 and is credited on every surface that shows it.
+- It is registry entry `artsobs`, with observer names stored.
+- The old `artsobs-gbif` entry is switched off.
+
+**Coverage:**
+- The 19 old (pre-2020) Norwegian counties, each loaded on demand.
+- On prod: Nordland (NO-18) and Oslo (NO-03), both reloaded on 2026-10-29.
+  - Window: Oct 2024 – Sep 2026.
+  - 235,151 reports in all.
+
+**How a load runs:**
+1. Someone queues a county:
+   - "Load a region" on Hotspots & data;
+   - the Load button on a card;
+   - "Queue load" in Admin → Sources.
+2. The connector (`src/connectors/artsobs/`, PM2 app `birds-connector-artsobs`) claims the load through the ingest API (`/api/ingest/`, bearer token per connector).
+3. It reads the county from Artskart one month at a time, from the start of the 24-month window through the day it runs.
+4. It sends chunks:
+   - summaries (places, totals, species per month, top places, top birders, the last 14 days);
+   - `taxa`;
+   - `records`, one row per report.
+5. Finish swaps the county's rows in one transaction, so the previous good data stays until then.
+- The connector never touches the database. The app never reads Artskart itself.
+
+**What is stored:**
+- **Summary tables:** `external_place_month_totals`, `external_place_month_species`, `external_top_localities`, `external_top_observers`, `external_recent_reports`.
+- **Every report since td-769300:** `external_records`, with its own coordinates, count, behaviour, notes, observers and photo links (link-out only).
+- **`external_taxa`:** one row per taxon, with its Norwegian name, Red List status and eBird species match.
+- **Separate from eBird:** report counts never enter eBird's frequency tables and are never called likelihoods.
+
+**Where it shows:**
+- **Hotspots & data** (`/forecast/data`): the "Reports from other sources" card, with loaded counties, month totals, most active birders and "Load a region".
+- **Species forecast** (`/forecast/species?region=NO-xx`), the "Reported on Artsobservasjoner" card:
+  - the month strip of report counts;
+  - the top municipalities for the month;
+  - the latest reports, with their observers.
+- **Species page:** the counties with reports and their busiest months.
+- **Where and when to look** (`/reports/artsobs/NO-xx`): by month or by species, needs or all, county or municipality, plus top places and birders.
+- **What can I see?** (`/forecast`, since td-46fff6):
+  - the reports within the chosen radius, counted by each report's own coordinates;
+  - needs first, with "in N of M Octobers";
+  - the busiest places nearby;
+  - the nearest report when none are in range;
+  - a Load offer for a county not loaded yet.
+
+**Matching to eBird species:**
+- Scientific name first.
+- Then eBird's own subspecies grouping (`report_as`).
+- Anything else stays unmatched, and the owner matches it in Admin → Sources → "Match species".
+- **Admin → Sources helps here (td-b856c7):**
+  - Unmatched taxa lead with their Norwegian name and offer a suggested eBird species to accept with one tap ("Match to Hooded Crow"). The suggestion is the subspecies raised to its own species, else its parent species, and only when exactly one eBird species has that name.
+  - "Change a match" lists every matched taxon, so a wrong automatic match can be changed.
+- **Crows (2026-10-29):** Artskart's *Corvus corone* (kråke) matched Carrion Crow automatically, and *Corvus corone cornix* (gråkråke) was unmatched. In Norway the bird is the Hooded Crow. Both are changed by owner matches in Admin → Sources; svartkråke (*C. c. corone*) stays Carrion Crow.
+
+**Admin → Sources:**
+- connectors and their health;
+- loads, with "Queue load";
+- unmatched taxa (a fold), with Norwegian names, a suggested species, "Match species", "Remove match" and "Re-match species";
+- "Change a match" for any matched taxon;
+- Revoke for connectors.
+
+**Migrations:**
+
+| Migration | What it adds |
+|---|---|
+| 0092 | ingest foundation |
+| 0096 | Artskart source and observers |
+| 0097 | per-report records and taxa |
+| 0098 | GiST location index for "near a place" queries |
+
+**Related docs:**
+
+| Doc | What it covers |
+|---|---|
+| `docs/2026-10-28-external-records-plan-CC.md` | every report kept (td-769300) |
+| `docs/2026-10-28-forecast-external-card-plan-CC.md` | the "What can I see?" card (td-46fff6) |
+| `docs/2026-10-22-bird-sightings-sources-survey.md` | other countries' portals |
+| `archive/gbif-artsobs-connector/` | the replaced GBIF connector and how to reuse it |
+
+**Open owner decisions:**
+- the window length (24 months now).
+
+## Revision history
+
+Status before the build: plan, rev 4 (2026-10-22).
 - **Rev 2** includes the CODEX1 plan review: P1 ×4, P2 ×7 and P3 ×1, all accepted. I re-checked the GBIF figures live, and the 512K versus 5m body limits in the code. Sections changed by these findings carry tags like [C-P1-1].
 - **Rev 3** includes the AGY plan review (model: Argon). Its code references were checked first: `mapsPlaceUrl`, `LABELED_PATHS`, `jobsPoll`, `ProcessName`, `lastCompleteYear` and the "Add to trip" links on `forecast/species`. Sections changed by AGY's findings carry tags like [A-P1-1].
   - Accepted: P1 ×4, P2-2, P2-3, P2-4, P3 ×2.
@@ -73,6 +162,8 @@ Decided on 2026-10-21:
 - Plan reviews: CODEX1 (rev 2) and AGY (rev 3) are done. Rev 4 holds the owner's changes.
 
 ### Phase 0 findings (td-fc5f1a, 2026-10-22; live, read-only GBIF probes)
+*History: these are GBIF findings, superseded by Phase 2 rev B. Three still apply to the Artskart connector: the placement rule for top places (6), sensitive species being hidden by the source (7), and the missing county deep link (10).*
+
 Unless stated otherwise, every probe used dataset `b124e1e0-…`, taxonKey 212 and `occurrenceStatus=PRESENT`, over the window `eventDate=2024-10-01,2026-09-30`.
 
 1. **Basis of record:** all 123,345 Nordland (GADM) records in the window are `HUMAN_OBSERVATION`; there is no other basis to pin. `ABSENT`: 11 records, now excluded.
@@ -321,6 +412,10 @@ All of these tables are separate from the eBird tables. Composite foreign keys a
 | `recent` | `upstream_record_id`, `place_key`, `upstream_taxon_id`, `canonical_name`, `observed_on`, `count\|null`, `locality`, `lat\|null`, `lon\|null`, `uncertainty_m\|null`, `generalized`, `record_url`, `observer\|null` (must be null unless `store_observers`) |
 | `diagnostics` | `code`, `detail`, `count` (e.g. `unplaced_records`, `split_municipality`, `no_uncertainty`) |
 
+- **Kinds added later (contract version still 1, additive):**
+  - `observers` (Phase 2 rev B);
+  - `taxa` and `records` (td-769300, see `docs/2026-10-28-external-records-plan-CC.md`).
+  - The live list is `CHUNK_KINDS` in `src/lib/server/external-sources/contract.ts`.
 - **Place keys:** the county is its app code (`NO-18`); a municipality is `"NO-18:Nesna"`.
 - **`sha256`** is the hex SHA-256 of the canonical JSON of `rows` (keys sorted, no whitespace).
 - **Chunk size:** ≤256 KB, roughly 1,500 `taxon_month` rows.
@@ -352,7 +447,7 @@ All of these tables are separate from the eBird tables. Composite foreign keys a
 Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+page.svelte`. Every action re-checks `role==='admin'`. It shows:
 - the registry and connector health: last seen, the age of the oldest queued load, and leases that are overdue;
 - loads, with their status, attempts and result;
-- unmatched taxa, each with a "Match to species" override, modelled on the `/photos` override action;
+- unmatched taxa, each with a "Match species" override, modelled on the `/photos` override action;
 - a Revoke button for connectors;
 - **Reference docs (owner request, 2026-10-23; built in Phase 2):** a "Reference" line at the top of the tab, so the background is found from the place where imports are run. It links to:
   - the sources survey, `docs/2026-10-22-bird-sightings-sources-survey.md` (which countries' portals out-record eBird, and candidate connectors);
@@ -421,6 +516,8 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
   - **The test fixtures** take their window from the database clock, so they don't age out at a month boundary. A queued-Oct-31 regression test covers the rollover.
 
 ## Phase 2: Norway connector (`connectors/gbif-artsobs/`)
+*History: this GBIF connector was replaced by Phase 2 rev B (Artskart) and never ran on prod. Its code is in `archive/gbif-artsobs-connector/`.*
+
 - **Admin → Sources reference links** (owner request, 2026-10-23): add the "Reference" line described under Phase 1's Admin → "Sources" tab, linking the sources survey and this plan.
 - **Process:** a standalone Node program, bundled in `npm run build` the same way as `scripts/build-worker.mjs`. It runs as its own PM2 app (one instance, a memory cap via `max_memory_restart`, a graceful stop that releases or finishes the load). It never touches the database.
 - **Health** [A-P3-1]: the connector is **not** added to `process_memory_samples` or `ProcessName`. Its health shows as `last_seen_at` and the heartbeat in Admin → Sources. Memory on prod is read with `pm2 jlist` (read-only).
@@ -518,7 +615,7 @@ Built with the existing tab and `CollapsibleCard` pattern in `src/routes/admin/+
 - **CODEX1 code review (high, 2026-10-23):** rounds 3, 4 and 5 each found 1 more P2, fixed with tests: records swapping slices without changing any count, first one-day records, then interval records whose dates changed, then unchanged intervals swapping spellings (the rule above). Round 2 found 3 more P2s, all fixed with tests: a record moving into a slice already read (the group recheck above), a failure not aborting the request beside it, and the deploy gate misreading `[PM2][WARN]` lines. Round 1 had 10 findings (P1 ×1, P2 ×9), all accepted and fixed with a regression test each: zero-county publish on a broken facet; re-read keeping deleted records; no cross-county dedupe; recent-only species dropped; pin share ignoring reports without coordinates; queued requests bypassing a 429 pause; a re-read paging past the cap; a large locality overflowing a spread call; a failed name lookup leaving GBIF requests queued; the deploy gate accepting a stopped connector.
 
 ## Phase 2 rev B: read Artskart, not GBIF (owner, 2026-10-26/27)
-The owner chose Artsobservasjoner's own source (Artsdatabanken's Artskart public API) over GBIF after the probe in `docs/devlog/2026-10-26.md`. The owner also wants **observer names stored** (reversing "not stored for now"): they are public on Artsobservasjoner, and seeing who birds a county most is interesting and points to people worth looking up. The GBIF connector above is replaced; it stays in `git stash@{0}` until the owner drops it.
+The owner chose Artsobservasjoner's own source (Artsdatabanken's Artskart public API) over GBIF after the probe in `docs/devlog/2026-10-26.md`. The owner also wants **observer names stored** (reversing "not stored for now"): they are public on Artsobservasjoner, and seeing who birds a county most is interesting and points to people worth looking up. The GBIF connector above is replaced. It is archived in `archive/gbif-artsobs-connector/` (baf00ca), with a README on reusing it for another country.
 
 **Why (measured 2026-10-26/27, not estimated):**
 - A whole-Nordland pull (2016 on, 723,133 records) took 27 min 31 s: 144 requests, one at a time, no throttling, every window complete. The GBIF paging run for Trøndelag took 4 h 21 min for 516,440 records, 46% of its requests answered 429.
@@ -617,9 +714,14 @@ Sized from prod's Nordland load (read-only, 2026-10-28): 41 municipalities; 298 
 - **Links in:** each loaded county on Hotspots & data ("Where and when to look in Nordland ›") and the species card ("Every species in Nordland in June ›"). The species page reaches it through the county card. Back link label "Where and when to look" (`LABELED_PATHS`).
 - **Wording:** the same callout (counts, not frequency or chance; reporting effort; hidden sensitive species) and the source's attribution with its window.
 
+## After the epic (2026-10-28/29)
+- **td-769300, keep every report:** migration 0097 and chunk kinds `taxa` and `records`. Nordland and Oslo were reloaded on prod on 2026-10-29, and the stored reports reproduce every place-month total. Details: `docs/2026-10-28-external-records-plan-CC.md`.
+- **td-46fff6, "What can I see?" card:** counts the reports within the radius by their own coordinates, with migration 0098 (GiST index on `point(lon, lat)`). Measured on prod for Sandnessjøen in October at 31 mi: 1,429 reports, 109 species, 70 needs. Details: `docs/2026-10-28-forecast-external-card-plan-CC.md` → "Rev B".
+
 ## Later (separate tickets)
 - A Sweden connector (Artportalen, keyed API).
 - GBIF density map tiles as an overlay (the earlier probe returned 503).
+- Incremental loads from Artskart (`afterTrackDateTime`, `observations/Deleted`) instead of reloading a whole county.
 
 ## Process for every phase
 - `npm run check`, `npm run build` and the full `npm test`.
@@ -631,6 +733,10 @@ Sized from prod's Nordland load (read-only, 2026-10-28): 41 municipalities; 298 
 - Each phase gets a devlog entry.
 
 ## Verification (end to end)
+*As planned for GBIF. Done for Artskart instead:*
+- *the first prod Nordland load's month totals equal Artskart's own counts for all 12 months (devlog 2026-10-27);*
+- *after td-769300, the stored reports reproduce every place-month total on prod (Nordland 486/486, Oslo 25/25).*
+
 1. **Fake connector:** the happy path plus every fault and race test against `birds_test`, with the eBird tables unchanged.
 2. **Recorded fixtures:** the connector runs on recorded GBIF responses against `npm run dev:test`.
 3. **Live GBIF into `birds_test`:** one live run for Nordland. The rows are mine and are deleted afterwards.

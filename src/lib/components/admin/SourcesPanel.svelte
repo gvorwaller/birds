@@ -2,11 +2,13 @@
 	/**
 	 * Admin → Sources (td-eec7db Phase 1): external sightings sources. For each
 	 * source: connector health, queueing a load for one region, the recent
-	 * loads, and unmatched upstream taxa with a "Match species" override.
+	 * loads, and unmatched upstream taxa with a "Match species" override
+	 * (td-b856c7: Norwegian names, a suggested species, and "Change a match"
+	 * for a wrong automatic match).
 	 * Server-rendered from the admin page load; every action re-checks admin.
 	 */
 	import { enhance } from '$app/forms';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import type { AdminSource, AdminLoad } from '$server/external-sources/admin';
 	import AdminBadge from './AdminBadge.svelte';
@@ -32,7 +34,7 @@
 		},
 		{
 			title: 'External sources plan',
-			about: 'How imports work: the ingest contract, the Norway connector, and what the GBIF checks found.',
+			about: 'How it works now: the Norway connector, what is stored and where it shows, then the ingest contract and the history of the plan.',
 			path: 'docs/2026-10-21-external-sources-plan-CC.md'
 		}
 	];
@@ -41,6 +43,16 @@
 		ambiguous: 'more than one eBird species has this scientific name',
 		override_code_missing: 'its override names a code no longer in the eBird taxonomy'
 	};
+
+	const METHOD: Record<string, string> = {
+		scientific: 'matched by the same scientific name',
+		subspecies: 'matched as the species eBird reports this subspecies as',
+		override: 'your match'
+	};
+	// The "Find a taxon" box filters in the browser; without JavaScript the whole list shows.
+	let mounted = $state(false);
+	onMount(() => (mounted = true));
+	let filter = $state<Record<string, string>>({});
 
 	function ago(iso: string | null): string {
 		if (!iso) return 'never';
@@ -268,10 +280,12 @@
 				</ul>
 			{/if}
 
-			<h4>Unmatched taxa <span class="muted">({s.unmatched.length})</span></h4>
 			{#if s.unmatched.length === 0}
+				<h4>Unmatched taxa</h4>
 				<p class="muted">Every loaded taxon matched an eBird species.</p>
 			{:else}
+				<details class="change">
+				<summary>Unmatched taxa ({s.unmatched.length})</summary>
 				<p class="muted">
 					Their reports are left out of species counts until matched. Pick the eBird species once; the match
 					is remembered for later loads and applied to the loaded data straight away.
@@ -280,10 +294,19 @@
 					{#each s.unmatched as u (u.upstreamTaxonId)}
 						<li>
 							<div class="line">
-								<strong><i>{u.canonicalName}</i></strong>
+								<strong>{#if u.localName}{`${u.localName} · `}{/if}<i>{u.canonicalName}</i></strong>
 								<span class="muted">{n(u.reports)} reports · {u.regions.join(', ')}</span>
 							</div>
 							<p class="muted">Not matched: {REASON[u.reason] ?? u.reason}.</p>
+							{#if u.suggestion}
+								<form method="POST" action="?/set_taxon_override" use:enhance class="inline-form">
+									<input type="hidden" name="source_id" value={s.id} />
+									<input type="hidden" name="upstream_taxon_id" value={u.upstreamTaxonId} />
+									<input type="hidden" name="species" value={u.suggestion.code} />
+									<span>Suggested: {u.suggestion.comName} <i class="muted">({u.suggestion.sciName})</i></span>
+									<button type="submit" class="btn accent">Match to {u.suggestion.comName}</button>
+								</form>
+							{/if}
 							<form method="POST" action="?/set_taxon_override" use:enhance class="inline-form">
 								<input type="hidden" name="source_id" value={s.id} />
 								<input type="hidden" name="upstream_taxon_id" value={u.upstreamTaxonId} />
@@ -301,6 +324,7 @@
 						</li>
 					{/each}
 				</ul>
+				</details>
 			{/if}
 
 			{#if s.overrides.length > 0}
@@ -309,12 +333,66 @@
 					<ul class="rows">
 						{#each s.overrides as o (o.upstreamTaxonId)}
 							<li class="line">
-								<span><i>{o.canonicalName}</i> → {o.comName ?? o.speciesCode} ({o.speciesCode})</span>
+								<span
+									>{#if o.localName}{`${o.localName} · `}{/if}<i>{o.canonicalName}</i> → {o.comName ?? o.speciesCode} ({o.speciesCode})</span
+								>
 								<form method="POST" action="?/remove_taxon_override" use:enhance>
 									<input type="hidden" name="source_id" value={s.id} />
 									<input type="hidden" name="upstream_taxon_id" value={o.upstreamTaxonId} />
 									<button type="submit" class="btn">Remove match</button>
 								</form>
+							</li>
+						{/each}
+					</ul>
+				</details>
+			{/if}
+			{#if s.matched.length > 0}
+				{@const q = (filter[s.id] ?? '').trim().toLowerCase()}
+				<details class="change">
+					<summary>Change a match ({n(s.matched.length)} matched taxa)</summary>
+					<p class="muted">
+						Every loaded taxon that counts as an eBird species. Change one when the automatic match is wrong
+						for the region: kråke (<i>Corvus corone</i>) is the Hooded Crow in Norway, not the Carrion Crow.
+					</p>
+					{#if mounted}
+						<label class="field find">
+							<span>Find a taxon</span>
+							<input
+								type="search"
+								placeholder="Norwegian, scientific or eBird name"
+								value={filter[s.id] ?? ''}
+								oninput={(e) => (filter[s.id] = e.currentTarget.value)}
+							/>
+						</label>
+					{/if}
+					<ul class="rows">
+						{#each s.matched as m (m.upstreamTaxonId + '\u0000' + m.canonicalName)}
+							<li
+								hidden={q !== '' &&
+									![m.localName, m.canonicalName, m.comName, m.speciesCode].some((v) => v?.toLowerCase().includes(q))}
+							>
+								<div class="line">
+									<strong>{#if m.localName}{`${m.localName} · `}{/if}<i>{m.canonicalName}</i></strong>
+									<span>→ {m.comName ?? m.speciesCode}</span>
+								</div>
+								<p class="muted">{n(m.reports)} reports · {METHOD[m.method] ?? m.method}</p>
+								<details>
+									<summary>Change</summary>
+									<form method="POST" action="?/set_taxon_override" use:enhance class="inline-form">
+										<input type="hidden" name="source_id" value={s.id} />
+										<input type="hidden" name="upstream_taxon_id" value={m.upstreamTaxonId} />
+										<label class="field grow">
+											<span class="sr-only">eBird species for {m.localName ?? m.canonicalName}</span>
+											<input
+												type="text"
+												name="species"
+												placeholder="Exact eBird common name, scientific name, or code…"
+												required
+											/>
+										</label>
+										<button type="submit" class="btn">Match species</button>
+									</form>
+								</details>
 							</li>
 						{/each}
 					</ul>
@@ -450,7 +528,8 @@
 		min-width: min(240px, 100%);
 	}
 	select,
-	input[type='text'] {
+	input[type='text'],
+	input[type='search'] {
 		min-height: 48px;
 		font-size: 16px;
 		padding: 8px 12px;
@@ -470,6 +549,10 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
+	.btn.accent {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
 	.btn.accent-solid {
 		border-color: var(--accent);
 		background: var(--accent);
@@ -487,6 +570,29 @@
 	.btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+	details.change {
+		margin: 16px 0 8px;
+	}
+	.field.find {
+		margin: 12px 0 4px;
+	}
+	details summary {
+		display: flex;
+		align-items: center;
+		min-height: 48px;
+		cursor: pointer;
+		font-weight: 600;
+	}
+	details summary::-webkit-details-marker {
+		display: none;
+	}
+	details summary::before {
+		content: '▸';
+		margin-right: 8px;
+	}
+	details[open] > summary::before {
+		content: '▾';
 	}
 	.sr-only {
 		position: absolute;

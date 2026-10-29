@@ -1070,7 +1070,7 @@
   </div>
   {:else if activeTab === "sources"}
   <div id="admin-panel-sources" role="tabpanel" aria-labelledby="admin-tab-sources">
-    <!-- td-eec7db: external sightings sources (Artsobservasjoner via GBIF). -->
+    <!-- td-eec7db: external sightings sources (Artsobservasjoner via Artskart). -->
     <SourcesPanel sources={data.sources} form={form?.kind === "sources" ? form : null} />
   </div>
   {:else if activeTab === "metrics"}

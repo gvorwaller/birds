@@ -17,7 +17,7 @@ import { newConnectorToken, tokenHash } from './auth';
 import { allowedWindowEnds, rowsDigest, windowStartFor, MAX_BODY_BYTES } from './contract';
 import { resetIngestRateForTest } from './http';
 import { finishLoad, publishedCounts, putChunk, queueExternalLoad, sweepExternalStaging } from './lifecycle';
-import { rematchSource, removeTaxonOverride, revokeConnector, setTaxonOverride } from './admin';
+import { adminSources, rematchSource, removeTaxonOverride, revokeConnector, setTaxonOverride } from './admin';
 import { lockSourceDerived } from './taxa';
 import { externalLoadsForUser } from './jobs';
 import { isPublicPath } from '../../../hooks.server';
@@ -1110,6 +1110,65 @@ describe('records and taxa (td-769300)', () => {
 		expect(joined.rows[0].species_code).toBe(otherCode);
 		const reason = await query<{ match_reason: string }>(`SELECT match_reason FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, FAKE_ID]);
 		expect(reason.rows[0].match_reason).toBe('override');
+	});
+
+	it('Admin → Sources: Norwegian names, a suggested species, the matched list, and changing an automatic match (td-b856c7)', async () => {
+		const CROW_ID = `crow-${RUN}`;
+		const crow = { upstream_taxon_id: CROW_ID, canonical_name: 'Corvus corone cornix', raw_name: 'Corvus corone subsp. cornix', rank: 'SUBSPECIES', local_name: 'gråkråke', red_list: 'LC', red_list_url: null };
+		const hooded = (
+			await query<{ species_code: string; com_name: string }>(
+				`SELECT species_code, com_name FROM taxonomy_cache WHERE category = 'species' AND sci_name = 'Corvus cornix'`
+			)
+		).rows[0];
+		expect(hooded, 'birds_test taxonomy has Corvus cornix').toBeDefined();
+		const magpieName = (await query<{ com_name: string }>(`SELECT com_name FROM taxonomy_cache WHERE species_code = $1`, [otherCode])).rows[0].com_name;
+		await publishRecords({
+			taxaRows: [...taxa(), crow],
+			recordRows: [...records(), record('rec20', { upstream_taxon_id: CROW_ID, canonical_name: 'Corvus corone cornix', photos: null })]
+		});
+		const mine = async () => (await adminSources()).find((x) => x.id === SRC)!;
+
+		// The unmatched subspecies leads with its Norwegian name and offers the eBird species it is raised to.
+		let src = await mine();
+		const unmatchedCrow = src.unmatched.find((u) => u.upstreamTaxonId === CROW_ID);
+		expect(unmatchedCrow).toMatchObject({ localName: 'gråkråke', canonicalName: 'Corvus corone cornix', reports: 1 });
+		expect(unmatchedCrow!.suggestion).toEqual({ code: hooded.species_code, comName: hooded.com_name, sciName: 'Corvus cornix' });
+		// A binomial with no eBird species gets no suggestion; nothing is applied without the owner.
+		expect(src.unmatched.find((u) => u.upstreamTaxonId === FAKE_ID)!.suggestion).toBeNull();
+
+		// Matched taxa are listed with their Norwegian name, eBird name, how they matched and their reports.
+		const robinRow = src.matched.find((m) => m.upstreamTaxonId === ROBIN_ID);
+		expect(robinRow).toMatchObject({ localName: 'rødstrupe', speciesCode: robin, method: 'scientific', reports: 1 });
+		expect(src.matched.some((m) => m.upstreamTaxonId === GULLS_ID || m.upstreamTaxonId === FAKE_ID)).toBe(false);
+
+		// Changing an automatic match moves every derived row to the new species.
+		const robinRows = async (code: string) =>
+			Number((await query<{ n: string }>(`SELECT COALESCE(SUM(reports), 0) AS n FROM external_place_month_species WHERE source_id = $1 AND species_code = $2`, [SRC, code])).rows[0].n);
+		const before = await robinRows(robin);
+		expect(before).toBeGreaterThan(0);
+		const otherBefore = await robinRows(otherCode);
+		const r = await setTaxonOverride({ sourceId: SRC, upstreamTaxonId: ROBIN_ID, species: otherCode, userId });
+		expect(r).toMatchObject({ speciesCode: otherCode, canonicalName: 'Erithacus rubecula', localName: 'rødstrupe', comName: magpieName });
+		expect(await robinRows(robin)).toBe(0);
+		expect(await robinRows(otherCode)).toBe(otherBefore + before);
+		// …and the latest reports with it (CODEX1 td-b856c7 review).
+		const recentCodes = async () =>
+			(await query<{ species_code: string }>(`SELECT DISTINCT species_code FROM external_recent_reports WHERE source_id = $1 AND upstream_taxon_id = $2`, [SRC, ROBIN_ID])).rows.map((x) => x.species_code);
+		expect(await recentCodes()).toEqual([otherCode]);
+		src = await mine();
+		expect(src.matched.find((m) => m.upstreamTaxonId === ROBIN_ID)).toMatchObject({ speciesCode: otherCode, method: 'override' });
+		expect(src.overrides.find((o) => o.upstreamTaxonId === ROBIN_ID)).toMatchObject({ localName: 'rødstrupe', comName: magpieName });
+
+		// Accepting the suggestion (the form sends its code) matches the subspecies.
+		await setTaxonOverride({ sourceId: SRC, upstreamTaxonId: CROW_ID, species: hooded.species_code, userId });
+		src = await mine();
+		expect(src.unmatched.some((u) => u.upstreamTaxonId === CROW_ID)).toBe(false);
+		expect(src.matched.find((m) => m.upstreamTaxonId === CROW_ID)).toMatchObject({ localName: 'gråkråke', speciesCode: hooded.species_code, method: 'override' });
+
+		// Removing the change puts the robin back on its scientific match.
+		expect(await removeTaxonOverride(SRC, ROBIN_ID)).toBe(true);
+		expect(await robinRows(robin)).toBe(before);
+		expect(await recentCodes()).toEqual([robin]);
 	});
 
 	it('refuses a species taxon sent under two names, but not a genus or hybrid', async () => {

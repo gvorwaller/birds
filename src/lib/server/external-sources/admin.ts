@@ -38,9 +38,26 @@ export interface AdminLoad {
 export interface AdminUnmatched {
 	upstreamTaxonId: string;
 	canonicalName: string;
+	/** The source's own common name (Artskart: Norwegian), when it sent one. */
+	localName: string | null;
 	reason: string;
 	reports: number;
 	regions: string[];
+	/** An eBird species to offer with one tap; never applied without the owner. */
+	suggestion: { code: string; comName: string; sciName: string } | null;
+}
+
+/** A taxon that counts as an eBird species, so the owner can change a wrong automatic match. */
+export interface AdminMatched {
+	upstreamTaxonId: string;
+	canonicalName: string;
+	localName: string | null;
+	speciesCode: string;
+	comName: string | null;
+	/** How it was matched: 'scientific' | 'subspecies' | 'override'. */
+	method: string;
+	/** Stored reports (td-769300 records) for the taxon, across loaded regions. */
+	reports: number;
 }
 
 export interface AdminSource {
@@ -57,10 +74,47 @@ export interface AdminSource {
 	oldestQueuedAt: string | null;
 	overdueLeases: number;
 	unmatched: AdminUnmatched[];
-	overrides: { upstreamTaxonId: string; canonicalName: string; speciesCode: string; comName: string | null; setAt: string }[];
+	matched: AdminMatched[];
+	overrides: {
+		upstreamTaxonId: string;
+		canonicalName: string;
+		localName: string | null;
+		speciesCode: string;
+		comName: string | null;
+		setAt: string;
+	}[];
 }
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
+
+/**
+ * The eBird binomials worth offering for an unmatched trinomial "Genus
+ * species sub", best first: the subspecies as its own species ("Corvus
+ * corone cornix" → Corvus cornix, Hooded Crow), then its parent species
+ * ("Lagopus lagopus lagopus" → Lagopus lagopus). Anything else gets none.
+ */
+export function suggestionCandidates(canonicalName: string): string[] {
+	const parts = canonicalName.trim().split(/\s+/);
+	if (parts.length !== 3) return [];
+	const [genus, species, sub] = parts;
+	return sub === species ? [`${genus} ${species}`] : [`${genus} ${sub}`, `${genus} ${species}`];
+}
+
+/** The first candidate that names exactly one eBird species. */
+export function pickSuggestion(
+	canonicalName: string,
+	species: { species_code: string; sci_name: string; com_name: string }[]
+): { code: string; comName: string; sciName: string } | null {
+	for (const name of suggestionCandidates(canonicalName)) {
+		const hits = species.filter((t) => t.sci_name.toLowerCase() === name.toLowerCase());
+		if (hits.length === 1) return { code: hits[0].species_code, comName: hits[0].com_name, sciName: hits[0].sci_name };
+	}
+	return null;
+}
+
+const byLocalName = (a: { localName: string | null; canonicalName: string }, b: typeof a) =>
+	(a.localName ?? a.canonicalName).localeCompare(b.localName ?? b.canonicalName, 'nb') ||
+	a.canonicalName.localeCompare(b.canonicalName);
 
 export async function adminSources(): Promise<AdminSource[]> {
 	const sources = await query<{
@@ -74,7 +128,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 	}>(`SELECT id, name, publisher, license, active, window_months, store_observers FROM external_sources ORDER BY name, id`);
 	const out: AdminSource[] = [];
 	for (const s of sources.rows) {
-		const [connectors, regions, loads, queue, unmatched, overrides] = await Promise.all([
+		const [connectors, regions, loads, queue, unmatched, matched, overrides] = await Promise.all([
 			query<{ id: string; label: string; created_at: Date; last_seen_at: Date | null; revoked_at: Date | null }>(
 				`SELECT id, label, created_at, last_seen_at, revoked_at FROM external_connectors
 				  WHERE source_id = $1 ORDER BY revoked_at NULLS FIRST, created_at DESC`,
@@ -127,20 +181,69 @@ export async function adminSources(): Promise<AdminSource[]> {
 				   FROM external_loads WHERE source_id = $1`,
 				[s.id]
 			),
-			query<{ upstream_taxon_id: string; canonical_name: string; reason: string; reports: string; regions: string[] }>(
-				`SELECT upstream_taxon_id, MIN(canonical_name) AS canonical_name, MIN(reason) AS reason,
-				        SUM(reports) AS reports, array_agg(region_code ORDER BY region_code) AS regions
-				   FROM external_unmatched WHERE source_id = $1
-				  GROUP BY upstream_taxon_id ORDER BY SUM(reports) DESC, MIN(canonical_name)`,
+			query<{
+				upstream_taxon_id: string;
+				canonical_name: string;
+				local_name: string | null;
+				reason: string;
+				reports: string;
+				regions: string[];
+			}>(
+				`SELECT u.upstream_taxon_id, MIN(u.canonical_name) AS canonical_name,
+				        (SELECT MIN(x.local_name) FROM external_taxa x
+				          WHERE x.source_id = $1 AND x.upstream_taxon_id = u.upstream_taxon_id) AS local_name,
+				        MIN(u.reason) AS reason, SUM(u.reports) AS reports,
+				        array_agg(u.region_code ORDER BY u.region_code) AS regions
+				   FROM external_unmatched u WHERE u.source_id = $1
+				  GROUP BY u.upstream_taxon_id ORDER BY SUM(u.reports) DESC, MIN(u.canonical_name)`,
 				[s.id]
 			),
-			query<{ upstream_taxon_id: string; canonical_name: string; species_code: string; com_name: string | null; set_at: Date }>(
-				`SELECT o.upstream_taxon_id, o.canonical_name, o.species_code, t.com_name, o.set_at
+			query<{
+				upstream_taxon_id: string;
+				canonical_name: string;
+				local_name: string | null;
+				species_code: string;
+				com_name: string | null;
+				match_reason: string;
+				reports: string;
+			}>(
+				`SELECT x.upstream_taxon_id, x.canonical_name, x.local_name, x.species_code, t.com_name, x.match_reason,
+				        COALESCE(r.n, 0) AS reports
+				   FROM external_taxa x
+				   LEFT JOIN taxonomy_cache t ON t.species_code = x.species_code
+				   LEFT JOIN (SELECT upstream_taxon_id, canonical_name, COUNT(*) AS n FROM external_records
+				               WHERE source_id = $1 GROUP BY upstream_taxon_id, canonical_name) r
+				     ON r.upstream_taxon_id = x.upstream_taxon_id AND r.canonical_name = x.canonical_name
+				  WHERE x.source_id = $1 AND x.species_code IS NOT NULL`,
+				[s.id]
+			),
+			query<{
+				upstream_taxon_id: string;
+				canonical_name: string;
+				local_name: string | null;
+				species_code: string;
+				com_name: string | null;
+				set_at: Date;
+			}>(
+				`SELECT o.upstream_taxon_id, o.canonical_name,
+				        (SELECT MIN(x.local_name) FROM external_taxa x
+				          WHERE x.source_id = o.source_id AND x.upstream_taxon_id = o.upstream_taxon_id) AS local_name,
+				        o.species_code, t.com_name, o.set_at
 				   FROM external_taxon_overrides o LEFT JOIN taxonomy_cache t ON t.species_code = o.species_code
 				  WHERE o.source_id = $1 ORDER BY o.canonical_name`,
 				[s.id]
 			)
 		]);
+		const candidates = [...new Set(unmatched.rows.flatMap((u) => suggestionCandidates(u.canonical_name)))];
+		const suggestable = candidates.length
+			? (
+					await query<{ species_code: string; sci_name: string; com_name: string }>(
+						`SELECT species_code, sci_name, com_name FROM taxonomy_cache
+						  WHERE category = 'species' AND lower(sci_name) = ANY($1::text[])`,
+						[candidates.map((c) => c.toLowerCase())]
+					)
+				).rows
+			: [];
 		out.push({
 			id: s.id,
 			name: s.name,
@@ -185,13 +288,27 @@ export async function adminSources(): Promise<AdminSource[]> {
 			unmatched: unmatched.rows.map((u) => ({
 				upstreamTaxonId: u.upstream_taxon_id,
 				canonicalName: u.canonical_name,
+				localName: u.local_name,
 				reason: u.reason,
 				reports: Number(u.reports),
-				regions: u.regions
+				regions: u.regions,
+				suggestion: pickSuggestion(u.canonical_name, suggestable)
 			})),
+			matched: matched.rows
+				.map((m) => ({
+					upstreamTaxonId: m.upstream_taxon_id,
+					canonicalName: m.canonical_name,
+					localName: m.local_name,
+					speciesCode: m.species_code,
+					comName: m.com_name,
+					method: m.match_reason,
+					reports: Number(m.reports)
+				}))
+				.sort(byLocalName),
 			overrides: overrides.rows.map((o) => ({
 				upstreamTaxonId: o.upstream_taxon_id,
 				canonicalName: o.canonical_name,
+				localName: o.local_name,
 				speciesCode: o.species_code,
 				comName: o.com_name,
 				setAt: o.set_at.toISOString()
@@ -212,7 +329,8 @@ export async function revokeConnector(connectorId: number): Promise<boolean> {
 export class OverrideError extends Error {}
 
 /**
- * "Match to species" for an unmatched upstream taxon: accepts an exact eBird
+ * "Match species" for an unmatched upstream taxon, or a change to an
+ * automatic match (kråke, Corvus corone, is the Hooded Crow in Norway): accepts an exact eBird
  * common name, scientific name or species code (as /photos does), saves the
  * override and re-derives the source's species rows and recent reports from
  * the stored raw taxa — no new fetch [A-P1-2].
@@ -222,7 +340,7 @@ export async function setTaxonOverride(opts: {
 	upstreamTaxonId: string;
 	species: string;
 	userId: number;
-}): Promise<{ speciesCode: string; canonicalName: string }> {
+}): Promise<{ speciesCode: string; canonicalName: string; localName: string | null; comName: string | null }> {
 	const species = opts.species.trim();
 	if (!species) throw new OverrideError('Enter a species.');
 	const matcher = await buildMatcher();
@@ -258,7 +376,12 @@ export async function setTaxonOverride(opts: {
 			[opts.sourceId, opts.upstreamTaxonId, speciesCode, canonicalName, opts.userId]
 		);
 		await deriveSpecies(c, opts.sourceId, null);
-		return { speciesCode, canonicalName };
+		const names = await c.query<{ local_name: string | null; com_name: string | null }>(
+			`SELECT (SELECT MIN(local_name) FROM external_taxa WHERE source_id = $1 AND upstream_taxon_id = $2) AS local_name,
+			        (SELECT com_name FROM taxonomy_cache WHERE species_code = $3) AS com_name`,
+			[opts.sourceId, opts.upstreamTaxonId, speciesCode]
+		);
+		return { speciesCode, canonicalName, localName: names.rows[0]?.local_name ?? null, comName: names.rows[0]?.com_name ?? null };
 	});
 }
 

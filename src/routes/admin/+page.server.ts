@@ -310,7 +310,8 @@ export const actions: Actions = {
         species: String(f.get("species") ?? ""),
         userId: locals.user.id,
       });
-      return sourcesResult(true, `Matched ${r.canonicalName} → ${r.speciesCode}. Loaded data updated.`);
+      const taxon = r.localName ? `${r.localName} (${r.canonicalName})` : r.canonicalName;
+      return sourcesResult(true, `Matched ${taxon} → ${r.comName ?? r.speciesCode}. Loaded data updated.`);
     } catch (err) {
       if (err instanceof OverrideError) return sourcesResult(false, err.message);
       throw err;
