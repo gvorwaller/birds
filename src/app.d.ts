@@ -3,6 +3,11 @@ declare global {
 	namespace App {
 		interface PageState {
 			birdsNavigation?: { accountId: number; nodeId: string };
+			/** Hotspots & data: the address of live search results (td-a6f8a1). */
+			hubHref?: string;
+			/** The page.url those live results were shown over: a restore only
+			 * applies to that entry, never to state a fresh navigation inherits. */
+			hubBase?: string;
 		}
 		interface Locals {
 			user?: {

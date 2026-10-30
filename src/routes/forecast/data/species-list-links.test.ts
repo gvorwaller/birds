@@ -33,7 +33,8 @@ describe("Hotspots & data species-count links", () => {
   });
 
   it("joins the path so Back returns to the row, with a 48px target and a descriptive name", () => {
-    expect(hub).toContain('withReturnTo(href, page.url.pathname + page.url.search + page.url.hash, undefined, "Hotspots & data")');
+    // The address on screen, which a live search can move ahead of page.url (td-a6f8a1).
+    expect(hub).toContain('withReturnTo(href, shownHref, undefined, "Hotspots & data")');
     expect(hub).toContain('onclick={navigationAction(data.accountId, { label: "Field guide"');
     expect(hub).toMatch(/\.specieslist \{[^}]*min-height: 48px;/);
     expect(hub).toContain("aria-label={`See the species list for ${r.locName} in the Field Guide`}");

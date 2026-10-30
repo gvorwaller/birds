@@ -144,6 +144,19 @@ describe('review: public history adapter behavior',()=>{
   nav.updateCurrentNode({accountId:1,href:fixture.page.url.pathname+fixture.page.url.search,label:'Myakka River SP',ui:{expanded:true}});
   const trail=nav.trailFor(1).nodes;expect(trail.map(n=>n.label)).toEqual(['Myakka trip','Myakka River SP']);expect(trail.at(-1)!.id).toBe(before);expect(trail.at(-1)!.href).toContain('month=10');
  });
+ it('writes back the address the browser shows, not a stale page.url, after shallow routing (td-a6f8a1)',async()=>{
+  const nav=await loadAdapter();fixture.page.url=new URL('https://birds.test/forecast/data');fixture.page.state={};
+  const shown={origin:'https://birds.test',pathname:'/forecast/data',search:'',hash:''};
+  vi.stubGlobal('window',{...(globalThis as unknown as {window:object}).window,location:shown});
+  nav.ensureCurrentNode({accountId:1,href:'/forecast/data',label:'Hotspots & data'});nav.navigationAfterNavigate(1);
+  // A live search wrote the address bar; page.url stays as it was.
+  shown.search='?inCountry=US&inRegion=US-FL';shown.hash='#discovery-results';
+  fixture.replaceState.mockClear();
+  nav.ensureCurrentNode({accountId:1,href:'/forecast/data?inCountry=US&inRegion=US-FL#discovery-results',label:'Hotspots & data'});
+  expect(fixture.replaceState).toHaveBeenCalled();
+  for (const [url] of fixture.replaceState.mock.calls) expect(url).toBe('/forecast/data?inCountry=US&inRegion=US-FL#discovery-results');
+  expect(nav.trailFor(1).nodes.at(-1)!.href).toContain('inRegion=US-FL');
+ });
  it('records the departure row on the source, not the destination',async()=>{
   const nav=await loadAdapter();nav.ensureCurrentNode({accountId:1,label:'Myakka trip'});
   nav.navigateWithContext({event:event(),href:'/hotspots/L299291?returnTo=%2Ftrips%2F9',label:'Myakka River SP',accountId:1,originId:'stop-27'});await Promise.resolve();await Promise.resolve();

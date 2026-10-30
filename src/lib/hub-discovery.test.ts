@@ -11,6 +11,7 @@ import {
   withHubMap,
   withHubPage,
   withHubTyped,
+  withHubWithin,
 } from "./hub-discovery";
 
 const parse = (qs: string) => parseHubDiscovery(new URLSearchParams(qs));
@@ -34,16 +35,17 @@ describe("parseHubDiscovery", () => {
   });
 
   it("parses a typed query, collapsing whitespace but keeping the submitted text", () => {
-    expect(ok("find=Myakka")).toEqual({ mode: "typed", find: "Myakka", page: 1, submitted: "Myakka" });
+    expect(ok("find=Myakka")).toEqual({ mode: "typed", find: "Myakka", page: 1, submitted: "Myakka", within: null });
     // Normalized for searching and URLs; the submitted text is kept for display.
     expect(ok("find=%20%20Myakka%20%20River%09SP%20")).toEqual({
       mode: "typed",
       find: "Myakka River SP",
       page: 1,
       submitted: "  Myakka  River\tSP ",
+      within: null,
     });
     expect(ok("find=Ålesund")).toMatchObject({ find: "Ålesund" });
-    expect(ok("find=Myakka&findPage=3")).toEqual({ mode: "typed", find: "Myakka", page: 3, submitted: "Myakka" });
+    expect(ok("find=Myakka&findPage=3")).toEqual({ mode: "typed", find: "Myakka", page: 3, submitted: "Myakka", within: null });
   });
 
   it("parses a map state into finite numbers, a whole-mile radius and a page", () => {
@@ -179,5 +181,65 @@ describe("selection destinations", () => {
     expect(hubHotspotPath("L299291")).toBe("/hotspots/L299291?tab=monthly");
     expect(hubHotspotPath("L1")).toBe("/hotspots/L1?tab=monthly");
     expect(hubHotspotPath("L1")).not.toContain("tab=recent");
+  });
+});
+
+describe("location (td-a6f8a1)", () => {
+  it("a location alone is that place; with text, the search inside it", () => {
+    expect(ok("inRegion=us-fl")).toEqual({
+      mode: "place",
+      within: { kind: "region", country: "US", region: "US-FL" },
+    });
+    expect(ok("find=Miami&inCountry=US&inRegion=US-FL")).toEqual({
+      mode: "typed",
+      find: "Miami",
+      page: 1,
+      submitted: "Miami",
+      within: { kind: "region", country: "US", region: "US-FL" },
+    });
+    expect(ok("inCounty=US-FL-086")).toMatchObject({
+      within: { kind: "county", country: "US", region: "US-FL", county: "US-FL-086" },
+    });
+    expect(ok("inRegion=US-FL&inHotspot=L123")).toMatchObject({
+      mode: "place",
+      within: { kind: "hotspot", country: "US", region: "US-FL", county: null, hotspot: "L123" },
+    });
+    // Blank native values are no location; the Load form's own country/region stay theirs.
+    expect(ok("inCountry=&inRegion=&country=NO&region=NO-18")).toEqual({ mode: "none" });
+  });
+
+  it("checks a location with the Field Guide's rules", () => {
+    expect(bad("inRegion=US-FL&inCountry=NO")).toMatch(/not in the selected country/);
+    expect(bad("inHotspot=L123")).toMatch(/state or region before choosing a hotspot/);
+    expect(bad("inCounty=Florida")).toMatch(/recognized county/);
+    expect(bad("inCountry=US&inCountry=NO")).toMatch(/only one country/);
+  });
+
+  it("never mixes a location with a map point", () => {
+    expect(bad(`inRegion=US-FL&${MAP}`)).toMatch(/not both/);
+  });
+
+  it("typed search keeps the location; a map point and clearing remove it", () => {
+    const base = new URLSearchParams("inCountry=US&inRegion=US-FL&find=old&findPage=2&show=US-FL&future=1");
+    expect(withHubTyped(base, "Miami").toString()).toBe("inCountry=US&inRegion=US-FL&future=1&find=Miami");
+    const map = withHubMap(base, { place: "P", lat: 1, lng: 2, dist: 5 });
+    expect(map.ok && [...map.params.keys()].some((k) => k.startsWith("in"))).toBe(false);
+    expect(clearHubDiscovery(base).toString()).toBe("show=US-FL&future=1");
+  });
+
+  it("a new location keeps the text and drops the page, the map and stale selection", () => {
+    const base = new URLSearchParams(`find=Miami&findPage=3&inCountry=US&show=US&region=US-GA&future=1`);
+    expect(
+      withHubWithin(base, { kind: "county", country: "US", region: "US-FL", county: "US-FL-086" }).toString(),
+    ).toBe("find=Miami&future=1&inCountry=US&inRegion=US-FL&inCounty=US-FL-086");
+    expect(
+      withHubWithin(base, { kind: "hotspot", country: "US", region: "US-FL", county: null, hotspot: "L123" }).toString(),
+    ).toBe("find=Miami&future=1&inCountry=US&inRegion=US-FL&inHotspot=L123");
+    expect(withHubWithin(base, null).toString()).toBe("find=Miami&future=1");
+    expect(withHubWithin(new URLSearchParams(MAP), { kind: "country", country: "US" }).toString()).toBe("inCountry=US");
+  });
+
+  it("every location parameter is owned discovery state", () => {
+    for (const name of ["inCountry", "inRegion", "inCounty", "inHotspot"]) expect(HUB_DISCOVERY_PARAMS).toContain(name);
   });
 });

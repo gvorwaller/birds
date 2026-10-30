@@ -29,6 +29,7 @@ import { enqueueJob } from "$server/jobs";
 import { dedupKeys } from "$server/job-policy";
 import { countyMapQuery, countySeat } from "$server/county-meta";
 import { hubNodeId, parseHubDiscovery } from "$lib/hub-discovery";
+import { comparePlaceChoices } from "$lib/place-filter";
 import { hubDiscover, verifiedHotspotIdsAmong } from "$server/hub-discovery";
 import { regionDetail, type RegionDetail } from "$server/region-detail";
 import { geographicAreaForCountry } from "$lib/geographic-areas";
@@ -818,6 +819,12 @@ async function hubInventoryData(
       detectedAt: r.detected_at,
     })),
     countries: countryOptions,
+    // Every country, for the Location field (td-a6f8a1): the Field Guide's
+    // order, the United States first.
+    placeCountries: countryList
+      .map(({ code, name }) => ({ code, name }))
+      .sort(comparePlaceChoices)
+      .sort((a, b) => Number(b.code === "US") - Number(a.code === "US")),
     selectedCountry,
     states,
     wholeCountryLoaded,

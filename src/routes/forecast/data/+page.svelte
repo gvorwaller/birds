@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
-  import { goto, invalidateAll, replaceState } from "$app/navigation";
+  import { afterNavigate, beforeNavigate, goto, invalidateAll, replaceState } from "$app/navigation";
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/state";
   import PathNavigation from "$components/PathNavigation.svelte";
@@ -26,22 +26,44 @@
   import ExternalSourcesCard from "$lib/components/external/ExternalSourcesCard.svelte";
   import type { ActionData, PageData } from "./$types";
   import MapPicker, { type PickedLocation } from "$components/MapPicker.svelte";
-  import { GUIDE_RADIUS_MAX, GUIDE_RADIUS_MIN, guidePlaceListHref } from "$lib/guide-location";
+  import {
+    GUIDE_RADIUS_MAX,
+    GUIDE_RADIUS_MIN,
+    guidePlaceListHref,
+    type GuideChoicesLevel,
+    type GuideLevel,
+    type GuideLocationSelection,
+  } from "$lib/guide-location";
+  import SearchableSelect from "$components/SearchableSelect.svelte";
+  import {
+    CHOICE_LEVELS,
+    NO_LOADING,
+    PlaceChoiceLoader,
+    PlaceListsController,
+    fetchGuideChoices,
+    placeLevels,
+    withDraftLevel,
+  } from "$lib/guide-draft";
+  import type { PlaceChoice } from "$lib/place-filter";
   import {
     HUB_DISCOVERY_PARAMS,
+    HUB_WITHIN_PARAM,
+    HUB_WITHIN_PARAMS,
     HUB_FIND_MIN,
     HUB_RESULTS_ID,
     HUB_SELECTION_PARAMS,
     clearHubDiscovery,
+    parseHubDiscovery,
     hubFailedId,
     hubHotspotPath,
     hubHref,
     hubNodeId,
     hubSelectHref,
-    normalizeHubFind,
     withHubMap,
     withHubPage,
     withHubTyped,
+    withHubWithin,
+    type HubWithin,
   } from "$lib/hub-discovery";
   import type { HubDiscovery, HubResult, HubSummaryArea } from "$server/hub-discovery";
 
@@ -71,7 +93,7 @@
   function onCountryChange(e: Event & { currentTarget: HTMLSelectElement }) {
     // Keep every unrelated parameter (discovery included); a new country makes
     // any preselected region or opened section stale.
-    const next = new URLSearchParams(page.url.searchParams);
+    const next = new URLSearchParams(shownUrl.searchParams);
     next.set("country", e.currentTarget.value);
     for (const name of ["region", "show"]) next.delete(name);
     void goto(`?${next}`, { keepFocus: true, noScroll: true });
@@ -570,16 +592,23 @@
   // (native GET form, no JavaScript needed); this only adds debounced live
   // results from the same service through /api/hub-search.
   const NAV_KEYS = ["returnTo", "returnLabel", "navNode", "navParent", "navAccount"];
+  // The address of what is on screen. A live search writes the address bar
+  // with replaceState, which leaves page.url as it was (and Back restores
+  // that old page.url), so every link, return path and next search is built
+  // from this instead (CODEX1, td-a6f8a1).
+  let liveHref = $state<string | null>(null);
+  const shownUrl = $derived(liveHref === null ? page.url : new URL(liveHref, page.url.origin));
+  const shownHref = $derived(shownUrl.pathname + shownUrl.search + shownUrl.hash);
   /** The current URL's parameters without navigation bookkeeping. */
   function baseParams(): URLSearchParams {
-    const next = new URLSearchParams(page.url.searchParams);
+    const next = new URLSearchParams(shownUrl.searchParams);
     for (const name of NAV_KEYS) next.delete(name);
     return next;
   }
   // Unrelated parameters ride along on the native forms; discovery and stale
   // selection state do not.
   const preservedParams = $derived(
-    [...page.url.searchParams].filter(
+    [...shownUrl.searchParams].filter(
       ([name]) =>
         !HUB_DISCOVERY_PARAMS.includes(name) &&
         !(HUB_SELECTION_PARAMS as readonly string[]).includes(name) &&
@@ -596,38 +625,132 @@
   // `discovery: null` means the search was cleared.
   let live = $state<{ discovery: HubDiscovery | null } | null>(null);
   const shown = $derived<HubDiscovery | null>(live ? live.discovery : data.discovery);
+
+  // ---- Location (td-a6f8a1): the Field Guide's country, state/region, county
+  // and hotspot fields. A location alone shows that one place; with typed
+  // text, only matches inside it. The lists come from the Field Guide's
+  // /api/guide-locations, so both pages offer the same places.
+  const ANYWHERE: GuideLocationSelection = { kind: "anywhere" };
+  const appliedPlace = (): GuideLocationSelection => data.discovery?.within?.selection ?? ANYWHERE;
+  let place = $state<GuideLocationSelection>(untrack(appliedPlace));
+  const placeNow = $derived(placeLevels(place));
+  const withinOf = (sel: GuideLocationSelection): HubWithin | null =>
+    sel.kind === "anywhere" || sel.kind === "map" ? null : sel;
+  const WITHIN_LEVELS: readonly GuideLevel[] = ["country", "region", "county", "hotspot"];
+  const CHOICE_NOUN: Record<GuideChoicesLevel, string> = { region: "states or regions", county: "counties", hotspot: "hotspots" };
+  const placeLoader = new PlaceChoiceLoader(fetchGuideChoices);
+  const EMPTY_LISTS: Record<GuideChoicesLevel, PlaceChoice[]> = { region: [], county: [], hotspot: [] };
+  let lists = $state<Record<GuideChoicesLevel, PlaceChoice[]>>({ ...EMPTY_LISTS });
+  let loading = $state<Record<GuideChoicesLevel, boolean>>({ ...NO_LOADING });
+  let choiceErrors = $state<Partial<Record<GuideChoicesLevel, { parent: string; message: string }>>>({});
+  const anyLoading = $derived(CHOICE_LEVELS.find((l) => loading[l]) ?? null);
+  const placeLists = new PlaceListsController(
+    placeLoader,
+    () => ({ lists, loading, errors: choiceErrors }),
+    (patch) => {
+      if (patch.lists) lists = patch.lists;
+      if (patch.loading) loading = patch.loading;
+      if (patch.errors) choiceErrors = patch.errors;
+    },
+    () => placeLevels(place),
+  );
+
+  // A navigation (Search, a result, Back/Forward, the map) brings its own
+  // results and location: drop the live state, cancel any search still in
+  // flight, and refill the lists for it.
   $effect(() => {
     void data.discovery;
-    typedText = null;
-    live = null;
+    untrack(() => {
+      cancelSearch();
+      typedText = null;
+      live = null;
+      liveHref = null;
+      setPlace(appliedPlace());
+    });
   });
+  function setPlace(next: GuideLocationSelection) {
+    place = next;
+    placeLists.cancel();
+    lists = { ...EMPTY_LISTS };
+    if (browser) void placeLists.fill();
+  }
+  // Back or Forward to an entry whose results were live loads that entry's
+  // original address with its saved state: run the live search again. Only
+  // for a history move, and only into the entry that saved it: a fresh
+  // navigation inherits the source page's state (navigation context merges
+  // it into goto), which must never send it back to the old search (CODEX1).
+  afterNavigate((nav) => {
+    if (nav.type !== "popstate") return;
+    const { hubHref, hubBase } = page.state;
+    if (typeof hubHref !== "string" || hubBase !== page.url.href) return;
+    if (hubHref === page.url.pathname + page.url.search + page.url.hash) return;
+    const parsed = parseHubDiscovery(new URL(hubHref, page.url.origin).searchParams);
+    // A cleared search ("none") is restored too: empty text, Anywhere, no
+    // results (CODEX1). A map view is never live, so it never gets here.
+    if (!parsed.ok || parsed.state.mode === "map") return;
+    const again = parsed.state;
+    setPlace(again.mode === "typed" ? (again.within ?? ANYWHERE) : again.mode === "place" ? again.within : ANYWHERE);
+    typedText = again.mode === "typed" ? (again.submitted ?? again.find) : "";
+    void runSearch(searchParams());
+  });
+  // Leaving (a result, Search, the map, Back) cancels a search still running,
+  // so its answer can never repaint or rewrite the address of the next view.
+  beforeNavigate(() => cancelSearch());
+
+  /** The search on screen: the typed text inside the chosen location. */
+  function searchParams(): URLSearchParams {
+    return withHubWithin(withHubTyped(baseParams(), findValue), withinOf(place));
+  }
+
+  /** Choose one location level: deeper levels clear, their lists refill, and
+   * the results follow at once. */
+  function chooseLevel(level: GuideLevel, code: string) {
+    if (code.trim().toUpperCase() === placeNow[level]) return;
+    place = withDraftLevel(place, level, code);
+    void placeLists.afterChoice(level);
+    clearTimeout(findTimer);
+    void runSearch(searchParams());
+  }
 
   let findSeq = 0;
   let findTimer: ReturnType<typeof setTimeout> | undefined;
+  function cancelSearch() {
+    findSeq += 1;
+    clearTimeout(findTimer);
+  }
   function onFindInput(e: Event & { currentTarget: HTMLInputElement }) {
     typedText = e.currentTarget.value;
-    const text = normalizeHubFind(typedText);
-    const params = withHubTyped(baseParams(), text);
+    const params = searchParams();
     clearTimeout(findTimer);
-    findTimer = setTimeout(async () => {
-      const seq = ++findSeq;
-      if (!text) {
-        live = { discovery: null };
-        replaceState(hubHref(params, ""), {});
-        return;
-      }
-      try {
-        const res = await fetch(`/api/hub-search?${params}`);
-        // Out-of-order guard: only the newest query may paint. A failure keeps
-        // the last answer; the Search button always works.
-        if (seq !== findSeq || !res.ok) return;
-        const body = (await res.json()) as { discovery: HubDiscovery | null };
-        live = { discovery: body.discovery };
-        replaceState(hubHref(params), {});
-      } catch {
-        /* the native form remains authoritative */
-      }
-    }, 250);
+    findTimer = setTimeout(() => void runSearch(params), 250);
+  }
+
+  /** Live results for `params` (text, location, or both); neither clears them. */
+  /** Paints live results and records their address, in the address bar and
+   * in this history entry's state, for links and for a return here. */
+  function showLive(discovery: HubDiscovery | null, href: string) {
+    live = { discovery };
+    liveHref = href;
+    replaceState(href, { ...page.state, hubHref: href, hubBase: page.url.href });
+  }
+
+  async function runSearch(params: URLSearchParams) {
+    const seq = ++findSeq;
+    if (!params.get("find") && !HUB_WITHIN_PARAMS.some((name) => params.has(name))) {
+      showLive(null, hubHref(params, ""));
+      return;
+    }
+    try {
+      const res = await fetch(`/api/hub-search?${params}`);
+      // Out-of-order guard: only the newest query may paint. A failure keeps
+      // the last answer; the Search button always works.
+      if (seq !== findSeq || !res.ok) return;
+      const body = (await res.json()) as { discovery: HubDiscovery | null };
+      if (seq !== findSeq) return;
+      showLive(body.discovery, hubHref(params));
+    } catch {
+      /* the native form remains authoritative */
+    }
   }
 
   // The named immediate return path: the exact canonical query of what is on
@@ -684,7 +807,7 @@
   function speciesListHref(code: string, parent: string | null = null): string | null {
     const href = guidePlaceListHref(code, parent);
     return href
-      ? withReturnTo(href, page.url.pathname + page.url.search + page.url.hash, undefined, "Hotspots & data")
+      ? withReturnTo(href, shownHref, undefined, "Hotspots & data")
       : null;
   }
   const speciesListId = (code: string) => `forecast-data-species-${code.replace(/[^A-Za-z0-9_-]/g, "_")}`;
@@ -1061,7 +1184,7 @@
         <a
           id={`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`}
           class="hublink path-focus-target"
-          href={withReturnTo(hubHotspotPath(r.locCode),page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')}
+          href={withReturnTo(hubHotspotPath(r.locCode),shownHref,undefined,'Hotspots & data')}
           onclick={navigationAction(data.accountId,{label:r.locName,originId:`forecast-data-hotspot-${encodeURIComponent(r.locCode)}`})}
           ><strong>{r.locName}</strong></a
         >
@@ -1418,7 +1541,7 @@
   <PathNavigation
     accountId={data.accountId}
     label="Hotspots & data"
-    href={page.url.pathname + page.url.search + page.url.hash}
+    href={shownHref}
     fallbackHref={data.returnLink.href !== "/" ? data.returnLink.href : "/forecast"}
     fallbackLabel={data.returnLink.href !== "/" ? data.returnLink.label : "Forecast"}
     hasExplicitSource={data.returnLink.href !== "/"}
@@ -1438,6 +1561,10 @@
     <form method="GET" action={`${page.url.pathname}#${HUB_RESULTS_ID}`} class="findform" role="search">
       {#each preservedParams as [pname, pvalue], i (`keep-${i}-${pname}-${pvalue}`)}
         <input type="hidden" name={pname} value={pvalue} />
+      {/each}
+      <!-- The chosen location rides along, so Search looks inside it. -->
+      {#each WITHIN_LEVELS as level (level)}
+        {#if placeNow[level]}<input type="hidden" name={HUB_WITHIN_PARAM[level]} value={placeNow[level]} />{/if}
       {/each}
       <div class="find-entry">
         <input
@@ -1459,6 +1586,38 @@
       equivalents, verified eBird hotspots, and failed loads. Searching and
       selecting a result never loads bird data.
     </p>
+
+    <fieldset class="hub-place">
+      <legend>Location</legend>
+      <p class="muted2">
+        Choose a place to see just that place. With a search above, only
+        matches inside it are shown.
+      </p>
+      <noscript>
+        <p class="notice">
+          Choosing a location needs JavaScript. Typed search works without it,
+          and a shared link with a location still shows its results.
+        </p>
+      </noscript>
+      {#if jsReady}
+        <div class="place-fields">
+          <SearchableSelect id="hub-place-country" name="placeCountry" label="Country" choices={data.placeCountries} value={placeNow.country} anywhereLabel="Anywhere" onCommit={(code) => chooseLevel("country", code)} />
+          <SearchableSelect id="hub-place-region" name="placeRegion" label="State / region" choices={lists.region} value={placeNow.region} anywhereLabel="Anywhere in this country" disabled={!placeNow.country} disabledText="Choose a country first" loading={loading.region} emptyText="No states or regions" onCommit={(code) => chooseLevel("region", code)} />
+          <SearchableSelect id="hub-place-county" name="placeCounty" label="County / equivalent" choices={lists.county} value={placeNow.county} anywhereLabel="Anywhere in this state or region" disabled={!placeNow.region} disabledText="Choose a state or region first" loading={loading.county} emptyText="No loaded counties" onCommit={(code) => chooseLevel("county", code)} />
+          <SearchableSelect id="hub-place-hotspot" name="placeHotspot" label="Verified hotspot" choices={lists.hotspot} value={placeNow.hotspot} anywhereLabel={placeNow.county ? "Anywhere in this county" : "Anywhere in this state or region"} disabled={!placeNow.region} disabledText="Choose a state or region first" loading={loading.hotspot} emptyText={!placeNow.county && (lists.county.length > 0 || loading.county) ? "Choose a county first" : "No loaded hotspots"} onCommit={(code) => chooseLevel("hotspot", code)} />
+        </div>
+        {#if anyLoading}<p class="muted2" role="status">Loading {CHOICE_NOUN[anyLoading]}…</p>{/if}
+        {#each CHOICE_LEVELS as level (level)}
+          {@const failed = choiceErrors[level]}
+          {#if failed}
+            <p class="err" role="alert">
+              Couldn't load {CHOICE_NOUN[level]}. Your other choices are kept.
+              <button type="button" class="secondary" aria-label={`Retry loading ${CHOICE_NOUN[level]}`} onclick={() => placeLists.load(level, failed.parent)}>Retry</button>
+            </p>
+          {/if}
+        {/each}
+      {/if}
+    </fieldset>
 
     <div class="map-chooser">
       <p id="hub-map-label" class="map-label">Or choose a point on the map</p>
@@ -1515,10 +1674,20 @@
       <div id={HUB_RESULTS_ID} class="hub-results hub-target">
         {#if shown.tooShort}
           <p class="notice" role="status">Type at least {HUB_FIND_MIN} characters to search.</p>
+        {:else if shown.within && !shown.within.known}
+          <p class="notice" role="status">
+            The location in this link ({shown.within.code}) is not known here. Choose
+            another location, or clear the search.
+          </p>
+        {:else if shown.mode === "place" && shown.total === 0 && shown.within}
+          <p class="notice" role="status">
+            Nothing is loaded for {shown.within.name} as a whole. Type a search above
+            to find what is loaded inside it.
+          </p>
         {:else if shown.total === 0}
           <p class="notice" role="status">
             {#if shown.mode === "typed"}
-              No local match for “{shown.submitted ?? shown.find}”.
+              No local match for “{shown.submitted ?? shown.find}”{#if shown.within} in {shown.within.name}{/if}.
             {:else if shown.map}
               No coordinate-known verified hotspot lies within {plural(shown.map.dist, "mile", "miles")} of {shown.map.place}.
             {/if}
@@ -1532,16 +1701,20 @@
             {#if shown.mode === "typed"}
               Showing {shown.first.toLocaleString()}–{shown.last.toLocaleString()} of
               {shown.total.toLocaleString()} {shown.total === 1 ? "match" : "matches"} for
-              “{shown.submitted ?? shown.find}”
+              “{shown.submitted ?? shown.find}”{#if shown.within}{" "}in {shown.within.name}{/if}
+            {:else if shown.mode === "place" && shown.within}
+              Showing {shown.within.name}
             {:else if shown.map}
               Showing {shown.first.toLocaleString()}–{shown.last.toLocaleString()} of
               {shown.total.toLocaleString()} verified {shown.total === 1 ? "hotspot" : "hotspots"} within
               {plural(shown.map.dist, "mile", "miles")} of {shown.map.place}, nearest first
             {/if}
-            <span class="muted2">· page {shown.page} of {shown.pageCount.toLocaleString()}</span>
+            {#if shown.mode !== "place"}<span class="muted2">· page {shown.page} of {shown.pageCount.toLocaleString()}</span>{/if}
           </p>
           <p class="muted2">
-            {#if shown.mode === "typed"}
+            {#if shown.mode === "place"}
+              {shown.within?.selection.kind === "hotspot" ? "The chosen hotspot." : "Just this place. Type a search above to find what is inside it."}
+            {:else if shown.mode === "typed"}
               {countsText(shown)}. Best matches first: exact code, exact name, name
               prefix, then names and contexts that contain your text.
             {:else if shown.map}
@@ -2835,6 +3008,27 @@
   }
   .muted2 {
     color: var(--muted);
+  }
+  /* Location (td-a6f8a1): the Field Guide's Place fields. */
+  .hub-place {
+    border: 0;
+    margin: 0 0 16px;
+    padding: 0;
+    min-width: 0;
+    display: grid;
+    gap: 12px;
+  }
+  .hub-place legend {
+    padding: 0;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .hub-place p {
+    margin: 0;
+  }
+  .place-fields {
+    display: grid;
+    gap: 12px;
   }
   .nextscan {
     color: var(--muted);

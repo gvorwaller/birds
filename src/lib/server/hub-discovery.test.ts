@@ -2,7 +2,7 @@ import { loadTestEnv, requireTestDb } from "$server/testing/test-env";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { query } from "$lib/db";
-import { HUB_PAGE_SIZE } from "$lib/hub-discovery";
+import { HUB_PAGE_SIZE, type HubWithin } from "$lib/hub-discovery";
 import { buildCandidates, hubDiscover, verifiedHotspotIdsAmong, type Evidence, type HubDiscovery } from "$server/hub-discovery";
 
 /**
@@ -25,6 +25,8 @@ const H_INFO = "L99771003"; // strict positive official info only
 const H_BOTH = "L99771004"; // loaded row AND list: one result
 const H_FAILED = "L99771008"; // verified by list, last load failed
 const H_MERGED = "L99771009"; // list precedence, with missing fields filled from info
+// Loaded under COUNTY, while the official list files it under COUNTY_UNLOADED (td-a6f8a1).
+const H_CONFLICT = "L99771010";
 // Never verified: must not appear as hotspots.
 const X_OBS = "L99771005"; // ebird_locations only
 const X_NEG = "L99771006"; // hotspotInfo with isHotspot false
@@ -47,11 +49,12 @@ const CACHE_KEYS = [
   "hotspotsRegion:ZZ-DISC-A",
   "hotspotsRegion:ZZ-DISC-B",
   "hotspotsRegion:ZZ-DISC-P",
+  "hotspotsRegion:ZZ-DISC-C",
   `hotspotInfo:${H_INFO}`,
   `hotspotInfo:${H_MERGED}`,
   `hotspotInfo:${X_NEG}`,
 ];
-const FF = [COUNTY, H_LOADED, H_BOTH, M_LOADEDNOCOORD];
+const FF = [COUNTY, H_LOADED, H_BOTH, M_LOADEDNOCOORD, H_CONFLICT];
 const ATTEMPTS = [COUNTY_FAILED, X_REPORTED, H_FAILED, M_REPORTED];
 const ELOCS = [H_LOADED, H_BOTH, X_OBS, M_OBSONLY, M_REPORTED];
 
@@ -109,6 +112,7 @@ describe("Hotspots & data discovery service", () => {
     await fetchRow(H_BOTH, "hotspot", "Zqdisc Old Loaded Name", COUNTY, [2010, 2019]); // outdated
     await fetchRow(M_LOADEDNOCOORD, "hotspot", "Zqmap Loaded No Coordinates", null);
     await attempt(COUNTY_FAILED, "region", "Zqdisc Failed Equivalent", STATE, "http 500");
+    await fetchRow(H_CONFLICT, "hotspot", "Zqconflict Loaded Name", COUNTY);
     await attempt(X_REPORTED, "hotspot", "Zqdisc Failed Reported", COUNTY, "eBird timeout");
     await attempt(H_FAILED, "hotspot", "Zqdisc Verified But Failed", COUNTY, "http 502");
     await attempt(M_REPORTED, "hotspot", "Zqmap Reported Near Centre", null, "timeout");
@@ -158,6 +162,7 @@ describe("Hotspots & data discovery service", () => {
         ? [{ ...entry(M_REGION, "Zqmap Unloaded Region", 10, 179.8, emptyRegion.code, null), countryCode: emptyRegion.country }]
         : []),
     ]);
+    await cache("hotspotsRegion:ZZ-DISC-C", [entry(H_CONFLICT, "Zqconflict Official", 27.95, -82.95, STATE, COUNTY_UNLOADED)]);
     await cache(
       "hotspotsRegion:ZZ-DISC-P",
       PAGED.map((id, i) => entry(id, `Zqpage ${String(i).padStart(3, "0")}`, 15 + i / 1000, -170, STATE, COUNTY)),
@@ -431,6 +436,85 @@ describe("Hotspots & data discovery service", () => {
       const third = await map(15.06, -170, 200, 3);
       expect(third.results).toHaveLength(20);
       await expect(map(15.06, -170, 200, 4)).rejects.toMatchObject({ status: 404 });
+    });
+  });
+
+  describe("location (td-a6f8a1)", () => {
+    const place = (within: HubWithin) => hubDiscover({ mode: "place", within });
+    const inside = (find: string, within: HubWithin, page = 1) => hubDiscover({ mode: "typed", find, page, within });
+    const FL = { kind: "region", country: "US", region: STATE } as const;
+    const IN_COUNTY = { kind: "county", country: "US", region: STATE, county: COUNTY } as const;
+
+    it("a location alone is that one place, never everything inside it", async () => {
+      const florida = await place(FL);
+      expect(florida).toMatchObject({ mode: "place", total: 1, within: { code: STATE, name: "Florida", context: "United States", known: true } });
+      expect(florida.results).toHaveLength(1);
+      expect(florida.results[0]).toMatchObject({ id: STATE, type: "region", name: "Florida", target: { kind: "section", code: STATE } });
+      // A country is the country itself, not its first region.
+      expect(ids(await place({ kind: "country", country: "US" }))).toEqual(["US"]);
+      const county = await place(IN_COUNTY);
+      expect(ids(county)).toEqual([COUNTY]);
+      expect(county.within).toMatchObject({ name: "Zqsarasota", context: "Florida, United States" });
+      const hotspot = await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY, hotspot: H_LIST });
+      expect(hotspot.results).toEqual([expect.objectContaining({ id: H_LIST, type: "hotspot", target: { kind: "hotspot", id: H_LIST } })]);
+      expect(hotspot.within).toMatchObject({ name: "Zqdisc List Only", known: true });
+      // A failed, unverified location is still its own place.
+      const reported = await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY, hotspot: X_REPORTED });
+      expect(reported.results).toEqual([expect.objectContaining({ id: X_REPORTED, type: "reported" })]);
+    });
+
+    it("a hotspot outside the chosen county or state, or an unknown place, finds nothing and says so", async () => {
+      const wrong = await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY_FAILED, hotspot: H_LIST });
+      expect(wrong).toMatchObject({ total: 0, results: [], within: { known: false } });
+      expect(await inside("zqdisc", { kind: "hotspot", country: "US", region: "US-GA", county: null, hotspot: H_LIST })).toMatchObject({
+        total: 0,
+        within: { known: false },
+      });
+      const nowhere = await place({ kind: "county", country: "US", region: STATE, county: "US-FL-999" });
+      expect(nowhere).toMatchObject({ total: 0, within: { code: "US-FL-999", known: false } });
+    });
+
+    it("typed text inside a location finds only matches recorded there, at every level", async () => {
+      const everywhere = await typed("zqdisc");
+      expect(ids(everywhere)).toContain(COUNTY_FAILED);
+      const inState = await inside("zqdisc", FL);
+      expect(inState.within).toMatchObject({ code: STATE, known: true });
+      expect(ids(inState)).toContain(COUNTY_FAILED);
+      const inCounty = await inside("zqdisc", IN_COUNTY);
+      expect(ids(inCounty)).not.toContain(COUNTY_FAILED);
+      expect(ids(inCounty)).toEqual(expect.arrayContaining([H_LOADED, H_LIST, H_INFO, H_BOTH, H_FAILED, X_REPORTED]));
+      expect(inCounty.total).toBe(inCounty.results.length);
+      // Every result really is inside the county; the counts agree with them.
+      for (const r of inCounty.results) expect(r.id === COUNTY || r.context.startsWith("Zqsarasota")).toBe(true);
+      expect(inCounty.counts.hotspot + inCounty.counts.reported + inCounty.counts.county).toBe(inCounty.total);
+      // A hotspot location holds only that hotspot.
+      const one = await inside("zqdisc", { kind: "hotspot", country: "US", region: STATE, county: COUNTY, hotspot: H_LIST });
+      expect(ids(one)).toEqual([H_LIST]);
+      // Another country holds none of them.
+      expect((await inside("zqdisc", { kind: "country", country: "NO" })).total).toBe(0);
+      // Paging covers the location's matches only.
+      const paged = await inside("zqpage", IN_COUNTY, 3);
+      expect(paged).toMatchObject({ total: PAGED.length, page: 3, pageCount: 3 });
+    });
+
+    it("a hotspot counts as inside the place its loaded row or its official record names (CODEX1)", async () => {
+      // The location list offers it under its loaded county; choosing it there finds it.
+      const offered = await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY, hotspot: H_CONFLICT });
+      expect(offered).toMatchObject({ total: 1, within: { known: true } });
+      expect(ids(offered)).toEqual([H_CONFLICT]);
+      // Its official county works too.
+      expect(ids(await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY_UNLOADED, hotspot: H_CONFLICT }))).toEqual([H_CONFLICT]);
+      // Typed inside the loaded county, and inside the state, it is there; elsewhere it is not.
+      expect(ids(await inside("zqconflict", IN_COUNTY))).toEqual([H_CONFLICT]);
+      expect(ids(await inside("zqconflict", FL))).toEqual([H_CONFLICT]);
+      expect((await inside("zqconflict", { kind: "region", country: "US", region: "US-GA" })).total).toBe(0);
+      expect(
+        (await place({ kind: "hotspot", country: "US", region: STATE, county: COUNTY_FAILED, hotspot: H_CONFLICT })).within?.known,
+      ).toBe(false);
+    });
+
+    it("a too-short search inside a location still names the location", async () => {
+      expect(await inside("z", FL)).toMatchObject({ tooShort: true, total: 0, within: { code: STATE, name: "Florida" } });
     });
   });
 

@@ -33,10 +33,24 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
 
   it("enhances with debounced live results from the same service, writing the same canonical URL", () => {
     expect(page).toContain("fetch(`/api/hub-search?${params}`)");
-    expect(page).toContain("}, 250);");
-    expect(page).toContain("replaceState(hubHref(params), {})");
+    expect(page).toContain("findTimer = setTimeout(() => void runSearch(params), 250);");
+    expect(page).toContain("showLive(body.discovery, hubHref(params));");
+    expect(page).toContain("replaceState(href, { ...page.state, hubHref: href, hubBase: page.url.href });");
     expect(page).toContain("if (seq !== findSeq || !res.ok) return;"); // out-of-order guard; failure keeps the last answer
-    expect(page).toContain("withHubTyped(baseParams(), text)");
+    // replaceState leaves page.url behind: links, the next search and a
+    // return here build from the address on screen (CODEX1, td-a6f8a1).
+    expect(page).toContain("const shownUrl = $derived(liveHref === null ? page.url : new URL(liveHref, page.url.origin));");
+    expect(page).toContain("const next = new URLSearchParams(shownUrl.searchParams);");
+    expect(page).not.toContain("page.url.pathname + page.url.search + page.url.hash,");
+    // The trail records the address on screen, so Your path returns to the live view.
+    expect(page).toContain('label="Hotspots & data"\n    href={shownHref}');
+    // Leaving cancels a search in flight; Back re-runs a live search from the entry's state.
+    expect(page).toContain("beforeNavigate(() => cancelSearch());");
+    // Only a history move into the entry that saved the live view restores it.
+    expect(page).toContain('if (nav.type !== "popstate") return;');
+    expect(page).toContain("if (typeof hubHref !== \"string\" || hubBase !== page.url.href) return;");
+    // The typed text is searched inside the chosen location (td-a6f8a1).
+    expect(page).toContain("withHubWithin(withHubTyped(baseParams(), findValue), withinOf(place))");
   });
 
   it("names each result's type and evidence in words rather than icon or colour alone", () => {
@@ -235,7 +249,7 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
 
   it("never links a hotspot from this page to the default live-observations tab", () => {
     // Every hotspot link (results, summaries and the auto-opened inventory rows) goes through the local-only builder.
-    expect(page).toContain("withReturnTo(hubHotspotPath(r.locCode),page.url.pathname + page.url.search + page.url.hash,undefined,'Hotspots & data')");
+    expect(page).toContain("withReturnTo(hubHotspotPath(r.locCode),shownHref,undefined,'Hotspots & data')");
     expect(page).not.toMatch(/`\/hotspots\//);
     expect(page).not.toContain('href="/hotspots/');
     expect(page.match(/hubHotspotPath\(/g)?.length).toBeGreaterThanOrEqual(2);
@@ -266,7 +280,7 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
   it("displays the submitted text while searching on the normalized text", () => {
     expect(page).toContain("data.discovery.submitted ?? data.discovery.find");
     expect(page).toContain("“{shown.submitted ?? shown.find}”");
-    expect(page).toContain("No local match for “{shown.submitted ?? shown.find}”.");
+    expect(page).toContain("No local match for “{shown.submitted ?? shown.find}”{#if shown.within} in {shown.within.name}{/if}.");
   });
 
   it("keeps the hotspot workspace's unverified state plain: no venues, no eBird hotspot link, no verified actions", () => {
@@ -289,5 +303,22 @@ describe("Phase 8B Hotspots & data discovery UI contract", () => {
     expect(verifiedBranch).toContain("https://ebird.org/hotspot/");
     expect(verifiedBranch).toContain('<nav class="tabs" aria-label="Hotspot data">');
     expect(workspace.slice(0, workspace.indexOf('<section class="card actions">'))).not.toContain('<nav class="tabs"');
+  });
+
+  it("offers the Field Guide's location fields, which narrow the results (td-a6f8a1)", () => {
+    for (const label of ['label="Country"', 'label="State / region"', 'label="County / equivalent"', 'label="Verified hotspot"'])
+      expect(page).toContain(label);
+    // The same lists as the Field Guide, from the same endpoint and controller.
+    expect(page).toContain("new PlaceChoiceLoader(fetchGuideChoices)");
+    expect(page).toContain("new PlaceListsController(");
+    expect(loader).toContain("placeCountries: countryList");
+    // A choice searches at once, keeping the typed text; Search carries the location.
+    expect(page).toContain("void runSearch(searchParams());");
+    expect(page).toContain('<input type="hidden" name={HUB_WITHIN_PARAM[level]} value={placeNow[level]} />');
+    // Without JavaScript the fields are not offered, and the page says so.
+    expect(page).toContain("Choosing a location needs JavaScript.");
+    // A location alone shows that place; an unknown one is named, not hidden.
+    expect(page).toContain('{:else if shown.mode === "place" && shown.within}');
+    expect(page).toContain("The location in this link ({shown.within.code}) is not known here.");
   });
 });

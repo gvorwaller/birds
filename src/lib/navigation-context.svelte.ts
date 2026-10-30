@@ -143,6 +143,14 @@ function newId(): string {
 }
 
 function currentHref(): string {
+  // The address the browser shows. Shallow routing (replaceState with a new
+  // URL, as Hotspots & data's live search does) changes it without changing
+  // page.url, so writing page.url back would undo it (td-a6f8a1). SvelteKit
+  // writes the address before it renders a navigation, so otherwise the two
+  // agree.
+  const shown = browser ? globalThis.window?.location : undefined;
+  if (shown && typeof shown.pathname === "string")
+    return shown.pathname + (shown.search ?? "") + (shown.hash ?? "");
   return page.url.pathname + page.url.search + page.url.hash;
 }
 

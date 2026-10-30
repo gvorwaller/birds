@@ -22,7 +22,13 @@ import { haversineKm, MILES_TO_KM } from "$lib/geo";
 import { guideHotspotParent } from "$lib/guide-location";
 import { isHotspotLocId } from "$lib/loc-id";
 import { parentOf, parseRegionCode } from "$lib/region-code";
-import { HUB_FIND_MIN, HUB_PAGE_SIZE, type HubDiscoveryState, type HubTarget } from "$lib/hub-discovery";
+import {
+  HUB_FIND_MIN,
+  HUB_PAGE_SIZE,
+  type HubDiscoveryState,
+  type HubTarget,
+  type HubWithin,
+} from "$lib/hub-discovery";
 import { lastCompleteYear } from "$server/barchart";
 import { countyMeta } from "$server/county-meta";
 import { trackBusy } from "$server/freeze-watch";
@@ -71,8 +77,22 @@ export interface HubSummaryArea {
   target: HubTarget;
 }
 
+/** The location a search is limited to (td-a6f8a1). */
+export interface HubWithinView {
+  selection: HubWithin;
+  /** The deepest chosen code: the hotspot, county, state or region, or country. */
+  code: string;
+  name: string;
+  /** Its containing places, e.g. "United States" for Florida. */
+  context: string;
+  /** False when nothing here knows that place (a hand-edited or stale link). */
+  known: boolean;
+}
+
 export interface HubDiscovery {
-  mode: "typed" | "map";
+  /** "place": a location chosen with no typed text, answered with that one place. */
+  mode: "typed" | "map" | "place";
+  within: HubWithinView | null;
   /** The normalized (trimmed, whitespace-collapsed) query used to search and to build URLs. */
   find: string | null;
   /** The text as submitted, for display; equals `find` when nothing was normalized away. */
@@ -631,6 +651,8 @@ function loadStateOf(row: LoadedRow | undefined, failed: boolean, completeYear: 
 
 /** @internal */
 export interface Candidate extends HubResult {
+  /** Its own code and every containing code it is recorded under. */
+  area: string[];
   names: string[];
   contextFolded: string;
   evidenceRank: number;
@@ -724,6 +746,7 @@ function hotspotCandidate(ev: Evidence, i: number, helpers: CandidateHelpers): C
     distanceMiles: null,
     error: !loadedRow && failed ? (failed.error ?? "unknown error") : null,
     target: { kind: "hotspot", id },
+    area: [id, ...[store.county[i], store.state[i], store.country[i]].filter((x): x is string => !!x)],
     names: [fold(name), ...(loadedRow ? [fold(loadedRow.loc_name)] : [])],
     evidenceRank: loadedRow ? 0 : failed ? 2 : 1,
     contextFolded: helpers.foldedContext(context),
@@ -766,6 +789,7 @@ export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candid
       target: hasSection
         ? { kind: "section", code: ref.code }
         : { kind: "load", country, region: ref.level === "country" ? null : ref.code },
+      area: chain(ref.code),
       names: [fold(ref.name)],
       evidenceRank: region || below > 0 ? 0 : failed ? 2 : 1,
     });
@@ -792,6 +816,7 @@ export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candid
       distanceMiles: null,
       error: null,
       target: { kind: "section", code: row.loc_code },
+      area: chain(row.loc_code),
       names: [...new Set([fold(name), fold(row.loc_name)])],
       evidenceRank: 0,
     });
@@ -824,6 +849,7 @@ export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candid
         // The existing failed-load recovery row, never a hotspot page: an
         // unverified location is not routed through a verified presentation.
         target: { kind: "failed", code: a.loc_code },
+        area: [a.loc_code, ...chain(a.region_code)],
         names: [fold(name)],
         evidenceRank: 3,
       });
@@ -847,6 +873,7 @@ export function buildCandidates(ev: Evidence, helpers: CandidateHelpers = candid
         distanceMiles: null,
         error: a.error ?? "unknown error",
         target: { kind: "failed", code: a.loc_code },
+        area: chain(a.loc_code),
         names: [fold(name)],
         evidenceRank: 2,
       });
@@ -903,22 +930,123 @@ function paginate<T>(items: T[], page: number): { slice: T[]; pageCount: number;
 }
 
 /**
- * Discovery for a strict typed or map state. Deterministic ordering; exact
+ * What a chosen location means against the index (td-a6f8a1): its display
+ * name, whether it is known, and the two membership tests a search applies,
+ * one for candidates (countries, regions, counties, reported locations) and
+ * one for verified hotspots in the compact store. A hotspot location holds
+ * only itself, and only where it is recorded under the chosen state or region
+ * (and county, when one is chosen).
+ */
+function resolveWithin(ev: Evidence, helpers: CandidateHelpers, within: HubWithin) {
+  const store = ev.hotspots as HotspotStore;
+  // A hotspot is inside a place when its official record OR its loaded row
+  // puts it there: the location's hotspot list (guideHotspots) files a
+  // loaded hotspot under its loaded row's region, which can disagree with the
+  // official lists the store prefers (CODEX1).
+  const loadedChain = (id: string): string[] => {
+    const row = ev.loaded.get(id);
+    return row?.loc_kind === "hotspot" ? chain(row.region_code) : [];
+  };
+  if (within.kind === "hotspot") {
+    const id = within.hotspot;
+    const at = (county: string | null, state: string | null) =>
+      state === within.region && (!within.county || county === within.county);
+    const filedUnder = (codes: string[]) =>
+      codes.includes(within.region) && (!within.county || codes.includes(within.county));
+    const i = store.indexOf(id);
+    const attempt = ev.attempts.get(id);
+    const attemptChain = chain(attempt?.region_code);
+    const inStore =
+      i !== undefined && (at(store.county[i], store.state[i]) || filedUnder(loadedChain(id))) ? i : undefined;
+    const reported =
+      inStore === undefined && attempt && attemptChain.includes(within.region) &&
+      (!within.county || attemptChain.includes(within.county));
+    const known = inStore !== undefined || !!reported;
+    const view: HubWithinView = {
+      selection: within,
+      code: id,
+      name: (inStore !== undefined ? store.names[inStore] : attempt?.loc_name?.trim()) || id,
+      context: helpers.contextOf(within.county, within.region, within.country),
+      known,
+    };
+    return {
+      view,
+      hotspotIndex: inStore,
+      candidateIn: (c: Candidate) => known && c.id === id,
+      storeIn: (k: number) => k === inStore,
+    };
+  }
+  const code = within.kind === "country" ? within.country : within.kind === "region" ? within.region : within.county;
+  const parent = parentOf(code);
+  const known =
+    within.kind === "county"
+      ? ev.refByCode.has(within.region) &&
+        (!!countyMeta(code) || ev.loaded.get(code)?.loc_kind === "region" || ev.attempts.has(code))
+      : ev.refByCode.has(code);
+  const view: HubWithinView = {
+    selection: within,
+    code,
+    name: helpers.nameOf(code) ?? code,
+    context: parent ? helpers.ancestryContext(parent) : "",
+    known,
+  };
+  return {
+    view,
+    hotspotIndex: undefined as number | undefined,
+    candidateIn: (c: Candidate) => known && c.area.includes(code),
+    storeIn: (k: number) =>
+      known &&
+      (store.county[k] === code ||
+        store.state[k] === code ||
+        store.country[k] === code ||
+        loadedChain(store.ids[k]).includes(code)),
+  };
+}
+
+/** The location's view alone, for an answer that searches nothing. */
+async function withinOnly(within: HubWithin): Promise<HubWithinView> {
+  const { ev, helpers } = await discoveryIndex();
+  return resolveWithin(ev, helpers, within).view;
+}
+
+/**
+ * Discovery for a strict typed, place or map state. Deterministic ordering; exact
  * totals; `HUB_PAGE_SIZE` results per page with every match reachable.
  */
 export async function hubDiscover(
   state: Exclude<HubDiscoveryState, { mode: "none" }>,
 ): Promise<HubDiscovery> {
   if (state.mode === "typed" && fold(state.find).length < HUB_FIND_MIN) {
+    // Not a search yet: the location is resolved only when there is one.
+    const within = state.within ? await withinOnly(state.within) : null;
     return {
-      mode: "typed", find: state.find, submitted: state.submitted ?? state.find, tooShort: true, map: null, total: 0, counts: emptyCounts(),
+      mode: "typed", within, find: state.find, submitted: state.submitted ?? state.find, tooShort: true, map: null, total: 0, counts: emptyCounts(),
       page: 1, pageSize: HUB_PAGE_SIZE, pageCount: 1, first: 0, last: 0, results: [], summary: null,
     };
   }
   const { ev, candidates, helpers } = await discoveryIndex();
   const store = ev.hotspots as HotspotStore;
 
+  if (state.mode === "place") {
+    // The chosen place itself, as its own row: the county, state or region,
+    // country or hotspot, never everything inside it (td-a6f8a1).
+    const where = resolveWithin(ev, helpers, state.within);
+    const own = where.view.known
+      ? where.hotspotIndex !== undefined
+        ? hotspotCandidate(ev, where.hotspotIndex, helpers)
+        : candidates.find((c) => c.id === where.view.code)
+      : undefined;
+    const counts = emptyCounts();
+    if (own) counts[own.type] = 1;
+    return {
+      mode: "place", within: where.view, find: null, submitted: null, tooShort: false, map: null,
+      total: own ? 1 : 0, counts, page: 1, pageSize: HUB_PAGE_SIZE, pageCount: 1,
+      first: own ? 1 : 0, last: own ? 1 : 0, results: own ? [strip(own)] : [], summary: null,
+    };
+  }
+
   if (state.mode === "typed") {
+    const where = state.within ? resolveWithin(ev, helpers, state.within) : null;
     const folded = fold(state.find);
     const code = state.find.replace(/\s+/g, "").toUpperCase();
     const nameRank = (n: string) =>
@@ -936,6 +1064,7 @@ export async function hubDiscover(
     const hotspotEvidenceRanks = new Uint8Array(store.size);
     for (let i = 0; i < candidates.length; i++) {
       const c = candidates[i];
+      if (where && !where.candidateIn(c)) continue;
       let rank = -1;
       if (c.id.toUpperCase() === code) rank = 0;
       else {
@@ -950,6 +1079,7 @@ export async function hubDiscover(
     for (let i = 0; i < store.size; i++) {
       // ~186k hotspots: let other requests run between slices (td-877997).
       if (i % SLICE === 0) await breathe();
+      if (where && !where.storeIn(i)) continue;
       const id = store.ids[i];
       const row = ev.loaded.get(id);
       const loadedRow = row?.loc_kind === "hotspot" ? row : undefined;
@@ -996,7 +1126,7 @@ export async function hubDiscover(
       counts[isHotspotMatch(m) ? "hotspot" : candidates[matchIndex(m)].type] += 1;
     const { slice, pageCount, first, last } = paginate(ranked, state.page);
     return {
-      mode: "typed", find: state.find, submitted: state.submitted ?? state.find, tooShort: false, map: null, total: ranked.length, counts,
+      mode: "typed", within: where?.view ?? null, find: state.find, submitted: state.submitted ?? state.find, tooShort: false, map: null, total: ranked.length, counts,
       page: state.page, pageSize: HUB_PAGE_SIZE, pageCount, first, last,
       results: slice.map((m) => {
         const i = matchIndex(m);
@@ -1070,6 +1200,7 @@ export async function hubDiscover(
   counts.hotspot = inside.length;
   return {
     mode: "map",
+    within: null,
     find: null,
     submitted: null,
     tooShort: false,
