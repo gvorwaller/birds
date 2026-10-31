@@ -455,31 +455,12 @@ export const actions: Actions = {
   },
 
   /**
-   * Both syncs are background JOBS (Phase 3, td-eb9e1d): validate the
-   * prerequisites here, enqueue, return immediately. The worker runs them
-   * with the retry schedule; results land in the job history (/admin and
-   * the Forecast data hub).
+   * The life-list sync is a background JOB (Phase 3, td-eb9e1d): validate the
+   * prerequisites here, enqueue, return immediately. The worker runs it with
+   * the retry schedule; results land in the job history (/admin and the
+   * Forecast data hub). The taxonomy sync moved to Admin → Taxonomy
+   * (td-6093ae), where every sync is backed up and compared first.
    */
-  sync_taxonomy: async ({ locals }) => {
-    const userId = locals.user!.id;
-    const apiKey = await getEbirdApiKey(userId);
-    if (!apiKey) return fail(400, { error: "Save your eBird API key first." });
-    const { jobId, deduped } = await enqueueJob({
-      type: "sync_taxonomy",
-      payload: {},
-      dedupKey: dedupKeys.syncTaxonomy(),
-      requestedBy: userId,
-      label: "eBird taxonomy + photo re-match",
-    });
-    return {
-      ok: true as const,
-      message: deduped
-        ? "A taxonomy sync is already queued — it runs in the background."
-        : "Taxonomy sync queued — it runs in the background; the result appears in the job history.",
-      queued: { jobId, deduped },
-    };
-  },
-
   sync_lifelist: async ({ locals }) => {
     const userId = locals.user!.id;
     const creds = await query<{ login_set: boolean }>(

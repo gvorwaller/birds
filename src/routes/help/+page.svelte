@@ -262,9 +262,9 @@
 						its new taxonomy, a sync can't match that bird. Instead of
 						dropping it, the sync keeps your earlier entry and marks the
 						sync <strong>incomplete</strong> (in Settings and on the Life
-						list page) with the names it couldn't match. Run
-						<strong>Sync taxonomy</strong> in Settings, then sync your life
-						list again. Hybrids, slashes and “sp.” entries never match a
+						list page) with the names it couldn't match. Once an admin has
+						refreshed the taxonomy (Admin → Taxonomy), sync your life list
+						again. Hybrids, slashes and “sp.” entries never match a
 						species and don't count.
 					</li>
 					<li>
@@ -1622,6 +1622,65 @@
 						approval and the blind test like any other.
 					</li>
 				</ul>
+			</div>
+		{/if}
+
+		<!-- Admin: Taxonomy refresh (td-6093ae) -->
+		<button
+			class="toggle"
+			class:open={open === 'taxonomy-refresh'}
+			aria-expanded={open === 'taxonomy-refresh'}
+			onclick={() => toggle('taxonomy-refresh')}
+		>
+			<span class="ico">🧬</span>
+			<span class="title">Admin: Taxonomy refresh</span>
+			<span class="chev">{open === 'taxonomy-refresh' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'taxonomy-refresh'}
+			<div class="body">
+				<p class="lead">
+					Admins only — the <strong>Taxonomy</strong> tab on the Admin page. eBird
+					updates its taxonomy once a year, usually in October or November:
+					species are split, lumped, renamed or added. This app keeps its own
+					copy and follows only when you refresh it there. The tab shows our
+					version and eBird's latest, with <strong>Update available</strong> when
+					they differ.
+				</p>
+				<ol>
+					<li>
+						<strong>Back up, sync and compare.</strong> When eBird says its
+						update is complete, press it. In the background it saves today's
+						taxonomy, fetches eBird's, saves the new one, and compares the two.
+						Each step shows as it finishes; if one stops, <strong>Try again</strong>
+						continues from that step. Straight away the species list, names,
+						tags and photo matches switch to the new taxonomy, and a species
+						eBird removed stops appearing in forecasts until step 3.
+					</li>
+					<li>
+						<strong>Read the changes.</strong> Counts by kind (removed, added,
+						renamed, a different category) and every changed bird, with how many
+						stored locations hold it.
+					</li>
+					<li>
+						<strong>Refresh affected locations.</strong> Reloads the frequencies
+						of every listed location from eBird, one request each, in the
+						background, using your eBird account login (saved in Settings). The
+						list includes locations holding a changed species, locations whose
+						stored names now match a species, and, to be safe, locations loaded
+						since the last sync. Progress shows on the card;
+						<strong>Retry unfinished</strong> queues again whatever failed or was
+						not reached.
+					</li>
+					<li>
+						<strong>Life lists.</strong> Ask every user to sync their life list
+						(Settings → Life list), so eBird's conversions of their records reach
+						this app.
+					</li>
+				</ol>
+				<p>
+					Every refresh keeps a backup of the taxonomy from before and after
+					its sync, and its list of changes, under <strong>History</strong>.
+				</p>
 			</div>
 		{/if}
 	</div>

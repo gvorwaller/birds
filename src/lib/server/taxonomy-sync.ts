@@ -93,12 +93,19 @@ export function parseTaxonomy(value: unknown): TaxonomyEntry[] {
  * from the old taxonomy after this commits. `requesterId` is the sync job's
  * requester; it owns any repair job this change opens (plan rev 21).
  */
-export async function replaceTaxonomy(payload: unknown, requesterId: number): Promise<number> {
+export async function replaceTaxonomy(
+  payload: unknown,
+  requesterId: number,
+  opts: { onApplied?: (tx: TagWriteTx) => Promise<void> } = {},
+): Promise<number> {
   const taxa = parseTaxonomy(payload);
   await withTagWriteTx("exclusive", "global:replaceTaxonomy", "replaceTaxonomy", async (tx) => {
     const before = await beginTaxonomyChange(tx);
     await writeTaxonomy(tx.client, taxa);
     await finishTaxonomyChange(tx, before, requesterId);
+    // td-6093ae: a taxonomy refresh run records which replacement committed,
+    // in this transaction. Keep it to one small write: the cap is 30 s.
+    if (opts.onApplied) await opts.onApplied(tx);
   });
   return taxa.length;
 }

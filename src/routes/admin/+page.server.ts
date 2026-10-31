@@ -35,6 +35,18 @@ import { meteredAiCall } from "$server/ai-call";
 import { setWorkerPauseRequested } from "$server/jobs";
 import { generateSpeciesAnnotation } from "$server/ai-enrichment";
 import { aiStageInputFor, similarCandidatesFor } from "$server/species-enrichment";
+import { getEbirdApiKey, latestTaxonomyVersion } from "$server/ebird";
+import { lifeListOrphans } from "$server/ebird-account";
+import {
+  dispatchRefresh,
+  hasEbirdLogin,
+  startOrResumeRun,
+  taxonomyPanel,
+  TaxonomyRunError,
+} from "$server/taxonomy-refresh";
+
+/** Taxonomy tab (td-6093ae): eBird's latest version, never holding the page up long. */
+const LATEST_VERSION_WAIT_MS = 3_000;
 
 /**
  * Burn badge threshold for the AI & Cost tab (AGY correction 7: a named
@@ -57,7 +69,7 @@ let compareInFlight = false;
 
 // Admin observability (td-eb9e1d MVP, plan §9). 404 — not 403 — for
 // non-admins: the page's existence is nobody else's business.
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
   if (locals.user?.role !== "admin") throw error(404, "Not found");
   const [
     liveStatus,
@@ -161,10 +173,31 @@ export const load: PageServerLoad = async ({ locals }) => {
     console.error(`[admin] sources unavailable: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   });
+  // Taxonomy tab (td-6093ae); a failure shows "unavailable" in that tab only.
+  const adminId = locals.user.id;
+  const apiKey = await getEbirdApiKey(adminId).catch(() => null);
+  const runParam = Number(url.searchParams.get("run"));
+  const taxonomyRefresh = await taxonomyPanel({
+    runId: Number.isSafeInteger(runParam) && runParam > 0 ? runParam : null,
+    latest: () =>
+      apiKey
+        ? Promise.race([
+            latestTaxonomyVersion(apiKey),
+            new Promise<null>((done) => setTimeout(() => done(null), LATEST_VERSION_WAIT_MS)),
+          ])
+        : Promise.resolve(null),
+    canSync: apiKey !== null,
+    canRefresh: await hasEbirdLogin(adminId),
+    orphans: lifeListOrphans,
+  }).catch((err) => {
+    console.error(`[admin] taxonomy unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
   return {
     health,
     accountUsage,
     sources,
+    taxonomyRefresh,
     tagOverview,
     tagHealth,
     hotspotCoordinates,
@@ -274,7 +307,82 @@ function sourcesResult(ok: boolean, message: string, status = 400) {
   return ok ? body : fail(status, body);
 }
 
+/** Queue reloads for a run (td-6093ae): its new locations, or the unfinished ones again. */
+async function taxonomyDispatch(locals: App.Locals, request: Request, mode: "new" | "unfinished") {
+  const section = "tax-refresh" as const;
+  if (locals.user?.role !== "admin") return taxonomyResult(false, "Admins only.", { status: 403, section });
+  const runId = runIdFrom(await request.formData());
+  if (!runId) return taxonomyResult(false, "Unknown taxonomy run.", { section });
+  if (!(await hasEbirdLogin(locals.user.id))) {
+    return taxonomyResult(false, "Save your eBird account login in Settings first: the reloads sign in to eBird with it.", {
+      section,
+      runId,
+    });
+  }
+  try {
+    const r = await dispatchRefresh(runId, locals.user.id, mode);
+    if (!r.locations) {
+      return taxonomyResult(true, mode === "new" ? "Nothing left to queue." : "Nothing needs retrying.", { section, runId });
+    }
+    const n = r.locations.toLocaleString("en-US");
+    return taxonomyResult(
+      true,
+      `Queued ${n} ${r.locations === 1 ? "location" : "locations"} in ${r.batches} ${r.batches === 1 ? "batch" : "batches"}. Progress shows below.`,
+      { section, runId },
+    );
+  } catch (err) {
+    if (err instanceof TaxonomyRunError) return taxonomyResult(false, err.message, { section, runId });
+    throw err;
+  }
+}
+
+/**
+ * Taxonomy tab (td-6093ae): one result shape for every action. `section`
+ * places the message on the card without JavaScript too; `runId` is the run
+ * the card should now show.
+ */
+function taxonomyResult(
+  ok: boolean,
+  message: string,
+  opts: { status?: number; section: "tax-sync" | "tax-refresh"; runId?: number | null },
+) {
+  const body = { kind: "taxonomy" as const, ok, message, section: opts.section, runId: opts.runId ?? null };
+  return ok ? body : fail(opts.status ?? 400, body);
+}
+
+const runIdFrom = (form: FormData) => {
+  const id = Number(form.get("run_id"));
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+};
+
 export const actions: Actions = {
+  taxonomy_sync: async ({ locals }) => {
+    const section = "tax-sync" as const;
+    if (locals.user?.role !== "admin") return taxonomyResult(false, "Admins only.", { status: 403, section });
+    if (!(await getEbirdApiKey(locals.user.id))) {
+      return taxonomyResult(false, "Save your eBird API key in Settings first: the sync uses it.", { section });
+    }
+    try {
+      const r = await startOrResumeRun(locals.user.id, locals.user.display_name || locals.user.username);
+      if (r.alreadyRunning) {
+        return taxonomyResult(true, "The taxonomy refresh is already running; its progress shows below.", { section, runId: r.runId });
+      }
+      return taxonomyResult(
+        true,
+        r.resumed
+          ? "Picking the stopped run up where it left off. Progress shows below."
+          : "Backing up, syncing and comparing. It runs in the background; each step shows below as it finishes.",
+        { section, runId: r.runId },
+      );
+    } catch (err) {
+      if (err instanceof TaxonomyRunError) return taxonomyResult(false, err.message, { section });
+      throw err;
+    }
+  },
+
+  taxonomy_refresh: async ({ locals, request }) => taxonomyDispatch(locals, request, "new"),
+  taxonomy_retry: async ({ locals, request }) => taxonomyDispatch(locals, request, "unfinished"),
+
   queue_external_load: async ({ locals, request }) => {
     if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
     const f = await request.formData();

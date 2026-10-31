@@ -781,8 +781,47 @@ export async function countries(apiKey: string): Promise<CachedResult<EbirdRegio
 
 /** Full taxonomy pull, validated before atomic replacement. */
 export async function syncTaxonomy(apiKey: string, requesterId: number): Promise<number> {
- const payload = await ebirdFetch<unknown>('/ref/taxonomy/ebird?fmt=json', apiKey, { deadlineMs: 180_000 });
+ const payload = await fetchTaxonomyPayload(apiKey);
  return replaceTaxonomy(payload, requesterId);
+}
+
+/**
+ * The full eBird taxonomy, unvalidated (parseTaxonomy validates it). With a
+ * version, that version exactly (probed 2026-10-30: `version=2026` and
+ * `version=2025` each return their own edition; an unknown version returns
+ * [], which parseTaxonomy refuses as empty).
+ */
+export async function fetchTaxonomyPayload(apiKey: string, version: string | null = null): Promise<unknown> {
+ const pin = version ? `&version=${encodeURIComponent(version)}` : '';
+ return ebirdFetch<unknown>(`/ref/taxonomy/ebird?fmt=json${pin}`, apiKey, { deadlineMs: 180_000 });
+}
+
+/** eBird's latest taxonomy version, asked now (never cached): what a sync records. */
+export async function fetchLatestTaxonomyVersion(apiKey: string): Promise<string | null> {
+ return latestVersionOf(await ebirdFetch<unknown>('/ref/taxonomy/versions', apiKey));
+}
+
+/**
+ * eBird's latest taxonomy version (td-6093ae): the one entry of
+ * /ref/taxonomy/versions with latest:true, e.g. 2026 or 2021.01. Its real
+ * response (probed 2026-10-30) is [{authorityVer: number, latest: boolean}, …]
+ * newest first. Anything else, or not exactly one latest entry, is null:
+ * the version is then "unknown", never guessed. Cached for a day: for the
+ * card's status line only, never for what a sync records.
+ */
+export async function latestTaxonomyVersion(apiKey: string): Promise<string | null> {
+ const result = await cachedFetch('taxonomy:versions', 24 * 60,
+  () => ebirdFetch<unknown>('/ref/taxonomy/versions', apiKey),
+  (value) => value);
+ return latestVersionOf(result.data);
+}
+
+export function latestVersionOf(value: unknown): string | null {
+ if (!Array.isArray(value)) return null;
+ const latest = value.filter((v) => v && typeof v === 'object' && (v as { latest?: unknown }).latest === true);
+ if (latest.length !== 1) return null;
+ const ver = (latest[0] as { authorityVer?: unknown }).authorityVer;
+ return typeof ver === 'number' && Number.isFinite(ver) ? String(ver) : null;
 }
 
 export async function taxonomyCount(): Promise<number> {

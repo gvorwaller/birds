@@ -692,7 +692,7 @@ export async function importLifeList(
 ): Promise<SyncResult> {
 	const matcher = await buildMatcher();
 	if (matcher.taxonomySize === 0) {
-		throw new Error('Taxonomy cache is empty — run the taxonomy sync first (Settings).');
+		throw new Error('The taxonomy is empty: an admin needs to run the taxonomy refresh first (Admin → Taxonomy).');
 	}
 
 	const seen = new Map<string, LifeListRow>(); // code → CSV row (details ride along)
@@ -811,7 +811,7 @@ export function partialImportNote(r: Pick<SyncResult, 'unmatchedSpecies' | 'reta
 		: '';
 	return (
 		`${n} species from eBird didn't match this app's species list (${list(r.unmatchedSpecies)}).${kept} ` +
-		`eBird has probably updated its taxonomy: run Sync taxonomy in Settings, then sync your life list again. ` +
+		`eBird has probably updated its taxonomy: an admin refreshes it in Admin → Taxonomy, then sync your life list again. ` +
 		`If the same names keep appearing, tell the admin.`
 	);
 }

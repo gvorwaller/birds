@@ -189,6 +189,9 @@ export const dedupKeys = {
   retryLoc: (locCode: string) => `retry_loc:${locCode}`,
   syncLifelist: (userId: number) => `sync_lifelist:u${userId}`,
   syncTaxonomy: () => "sync_taxonomy:global",
+  // td-6093ae: one key per refresh batch; a batch's locations never change.
+  taxonomyRefresh: (runId: number, batchNo: number) =>
+    `taxonomy_refresh:${runId}:${batchNo}`,
   scanNeedAlerts: () => "scan_need_alerts:global",
   // Content-hashed per chunk (CODEX1 plan #2): identical chunk dedups,
   // different codes are distinct jobs — a constant key would silently drop

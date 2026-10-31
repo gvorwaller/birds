@@ -24,7 +24,9 @@ import { isSubnational1 } from '$lib/region-code';
 import { frequencyMeta, attemptMeta, lastCompleteYear } from '$server/barchart';
 import { env } from '$env/dynamic/private';
 import { query, queryTimed } from '$lib/db';
-import { getEbirdApiKey, notableNearbyObs, syncTaxonomy, EbirdError } from '$server/ebird';
+import { getEbirdApiKey, notableNearbyObs, fetchTaxonomyPayload, fetchLatestTaxonomyVersion, EbirdError } from '$server/ebird';
+import { defaultReplace, runTaxonomyRun } from '$server/taxonomy-refresh';
+import { buildMatcher } from '$server/species-match';
 import { seenSet } from '$server/needs';
 import { sendWebPush, PushError, type PushSubscriptionRow } from '$server/push';
 import {
@@ -2791,21 +2793,29 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 				return;
 			}
 			case 'sync_taxonomy': {
-				await runSyncJob(job, async () => {
-					const apiKey = await getEbirdApiKey(job.requested_by);
-					if (!apiKey) {
-						throw new EbirdLoginError('An eBird API key is required — add one in Settings.');
-					}
-					const orphansBefore = await lifeListOrphans();
-					const taxa = await syncTaxonomy(apiKey, job.requested_by);
-					// td-b52a90: life-list codes the new taxonomy retired (splits/lumps).
-					// Counts only; each owner sees their own codes on /life.
-					const lifeListOrphansAfter = await lifeListOrphans();
-					const rematch = await rematchPhotoLinks();
-					const metadata = await taxonomySummary();
-					await ensureFamilyEnrichment(true);
-                    return { taxa, metadata: { species: metadata.total, classified: metadata.total-metadata.missing, ordered: metadata.ordered, withBandingCodes: metadata.banding }, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched, lifeListOrphans: { before: orphansBefore.rows, after: lifeListOrphansAfter.rows, users: lifeListOrphansAfter.users } };
-				});
+				// td-6093ae: one Admin → Taxonomy refresh run, resumed stage by stage.
+				await runSyncJob(job, () =>
+					runTaxonomyRun(job, {
+						apiKey: async () => {
+							const apiKey = await getEbirdApiKey(job.requested_by);
+							if (!apiKey) throw new EbirdLoginError('An eBird API key is required — add one in Settings.');
+							return apiKey;
+						},
+						fetchTaxonomy: fetchTaxonomyPayload,
+						latestVersion: fetchLatestTaxonomyVersion,
+						replace: defaultReplace,
+						matcher: buildMatcher,
+						finish: async () => {
+							// td-b52a90: life-list codes the new taxonomy retired (splits/lumps).
+							// Counts only; each owner sees their own codes on /life.
+							const orphans = await lifeListOrphans();
+							const rematch = await rematchPhotoLinks();
+							const metadata = await taxonomySummary();
+							await ensureFamilyEnrichment(true);
+							return { metadata: { species: metadata.total, classified: metadata.total - metadata.missing, ordered: metadata.ordered, withBandingCodes: metadata.banding }, photosMatched: rematch.matched, photosUnmatched: rematch.unmatched, lifeListOrphans: { rows: orphans.rows, users: orphans.users } };
+						}
+					})
+				);
 				return;
 			}
 			default:

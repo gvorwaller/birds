@@ -204,7 +204,8 @@ const syncMocks = vi.hoisted(() => {
     syncLifeListFromEbird: vi.fn<(userId: number) => Promise<{ total: number; matched: number; unmatched: string[]; unmatchedSpecies: string[]; retained: string[] }>>(),
     lifeListOrphans: vi.fn<() => Promise<{ rows: number; users: number; sample: string[] }>>(async () => ({ rows: 0, users: 0, sample: [] })),
     getEbirdApiKey: vi.fn<(userId: number) => Promise<string | null>>(async () => "key"),
-    syncTaxonomy: vi.fn<(apiKey: string) => Promise<number>>(async () => 42),
+    fetchTaxonomyPayload: vi.fn<(apiKey: string) => Promise<unknown>>(async () => [{ speciesCode: "x1" }]),
+    fetchLatestTaxonomyVersion: vi.fn<(apiKey: string) => Promise<string | null>>(async () => "2026"),
     rematchPhotoLinks: vi.fn<() => Promise<{ matched: number; unmatched: number }>>(
       async () => ({ matched: 5, unmatched: 1 }),
     ),
@@ -241,8 +242,26 @@ vi.mock("$server/ebird-account", () => ({
 vi.mock("$server/ebird", () => ({
   EbirdError: syncMocks.FakeEbirdError,
   getEbirdApiKey: syncMocks.getEbirdApiKey,
-  syncTaxonomy: syncMocks.syncTaxonomy,
+  fetchTaxonomyPayload: syncMocks.fetchTaxonomyPayload,
+  fetchLatestTaxonomyVersion: syncMocks.fetchLatestTaxonomyVersion,
   notableNearbyObs: syncMocks.notableNearbyObs,
+}));
+// td-6093ae: the run's stages have their own tests (taxonomy-refresh*.test.ts).
+// Here a stand-in drives the dependencies the handler wires in, so these
+// tests cover that wiring and runSyncJob's error classification.
+vi.mock("$server/taxonomy-refresh", () => ({
+  defaultReplace: vi.fn(),
+  runTaxonomyRun: vi.fn(async (job: { requested_by: number }, deps: {
+    apiKey: () => Promise<string>;
+    fetchTaxonomy: (k: string, version: string | null) => Promise<unknown>;
+    latestVersion: (k: string) => Promise<string | null>;
+    finish: () => Promise<Record<string, unknown>>;
+  }) => {
+    const key = await deps.apiKey();
+    const version = await deps.latestVersion(key);
+    await deps.fetchTaxonomy(key, version);
+    return { runId: 1, stage: "done", version, requester: job.requested_by, ...(await deps.finish()) };
+  }),
 }));
 vi.mock("$server/gallery", () => ({
   rematchPhotoLinks: syncMocks.rematchPhotoLinks,
@@ -1264,7 +1283,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
 
     vi.clearAllMocks();
     mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
-    syncMocks.syncTaxonomy.mockRejectedValueOnce(
+    syncMocks.fetchTaxonomyPayload.mockRejectedValueOnce(
       new syncMocks.FakeEbirdError("too many requests", 429),
     );
     await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
@@ -1275,7 +1294,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
     for (const status of [401, 403]) {
       vi.clearAllMocks();
       mocks.updateProgress.mockResolvedValue({ cancelRequested: false });
-      syncMocks.syncTaxonomy.mockRejectedValueOnce(
+      syncMocks.fetchTaxonomyPayload.mockRejectedValueOnce(
         new syncMocks.FakeEbirdError("eBird rejected the API key", status),
       );
       await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
@@ -1285,7 +1304,7 @@ describe("runJob — sync jobs (Phase 3)", () => {
   });
 
   it("an EbirdError 5xx retries as transient", async () => {
-    syncMocks.syncTaxonomy.mockRejectedValueOnce(
+    syncMocks.fetchTaxonomyPayload.mockRejectedValueOnce(
       new syncMocks.FakeEbirdError("eBird 502", 502),
     );
     await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
@@ -1294,18 +1313,20 @@ describe("runJob — sync jobs (Phase 3)", () => {
     expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
-  it("sync_taxonomy success → taxa + photo re-match counts + life-list orphan audit", async () => {
-    syncMocks.lifeListOrphans
-      .mockResolvedValueOnce({ rows: 0, users: 0, sample: [] })
-      .mockResolvedValueOnce({ rows: 2, users: 1, sample: ["oldcode1", "oldcode2"] });
+  it("sync_taxonomy success → the run's result + photo re-match counts + life-list orphan audit", async () => {
+    syncMocks.lifeListOrphans.mockResolvedValueOnce({ rows: 2, users: 1, sample: ["oldcode1", "oldcode2"] });
     await runJob(jobRow({ type: "sync_taxonomy" }), ctx);
-    expect(syncMocks.syncTaxonomy).toHaveBeenCalledWith("key", 7); // requester owns any tag_repair job (td-894144 rev 21)
+    expect(syncMocks.getEbirdApiKey).toHaveBeenCalledWith(7); // the requester's own key
+    expect(syncMocks.fetchTaxonomyPayload).toHaveBeenCalledWith("key", "2026"); // pinned to the version recorded
     expect(mocks.completeJob.mock.calls[0][2]).toEqual({
-      taxa: 42,
+      runId: 1,
+      stage: "done",
+      version: "2026",
+      requester: 7, // owns any tag_repair job (td-894144 rev 21)
       metadata: {species:40,classified:38,ordered:38,withBandingCodes:10},
       photosMatched: 5,
       photosUnmatched: 1,
-      lifeListOrphans: { before: 0, after: 2, users: 1 },
+      lifeListOrphans: { rows: 2, users: 1 },
     });
   });
 

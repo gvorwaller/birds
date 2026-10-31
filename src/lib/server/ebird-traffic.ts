@@ -61,6 +61,7 @@ export const ENDPOINT_LABELS: Record<string, string> = {
   "hotspot/info": "One hotspot's details",
   "region/list": "Region lists",
   "taxonomy": "Taxonomy",
+  "taxonomy/versions": "Taxonomy versions",
   "web/barchart": "Bar charts (frequency loads)",
   "web/lifelist": "Life list download",
   "web/checklist": "Checklist pages",
@@ -84,6 +85,7 @@ const API_RULES: [RegExp, string][] = [
   [/^\/ref\/hotspot\/[^/]+$/, "hotspot/region"],
   [/^\/ref\/region\/list\/[^/]+\/[^/]+$/, "region/list"],
   [/^\/ref\/taxonomy\/ebird$/, "taxonomy"],
+  [/^\/ref\/taxonomy\/versions$/, "taxonomy/versions"],
 ];
 
 /** The endpoint name for an api.ebird.org/v2 path (query string ignored). */
@@ -127,6 +129,7 @@ export const CACHE_KEY_ENDPOINTS: Record<string, string> = {
   hotspotsRegion: "hotspot/region",
   hotspots: "hotspot/geo",
   regions: "region/list",
+  taxonomy: "taxonomy/versions",
 };
 
 export function classifyCacheKey(cacheKey: string): string {

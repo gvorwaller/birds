@@ -178,7 +178,7 @@ describe("split survival: which unmatched names mean taxonomy drift (td-b52a90)"
     expect(note).toContain("A Bird, B Bird, C Bird, …");
     expect(note).toContain("Kept from your earlier list so nothing is lost: Old Bird (1)");
     expect(note).toContain("may include a bird you've since removed on eBird");
-    expect(note).toContain("Sync taxonomy");
+    expect(note).toContain("Admin → Taxonomy");
   });
 });
 

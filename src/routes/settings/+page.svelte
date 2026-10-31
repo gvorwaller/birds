@@ -622,17 +622,16 @@
           {#if data.taxonomyNewest}· last synced {new Date(
               data.taxonomyNewest,
             ).toLocaleString()}{/if}
-          — needed for species matching. Re-sync quarterly.
+          — needed for species matching.
+          <!-- td-6093ae: only the admin refresh syncs it, so a backup always comes first. -->
+          {#if data.isAdmin}
+            eBird updates it once a year; refresh it in
+            <a href="/admin?tab=taxonomy">Admin → Taxonomy</a>.
+          {:else}
+            An admin refreshes it once a year, when eBird updates it.
+          {/if}
         </div>
       </div>
-      <form method="POST" action="?/sync_taxonomy" use:enhance={track("tax")}>
-        <button
-          type="submit"
-          disabled={busy === "tax" || !data.ebird.api_key_set}
-        >
-          {busy === "tax" ? "Queueing…" : "⟳ Sync"}
-        </button>
-      </form>
     </div>
     <div class="obs">
       <div class="grow">
