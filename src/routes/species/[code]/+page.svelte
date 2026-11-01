@@ -99,6 +99,8 @@
   // --- Species enrichment (About card) ------------------------------------
   let aboutExpanded = $state(false);
   let refreshBusy = $state(false);
+  /** The last enrichment form pressed was the header's Refresh: its result shows there. */
+  let flashAtHead = $state(false);
   let ribbonExpanded = $state(true);
   let similarExpanded = $state(true);
   // Every other card folds too (td-d16c18), open on each new species.
@@ -577,6 +579,37 @@
         <SpeciesViewed code={data.taxon.species_code} accountId={data.user.id} />
       {/key}
     {/if}
+    <!-- One fixed place for every species, filled in or not: it used to sit at the
+         foot of Finding this bird or About, and was missing when neither existed. -->
+    {#if data.isAdmin && data.taxon.category === 'species'}
+      <form
+        method="POST"
+        action="?/refresh_enrichment"
+        class="admin-refresh"
+        use:enhance={() => {
+          refreshBusy = true;
+          flashAtHead = true;
+          return async ({ update }) => {
+            try {
+              await update();
+            } finally {
+              refreshBusy = false;
+            }
+          };
+        }}
+        aria-busy={refreshBusy}
+      >
+        <button type="submit" class="secondary" disabled={refreshBusy}>
+          {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
+        </button>
+      </form>
+      {#if flashAtHead && form && "message" in form && form.message}
+        <p class="ok" role="status">{form.message}</p>
+      {/if}
+      {#if flashAtHead && form && "error" in form && form.error}
+        <p class="err" role="alert">{form.error}</p>
+      {/if}
+    {/if}
   </header>
 
   <nav class="on-page" aria-label="On this page">
@@ -653,10 +686,10 @@
   {#if hasFieldCraft}
     <details class="card fold" bind:open={cardOpen.finding}>
       <summary><h2 id="finding-this-bird" class="section-target" tabindex="-1">Finding this bird</h2></summary>
-      {#if form && "message" in form && form.message}
+      {#if !flashAtHead && form && "message" in form && form.message}
         <p class="ok" role="status">{form.message}</p>
       {/if}
-      {#if form && "error" in form && form.error}
+      {#if !flashAtHead && form && "error" in form && form.error}
         <p class="err" role="alert">{form.error}</p>
       {/if}
       <p class="fieldcraft">{en?.field_craft}</p>
@@ -718,27 +751,6 @@
         ·
         <a class="path-focus-target" id="species-browse-field-guide-craft" href={withReturnTo("/species", speciesContextHref, undefined, data.taxon.com_name)} onclick={adopt("Field guide", "species-browse-field-guide-craft")}>Browse field guide →</a>
       </p>
-      {#if data.isAdmin}
-        <form
-          method="POST"
-          action="?/refresh_enrichment"
-          use:enhance={() => {
-            refreshBusy = true;
-            return async ({ update }) => {
-              try {
-                await update();
-              } finally {
-                refreshBusy = false;
-              }
-            };
-          }}
-          aria-busy={refreshBusy}
-        >
-          <button type="submit" class="secondary" disabled={refreshBusy}>
-            {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
-          </button>
-        </form>
-      {/if}
     </details>
   {/if}
 
@@ -1172,9 +1184,9 @@
           </span>
         {/if}
       </h2></summary>
-      <!-- Refresh flash lives with the refresh button: here only when the
-           Finding card (which owns the button then) doesn't exist (GROK). -->
-      {#if !hasFieldCraft}
+      <!-- The Load Wikipedia notes flash: here only when the Finding card
+           doesn't exist (GROK). The refresh flash shows beside its button. -->
+      {#if !hasFieldCraft && !flashAtHead}
         {#if form && "message" in form && form.message}
           <p class="ok" role="status">{form.message}</p>
         {/if}
@@ -1279,6 +1291,7 @@
           action="?/load_enrichment"
           use:enhance={() => {
             refreshBusy = true;
+            flashAtHead = false;
             return async ({ update }) => {
               try {
                 await update();
@@ -1299,27 +1312,6 @@
           Adds Wikipedia notes to the shared field guide. Your sightings won't
           change.
         </p>
-      {/if}
-      {#if data.isAdmin && en?.wiki_fetched_at && !hasFieldCraft}
-        <form
-          method="POST"
-          action="?/refresh_enrichment"
-          use:enhance={() => {
-            refreshBusy = true;
-            return async ({ update }) => {
-              try {
-                await update();
-              } finally {
-                refreshBusy = false;
-              }
-            };
-          }}
-          aria-busy={refreshBusy}
-        >
-          <button type="submit" class="secondary" disabled={refreshBusy}>
-            {refreshBusy ? "Refreshing…" : "↻ Refresh species data"}
-          </button>
-        </form>
       {/if}
     </details>
   {/if}
