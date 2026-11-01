@@ -8,6 +8,7 @@
 	 * Server-rendered from the admin page load; every action re-checks admin.
 	 */
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import type { ActionResult, SubmitFunction } from '@sveltejs/kit';
 	import { onMount, tick } from 'svelte';
 	import { jobsPoll } from '$lib/job-poll.svelte';
@@ -42,13 +43,14 @@
 	];
 	const REASON: Record<string, string> = {
 		no_match: 'no eBird species with this scientific name',
-		ambiguous: 'more than one eBird species has this scientific name',
+		ambiguous: 'more than one eBird species has, or had, this scientific name',
 		override_code_missing: 'its override names a code no longer in the eBird taxonomy'
 	};
 
 	const METHOD: Record<string, string> = {
 		scientific: 'matched by the same scientific name',
 		subspecies: 'matched as the species eBird reports this subspecies as',
+		former_name: 'matched by a scientific name eBird used before',
 		override: 'your match'
 	};
 	// The "Find a taxon" box filters in the browser; without JavaScript the whole list shows.
@@ -396,7 +398,8 @@
 				{/if}
 			</details>
 
-			<details class="sec">
+			<!-- td-493c58: Admin → Taxonomy links here for taxa a re-match lost. -->
+			<details class="sec" id={`${at}-unmatched`} open={page.url.searchParams.get('unmatched') === s.id}>
 				<summary><h4>Unmatched taxa <span class="muted">({s.unmatched.length})</span></h4></summary>
 				{@render notice(`${at}:unmatched`)}
 				{#if s.unmatched.length === 0}
@@ -531,7 +534,10 @@
 									<strong>{#if m.localName}{`${m.localName} · `}{/if}<i>{m.canonicalName}</i></strong>
 									<span>→ {m.comName ?? m.speciesCode}</span>
 								</div>
-								<p class="muted">{n(m.reports)} reports · {METHOD[m.method] ?? m.method}</p>
+								<p class="muted">
+									{n(m.reports)} reports · {METHOD[m.method] ?? m.method}{#if m.method === 'former_name' && m.sciName}; eBird
+										now calls it <i>{m.sciName}</i>{/if}
+								</p>
 								<details>
 									<summary>Change</summary>
 									<form

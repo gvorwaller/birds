@@ -444,6 +444,8 @@ describe.skipIf(!dbUp)("taxonomy refresh (td-6093ae)", () => {
         },
         matcher: async () => fixtureMatcher({}),
         earlierRuns: runIds,
+        // No external source here (taxonomy-sources-db.test.ts owns those).
+        sources: [],
         ...over,
       };
       return { d, calls };

@@ -54,7 +54,9 @@ export interface AdminMatched {
 	localName: string | null;
 	speciesCode: string;
 	comName: string | null;
-	/** How it was matched: 'scientific' | 'subspecies' | 'override'. */
+	/** eBird's scientific name for the species today (shown for a former-name match). */
+	sciName: string | null;
+	/** How it was matched: 'scientific' | 'subspecies' | 'former_name' | 'override'. */
 	method: string;
 	/** Stored reports (td-769300 records) for the taxon, across loaded regions. */
 	reports: number;
@@ -204,10 +206,11 @@ export async function adminSources(): Promise<AdminSource[]> {
 				local_name: string | null;
 				species_code: string;
 				com_name: string | null;
+				sci_name: string | null;
 				match_reason: string;
 				reports: string;
 			}>(
-				`SELECT x.upstream_taxon_id, x.canonical_name, x.local_name, x.species_code, t.com_name, x.match_reason,
+				`SELECT x.upstream_taxon_id, x.canonical_name, x.local_name, x.species_code, t.com_name, t.sci_name, x.match_reason,
 				        COALESCE(r.n, 0) AS reports
 				   FROM external_taxa x
 				   LEFT JOIN taxonomy_cache t ON t.species_code = x.species_code
@@ -301,6 +304,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 					localName: m.local_name,
 					speciesCode: m.species_code,
 					comName: m.com_name,
+					sciName: m.sci_name,
 					method: m.match_reason,
 					reports: Number(m.reports)
 				}))

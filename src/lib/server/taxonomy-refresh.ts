@@ -21,6 +21,15 @@ import { insertJobOn } from '$server/jobs';
 import { dedupKeys, type JobRow } from '$server/job-policy';
 import { parseTaxonomy, replaceTaxonomy, type TaxonomyEntry } from '$server/taxonomy-sync';
 import type { TagWriteTx } from '$server/tag-engine/runtime';
+import {
+	copySourceBaselines,
+	rematchSourcesForRun,
+	sourceChanges,
+	sourcesPending,
+	sourceSummaries,
+	type SourceChangeRow,
+	type SourceRematchSummary
+} from '$server/taxonomy-sources';
 
 // ── taxa and their changes (pure) ──────────────────────────────────────────
 
@@ -230,6 +239,16 @@ async function openRun(c: pg.PoolClient): Promise<{ id: number; job_id: number |
 const SYNC_LABEL = 'eBird taxonomy: back up, sync and compare';
 
 /**
+ * Serializes admitting a run (startOrResumeRun) with Admin → Taxonomy
+ * "Re-match sources" (td-493c58, CODEX1): while a re-match of the newest run
+ * holds it, no newer run can be created, so none can replace the taxonomy
+ * underneath it. Taken before any other lock.
+ */
+async function lockRunAdmission(c: Pick<pg.PoolClient, 'query'>): Promise<void> {
+	await c.query(`SELECT pg_advisory_xact_lock(hashtext('taxonomy-run-admission'))`);
+}
+
+/**
  * Start a run, or resume the open one ("Try again"), and queue its job, in
  * one transaction. A new run is refused while one is open: it would back up
  * a taxonomy the open run may already have replaced.
@@ -239,6 +258,7 @@ export async function startOrResumeRun(
 	actorLabel: string
 ): Promise<{ runId: number; jobId: number | null; resumed: boolean; alreadyRunning: boolean }> {
 	return withTransaction(async (c) => {
+		await lockRunAdmission(c);
 		const open = await openRun(c);
 		if (open) {
 			const active = open.job_id
@@ -289,6 +309,8 @@ export interface RunDeps {
 	matcher: () => Promise<{ match(name: string): { code: string } | null }>;
 	/** Earlier runs a comparison may carry over and supersede; default all. Tests scope it. */
 	earlierRuns?: number[];
+	/** External sources whose matches are kept and re-matched (td-493c58); default every active one. Tests scope it. */
+	sources?: readonly string[];
 }
 
 export const defaultReplace: RunDeps['replace'] = (payload, requesterId, onApplied) =>
@@ -305,7 +327,12 @@ async function backupRows(c: pg.PoolClient, backupId: number): Promise<TaxonRow[
 }
 
 /** Back up taxonomy_cache for a run, once per kind; a retry reuses it. */
-async function takeBackup(runId: number, kind: 'before_sync' | 'after_sync', version: string | null): Promise<number> {
+async function takeBackup(
+	runId: number,
+	kind: 'before_sync' | 'after_sync',
+	version: string | null,
+	sources: readonly string[] | null = null
+): Promise<number> {
 	return withClaimTx(
 		async (c) => {
 			const existing = await c.query<{ id: string }>(
@@ -328,6 +355,8 @@ async function takeBackup(runId: number, kind: 'before_sync' | 'after_sync', ver
 					   FROM taxonomy_cache`,
 					[id]
 				);
+				// td-493c58: the external sources' matches as they stand before the sync.
+				if (kind === 'before_sync') await copySourceBaselines(c, runId, 'before_sync', sources);
 			}
 			const column = kind === 'before_sync' ? 'before_id' : 'after_id';
 			const next = kind === 'before_sync' ? 'backed_up' : 'after_backed_up';
@@ -362,7 +391,7 @@ export async function runTaxonomyRun(job: JobRow, deps: RunDeps): Promise<Record
 	if (!run) throw new TaxonomyRunError('Taxonomy run not found.');
 	try {
 		if (run.stage === 'started') {
-			await takeBackup(runId, 'before_sync', null);
+			await takeBackup(runId, 'before_sync', null, deps.sources ?? null);
 			run = (await getRun(runId))!;
 		}
 		if (run.stage === 'backed_up') {
@@ -394,7 +423,9 @@ export async function runTaxonomyRun(job: JobRow, deps: RunDeps): Promise<Record
 		}
 		let finished: Record<string, unknown> = {};
 		if (run.stage === 'compared') {
-			finished = await deps.finish();
+			// td-493c58: external sources follow the new taxonomy before the run is done.
+			const sources = await rematchSourcesForRun(runId, { sources: deps.sources });
+			finished = { ...(await deps.finish()), sources: compactSources(sources) };
 			await withClaimTx(
 				(c) => c.query(`UPDATE taxonomy_runs SET stage = 'done', failed_stage = NULL, error = NULL WHERE id = $1`, [runId]),
 				{ where: 'taxonomy run done' }
@@ -416,6 +447,13 @@ export async function runTaxonomyRun(job: JobRow, deps: RunDeps): Promise<Record
 }
 
 /** The stage a run was working on when it failed. */
+/** The job result's per-source counts (never rows). */
+function compactSources(list: SourceRematchSummary[]): Record<string, Record<string, number>> {
+	return Object.fromEntries(
+		list.map((s) => [s.sourceId, { moved: s.moved, lost: s.lost, gained: s.gained, keptFormer: s.keptFormer }])
+	);
+}
+
 function nextStage(stage: RunStage): RunStage | null {
 	const i = RUN_STAGES.indexOf(stage);
 	return i >= 0 && i < RUN_STAGES.length - 1 ? RUN_STAGES[i + 1] : null;
@@ -810,7 +848,15 @@ export interface TaxonomyPanelData {
 	current: { taxa: number; syncedAt: string | null; version: string | null };
 	/** eBird's latest version; null when unknown. */
 	latest: string | null;
-	run: (TaxonomyRun & { changes: TaxonomyChangeRow[]; progress: RefreshProgress; jobActive: boolean }) | null;
+	run:
+		| (TaxonomyRun & {
+				changes: TaxonomyChangeRow[];
+				progress: RefreshProgress;
+				jobActive: boolean;
+				/** td-493c58: each external source's re-match for this run. */
+				sources: { summaries: SourceRematchSummary[]; changes: SourceChangeRow[]; canRematch: boolean };
+		  })
+		| null;
 	history: TaxonomyHistoryRow[];
 	backups: TaxonomyBackupRow[];
 	/** null when it could not be counted (never shown as zero). */
@@ -870,7 +916,23 @@ export async function taxonomyPanel(opts: {
 			  ORDER BY affects DESC, locations DESC, coalesce(new_com_name, old_com_name), taxon_code`,
 			[base.id]
 		);
-		run = { ...base, changes: changes.rows, progress: await refreshProgress(base.id), jobActive: await jobActive(base.job_id) };
+		const [summaries, srcChanges, pending] = await Promise.all([
+			sourceSummaries(base.id),
+			sourceChanges(base.id),
+			sourcesPending(base.id)
+		]);
+		run = {
+			...base,
+			changes: changes.rows,
+			progress: await refreshProgress(base.id),
+			jobActive: await jobActive(base.job_id),
+			sources: {
+				summaries,
+				changes: srcChanges,
+				// Only the newest run, once done (a compared run's finish re-matches itself).
+				canRematch: pending && base.stage === 'done' && base.id === rows[0]?.id
+			}
+		};
 	}
 	return {
 		current: { taxa: current.rows[0].taxa, syncedAt: current.rows[0].synced_at, version: ours.rows[0]?.v ?? null },
@@ -901,4 +963,29 @@ export async function taxonomyLiveStatus(runId: number): Promise<{
 		jobActive: await jobActive(run.job_id),
 		progress: await refreshProgress(runId)
 	};
+}
+
+/**
+ * Admin → Taxonomy "Re-match sources" (td-493c58): for the newest run once it
+ * is done (runs from before td-493c58 finished without re-matching). Each
+ * source's transaction takes the run-admission lock first and then re-checks
+ * the run, so no newer run can start (and replace the taxonomy) until it
+ * commits.
+ */
+export async function rematchSourcesNow(runId: number, sources?: readonly string[]): Promise<SourceRematchSummary[]> {
+	return rematchSourcesForRun(runId, {
+		sources,
+		guard: async (c) => {
+			await lockRunAdmission(c);
+			const r = await c.query<{ stage: RunStage; newer: boolean }>(
+				`SELECT stage, EXISTS (SELECT 1 FROM taxonomy_runs n WHERE n.id > r.id) AS newer
+				   FROM taxonomy_runs r WHERE r.id = $1 FOR SHARE`,
+				[runId]
+			);
+			const run = r.rows[0];
+			if (!run) throw new TaxonomyRunError('Taxonomy run not found.');
+			if (run.newer) throw new TaxonomyRunError('A newer taxonomy run exists: re-match from that run instead.');
+			if (run.stage !== 'done') throw new TaxonomyRunError('This run has not finished yet; it re-matches the sources itself.');
+		}
+	});
 }

@@ -42,6 +42,7 @@ import {
   hasEbirdLogin,
   startOrResumeRun,
   taxonomyPanel,
+  rematchSourcesNow,
   TaxonomyRunError,
 } from "$server/taxonomy-refresh";
 
@@ -344,7 +345,7 @@ async function taxonomyDispatch(locals: App.Locals, request: Request, mode: "new
 function taxonomyResult(
   ok: boolean,
   message: string,
-  opts: { status?: number; section: "tax-sync" | "tax-refresh"; runId?: number | null },
+  opts: { status?: number; section: "tax-sync" | "tax-refresh" | "tax-sources"; runId?: number | null },
 ) {
   const body = { kind: "taxonomy" as const, ok, message, section: opts.section, runId: opts.runId ?? null };
   return ok ? body : fail(opts.status ?? 400, body);
@@ -382,6 +383,28 @@ export const actions: Actions = {
 
   taxonomy_refresh: async ({ locals, request }) => taxonomyDispatch(locals, request, "new"),
   taxonomy_retry: async ({ locals, request }) => taxonomyDispatch(locals, request, "unfinished"),
+
+  // td-493c58: re-match the external sources for a run that finished before
+  // the run did so itself. Re-matching reads stored data only (no upstream fetch).
+  taxonomy_rematch_sources: async ({ locals, request }) => {
+    const section = "tax-sources" as const;
+    if (locals.user?.role !== "admin") return taxonomyResult(false, "Admins only.", { status: 403, section });
+    const runId = runIdFrom(await request.formData());
+    if (!runId) return taxonomyResult(false, "Unknown taxonomy run.", { section });
+    try {
+      const list = await rematchSourcesNow(runId);
+      const moved = list.reduce((n, s) => n + s.moved, 0);
+      const lost = list.reduce((n, s) => n + s.lost, 0);
+      return taxonomyResult(
+        true,
+        `Re-matched ${list.length} ${list.length === 1 ? "source" : "sources"}: ${moved} ${moved === 1 ? "taxon" : "taxa"} moved to another species, ${lost} lost. Details show below.`,
+        { section, runId },
+      );
+    } catch (err) {
+      if (err instanceof TaxonomyRunError) return taxonomyResult(false, err.message, { section, runId });
+      throw err;
+    }
+  },
 
   queue_external_load: async ({ locals, request }) => {
     if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);

@@ -1654,7 +1654,13 @@
 						Each step shows as it finishes; if one stops, <strong>Try again</strong>
 						continues from that step. Straight away the species list, names,
 						tags and photo matches switch to the new taxonomy, and a species
-						eBird removed stops appearing in forecasts until step 3.
+						eBird removed stops appearing in forecasts until step 3. Sightings
+						from other sources (such as Norway's Artsobservasjoner) are
+						re-matched too: a scientific name eBird no longer uses is followed
+						through the names eBird used before, so a bird moved to a new genus
+						keeps its species. <strong>Other sources</strong> on the run lists
+						what moved; a taxon left without a species is matched by hand in
+						Admin → Sources → Unmatched taxa.
 					</li>
 					<li>
 						<strong>Read the changes.</strong> Counts by kind (removed, added,

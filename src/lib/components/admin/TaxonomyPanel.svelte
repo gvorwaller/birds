@@ -34,7 +34,7 @@
 		{ stage: 'applied', label: "Fetch and apply eBird's taxonomy" },
 		{ stage: 'after_backed_up', label: 'Back up the new taxonomy' },
 		{ stage: 'compared', label: 'Compare them and list the locations to reload' },
-		{ stage: 'done', label: 'Finish: photo matches, families and tags' }
+		{ stage: 'done', label: 'Finish: other sources, photo matches, families and tags' }
 	];
 	const ORDER: RunStage[] = ['started', 'backed_up', 'applied', 'after_backed_up', 'compared', 'done'];
 	const KIND_LABEL: Record<ChangeKind, string> = {
@@ -217,6 +217,19 @@
 	);
 	const STATE_ORDER: LocationState[] = ['reloaded', 'queued', 'failed', 'unfinished', 'not_queued', 'removed'];
 	const left = $derived(progress ? progress.counts.failed + progress.counts.unfinished : 0);
+	const plural = (v: number, one: string, many: string) => `${n(v)} ${v === 1 ? one : many}`;
+	/** "Name (code)", or the code alone when no backup or today's taxonomy names it. */
+	const speciesLabel = (name: string | null, code: string) => (name ? `${name} (${code})` : code);
+	/** What happened to one source taxon between the baseline and the re-match. */
+	function sourceChange(c: { old_code: string | null; new_code: string | null }): {
+		tone: 'warn' | 'error' | 'ok' | 'neutral';
+		label: string;
+	} {
+		if (c.old_code && !c.new_code) return { tone: 'error', label: 'lost' };
+		if (!c.old_code && c.new_code) return { tone: 'ok', label: 'newly matched' };
+		if (c.old_code !== c.new_code) return { tone: 'warn', label: 'moved' };
+		return { tone: 'neutral', label: 'kept by former name' };
+	}
 </script>
 
 {#snippet notice(section: string)}
@@ -236,8 +249,9 @@
 		<ol class="steps">
 			<li>
 				Wait until eBird says its update is complete, then press <strong>Back up, sync and compare</strong>.
-				Straight away the app's species list, names, tags and photo matches switch to the new taxonomy. A
-				species eBird removed stops appearing in forecasts until its locations are reloaded (step 3).
+				Straight away the app's species list, names, tags and photo matches switch to the new taxonomy, and
+				sightings from other sources (such as Norway) are re-matched to it. A species eBird removed stops
+				appearing in forecasts until its locations are reloaded (step 3).
 			</li>
 			<li>Read the list of changes below.</li>
 			<li>
@@ -433,6 +447,87 @@
 								</ul>
 							</details>
 						{/if}
+					{/if}
+				</details>
+			{/if}
+
+			{#if run.sources.summaries.length > 0 || run.sources.canRematch}
+				<details class="sec" open id="tax-sources">
+					<summary>
+						<h4>Other sources</h4>
+						<span class="muted sum-note">{n(run.sources.summaries.length)}</span>
+					</summary>
+					<p class="muted">
+						Sightings from other sources (such as Norway's Artsobservasjoner) carry eBird species too. They are
+						re-matched to the new taxonomy; a scientific name eBird no longer uses is followed through the names
+						eBird used before, and left unmatched when eBird gives no single answer.
+					</p>
+					{#each run.sources.summaries as s (s.sourceId)}
+						<p>
+							<strong>{s.name}</strong>:
+							{#if s.rematchedAt}
+								{plural(s.moved, 'taxon', 'taxa')} moved to another species · {n(s.lost)} lost · {n(s.gained)} newly
+								matched · {n(s.keptFormer)} kept through a former eBird name
+							{:else}
+								not re-matched yet
+							{/if}
+						</p>
+						<p class="muted">
+							{#if s.baselineKind === 'before_sync'}
+								Compared with its matches from before the sync.
+							{:else}
+								Compared with its matches just before the re-match ({when(s.baselineAt)}): this run kept no
+								record from before the sync.
+							{/if}
+						</p>
+						{#if s.lost > 0}
+							<p>
+								<!-- A full load: the admin page picks its tab from the URL only when it loads,
+								     and the browser then scrolls to the opened section. -->
+								<a
+									href={`/admin?tab=sources&unmatched=${encodeURIComponent(s.sourceId)}#source-${s.sourceId}-unmatched`}
+									data-sveltekit-reload>Match the lost {s.lost === 1 ? 'taxon' : 'taxa'} in Admin → Sources → Unmatched taxa</a
+								>
+							</p>
+						{/if}
+					{/each}
+					{@render notice('tax-sources')}
+					{#if busy === 'sources'}<p class="muted" role="status">Re-matching; this can take a few seconds.</p>{/if}
+					{#if run.sources.canRematch}
+						<p class="muted">
+							{run.sources.summaries.some((s) => s.rematchedAt)
+								? 'A source has not been re-matched for this run yet.'
+								: 'This run finished before sources were re-matched with the taxonomy.'} Re-matching reads the
+							stored sightings only; nothing is fetched.
+						</p>
+						<form method="POST" action={actionUrl('taxonomy_rematch_sources', selected ? run.id : null)} use:enhance={act('sources', 'tax-sources')}>
+							<input type="hidden" name="run_id" value={run.id} />
+							<button type="submit" class="btn accent-solid" disabled={busy !== null}>
+								{busy === 'sources' ? 'Re-matching…' : 'Re-match sources'}
+							</button>
+						</form>
+					{/if}
+					{#if run.sources.changes.length > 0}
+						<details class="sec">
+							<summary><h5>Every changed taxon ({n(run.sources.changes.length)})</h5></summary>
+							<ul class="rows">
+								{#each run.sources.changes as c (`${c.source_id}|${c.upstream_taxon_id}|${c.canonical_name}`)}
+									{@const ch = sourceChange(c)}
+									<li>
+										<div class="line">
+											<strong>{c.local_name ?? c.canonical_name}</strong>
+											{#if c.local_name}<i>{c.canonical_name}</i>{/if}
+											<AdminBadge tone={ch.tone} label={ch.label} />
+										</div>
+										<p class="muted">
+											{c.old_code ? speciesLabel(c.old_com_name, c.old_code) : 'No eBird species'} →
+											{c.new_code ? speciesLabel(c.new_com_name, c.new_code) : 'no eBird species'}
+										</p>
+										{#if c.places > 0}<p class="muted">In {plural(c.places, 'place', 'places')}</p>{/if}
+									</li>
+								{/each}
+							</ul>
+						</details>
 					{/if}
 				</details>
 			{/if}

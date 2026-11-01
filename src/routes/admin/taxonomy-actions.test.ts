@@ -20,6 +20,7 @@ const m = vi.hoisted(() => {
     hasEbirdLogin: vi.fn(async () => true),
     startOrResumeRun: vi.fn(),
     dispatchRefresh: vi.fn(),
+    rematchSourcesNow: vi.fn(),
     taxonomyLiveStatus: vi.fn(),
   };
 });
@@ -30,6 +31,7 @@ vi.mock("$server/taxonomy-refresh", () => ({
   hasEbirdLogin: m.hasEbirdLogin,
   startOrResumeRun: m.startOrResumeRun,
   dispatchRefresh: m.dispatchRefresh,
+  rematchSourcesNow: m.rematchSourcesNow,
   taxonomyPanel: vi.fn(),
   taxonomyLiveStatus: m.taxonomyLiveStatus,
 }));
@@ -56,12 +58,13 @@ beforeEach(() => {
 
 describe("taxonomy actions", () => {
   it("refuse anyone but an admin, before doing anything", async () => {
-    for (const name of ["taxonomy_sync", "taxonomy_refresh", "taxonomy_retry"]) {
+    for (const name of ["taxonomy_sync", "taxonomy_refresh", "taxonomy_retry", "taxonomy_rematch_sources"]) {
       const r = await call(name, USER, { run_id: "3" });
       expect(r).toMatchObject({ status: 403, data: { kind: "taxonomy", ok: false } });
     }
     expect(m.startOrResumeRun).not.toHaveBeenCalled();
     expect(m.dispatchRefresh).not.toHaveBeenCalled();
+    expect(m.rematchSourcesNow).not.toHaveBeenCalled();
   });
 
   it("the sync needs the admin's eBird API key", async () => {
@@ -106,6 +109,26 @@ describe("taxonomy actions", () => {
       message: "This run has not finished comparing yet.",
     });
     expect(body(await call("taxonomy_refresh", ADMIN, { run_id: "x" }))).toMatchObject({ ok: false, message: "Unknown taxonomy run." });
+  });
+
+  it("re-matches sources for the posted run (td-493c58), with no eBird prerequisite, and explains a refusal", async () => {
+    m.getEbirdApiKey.mockResolvedValue(null);
+    m.hasEbirdLogin.mockResolvedValue(false);
+    m.rematchSourcesNow.mockResolvedValueOnce([{ sourceId: "artsobs", moved: 1, lost: 0, gained: 0, keptFormer: 5 }]);
+    expect(await call("taxonomy_rematch_sources", ADMIN, { run_id: "4" })).toEqual({
+      kind: "taxonomy",
+      ok: true,
+      message: "Re-matched 1 source: 1 taxon moved to another species, 0 lost. Details show below.",
+      section: "tax-sources",
+      runId: 4,
+    });
+    expect(m.rematchSourcesNow).toHaveBeenCalledWith(4);
+    m.rematchSourcesNow.mockRejectedValueOnce(new m.TaxonomyRunError("A newer taxonomy run exists: re-match from that run instead."));
+    expect(body(await call("taxonomy_rematch_sources", ADMIN, { run_id: "3" }))).toMatchObject({
+      ok: false,
+      message: "A newer taxonomy run exists: re-match from that run instead.",
+    });
+    expect(body(await call("taxonomy_rematch_sources", ADMIN, { run_id: "x" }))).toMatchObject({ ok: false, message: "Unknown taxonomy run." });
   });
 });
 

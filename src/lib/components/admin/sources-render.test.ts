@@ -6,8 +6,17 @@
  * without JavaScript an action's result shows at the top of the tab (the
  * per-section message needs the browser).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
+
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/admin?tab=sources') }));
+vi.mock('$app/state', () => ({
+	page: {
+		get url() {
+			return nav.url;
+		}
+	}
+}));
 import SourcesPanel from './SourcesPanel.svelte';
 import type { AdminSource } from '$server/external-sources/admin';
 
@@ -43,8 +52,19 @@ function source(over: Partial<AdminSource> = {}): AdminSource {
 				localName: 'kråke',
 				speciesCode: 'carcro1',
 				comName: 'Carrion Crow',
+				sciName: 'Corvus corone',
 				method: 'scientific',
 				reports: 4210
+			},
+			{
+				upstreamTaxonId: '3700',
+				canonicalName: 'Emberiza schoeniclus',
+				localName: 'sivspurv',
+				speciesCode: 'reebun',
+				comName: 'Reed Bunting',
+				sciName: 'Schoeniclus schoeniclus',
+				method: 'former_name',
+				reports: 204
 			}
 		],
 		overrides: [
@@ -126,5 +146,26 @@ describe('Admin → Sources folds (td-2219df)', () => {
 		expect(top).toBeGreaterThan(-1);
 		expect(top).toBeLessThan(body.indexOf('Artsobservasjoner'));
 		expect(body.indexOf(message, top + 1)).toBe(-1);
+	});
+});
+
+describe('Admin → Sources after a taxonomy re-match (td-493c58)', () => {
+	it("says when a match came through eBird's former name, and what eBird calls it now", () => {
+		const { body } = render(SourcesPanel, { props: { sources: [source()], form: null } });
+		const text = body.replace(/<!--[^>]*-->/g, '');
+		expect(text).toMatch(/matched by a scientific name eBird used before; eBird\s+now calls it <i>Schoeniclus schoeniclus<\/i>/);
+		expect(text.match(/now calls it/g)).toHaveLength(1);
+	});
+
+	it('opens Unmatched taxa when Admin → Taxonomy links to it', () => {
+		nav.url = new URL('http://localhost/admin?tab=sources&unmatched=artsobs');
+		try {
+			const { body } = render(SourcesPanel, { props: { sources: [source()], form: null } });
+			expect(body).toMatch(/<details class="sec[^"]*" id="source-artsobs-unmatched" open/);
+		} finally {
+			nav.url = new URL('http://localhost/admin?tab=sources');
+		}
+		const { body } = render(SourcesPanel, { props: { sources: [source()], form: null } });
+		expect(body).toMatch(/<details class="sec[^"]*" id="source-artsobs-unmatched">/);
 	});
 });
