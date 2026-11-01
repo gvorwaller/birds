@@ -24,7 +24,7 @@
     type StoredAlertReport,
   } from "$lib/alert-evidence";
   import { isHotspotLocId } from "$lib/loc-id";
-  import { page } from "$app/state";
+  import { navigating, page } from "$app/state";
   import { windowPhrase } from "$lib/time-windows";
   import { enhance } from "$app/forms";
   import { replaceState } from "$app/navigation";
@@ -193,6 +193,41 @@
     () => data.nearest,
     () => `${data.taxon.species_code}|nearest|${data.homeLat ?? ""}|${data.homeLng ?? ""}|${data.backDays}|${data.nearestKm}`,
   );
+
+  // td-07eb28: Check reloads this card and, for a new Window, Recent reports
+  // above it; both drop to placeholders while they load, so the controls would
+  // slide. Hold them where they were tapped until both have settled, or until
+  // the reader scrolls themselves.
+  let releaseNearestHold: (() => void) | null = null;
+  function holdNearestControls(form: HTMLFormElement) {
+    releaseNearestHold?.();
+    const startTop = form.getBoundingClientRect().top;
+    const started = performance.now();
+    let frame = 0;
+    let settledFrames = 0;
+    const release = () => {
+      cancelAnimationFrame(frame);
+      for (const type of ["touchstart", "wheel", "keydown"]) removeEventListener(type, release);
+      releaseNearestHold = null;
+    };
+    const step = () => {
+      if (!form.isConnected) return release();
+      const drift = form.getBoundingClientRect().top - startTop;
+      if (Math.abs(drift) > 1) window.scrollBy(0, drift);
+      const settled =
+        performance.now() - started > 300 &&
+        navigating.to == null &&
+        nearestView.current != null &&
+        nearbyView.current != null;
+      settledFrames = settled ? settledFrames + 1 : 0;
+      if (settledFrames > 10 || performance.now() - started > 30_000) return release();
+      frame = requestAnimationFrame(step);
+    };
+    for (const type of ["touchstart", "wheel", "keydown"]) addEventListener(type, release, { passive: true });
+    releaseNearestHold = release;
+    frame = requestAnimationFrame(step);
+  }
+  $effect(() => () => releaseNearestHold?.());
   // Stored alert lines wait until the live feeds have settled, then hide any
   // checklist those feeds already returned.
   const omittedAlerts = $derived.by((): StoredAlertReport[] => {
@@ -1046,7 +1081,9 @@
             label="cached"
           />{/if}
       </h2></summary>
-      <form method="GET" class="nearest-controls">
+      <!-- td-07eb28: a GET form navigates; without noscroll SvelteKit scrolls to the top,
+           and holdNearestControls keeps the controls still while the cards reload. -->
+      <form method="GET" class="nearest-controls" data-sveltekit-noscroll data-sveltekit-keepfocus onsubmit={(e) => holdNearestControls(e.currentTarget)}>
         <input type="hidden" name="nearest" value="1" />
         {#each nearestContextParams as [name, value]}
           <input type="hidden" {name} value={value} />
