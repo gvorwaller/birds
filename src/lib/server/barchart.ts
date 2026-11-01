@@ -716,6 +716,17 @@ interface EnsureOptions {
 	/** Refetch even when stored data is current (owner-triggered "Refresh"). */
 	force?: boolean;
 	/**
+	 * With force: a location stored at or after this time counts as current
+	 * (td-534b33). The worker passes the job's enqueued_at, so a retry never
+	 * downloads again what an earlier attempt of the same job already stored.
+	 */
+	forceSince?: Date;
+	/**
+	 * Cuts off the eBird download in flight (the worker's drain, td-534b33):
+	 * that location and the rest go to notAttempted, like any other stop.
+	 */
+	abortSignal?: AbortSignal;
+	/**
 	 * Per-unit callback for job progress/events. Invoked OUTSIDE the fetch
 	 * try/catch (CODEX1 #6): its failure must never convert a stored row into
 	 * a barchart failure.
@@ -734,7 +745,13 @@ interface EnsureOptions {
 	 */
 	shouldStop?: () => Promise<StopSignal>;
 	/** Injectable for tests: returns raw TSV text. */
-	fetcher?: (userId: number, locCode: string, beginYear: number, endYear: number) => Promise<string>;
+	fetcher?: (
+		userId: number,
+		locCode: string,
+		beginYear: number,
+		endYear: number,
+		signal?: AbortSignal
+	) => Promise<string>;
 	/** Injectable for tests: start-to-start pacing delay. */
 	sleep?: (ms: number) => Promise<void>;
 	now?: () => Date;
@@ -742,6 +759,16 @@ interface EnsureOptions {
 
 /** Stop starting new fetches once a batch has run this long (resumable). */
 export const BATCH_TIME_BUDGET_MS = 4 * 60_000;
+
+/**
+ * One bar-chart download may take this long (td-534b33). eBird builds the
+ * largest hotspots' charts (Everglades NP, Ottawa NWR, ...) in more than the
+ * usual 30 seconds; on prod (2026-11-01) each timed out at 30 s several
+ * times, then loaded in 7-25 s, so eBird finishes the chart after we give up.
+ * Typical downloads take 1 s (p99 36 s with retries). The worker's drain
+ * aborts a download in flight, so a deploy never waits on this limit.
+ */
+export const BARCHART_FETCH_TIMEOUT_MS = 120_000;
 // NOTE: there is deliberately NO in-memory lease anymore — serialization is
 // the worker queue (concurrency 1 + the Postgres advisory lock). And NO daily
 // fetch ceiling (removed 2026-08-15, GBV: "WTF is the logic behind that false
@@ -752,9 +779,24 @@ async function defaultFetcher(
 	userId: number,
 	locCode: string,
 	beginYear: number,
-	endYear: number
+	endYear: number,
+	signal?: AbortSignal
 ): Promise<string> {
-	return fetchAuthenticatedEbird(userId, barchartUrl(locCode, beginYear, endYear));
+	// One short-lived signal per download, linked to the caller's: combining
+	// the worker's weeks-long drain signal into every request would keep a
+	// listener on it per request.
+	const call = new AbortController();
+	const onAbort = () => call.abort(signal?.reason);
+	if (signal?.aborted) onAbort();
+	else signal?.addEventListener('abort', onAbort, { once: true });
+	try {
+		return await fetchAuthenticatedEbird(userId, barchartUrl(locCode, beginYear, endYear), {
+			timeout: BARCHART_FETCH_TIMEOUT_MS,
+			signal: call.signal
+		});
+	} finally {
+		signal?.removeEventListener('abort', onAbort);
+	}
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -797,8 +839,10 @@ export async function ensureFrequencies(
 
 	const meta = await frequencyMeta(locs.map((l) => l.code));
 	const current = (code: string) => {
-		if (opts.force) return false;
 		const m = meta.get(code);
+		if (opts.force) {
+			return m != null && opts.forceSince != null && m.fetchedAt.getTime() >= opts.forceSince.getTime();
+		}
 		return m != null && m.endYear >= endYear;
 	};
 	const toFetch = locs.filter((l) => !current(l.code));
@@ -853,7 +897,7 @@ export async function ensureFrequencies(
 		try {
 			let tsv: string;
 			try {
-				tsv = await fetcher(userId, loc.code, beginYear, endYear);
+				tsv = await fetcher(userId, loc.code, beginYear, endYear, opts.abortSignal);
 			} catch (err) { // stale-safe: rethrows every error that is not an eBird 5xx
 				// eBird's export throws one-off 5xxs (seen live on prod,
 				// 2026-08-14). One automatic retry after a short pause absorbs
@@ -867,7 +911,7 @@ export async function ensureFrequencies(
 						result.notAttempted.push(loc.code);
 						continue;
 					}
-					tsv = await fetcher(userId, loc.code, beginYear, endYear);
+					tsv = await fetcher(userId, loc.code, beginYear, endYear, opts.abortSignal);
 				} else {
 					throw err;
 				}
@@ -896,6 +940,14 @@ export async function ensureFrequencies(
 			// A lost claim (the fenced store refused) is not a unit failure:
 			// no failed-attempt row, no classification — stop the load.
 			if (isStaleClaim(err)) throw err;
+			// The caller cut the download off (drain): not a unit failure. The
+			// stop check records why, as at the top of the loop.
+			if (opts.abortSignal?.aborted) {
+				await shouldStop();
+				stopped = true;
+				result.notAttempted.push(loc.code);
+				continue;
+			}
 			let message = err instanceof Error ? err.message : String(err);
 			// A 23503 on frequency_fetch_region_fk (0045) means eBird knows a
 			// region this build's reference seed doesn't — classified HERE,

@@ -128,15 +128,18 @@ async function main(): Promise<void> {
 	let familyCheckedAt = Date.now();
 	let draining = false;
 	let currentJobId: number | null = null;
+	const drainAbort = new AbortController();
 	const ctx = {
 		isDraining: () => draining,
-		isPauseRequested: workerPauseRequested
+		isPauseRequested: workerPauseRequested,
+		drainSignal: drainAbort.signal
 	};
 	let reportedPaused = await workerPauseRequested();
 
 	const drain = (signal: string) => {
 		if (draining) return;
 		draining = true;
+		drainAbort.abort();
 		console.log(`[birds-worker] ${signal} received — draining`);
 		void setWorkerStatus(
 			{ pid: process.pid, version: VERSION, state: 'draining', currentJobId },

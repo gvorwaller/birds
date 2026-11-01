@@ -140,7 +140,8 @@ async function fetchWithJar(
 	url: string,
 	jar: CookieJar,
 	init?: RequestInit,
-	timeout?: number
+	timeout?: number,
+	signal?: AbortSignal
 ): Promise<Response> {
 	const t = timeout ?? EBIRD_FETCH_TIMEOUT_MS;
 	// eBird traffic metric (td-009031): every eBird web request and sign-in
@@ -155,7 +156,7 @@ async function fetchWithJar(
 		res = await fetch(url, {
 			...init,
 			redirect: 'manual',
-			signal: AbortSignal.timeout(t),
+			signal: signal ? AbortSignal.any([AbortSignal.timeout(t), signal]) : AbortSignal.timeout(t),
 			headers: { ...(init?.headers ?? {}), Cookie: jar.headerFor(url), 'User-Agent': UA }
 		});
 	} catch (err) { // stale-safe: counts the failed request, then rethrows it unchanged
@@ -206,7 +207,8 @@ async function followRedirects(
 	start: Response,
 	jar: CookieJar,
 	maxHops = 8,
-	timeout?: number
+	timeout?: number,
+	signal?: AbortSignal
 ): Promise<Response> {
 	let res = start;
 	let hops = 0;
@@ -214,7 +216,7 @@ async function followRedirects(
 		const loc = res.headers.get('location');
 		if (!loc) break;
 		const next = new URL(loc, res.url).toString();
-		res = await fetchWithJar(next, jar, undefined, timeout);
+		res = await fetchWithJar(next, jar, undefined, timeout, signal);
 		hops++;
 	}
 	return res;
@@ -427,24 +429,32 @@ export class EbirdUpstreamError extends Error {
  * login exactly once before failing with EbirdLoginError. An HTTP failure on
  * the requested host throws EbirdUpstreamError immediately — no re-login, no
  * credential blame.
+ *
+ * `timeout` replaces the 30-second limit for each request (td-534b33: the
+ * largest hotspots' bar charts take longer). `signal` lets the caller cut a
+ * request off (the worker's drain); that abort is rethrown as it is, never
+ * reported as eBird being slow.
  */
 export async function fetchAuthenticatedEbird(
 	userId: number,
 	url: string,
-	opts?: { timeout?: number }
+	opts?: { timeout?: number; signal?: AbortSignal }
 ): Promise<string> {
 	const target = new URL(url);
 	if (!AUTH_FETCH_ALLOWED_HOSTS.has(target.host)) {
 		throw new Error(`fetchAuthenticatedEbird refuses non-eBird host: ${target.host}`);
 	}
 	const t = opts?.timeout;
+	const signal = opts?.signal;
 
 	const doFetch = async (jar: CookieJar): Promise<Response> => {
 		try {
-			return await followRedirects(await fetchWithJar(url, jar, undefined, t), jar, 8, t);
+			return await followRedirects(await fetchWithJar(url, jar, undefined, t, signal), jar, 8, t, signal);
 		} catch (err) { // stale-safe: maps a timeout, rethrows everything else
+			if (signal?.aborted) throw err;
 			if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-				throw new EbirdUpstreamError('eBird did not respond within 30 seconds.', 504);
+				const seconds = Math.round((t ?? EBIRD_FETCH_TIMEOUT_MS) / 1000);
+				throw new EbirdUpstreamError(`eBird did not respond within ${seconds} seconds.`, 504);
 			}
 			throw err;
 		}

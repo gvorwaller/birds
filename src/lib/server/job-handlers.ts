@@ -142,6 +142,9 @@ export interface WorkerContext {
 	/** Persistent operator pause. Optional keeps non-worker callers/tests
 	 * source-compatible; the real worker always supplies it. */
 	isPauseRequested?: () => Promise<boolean>;
+	/** Aborted when the drain starts: cuts off an eBird download in flight,
+	 * which may run up to BARCHART_FETCH_TIMEOUT_MS (td-534b33). */
+	drainSignal?: AbortSignal;
 }
 
 /** Cumulative narration across budget yields: the ORIGINAL batch total and
@@ -270,6 +273,10 @@ async function runFrequencyJob(
 
 	const ensure = await ensureFrequencies(job.requested_by, locs, {
 		force,
+		// td-534b33: a retry keeps every location of its payload; what an
+		// earlier attempt already stored is not downloaded again.
+		forceSince: new Date(job.enqueued_at),
+		abortSignal: ctx.drainSignal,
 		maxFetches: Infinity,
 		timeBudgetMs: Infinity,
 		onUnit,

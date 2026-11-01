@@ -588,6 +588,20 @@ describe("runJob — frequency jobs", () => {
     expect(mocks.failJob).not.toHaveBeenCalled();
   });
 
+  it("passes the drain signal and the job's enqueued_at as forceSince (td-534b33)", async () => {
+    const drain = new AbortController();
+    const enqueuedAt = new Date("2026-11-01T15:57:14Z");
+    mocks.ensureFrequencies.mockResolvedValue(ensureResult({ refreshed: LOCS.map((l) => l.code) }));
+    await runJob(
+      jobRow({ enqueued_at: enqueuedAt, payload: { locs: LOCS, force: true } }),
+      { isDraining: () => false, drainSignal: drain.signal },
+    );
+    const [, , opts] = mocks.ensureFrequencies.mock.calls[0];
+    expect(opts.force).toBe(true);
+    expect(opts.abortSignal).toBe(drain.signal);
+    expect(opts.forceSince).toEqual(enqueuedAt);
+  });
+
   it("admin pause mid-job → requeues without consuming the attempt", async () => {
     const paused = { isDraining: () => false, isPauseRequested: async () => true };
     mocks.ensureFrequencies.mockImplementation(async (_u, locs, opts) => {

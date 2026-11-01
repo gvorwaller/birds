@@ -76,7 +76,8 @@ module.exports = {
 			min_uptime: '30s',
 			max_memory_restart: '300M',
 			// Graceful drain must outlast one unit: 30s fetch timeout + 4s 5xx
-			// retry pause + spacing + transition writes.
+			// retry pause + spacing + transition writes. Bar-chart downloads may
+			// run 120s (td-534b33), but the drain aborts one in flight.
 			kill_timeout: 45000,
 
 			out_file: '/var/log/pm2/birds-worker.out.log',

@@ -745,4 +745,81 @@ describe("ensureFrequencies", () => {
     expect(result.refreshed).toEqual(["US-FL"]);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  // td-534b33: on prod a retry of a taxonomy reload downloaded Frank Lake again
+  // (twice, both timing out) although an earlier attempt of the job stored it.
+  it("with force, a location stored at or after forceSince counts as current", async () => {
+    const since = new Date("2026-11-01T15:57:14Z");
+    const stored = (code: string, fetchedAt: string) => ({
+      loc_code: code,
+      loc_kind: "region",
+      loc_name: `Region ${code}`,
+      begin_year: 2016,
+      end_year: lastCompleteYear(),
+      sample_sizes: Array(WEEKS).fill(100),
+      n_species: 1,
+      n_unmatched: 0,
+      unmatched_names: [],
+      fetched_at: fetchedAt,
+    });
+    queryHandler = (text) => {
+      if (text.includes("FROM frequency_fetch WHERE")) {
+        return {
+          rows: [
+            stored("US-DONE", "2026-11-01T15:58:35Z"),
+            stored("US-SAME", since.toISOString()),
+            stored("US-OLD", "2026-08-16T17:27:55Z"),
+          ],
+        };
+      }
+      return taxonomyHandler(text);
+    };
+    const fetcher = vi.fn(async (_u: number, _code: string, _b: number, _e: number) =>
+      makeValidTsv([["Great Blue Heron", 0.25]]),
+    );
+    const result = await ensureFrequencies(1, [loc("US-DONE"), loc("US-SAME"), loc("US-OLD"), loc("US-NEW")], {
+      fetcher,
+      sleep: noSleep,
+      force: true,
+      forceSince: since,
+    });
+    expect(result.ready).toEqual(["US-DONE", "US-SAME"]);
+    expect(result.refreshed).toEqual(["US-OLD", "US-NEW"]);
+    expect(fetcher.mock.calls.map((c) => c[1])).toEqual(["US-OLD", "US-NEW"]);
+  });
+
+  it("a drain abort cuts the download off: no failure recorded, the rest not attempted", async () => {
+    queryHandler = taxonomyHandler;
+    const drain = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const fetcher = vi.fn(
+      (_u: number, _code: string, _b: number, _e: number, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          seen.push(signal);
+          signal?.addEventListener("abort", () => reject(signal.reason));
+          drain.abort();
+        }),
+    );
+    const stops: string[] = [];
+    const onUnit = vi.fn();
+    const result = await ensureFrequencies(1, [loc("US-A1"), loc("US-A2")], {
+      fetcher,
+      sleep: noSleep,
+      force: true,
+      abortSignal: drain.signal,
+      onUnit,
+      shouldStop: async () => {
+        const s = drain.signal.aborted ? "drain" : "no";
+        stops.push(s);
+        return s;
+      },
+    });
+    expect(seen).toEqual([drain.signal]);
+    expect(result.failed).toEqual([]);
+    expect(result.notAttempted).toEqual(["US-A1", "US-A2"]);
+    expect(onUnit).not.toHaveBeenCalled();
+    // The stop check ran after the abort, so the caller knows it was a drain.
+    expect(stops.at(-1)).toBe("drain");
+    expect(dbCalls.some((c) => c.text.includes("frequency_fetch_attempts") && c.text.includes("'error'"))).toBe(false);
+  });
 });

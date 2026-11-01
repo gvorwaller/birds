@@ -327,6 +327,63 @@ describe("fetchAuthenticatedEbird CAS gateway bounce", () => {
   });
 });
 
+describe("fetchAuthenticatedEbird time limit and abort (td-534b33)", () => {
+  function casLoginQueue(): (Response | Error)[] {
+    return [
+      html(CAS_FORM_HTML),
+      redirect("https://ebird.org/home"),
+      html("<h1>home</h1>"),
+    ];
+  }
+
+  it("a timeout states the usual 30-second limit", async () => {
+    invalidateEbirdSession(96);
+    fetchQueue = [...casLoginQueue(), new DOMException("timed out", "TimeoutError")];
+    const err = await fetchAuthenticatedEbird(96, "https://ebird.org/barchartData?r=L1").catch((e) => e);
+    expect(err).toBeInstanceOf(EbirdUpstreamError);
+    expect(err.status).toBe(504);
+    expect(err.message).toBe("eBird did not respond within 30 seconds.");
+  });
+
+  it("a timeout states the limit the caller asked for", async () => {
+    invalidateEbirdSession(95);
+    fetchQueue = [...casLoginQueue(), new DOMException("timed out", "TimeoutError")];
+    const err = await fetchAuthenticatedEbird(95, "https://ebird.org/barchartData?r=L1", {
+      timeout: 120_000,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(EbirdUpstreamError);
+    expect(err.message).toBe("eBird did not respond within 120 seconds.");
+  });
+
+  it("the caller's abort is rethrown as it is, never reported as eBird being slow", async () => {
+    invalidateEbirdSession(94);
+    const drain = new AbortController();
+    drain.abort();
+    fetchQueue = [...casLoginQueue(), new DOMException("aborted", "AbortError")];
+    const err = await fetchAuthenticatedEbird(94, "https://ebird.org/barchartData?r=L1", {
+      timeout: 120_000,
+      signal: drain.signal,
+    }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(EbirdUpstreamError);
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("AbortError");
+  });
+
+  it("passes a signal that the caller's abort aborts", async () => {
+    invalidateEbirdSession(93);
+    const drain = new AbortController();
+    fetchQueue = [
+      ...casLoginQueue(),
+      withUrl(new Response("Sample Size:", { status: 200 }), "https://ebird.org/barchartData?r=L1"),
+    ];
+    await fetchAuthenticatedEbird(93, "https://ebird.org/barchartData?r=L1", { signal: drain.signal });
+    const init = vi.mocked(globalThis.fetch).mock.calls.at(-1)?.[1];
+    expect(init?.signal?.aborted).toBe(false);
+    drain.abort();
+    expect(init?.signal?.aborted).toBe(true);
+  });
+});
+
 describe("eBird session memo invalidation (td-12bd33, CODEX1)", () => {
   const page = (path: string) =>
     withUrl(new Response('<html>"lat":1,"lng":2</html>', { status: 200 }), `https://ebird.org${path}`);
