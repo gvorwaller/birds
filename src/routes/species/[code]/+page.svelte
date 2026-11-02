@@ -603,8 +603,10 @@
       <code>{data.taxon.species_code}</code>
       {#if data.taxon.family}· {#if data.taxon.family_code}<a class="taxonomy-link path-focus-target" id={`species-family-${encodeURIComponent(data.taxon.family_code)}`} href={withReturnTo(taxonomyHref(data.taxon.family_code,data.taxon.species_code),speciesContextHref,undefined,data.taxon.com_name)} onclick={adopt('Taxonomy',`species-family-${encodeURIComponent(data.taxon.family_code)}`)}>{data.taxon.family}</a>{:else}{data.taxon.family}{/if}{/if}
       {#if data.taxon.order_name}· <a class="taxonomy-link path-focus-target" id={`species-order-${encodeURIComponent(data.taxon.order_name)}`} href={withReturnTo(taxonomyHref(null,undefined,data.taxon.order_name),speciesContextHref,undefined,data.taxon.com_name)} onclick={adopt('Taxonomy',`species-order-${encodeURIComponent(data.taxon.order_name)}`)}>{data.taxon.order_name}</a>{/if}
+      <!-- first_seen is a calendar date ("2021-10-04"): a bare date parses as UTC
+           midnight and showed the day before in the Americas, so read it as local. -->
       {#if data.seen?.first_seen}· first seen {new Date(
-          data.seen.first_seen,
+          `${data.seen.first_seen}T00:00:00`,
         ).toLocaleDateString()}{/if}
     </p>
     {#if data.user && data.taxon.category === 'species'}
