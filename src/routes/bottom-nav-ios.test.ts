@@ -14,14 +14,15 @@ describe("iOS bottom navigation stability", () => {
     expect(css).not.toContain("backdrop-filter:");
   });
 
-  it("corrects the stale standalone viewport after transitions settle", () => {
-    expect(layout).toContain("use:stabilizeBottomNav");
+  it("pins both fixed bars to the visual viewport once the keyboard has settled", () => {
+    expect(layout).toContain("use:pinFixedBars");
     expect(layout).toContain("window.visualViewport");
-    expect(layout).toContain("bottomNavViewportCorrection");
+    expect(layout).toContain("fixedBarOffsets");
+    expect(layout).toContain("opensKeyboard(document.activeElement)");
     expect(layout).toContain("display-mode: standalone");
-    expect(layout).toContain("viewport?.addEventListener('resize', repin");
-    expect(layout).toContain("viewport?.addEventListener('scroll', repin");
-    expect(layout.match(/requestAnimationFrame/g)).toHaveLength(2);
-    expect(layout).toContain("setTimeout(applyCorrection, 350)");
+    expect(layout).toContain("vv.addEventListener('resize', onViewportChange");
+    expect(layout).toContain("vv.addEventListener('scroll', onViewportChange");
+    expect(layout).toContain("topNav.style.transform");
+    expect(layout).toContain("node.style.visibility = held ? 'hidden' : ''");
   });
 });

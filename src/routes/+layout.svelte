@@ -5,7 +5,7 @@
 	import { navigating, page } from '$app/stores';
 	import { tick, untrack } from 'svelte';
 	import NavProgress from '$components/NavProgress.svelte';
-	import { bottomNavViewportCorrection } from '$lib/bottom-nav';
+	import { fixedBarOffsets, opensKeyboard } from '$lib/bottom-nav';
 	import { jobsPoll } from '$lib/job-poll.svelte';
 	import { jobPresentationText } from '$lib/job-presentation';
 	import { isFieldGuideActive } from '$lib/field-guide-nav';
@@ -261,65 +261,100 @@
 	});
 
 	/**
-	 * iOS 26 installed apps can leave visualViewport at its keyboard-sized
-	 * height after the keyboard closes. WebKit then paints `bottom: 0` at that
-	 * stale boundary even though the layout viewport is full-height again.
-	 * Compensate by the measured gap in standalone mode; ordinary Safari keeps
-	 * its native browser-toolbar positioning.
+	 * iOS 26 installed apps can keep the layout viewport (which fixed bars are
+	 * drawn against) apart from the visual viewport (what is on screen) after
+	 * the keyboard closes: both bars float up the screen, the bottom one
+	 * mid-page, until the app restarts (WebKit bugs 297779, 301857). Once the
+	 * keyboard has closed and the viewport has stopped moving, move each bar
+	 * onto its screen edge. While a text field has the keyboard up the bottom
+	 * bar is hidden, as the keys cover it anyway. Ordinary Safari keeps its
+	 * native browser-toolbar positioning.
 	 */
-	function stabilizeBottomNav(node: HTMLElement) {
+	function pinFixedBars(node: HTMLElement) {
 		const viewport = window.visualViewport;
 		const iosNavigator = navigator as Navigator & { standalone?: boolean };
 		const standalone =
 			iosNavigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
-		let firstFrame = 0;
-		let secondFrame = 0;
+		if (!viewport || !standalone) return;
+		const vv = viewport;
+		// The keyboard animates closed after focus leaves, and some affected
+		// WebKit builds omit the final viewport event: wait for the viewport to
+		// be quiet for SETTLE_QUIET_MS, but never longer than SETTLE_MAX_MS.
+		const SETTLE_QUIET_MS = 350;
+		const SETTLE_MAX_MS = 1000;
+		let frame = 0;
 		let settleTimer: ReturnType<typeof setTimeout> | undefined;
+		let settleDeadline = 0;
+		let settling = false;
+		let wasEditing = false;
 
-		function applyCorrection() {
-			const correction = bottomNavViewportCorrection({
-				layoutHeight: window.innerHeight,
-				visualOffsetTop: viewport?.offsetTop ?? 0,
-				visualHeight: viewport?.height ?? window.innerHeight,
-				standalone
-			});
-			node.style.transform = correction > 0 ? `translateY(${correction}px)` : '';
-		}
-
-		function repin() {
-			cancelAnimationFrame(firstFrame);
-			cancelAnimationFrame(secondFrame);
+		function waitForQuiet() {
 			if (settleTimer) clearTimeout(settleTimer);
-			firstFrame = requestAnimationFrame(() => {
-				secondFrame = requestAnimationFrame(() => {
-					applyCorrection();
-				});
-			});
-			// focusout can arrive before the keyboard animation completes and some
-			// affected WebKit builds omit a final viewport event.
-			settleTimer = setTimeout(applyCorrection, 350);
+			const left = settleDeadline - performance.now();
+			settleTimer = setTimeout(
+				() => {
+					settling = false;
+					place();
+				},
+				Math.max(0, Math.min(SETTLE_QUIET_MS, left))
+			);
 		}
 
-		viewport?.addEventListener('resize', repin, { passive: true });
-		viewport?.addEventListener('scroll', repin, { passive: true });
-		window.addEventListener('resize', repin, { passive: true });
-		window.addEventListener('orientationchange', repin, { passive: true });
-		window.addEventListener('pageshow', repin);
-		document.addEventListener('focusout', repin);
-		repin();
+		function place() {
+			// Read focus here rather than tracking focus events: a field removed
+			// by a navigation takes the keyboard away without a focusout.
+			const editing = opensKeyboard(document.activeElement);
+			if (wasEditing && !editing) {
+				settling = true;
+				settleDeadline = performance.now() + SETTLE_MAX_MS;
+				waitForQuiet();
+			}
+			wasEditing = editing;
+			const held = editing || settling;
+			const offsets = held
+				? { top: 0, bottom: 0 }
+				: fixedBarOffsets({
+						layoutHeight: window.innerHeight,
+						visualOffsetTop: vv.offsetTop,
+						visualHeight: vv.height,
+						scale: vv.scale
+					});
+			node.style.visibility = held ? 'hidden' : '';
+			node.style.transform = offsets.bottom ? `translateY(${offsets.bottom}px)` : '';
+			if (topNav) topNav.style.transform = offsets.top ? `translateY(${offsets.top}px)` : '';
+		}
+
+		function onViewportChange() {
+			if (settling) waitForQuiet();
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(place);
+		}
+
+		vv.addEventListener('resize', onViewportChange, { passive: true });
+		vv.addEventListener('scroll', onViewportChange, { passive: true });
+		window.addEventListener('resize', onViewportChange, { passive: true });
+		window.addEventListener('scroll', onViewportChange, { passive: true });
+		window.addEventListener('orientationchange', onViewportChange, { passive: true });
+		window.addEventListener('pageshow', onViewportChange);
+		document.addEventListener('focusin', onViewportChange);
+		document.addEventListener('focusout', onViewportChange);
+		place();
 
 		return {
 			destroy() {
-				cancelAnimationFrame(firstFrame);
-				cancelAnimationFrame(secondFrame);
+				cancelAnimationFrame(frame);
 				if (settleTimer) clearTimeout(settleTimer);
-				viewport?.removeEventListener('resize', repin);
-				viewport?.removeEventListener('scroll', repin);
-				window.removeEventListener('resize', repin);
-				window.removeEventListener('orientationchange', repin);
-				window.removeEventListener('pageshow', repin);
-				document.removeEventListener('focusout', repin);
+				vv.removeEventListener('resize', onViewportChange);
+				vv.removeEventListener('scroll', onViewportChange);
+				window.removeEventListener('resize', onViewportChange);
+				window.removeEventListener('scroll', onViewportChange);
+				window.removeEventListener('orientationchange', onViewportChange);
+				window.removeEventListener('pageshow', onViewportChange);
+				document.removeEventListener('focusin', onViewportChange);
+				document.removeEventListener('focusout', onViewportChange);
+				node.style.visibility = '';
 				node.style.transform = '';
+				if (topNav) topNav.style.transform = '';
 			}
 		};
 	}
@@ -426,7 +461,7 @@
 </main>
 
 {#if data.user}
-	<nav class="bottom-nav" bind:this={bottomNav} use:stabilizeBottomNav>
+	<nav class="bottom-nav" bind:this={bottomNav} use:pinFixedBars>
 		{#each primaryItems as item (item.href)}
 			<a
 				href={item.href}
