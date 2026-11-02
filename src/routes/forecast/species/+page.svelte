@@ -17,6 +17,7 @@
   import MapLink from "$components/MapLink.svelte";
   import ObsMap, { type ObsPoint } from "$components/ObsMap.svelte";
   import { formatMonthWindow } from "$lib/forecast-calendar";
+  import { speciesPageHref } from "$lib/forecast-species-links";
   import { mapsPlaceUrl } from "$lib/geo";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import { jobPresentationText } from "$lib/job-presentation";
@@ -126,15 +127,16 @@
 
   // Preserves month (and county, when it belongs to the current region) so
   // "change" doesn't silently reset the month picker back to default
-  // (GROK UX review #8). Country is inferred from region on the next load.
+  // (GROK UX review #8). The country travels too: with no region picked the
+  // loader would otherwise fall back to the United States.
+  const pageState = $derived({
+    country: data.country,
+    region: data.region?.code ?? null,
+    county: data.county?.code ?? null,
+    month: data.month,
+  });
   function changeSpeciesHref(): string {
-    const p = new URLSearchParams();
-    if (data.region) p.set("region", data.region.code);
-    p.set("month", String(data.month));
-    if (data.county && data.region && data.county.code.startsWith(`${data.region.code}-`)) {
-      p.set("county", data.county.code);
-    }
-    return `?${p.toString()}`;
+    return speciesPageHref(pageState);
   }
 
   function countyHref(
@@ -347,11 +349,7 @@
         <ul class="matches">
           {#each data.speciesMatches as m (m.species_code)}
             <li>
-              <a
-                href="?species={m.species_code}&region={encodeURIComponent(
-                  data.region?.code ?? '',
-                )}"
-              >
+              <a href={speciesPageHref(pageState, m.species_code)}>
                 {m.com_name} <span class="sci">{m.sci_name}</span>
               </a>
             </li>
