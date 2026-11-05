@@ -9,7 +9,15 @@ vi.mock('$server/taxonomy-reference', () => ({taxonomySummary: vi.fn(async () =>
  */
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { QueueWriteUnrecoverableError } from "./job-claim";
+import { claimFencedQuery, QueueWriteUnrecoverableError } from "./job-claim";
+
+// The real claim helpers, with claimFencedQuery observable: a test pins WHICH
+// writes are fenced (here no claim is held, so it behaves as plain query()).
+// The fencing itself runs against the real queue in jobs-claim-db.test.ts.
+vi.mock("$server/job-claim", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./job-claim")>();
+  return { ...real, claimFencedQuery: vi.fn(real.claimFencedQuery) };
+});
 
 const mocks = vi.hoisted(() => {
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1502,6 +1510,10 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     expect(syncMocks.sendWebPush).not.toHaveBeenCalled();
     const skips = mocks.recordEvent.mock.calls.filter((c) => c[1] === "unit_skipped");
     expect((skips[0][2] as { reason: string }).reason).toBe("no-devices");
+    // Checked BEFORE the eBird fetch (CODEX1 2535a73 review): a skip is not
+    // stamped, so a device-less account is re-evaluated every 15-min tick —
+    // and must never cost an upstream request each time.
+    expect(syncMocks.notableNearbyObs).not.toHaveBeenCalled();
   });
 
   it("a GONE endpoint (410) is pruned; delivery to a live sibling still counts", async () => {
@@ -1863,6 +1875,78 @@ describe("runJob — scan_need_alerts per-account check interval (0102)", () => 
     syncMocks.notableNearbyObs.mockRejectedValue(new Error("boom"));
     await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
     expect(stampedUsers()).toEqual([]);
+  });
+
+  // ── CODEX1 2535a73 review ───────────────────────────────────────────────
+  const NOTABLE_OBS = {
+    speciesCode: "snakit",
+    comName: "Snail Kite",
+    locId: "L9",
+    locName: "Sweetwater",
+    obsDt: "2026-08-16 14:40",
+    lat: 27.9,
+    lng: -82.64,
+    obsValid: true,
+    obsReviewed: true,
+    locationPrivate: false,
+    subId: "S555",
+  };
+
+  it("the timestamp write is claim-fenced", async () => {
+    scanDb([pref(4, 30, null)]);
+    syncMocks.notableNearbyObs.mockResolvedValue({ data: [], fetchedAt: new Date(), stale: false });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    const fenced = vi
+      .mocked(claimFencedQuery)
+      .mock.calls.filter(([text]) => text.includes("SET last_scanned_at = NOW()"));
+    expect(fenced).toHaveLength(1);
+    expect(fenced[0][1]).toEqual([4]);
+  });
+
+  it("a stale claim at the timestamp write abandons the scan: no unit_ok, no unit_failed, no next account", async () => {
+    scanDb([pref(4, 30, null), pref(5, 30, null)]);
+    syncMocks.notableNearbyObs.mockResolvedValue({ data: [], fetchedAt: new Date(), stale: false });
+    const inner = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("SET last_scanned_at = NOW()"))
+        throw new Error("stale claim: job 42 is no longer held by this execution (need-alert last_scanned_at)");
+      return inner(text, params);
+    };
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx); // boundary swallows it
+    const actions = mocks.recordEvent.mock.calls.map((c) => c[1]);
+    expect(actions).not.toContain("unit_ok");
+    expect(actions).not.toContain("unit_failed");
+    // Account 5 is never started by the abandoned execution.
+    expect(syncMocks.notableNearbyObs).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalizeAndReschedule).not.toHaveBeenCalled();
+  });
+
+  it("a timestamp write failure after a delivery counts the alert ONCE and fails the unit", async () => {
+    scanDb([pref(4, 30, null), pref(5, 30, null)]);
+    syncMocks.seenSet.mockResolvedValue(new Set<string>());
+    syncMocks.notableNearbyObs.mockResolvedValue({
+      data: [NOTABLE_OBS],
+      fetchedAt: new Date(),
+      stale: false,
+    });
+    const inner = db.handler!;
+    db.handler = (text, params) => {
+      if (text.includes("SET last_scanned_at = NOW()") && params?.[0] === 4)
+        throw new Error("connection reset");
+      return inner(text, params);
+    };
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+
+    // One push per account actually went out.
+    expect(syncMocks.sendWebPush).toHaveBeenCalledTimes(2);
+    const [, , outcome] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
+      number,
+      number,
+      { kind: string; result: { alertsSent: number; failed: number } },
+    ];
+    // Before the fix: 3 (account 4's delivery counted twice).
+    expect(outcome.result).toMatchObject({ alertsSent: 2, failed: 1 });
+    expect(stampedUsers()).toEqual([4, 5]); // 4 attempted (and rejected), 5 stamped
   });
 });
 

@@ -29,10 +29,12 @@ export const DEFAULT_SCAN_INTERVAL_MIN: ScanIntervalMin = 30;
 export const SCAN_TICK_MS = SCAN_INTERVAL_OPTIONS_MIN[0] * 60_000;
 
 /**
- * Ticks are scheduled from the previous scan's END, so they drift a little
- * later each time. Without slack a 30-min account checked at T would miss
- * the T+30+drift tick by seconds and wait for T+45. Kept well under one
- * tick so no account is ever checked a tick early.
+ * Cadence is approximate, not exact. An account is stamped when ITS check
+ * finishes, while the next tick is scheduled from the end of the WHOLE scan
+ * — so ticks land at varying offsets from an account's stamp. The slack lets
+ * an account be checked up to 5 min early rather than a whole tick (15 min)
+ * late: e.g. a 30-min account is due on any tick 25+ min after its last
+ * check. Kept under one tick, so the early margin never reaches a full tick.
  */
 export const SCAN_DUE_SLACK_MS = 5 * 60_000;
 

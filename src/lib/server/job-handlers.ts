@@ -894,6 +894,21 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				await skip('no-api-key');
 				return 'skipped';
 			}
+			// Devices BEFORE the eBird fetch (CODEX1 2535a73 review): a skip is
+			// never stamped, so a device-less account is re-evaluated every
+			// tick — it must cost no upstream request each time.
+			// Side-effect-free read — detachable on deadline.
+			const subRows = await raceRead(
+				query<PushSubscriptionRow>(
+					`SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`,
+					[u.user_id]
+				)
+			);
+			if (subRows.rows.length === 0) {
+				// Enabled but no enrolled device (all pruned / never enrolled).
+				await skip('no-devices');
+				return 'skipped';
+			}
 			// A cached feed older than the account's interval would make a
 			// 15-minute check quietly act like a 30-minute one.
 			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1, {
@@ -908,24 +923,15 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				return 'skipped';
 			}
 			// Side-effect-free reads — detachable on deadline.
-			const [seen, sentRows, subRows] = await raceRead(
+			const [seen, sentRows] = await raceRead(
 				Promise.all([
 					seenSet(u.user_id),
 					query<{ species_code: string; sent_at: string }>(
 						`SELECT species_code, sent_at FROM need_alerts_sent WHERE user_id = $1`,
 						[u.user_id]
-					),
-					query<PushSubscriptionRow>(
-						`SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`,
-						[u.user_id]
 					)
 				])
 			);
-			if (subRows.rows.length === 0) {
-				// Enabled but no enrolled device (all pruned / never enrolled).
-				await skip('no-devices');
-				return 'skipped';
-			}
 			const sentAt = new Map(
 				sentRows.rows.map((r) => [r.species_code, new Date(r.sent_at).getTime()])
 			);
@@ -1041,14 +1047,17 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 		};
 		try {
 			const outcome = await withBudget(processUser, SCAN_USER_BUDGET_MS);
-			alertsSent += tally.sent;
 			if (outcome === 'done') {
 				// Only a completed check restarts the account's interval: a
 				// skip (stale feed, no devices) or a failure is retried on the
-				// next tick instead of waiting out a long interval.
-				await query(`UPDATE user_alert_prefs SET last_scanned_at = NOW() WHERE user_id = $1`, [
-					u.user_id
-				]);
+				// next tick instead of waiting out a long interval. Fenced to
+				// the held claim (CODEX1 2535a73 review): an abandoned
+				// execution must not push a replacement scan up to 6 h out.
+				await claimFencedQuery(
+					`UPDATE user_alert_prefs SET last_scanned_at = NOW() WHERE user_id = $1`,
+					[u.user_id],
+					'need-alert last_scanned_at'
+				);
 				progress.unitsDone++;
 				await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: tally.sent });
 			}
@@ -1056,9 +1065,6 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			// A lost claim is not this user's failure: no unit_failed, no
 			// next user (td-b99b6d G3).
 			if (isStaleClaim(err)) throw err;
-			// Sends completed before the failure still count (they happened —
-			// and their sent-rows are recorded, so no re-ping next scan).
-			alertsSent += tally.sent;
 			progress.unitsFailed++;
 			const message = sanitizeErrorText(
 				err instanceof Error ? err.message : String(err)
@@ -1069,6 +1075,13 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				error: message,
 				...(err instanceof ScanBudgetExceeded ? { budget: true, sentBeforeExpiry: tally.sent } : {})
 			});
+		} finally {
+			// Counted exactly once, whatever happened after the sends (CODEX1
+			// 2535a73 review: a failure after delivery — e.g. the timestamp
+			// write — used to add the tally a second time in the catch).
+			// Sends completed before a failure still count: they happened, and
+			// their sent-rows are recorded, so no re-ping next scan.
+			alertsSent += tally.sent;
 		}
 		await updateProgress(job.id, progress);
 	}
