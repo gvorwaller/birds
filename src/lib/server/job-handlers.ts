@@ -31,7 +31,8 @@ import { seenSet } from '$server/needs';
 import { sendWebPush, PushError, type PushSubscriptionRow } from '$server/push';
 import {
 	alertCandidates,
-	SCAN_INTERVAL_MS,
+	isScanDue,
+	SCAN_TICK_MS,
 	type AlertObs
 } from '$lib/need-alerts-policy';
 import {
@@ -656,7 +657,7 @@ function scanEnqueueParams(adminId: number, runAfterMs: number) {
 		payload: {},
 		dedupKey: 'scan_need_alerts:global',
 		requestedBy: adminId,
-		label: 'every 30 min',
+		label: 'every 15 min',
 		runAfterMs
 	};
 }
@@ -815,8 +816,11 @@ async function runHotspotCoordinateRepair(job: JobRow): Promise<void> {
 }
 
 /**
- * One scan: for every enabled user, notable-near-home ∩ needs → Web Push to
- * every enrolled device.
+ * One scan: for every enabled user whose own check interval has come round
+ * (user_alert_prefs.scan_interval_min, isScanDue), notable-near-home ∩ needs
+ * → Web Push to every enrolled device. The job itself ticks at the shortest
+ * interval (SCAN_TICK_MS); accounts not yet due are left out of the units
+ * and counted as notDue in the result.
  * Delivery is explicitly AT-LEAST-ONCE (CODEX1 plan #3): send, then upsert
  * need_alerts_sent immediately per species — a crash in that window may
  * duplicate one push next scan; record-first would silently LOSE alerts.
@@ -832,17 +836,29 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 		user_id: number;
 		radius_km: number;
 		realert_days: number;
+		scan_interval_min: number;
+		last_scanned_at: string | null;
 		home_lat: number | null;
 		home_lon: number | null;
 	}>(
-		`SELECT p.user_id, p.radius_km, p.realert_days, u.home_lat, u.home_lon
+		`SELECT p.user_id, p.radius_km, p.realert_days, p.scan_interval_min, p.last_scanned_at,
+		        u.home_lat, u.home_lon
 		   FROM user_alert_prefs p JOIN users u ON u.id = p.user_id
 		  WHERE p.enabled ORDER BY p.user_id`
 	);
+	const scanNow = new Date();
+	const due = users.rows.filter((u) =>
+		isScanDue(
+			u.last_scanned_at == null ? null : new Date(u.last_scanned_at),
+			u.scan_interval_min,
+			scanNow
+		)
+	);
+	const notDue = users.rows.length - due.length;
 
 	const progress: JobProgress = {
 		phase: 'fetching',
-		unitsTotal: users.rows.length,
+		unitsTotal: due.length,
 		unitsDone: 0,
 		unitsFailed: 0,
 		unitsSkipped: 0,
@@ -851,7 +867,7 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 	await updateProgress(job.id, progress);
 
 	let alertsSent = 0;
-	for (const u of users.rows) {
+	for (const u of due) {
 		// Everything the user's pipeline sends is tallied here so accounting
 		// survives a budget expiry mid-candidate (CODEX1: unit_ok must report
 		// ACTUAL sends, never the candidate count).
@@ -878,8 +894,11 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 				await skip('no-api-key');
 				return 'skipped';
 			}
+			// A cached feed older than the account's interval would make a
+			// 15-minute check quietly act like a 30-minute one.
 			const notable = await notableNearbyObs(apiKey, u.home_lat, u.home_lon, u.radius_km, 1, {
-				signal
+				signal,
+				maxAgeMin: u.scan_interval_min
 			});
 			checkpoint();
 			if (notable.stale) {
@@ -1024,6 +1043,12 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 			const outcome = await withBudget(processUser, SCAN_USER_BUDGET_MS);
 			alertsSent += tally.sent;
 			if (outcome === 'done') {
+				// Only a completed check restarts the account's interval: a
+				// skip (stale feed, no devices) or a failure is retried on the
+				// next tick instead of waiting out a long interval.
+				await query(`UPDATE user_alert_prefs SET last_scanned_at = NOW() WHERE user_id = $1`, [
+					u.user_id
+				]);
 				progress.unitsDone++;
 				await recordEvent(job.id, 'unit_ok', { userId: u.user_id, alerts: tally.sent });
 			}
@@ -1050,7 +1075,8 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 
 	const eligible = progress.unitsDone + progress.unitsFailed;
 	const summary = {
-		usersScanned: users.rows.length,
+		usersScanned: due.length,
+		notDue,
 		alertsSent,
 		skipped: progress.unitsSkipped,
 		failed: progress.unitsFailed
@@ -1077,7 +1103,7 @@ async function runNeedAlertScan(job: JobRow): Promise<void> {
 		job.id,
 		attempts,
 		outcome,
-		scanEnqueueParams(adminId, SCAN_INTERVAL_MS)
+		scanEnqueueParams(adminId, SCAN_TICK_MS)
 	);
 }
 

@@ -24,6 +24,12 @@ import {
   type PushSubscriptionRow,
 } from "$server/push";
 import { createHash } from "node:crypto";
+import {
+  DEFAULT_SCAN_INTERVAL_MIN,
+  SCAN_INTERVAL_OPTIONS_MIN,
+  isScanIntervalMin,
+  scanIntervalLabel,
+} from "$lib/need-alerts-policy";
 import { ownerGalleryUrl } from "$server/access";
 import { hashPassword } from "$server/auth";
 import { deleteAccount, type DeleteAccountRefusal } from "$server/account-delete";
@@ -142,8 +148,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       enabled: boolean;
       radius_km: number;
       realert_days: number;
+      scan_interval_min: number;
     }>(
-      `SELECT enabled, radius_km, realert_days
+      `SELECT enabled, radius_km, realert_days, scan_interval_min
          FROM user_alert_prefs WHERE user_id = $1`,
       [userId],
     ),
@@ -190,6 +197,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       enabled: false,
       radius_km: 40,
       realert_days: 7,
+      scan_interval_min: DEFAULT_SCAN_INTERVAL_MIN,
     },
     // Per device: label (or platform fallback), enrolled date, and a hash
     // key — the endpoint itself is capability material and never leaves the
@@ -498,11 +506,17 @@ export const actions: Actions = {
     const enabled = form.get("enabled") === "1";
     const radius = Number(form.get("radius_km"));
     const realert = Number(form.get("realert_days"));
+    const interval = Number(form.get("scan_interval_min"));
     if (!Number.isInteger(radius) || radius < 1 || radius > 50) {
       return fail(400, { error: "Alert radius must be between 1 and 50 km." });
     }
     if (!Number.isInteger(realert) || realert < 1 || realert > 30) {
       return fail(400, { error: "Re-alert window must be between 1 and 30 days." });
+    }
+    if (!isScanIntervalMin(interval)) {
+      return fail(400, {
+        error: `Check interval must be one of: ${SCAN_INTERVAL_OPTIONS_MIN.map(scanIntervalLabel).join(", ")}.`,
+      });
     }
     if (enabled) {
       const devices = await query<{ n: string }>(
@@ -516,16 +530,16 @@ export const actions: Actions = {
       }
     }
     await query(
-      `INSERT INTO user_alert_prefs (user_id, enabled, radius_km, realert_days, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
+      `INSERT INTO user_alert_prefs (user_id, enabled, radius_km, realert_days, scan_interval_min, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
-         enabled = $2, radius_km = $3, realert_days = $4, updated_at = NOW()`,
-      [userId, enabled, radius, realert],
+         enabled = $2, radius_km = $3, realert_days = $4, scan_interval_min = $5, updated_at = NOW()`,
+      [userId, enabled, radius, realert, interval],
     );
     return {
       ok: true as const,
       message: enabled
-        ? "Need alerts saved and enabled — the next background scan (within ~30 min) starts watching."
+        ? `Need alerts saved and enabled — checked every ${scanIntervalLabel(interval)} in the background.`
         : "Need-alert settings saved (alerts off).",
     };
   },

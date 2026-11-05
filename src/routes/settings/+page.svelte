@@ -6,6 +6,7 @@
   import { page } from "$app/state";
   import { jobsPoll } from "$lib/job-poll.svelte";
   import type { ActionData, PageData } from "./$types";
+  import { SCAN_INTERVAL_OPTIONS_MIN, scanIntervalLabel } from "$lib/need-alerts-policy";
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const userTab = $derived(data.isAdmin && page.url.searchParams.get("tab") === "users");
@@ -511,7 +512,8 @@
     <p class="muted">
       A notification from this app when a
       <strong>rare bird you still need</strong> is reported near your home —
-      checked every 30 minutes in the background. Notifications come from the
+      checked every {scanIntervalLabel(data.alerts.scan_interval_min)} in the
+      background (change it below). Notifications come from the
       birds app itself: enable them on each device you want alerted. Quiet
       hours are your phone's Focus schedule — allow the birds app through any
       Focus you want a rarity to break. Past alerts persist on the
@@ -580,6 +582,14 @@
         <select name="radius_km">
           {#each [10, 20, 30, 40, 50] as km (km)}
             <option value={km} selected={data.alerts.radius_km === km}>{km} km</option>
+          {/each}
+        </select>
+      </label>
+      <label>
+        <span>Check for new reports every</span>
+        <select name="scan_interval_min">
+          {#each SCAN_INTERVAL_OPTIONS_MIN as m (m)}
+            <option value={m} selected={data.alerts.scan_interval_min === m}>{scanIntervalLabel(m)}</option>
           {/each}
         </select>
       </label>

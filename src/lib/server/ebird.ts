@@ -498,12 +498,20 @@ export async function notableNearbyObs(
 	lng: number,
 	distKm: number,
 	back: number,
-  opts?: { signal?: AbortSignal; deadlineMs?: number }
+  opts?: {
+    signal?: AbortSignal;
+    deadlineMs?: number;
+    /** Accept a cached copy only this fresh. Can only shorten the feed's own
+     * TTL: the need-alert scan passes an account's check interval so a
+     * 15-minute account gets 15-minute-fresh data, never older. */
+    maxAgeMin?: number;
+  }
 ): Promise<CachedResult<EbirdObs[]>> {
 	const la = lat.toFixed(2);
 	const ln = lng.toFixed(2);
 	const path = `/data/obs/geo/recent/notable?lat=${la}&lng=${ln}&dist=${distKm}&back=${back}&detail=simple`;
-	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, NOTABLE_TTL_MIN,
+	const ttlMin = Math.min(NOTABLE_TTL_MIN, opts?.maxAgeMin ?? NOTABLE_TTL_MIN);
+	return cachedFetch(`geonote:${la}:${ln}:${distKm}:${back}`, ttlMin,
 		() => ebirdFetch<unknown>(path, apiKey, { signal: opts?.signal, deadlineMs: opts?.deadlineMs }),
 		(value) => validateEbirdObservations(value, path) as EbirdObs[]);
 }

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   alertCandidates,
+  isScanDue,
+  isScanIntervalMin,
   PER_SCAN_CAP,
+  SCAN_DUE_SLACK_MS,
+  SCAN_INTERVAL_OPTIONS_MIN,
+  SCAN_TICK_MS,
+  scanIntervalLabel,
   type AlertObs,
 } from "./need-alerts-policy";
 
@@ -125,5 +131,51 @@ describe("alertCandidates", () => {
   it("weekday shown for non-today observations", () => {
     const c = run([obs({ speciesCode: "snakit", obsDt: "2026-08-14 09:15" })])[0];
     expect(c.body).toContain("Fri 09:15");
+  });
+});
+
+describe("per-account check interval", () => {
+  const now = new Date("2026-11-05T12:00:00Z");
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+
+  it("the job ticks at the shortest choice, and slack stays under one tick", () => {
+    expect(SCAN_TICK_MS).toBe(Math.min(...SCAN_INTERVAL_OPTIONS_MIN) * 60_000);
+    expect(SCAN_DUE_SLACK_MS).toBeLessThan(SCAN_TICK_MS);
+  });
+
+  it("never-checked accounts are due", () => {
+    expect(isScanDue(null, 360, now)).toBe(true);
+  });
+
+  it("a 30-min account skips the tick in between and is due on the next, despite drift", () => {
+    expect(isScanDue(ago(15.5), 30, now)).toBe(false);
+    expect(isScanDue(ago(29), 30, now)).toBe(true); // tick landed a minute early
+    expect(isScanDue(ago(31), 30, now)).toBe(true);
+  });
+
+  it("a 15-min account is due on every tick", () => {
+    expect(isScanDue(ago(15), 15, now)).toBe(true);
+    expect(isScanDue(ago(14), 15, now)).toBe(true);
+  });
+
+  it("a 6-hour account waits about six hours", () => {
+    expect(isScanDue(ago(5 * 60 + 45), 360, now)).toBe(false);
+    expect(isScanDue(ago(6 * 60), 360, now)).toBe(true);
+  });
+
+  it("only the listed choices are valid", () => {
+    for (const m of SCAN_INTERVAL_OPTIONS_MIN) expect(isScanIntervalMin(m)).toBe(true);
+    for (const m of [0, 5, 45, 90, 720, Number.NaN]) expect(isScanIntervalMin(m)).toBe(false);
+  });
+
+  it("labels read naturally", () => {
+    expect(SCAN_INTERVAL_OPTIONS_MIN.map(scanIntervalLabel)).toEqual([
+      "15 min",
+      "30 min",
+      "1 hour",
+      "2 hours",
+      "3 hours",
+      "6 hours",
+    ]);
   });
 });

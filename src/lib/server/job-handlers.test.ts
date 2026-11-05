@@ -1356,7 +1356,14 @@ describe("runJob — sync jobs (Phase 3)", () => {
 describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
   const ENDPOINT = "https://push.apple.example/dev-abc123SECRET";
   const HOME = { home_lat: 27.77, home_lon: -82.64 };
-  const PREF_ROW = { user_id: 3, radius_km: 40, realert_days: 7, ...HOME };
+  const PREF_ROW = {
+    user_id: 3,
+    radius_km: 40,
+    realert_days: 7,
+    scan_interval_min: 30,
+    last_scanned_at: null as string | null,
+    ...HOME,
+  };
   const SUB_ROW = { endpoint: ENDPOINT, p256dh: "k1", auth: "a1" };
   const NOTABLE = {
     speciesCode: "snakit",
@@ -1426,7 +1433,8 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
     ];
     expect(outcome.kind).toBe("complete");
     expect(outcome.result.alertsSent).toBe(1);
-    expect(successor.runAfterMs).toBe(30 * 60_000);
+    // The job ticks at the shortest per-account interval (15 min).
+    expect(successor.runAfterMs).toBe(15 * 60_000);
     expect(successor.dedupKey).toBe("scan_need_alerts:global");
     expect(mocks.completeJob).not.toHaveBeenCalled();
   });
@@ -1781,6 +1789,80 @@ describe("runJob — scan_need_alerts (plan Part A, Web Push channel)", () => {
       expect(json).not.toContain(ENDPOINT);
       expect(json).not.toContain("dev-abc123SECRET");
     }
+  });
+});
+
+describe("runJob — scan_need_alerts per-account check interval (0102)", () => {
+  const HOME = { home_lat: 27.77, home_lon: -82.64 };
+  const SUB_ROW = { endpoint: "https://push.example/dev-1", p256dh: "k1", auth: "a1" };
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const pref = (user_id: number, scan_interval_min: number, last_scanned_at: string | null) => ({
+    user_id,
+    radius_km: 40,
+    realert_days: 7,
+    scan_interval_min,
+    last_scanned_at,
+    ...HOME,
+  });
+
+  function scanDb(prefs: unknown[]) {
+    db.handler = (text) => {
+      if (text.includes("FROM user_alert_prefs p JOIN users")) return { rows: prefs };
+      if (text.includes("FROM need_alerts_sent")) return { rows: [] };
+      if (text.includes("FROM push_subscriptions")) return { rows: [SUB_ROW] };
+      if (text.includes("FROM users WHERE role = 'admin'")) return { rows: [{ id: 1 }] };
+      return undefined;
+    };
+  }
+  const stampedUsers = () =>
+    db.calls
+      .filter((c) => c.text.includes("SET last_scanned_at = NOW()"))
+      .map((c) => c.params?.[0]);
+
+  it("checks only the accounts whose interval has come round; the rest count as notDue", async () => {
+    scanDb([
+      pref(3, 30, minutesAgo(16)), // 30-min account, one tick ago → not due
+      pref(4, 30, minutesAgo(31)), // 30-min account, two ticks ago → due
+      pref(5, 15, minutesAgo(16)), // 15-min account → due every tick
+      pref(6, 360, minutesAgo(120)), // 6-hour account → not due
+      pref(7, 360, null), // never checked → due
+    ]);
+    syncMocks.notableNearbyObs.mockResolvedValue({ data: [], fetchedAt: new Date(), stale: false });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+
+    expect(syncMocks.notableNearbyObs).toHaveBeenCalledTimes(3);
+    expect(stampedUsers()).toEqual([4, 5, 7]);
+    const [, , outcome] = mocks.terminalizeAndReschedule.mock.calls[0] as unknown as [
+      number,
+      number,
+      { kind: string; result: { usersScanned: number; notDue: number } },
+    ];
+    expect(outcome.kind).toBe("complete");
+    expect(outcome.result).toMatchObject({ usersScanned: 3, notDue: 2 });
+  });
+
+  it("asks the notable feed for data no older than the account's interval", async () => {
+    scanDb([pref(5, 15, null), pref(7, 360, null)]);
+    syncMocks.notableNearbyObs.mockResolvedValue({ data: [], fetchedAt: new Date(), stale: false });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    const maxAges = syncMocks.notableNearbyObs.mock.calls.map(
+      (c) => (c[5] as { maxAgeMin?: number } | undefined)?.maxAgeMin,
+    );
+    expect(maxAges).toEqual([15, 360]);
+  });
+
+  it("a stale feed is not a completed check: no timestamp, so the next tick retries", async () => {
+    scanDb([pref(4, 360, null)]);
+    syncMocks.notableNearbyObs.mockResolvedValue({ data: [], fetchedAt: new Date(), stale: true });
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(stampedUsers()).toEqual([]);
+  });
+
+  it("a failed account is not stamped either", async () => {
+    scanDb([pref(4, 360, null)]);
+    syncMocks.notableNearbyObs.mockRejectedValue(new Error("boom"));
+    await runJob(jobRow({ type: "scan_need_alerts", payload: {} }), ctx);
+    expect(stampedUsers()).toEqual([]);
   });
 });
 

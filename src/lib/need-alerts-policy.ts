@@ -13,11 +13,50 @@
  */
 import { haversineKm } from '$lib/geo';
 
-// Matches NOTABLE_TTL_MIN (ebird.ts), which the rare-bird feeds deliberately
-// keep at 30 minutes while ordinary observation feeds sit at three hours —
-// scanning faster than the feed refreshes is waste.
-export const SCAN_INTERVAL_MS = 30 * 60_000;
+/**
+ * Per-account check interval (Gaylon 2026-11-05: configurable in Settings,
+ * shorter and longer than the original fixed 30 min). Must match the CHECK
+ * on user_alert_prefs.scan_interval_min (migration 0102).
+ */
+export const SCAN_INTERVAL_OPTIONS_MIN = [15, 30, 60, 120, 180, 360] as const;
+export type ScanIntervalMin = (typeof SCAN_INTERVAL_OPTIONS_MIN)[number];
+export const DEFAULT_SCAN_INTERVAL_MIN: ScanIntervalMin = 30;
+
+/**
+ * The one global scan job runs at the SHORTEST choice; each tick checks only
+ * the accounts whose own interval has come round (isScanDue).
+ */
+export const SCAN_TICK_MS = SCAN_INTERVAL_OPTIONS_MIN[0] * 60_000;
+
+/**
+ * Ticks are scheduled from the previous scan's END, so they drift a little
+ * later each time. Without slack a 30-min account checked at T would miss
+ * the T+30+drift tick by seconds and wait for T+45. Kept well under one
+ * tick so no account is ever checked a tick early.
+ */
+export const SCAN_DUE_SLACK_MS = 5 * 60_000;
+
 export const PER_SCAN_CAP = 5;
+
+export function isScanIntervalMin(n: number): n is ScanIntervalMin {
+	return (SCAN_INTERVAL_OPTIONS_MIN as readonly number[]).includes(n);
+}
+
+/** "15 min", "30 min", "1 hour", "6 hours". */
+export function scanIntervalLabel(min: number): string {
+	if (min < 60) return `${min} min`;
+	const h = min / 60;
+	return h === 1 ? '1 hour' : `${h} hours`;
+}
+
+/**
+ * Whether an account is due a check on this tick. Never checked (or never
+ * successfully checked) → due.
+ */
+export function isScanDue(lastScannedAt: Date | null, intervalMin: number, now: Date): boolean {
+	if (lastScannedAt == null) return true;
+	return now.getTime() - lastScannedAt.getTime() >= intervalMin * 60_000 - SCAN_DUE_SLACK_MS;
+}
 
 export interface AlertObs {
 	speciesCode: string;

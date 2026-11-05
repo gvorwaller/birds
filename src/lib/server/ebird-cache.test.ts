@@ -119,6 +119,43 @@ describe("request deadline", () => {
   });
 });
 
+describe("notableNearbyObs maxAgeMin (need-alert check interval)", () => {
+  /** One cached row, `ageMin` minutes old, for every SELECT. */
+  function cachedRow(ageMin: number) {
+    db.query.mockImplementation(async (text: string) =>
+      text.includes("SELECT payload")
+        ? {
+            rows: [
+              {
+                payload: [],
+                fetched_at: new Date(Date.now() - ageMin * 60_000).toISOString(),
+              },
+            ],
+          }
+        : { rows: [] },
+    );
+  }
+
+  it("a 20-minute-old copy serves the default 30-minute TTL", async () => {
+    cachedRow(20);
+    const r = await notableNearbyObs("key", 27.77, -82.64, 40, 1);
+    expect(fetchCalls).toHaveLength(0);
+    expect(r.stale).toBe(false);
+  });
+
+  it("the same copy is too old for a 15-minute account, so eBird is asked again", async () => {
+    cachedRow(20);
+    await notableNearbyObs("key", 27.77, -82.64, 40, 1, { maxAgeMin: 15 });
+    expect(fetchCalls).toHaveLength(1);
+  });
+
+  it("a longer interval never stretches the feed's own 30-minute TTL", async () => {
+    cachedRow(45);
+    await notableNearbyObs("key", 27.77, -82.64, 40, 1, { maxAgeMin: 360 });
+    expect(fetchCalls).toHaveLength(1);
+  });
+});
+
 describe("recentNearbySpeciesObs", () => {
   it("asks for unconfirmed records under a new cache key", async () => {
     await recentNearbySpeciesObs("key", "brwhaw", 30.33, -81.66, 50, 14);

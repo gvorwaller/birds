@@ -1270,7 +1270,8 @@
 		{#if open === 'alerts'}
 			<div class="body">
 				<p>
-					Every 30 minutes the app checks eBird's <em>notable</em> (rare /
+					Every 30 minutes (or as often as you choose, from 15 minutes to 6
+					hours) the app checks eBird's <em>notable</em> (rare /
 					review-worthy) reports near your home and sends a notification when
 					one is a species <strong>you still need</strong> — "Lifer nearby:
 					Snail Kite · Sweetwater Wetlands · 12 mi from home." Notifications
@@ -1293,7 +1294,8 @@
 						like a normal notification from <strong>birds</strong>.
 					</li>
 					<li>
-						Pick a radius and re-alert window, tick
+						Pick a radius, how often to check for new reports, and a re-alert
+						window, tick
 						<strong>Enable need alerts</strong>, and save. Done.
 					</li>
 				</ol>

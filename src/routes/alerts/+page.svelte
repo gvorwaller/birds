@@ -6,6 +6,7 @@
   import { navigationAction } from "$lib/navigation-context.svelte";
   import { withReturnTo } from "$lib/navigation-context";
   import { formatAlertObsDt, relativeAge } from "$lib/alert-evidence";
+  import { scanIntervalLabel } from "$lib/need-alerts-policy";
 
   let { data }: { data: PageData } = $props();
 
@@ -67,6 +68,7 @@
     <p class="muted">
       {#if data.alerts.enabled}
         Watching within <strong>{data.alerts.radius_km} km</strong> of home ·
+        checked every {scanIntervalLabel(data.alerts.scan_interval_min)} ·
         re-alerts the same species after {data.alerts.realert_days} days ·
         {data.pushDeviceCount} device{data.pushDeviceCount === 1 ? "" : "s"}
         enrolled.
@@ -74,7 +76,7 @@
         Need alerts are off — nothing new will appear here.
       {/if}
       {#if data.lastScanAt}
-        Last scan {relativeAge(data.lastScanAt)}.
+        Last checked {relativeAge(data.lastScanAt)}.
       {/if}
     </p>
     <a class="settings-link" href="/settings">Alert settings →</a>
