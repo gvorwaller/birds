@@ -163,6 +163,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     back,
     month,
     days,
+    // For the Recent lens's Seen empty state: an empty life list is a
+    // different message from "none of your seen species were reported".
+    seenCount: seen.size,
     recentError,
     recentStale,
     hasApiKey,

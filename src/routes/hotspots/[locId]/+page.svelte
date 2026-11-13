@@ -16,6 +16,16 @@
     mapsPlaceUrl,
     type DistanceUnit,
   } from "$lib/geo";
+  import { goto } from "$app/navigation";
+  import {
+    HOTSPOT_RECENT_LISTS,
+    HOTSPOT_RECENT_LIST_LABEL,
+    HOTSPOT_RECENT_LIST_MEANING,
+    filterRecentDays,
+    hotspotRecentListHref,
+    parseHotspotRecentList,
+    recentListCounts,
+  } from "$lib/hotspot-recent-list";
   import type { ActionData, PageData } from "./$types";
 
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -52,6 +62,25 @@
     }
     return withReturnTo(`/hotspots/${data.locId}?${p}`, data.returnLink.href, undefined, data.returnLink.label);
   }
+
+  // --- Recent reports All / Need / Seen lens (td-3aadc3) --------------------
+  // `?list=` is untracked by the loader (hotspot-loader-url-tracking.test.ts),
+  // so switching lens reuses the loaded reports and makes no eBird call. All
+  // is the default and renders exactly the list this page always had.
+  const listParse = $derived(parseHotspotRecentList(page.url.searchParams));
+  const recentList = $derived(listParse.list);
+  const recentCounts = $derived(recentListCounts(data.days));
+  const shownDays = $derived(filterRecentDays(data.days, recentList));
+  // Self-heal a hand-edited or stale value back to the canonical All URL, the
+  // way Home drops a bad lens; idempotent because the repair removes it.
+  $effect(() => {
+    if (listParse.valid) return;
+    goto(hotspotRecentListHref(page.url, "all"), {
+      keepFocus: true,
+      noScroll: true,
+      replaceState: true,
+    }).catch(() => {});
+  });
 
   function actionHref(name: "load_hotspot" | "load_area_hotspots"): string {
     const params = new URLSearchParams(page.url.searchParams);
@@ -370,12 +399,54 @@
               what's typical here{/if}.
           </p>
         {:else}
+          <!-- Plain links, like Home's and the Field Guide's scope pills: they
+               work without JavaScript, and with it they are a client-side
+               navigation the loader ignores (`list` is untracked), so no
+               eBird call is made. -->
+          <nav class="list-scope" aria-label="Recent reports: All, Need or Seen">
+            {#each HOTSPOT_RECENT_LISTS as l (l)}
+              <a
+                id={`hotspot-list-${l}`}
+                class:current={recentList === l}
+                href={hotspotRecentListHref(page.url, l)}
+                aria-current={recentList === l ? "true" : undefined}
+                title={HOTSPOT_RECENT_LIST_MEANING[l]}
+                data-sveltekit-preload-data="tap"
+                data-sveltekit-noscroll
+                data-sveltekit-keepfocus
+                ><span class="list-mark" aria-hidden="true"
+                  >{recentList === l ? "●" : "○"}</span
+                >{HOTSPOT_RECENT_LIST_LABEL[l]} <span class="list-count">{recentCounts[l]}</span></a
+              >
+            {/each}
+          </nav>
           <p class="muted">
             The most recent report of each species — one row per species
             (eBird's recent feed shows latest sightings, not every
             checklist). The link opens the checklist it came from.
           </p>
-          {#each data.days as day (day.date)}
+          {#if shownDays.length === 0}
+            <p class="muted" role="status">
+              {#if recentList === "seen" && data.seenCount === 0}
+                Your life list is empty, so every species here counts as a
+                need. Sync or import it in <a href="/settings">Settings</a>.
+              {:else if recentList === "seen"}
+                None of your seen species were reported here in the last
+                {data.back} days.
+              {:else}
+                None of the species reported here in the last {data.back} days
+                are needs.
+              {/if}
+              {#if data.back < 30}
+                <a href={tabHref("recent", { back: data.back === 7 ? "14" : "30" })}
+                  >Widen to {data.back === 7 ? 14 : 30} days</a
+                > or <a href={hotspotRecentListHref(page.url, "all")}>show All</a>.
+              {:else}
+                <a href={hotspotRecentListHref(page.url, "all")}>Show All</a>.
+              {/if}
+            </p>
+          {/if}
+          {#each shownDays as day (day.date)}
             <h3 class="day">{dayLabel(day.date)}</h3>
             <ul class="obs">
               {#each day.reports as sp (sp.speciesCode)}
@@ -626,6 +697,45 @@
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
+  }
+  /* Same pills as Home's and the Field Guide's All / Need / Seen scope, but
+     sharing the row equally: inside this card at phone width the standard
+     padding wrapped Seen onto a second line. */
+  .list-scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 12px 0 8px;
+  }
+  .list-scope a {
+    flex: 1 1 0;
+    justify-content: center;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 48px;
+    padding: 8px 6px;
+    font-size: 0.94rem;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  /* The selected lens differs in shape (filled mark, heavier border), not colour alone. */
+  .list-scope a.current {
+    border: 2px solid var(--accent);
+    background: var(--card);
+    color: var(--accent);
+  }
+  .list-scope a:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .list-count {
+    font-weight: 400;
   }
   .day {
     font-size: 0.82rem;
