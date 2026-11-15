@@ -31,6 +31,12 @@ export interface IndexedPlace {
   lastObsDt: string;
   nReports: number;
   totalCount: number;
+  /** Report-quality counts and latest checklist; optional so the index can be
+   * built from any feed, but {@link speciesAtPlace} must carry them through. */
+  missingCount?: number;
+  unconfirmedCount?: number;
+  reviewUnavailableCount?: number;
+  subId?: string | null;
 }
 
 /**
@@ -55,6 +61,10 @@ export interface IndexedSpecies {
   lastLng?: number;
   distanceKm?: number | null;
   googlePlaceId?: string | null;
+  missingCount?: number;
+  unconfirmedCount?: number;
+  reviewUnavailableCount?: number;
+  lastSubId?: string | null;
 }
 
 /** One place, with the species that make it worth visiting. */
@@ -284,6 +294,30 @@ export function searchPlaces(index: PlaceMatch[], query: string): PlaceMatch[] {
 }
 
 /**
+ * The indexed place a raw place record (one line in a bird card) folds into,
+ * for that line's Focus action (td-2eca50).
+ *
+ * Looked up by {@link PlaceMatch.memberKeys}, never by the record's own key:
+ * a coordinate-only record can live inside an locId-keyed entry, and focusing
+ * its own key would be cleared as unknown. Earlier indexes win, so passing
+ * `(lensIndex, fullIndex)` resolves exactly as Home's `focused` does. A record
+ * in no index returns null and the line simply shows no Focus.
+ */
+export function placeMatchLookup(
+  ...indexes: PlaceMatch[][]
+): (place: Pick<IndexedPlace, "locId" | "lat" | "lng">) => PlaceMatch | null {
+  const byMember = new Map<string, PlaceMatch>();
+  for (const index of indexes) {
+    for (const match of index) {
+      for (const member of match.memberKeys) {
+        if (!byMember.has(member)) byMember.set(member, match);
+      }
+    }
+  }
+  return (place) => byMember.get(placeKey(place.locId, place.lat, place.lng)) ?? null;
+}
+
+/**
  * Does this raw place record belong to the given indexed place?
  *
  * Key equality is not sufficient on its own: {@link buildPlaceIndex} folds
@@ -343,6 +377,13 @@ export function speciesAtPlace<T extends IndexedSpecies>(
       lastObsDt: latest.lastObsDt,
       nReports: here.reduce((n, p) => n + p.nReports, 0),
       totalCount: here.reduce((n, p) => n + p.totalCount, 0),
+      // td-2eca50: these were dropped, so every focused place line read
+      // "reported count unavailable" (undefined missingCount) and lost its
+      // checklist link, while the card header kept whole-area flags.
+      missingCount: here.reduce((n, p) => n + (p.missingCount ?? 0), 0),
+      unconfirmedCount: here.reduce((n, p) => n + (p.unconfirmedCount ?? 0), 0),
+      reviewUnavailableCount: here.reduce((n, p) => n + (p.reviewUnavailableCount ?? 0), 0),
+      subId: latest.subId ?? null,
     };
 
     out.push({
@@ -350,6 +391,10 @@ export function speciesAtPlace<T extends IndexedSpecies>(
       places: [canonical],
       nReports: canonical.nReports,
       totalCount: canonical.totalCount,
+      missingCount: canonical.missingCount,
+      unconfirmedCount: canonical.unconfirmedCount,
+      reviewUnavailableCount: canonical.reviewUnavailableCount,
+      lastSubId: canonical.subId,
       locationCount: 1,
       locations: [match.locName],
       lastObsDt: canonical.lastObsDt,

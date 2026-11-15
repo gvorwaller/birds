@@ -19,6 +19,7 @@
   import { FORECAST_CALENDAR_TZ } from "$lib/forecast-calendar";
   import {
     buildPlaceIndex,
+    placeMatchLookup,
     searchPlaces,
     speciesAtPlace,
   } from "$lib/place-search";
@@ -318,19 +319,40 @@
     return u.pathname + u.search;
   }
 
-  function focusPlace(key: string | null, replace = false) {
+  function focusPlace(key: string | null, replace = false): Promise<void> {
     // No-op when nothing would change: a same-URL `goto` without
     // `replaceState` still pushes a history entry, so re-clicking the focused
     // row would stack duplicates and make Back look broken.
-    if ((focusKey ?? null) === key) return;
+    if ((focusKey ?? null) === key) return Promise.resolve();
     // Rapid clicks overtake each other and SvelteKit rejects the loser with
     // "navigation aborted". The last one still wins, but an unhandled
     // rejection would surface as a console error.
-    goto(urlWithFocus(key), {
+    return goto(urlWithFocus(key), {
       keepFocus: true,
       noScroll: true,
       replaceState: replace,
     }).catch(() => {});
+  }
+
+  // td-2eca50: every place line in the bird cards can focus its place, so
+  // Focus no longer needs a typed place name. Resolved the same way `focused`
+  // is (lens index first, full index as fallback), and through the place's
+  // member keys, so a coordinate-only line focuses the hotspot it folded into.
+  let cardPlaceMatch = $derived(placeMatchLookup(placeIndex, fullPlaceIndex));
+  let focusBarEl: HTMLDivElement | undefined = $state();
+
+  // The tapped line is usually far down the page, and focusing shrinks the
+  // lists under it, so `noScroll` would leave the reader somewhere unrelated.
+  // Bring the focus bar (place name + Clear) into view and move keyboard focus
+  // there: the tapped button is gone once a place is focused. Back returns to
+  // the card, since the focus is its own history entry.
+  async function focusFromCard(key: string) {
+    if (focusKey === key) return;
+    await focusPlace(key);
+    if (page.url.searchParams.get("loc") !== key) return;
+    await tick();
+    focusBarEl?.scrollIntoView({ block: "start" });
+    focusBarEl?.focus({ preventScroll: true });
   }
 
   // Self-heal: a radius/window/place change rebuilds the index, and the focused
@@ -616,6 +638,24 @@
       ),
   );
 </script>
+
+<!-- td-2eca50: Focus on one place line of a bird card. Hidden while a place is
+     focused (every card then shows only that place; the focus bar has Clear),
+     and on a line whose place is in no index, which has nothing to focus. -->
+{#snippet cardFocus(pl: { locId: string | null; lat: number; lng: number })}
+  {#if !focused}
+    {@const m = cardPlaceMatch(pl)}
+    {#if m}
+      <button
+        type="button"
+        class="card-focus"
+        aria-label={`Focus on ${m.locName}`}
+        title={`Show only the birds reported at ${m.locName}`}
+        onclick={() => focusFromCard(m.key)}>◎ Focus</button
+      >
+    {/if}
+  {/if}
+{/snippet}
 
 <svelte:head>
   <title>Home — birds</title>
@@ -940,7 +980,7 @@
     </p>
 
     {#if focused}
-      <div class="focus-bar">
+      <div class="focus-bar" bind:this={focusBarEl} tabindex="-1">
         <span class="focus-chip">
           📍 {focused.locName}
         </span>
@@ -1108,13 +1148,16 @@
                 {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
                   <li>
                     <span class="pl-name">{pl.locName}</span>
-                    <MapLink
-                      lat={pl.lat}
-                      lng={pl.lng}
-                      name={pl.locName}
-                      googlePlaceId={pl.googlePlaceId}
-                      subId={pl.subId}
-                    />
+                    <span class="pl-actions">
+                      {@render cardFocus(pl)}
+                      <MapLink
+                        lat={pl.lat}
+                        lng={pl.lng}
+                        name={pl.locName}
+                        googlePlaceId={pl.googlePlaceId}
+                        subId={pl.subId}
+                      />
+                    </span>
                     <span class="pl-meta"
                       >{#if pl.distanceKm != null}{formatDistance(
                           pl.distanceKm,
@@ -1129,13 +1172,16 @@
                 {/each}
               </ul>
             {:else}
-              <MapLink
-                lat={n.lastLat}
-                lng={n.lastLng}
-                name={n.locations[0] ?? n.comName}
-                googlePlaceId={n.googlePlaceId}
-                subId={n.lastSubId}
-              />
+              <span class="pl-actions">
+                {#if n.places.length === 1}{@render cardFocus(n.places[0])}{/if}
+                <MapLink
+                  lat={n.lastLat}
+                  lng={n.lastLng}
+                  name={n.locations[0] ?? n.comName}
+                  googlePlaceId={n.googlePlaceId}
+                  subId={n.lastSubId}
+                />
+              </span>
             {/if}
           </div>
           <div class="right">
@@ -1359,13 +1405,16 @@
                 {#each n.places as pl (pl.locId ?? `${pl.lat},${pl.lng}`)}
                   <li>
                     <span class="pl-name">{pl.locName}</span>
-                    <MapLink
-                      lat={pl.lat}
-                      lng={pl.lng}
-                      name={pl.locName}
-                      googlePlaceId={pl.googlePlaceId}
-                      subId={pl.subId}
-                    />
+                    <span class="pl-actions">
+                      {@render cardFocus(pl)}
+                      <MapLink
+                        lat={pl.lat}
+                        lng={pl.lng}
+                        name={pl.locName}
+                        googlePlaceId={pl.googlePlaceId}
+                        subId={pl.subId}
+                      />
+                    </span>
                     <span class="pl-meta"
                       >{#if pl.distanceKm != null}{formatDistance(
                           pl.distanceKm,
@@ -1380,13 +1429,16 @@
                 {/each}
               </ul>
             {:else}
-              <MapLink
-                lat={n.lastLat}
-                lng={n.lastLng}
-                name={n.locations[0] ?? n.comName}
-                googlePlaceId={n.googlePlaceId}
-                subId={n.lastSubId}
-              />
+              <span class="pl-actions">
+                {#if n.places.length === 1}{@render cardFocus(n.places[0])}{/if}
+                <MapLink
+                  lat={n.lastLat}
+                  lng={n.lastLng}
+                  name={n.locations[0] ?? n.comName}
+                  googlePlaceId={n.googlePlaceId}
+                  subId={n.lastSubId}
+                />
+              </span>
             {/if}
           </div>
           <div class="right">
@@ -1782,6 +1834,51 @@
   }
   .partial-note {
     font-size: 0.83rem;
+  }
+  .focus-bar:focus {
+    outline: none;
+  }
+  .focus-bar:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 8px;
+  }
+  /* Focus joins the Map / Directions / checklist links in ONE wrapping row:
+     MapLink's own span becomes `contents`, so its links flow beside the
+     button instead of wrapping as a block onto a new line (td-2eca50). */
+  .pl-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    max-width: 100%;
+    gap: 0 14px;
+    margin-top: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .pl-actions :global(.maplink) {
+    display: contents;
+  }
+  /* Same weight and tap height as the MapLink links it sits beside. */
+  .card-focus {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  @media (hover: hover) {
+    .card-focus:hover {
+      text-decoration: underline;
+    }
   }
   .focus-clear {
     display: inline-flex;

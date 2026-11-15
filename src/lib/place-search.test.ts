@@ -3,6 +3,7 @@ import {
   buildPlaceIndex,
   MAX_PLACE_RESULTS,
   placeKey,
+  placeMatchLookup,
   searchPlaces,
   speciesAtPlace,
   type IndexedPlace,
@@ -445,5 +446,51 @@ describe("speciesAtPlace", () => {
 
     const got = speciesAtPlace(index[0], needs);
     expect(got.map((s) => s.speciesCode)).toEqual(["a", "b"]);
+  });
+});
+
+describe("placeMatchLookup (td-2eca50)", () => {
+  it("resolves a card's place line to the entry it folded into", () => {
+    const host = place();
+    const coords = place({ locId: null, lat: 30.41005, lng: -81.42005 });
+    const index = buildPlaceIndex([], [species("need1", [host]), species("need2", [coords])]);
+    const find = placeMatchLookup(index);
+    // The coordinate-only record has no entry of its own; it focuses the host.
+    expect(find(coords)?.key).toBe("L1");
+    expect(find(host)?.key).toBe("L1");
+  });
+
+  it("prefers the earlier index, like Home's focused lookup", () => {
+    const p = place();
+    const lens = buildPlaceIndex([], [species("need1", [p])]);
+    const full = buildPlaceIndex([], [species("need1", [p])], [species("seen1", [p])]);
+    expect(placeMatchLookup(lens, full)(p)).toBe(lens[0]);
+    const seenOnly = place({ locId: "L9", lat: 31, lng: -82 });
+    const fullWithPond = buildPlaceIndex([], [], [species("seen2", [seenOnly])]);
+    expect(placeMatchLookup(lens, fullWithPond)(seenOnly)?.key).toBe("L9");
+  });
+
+  it("returns null for a place in no index", () => {
+    expect(placeMatchLookup([])(place())).toBeNull();
+  });
+});
+
+describe("speciesAtPlace keeps report-quality counts (td-2eca50)", () => {
+  it("sums the place's counts and takes its latest checklist, not the area's", () => {
+    const here = place({ nReports: 2, totalCount: 3, missingCount: 0, unconfirmedCount: 1, reviewUnavailableCount: 0, subId: "S2", lastObsDt: "2026-07-21 07:00" });
+    const folded = place({ locId: null, lat: 30.41005, lng: -81.42005, nReports: 1, totalCount: 0, missingCount: 1, unconfirmedCount: 0, reviewUnavailableCount: 1, subId: "S1", lastObsDt: "2026-07-19 07:00" });
+    const away = place({ locId: "L2", lat: 31, lng: -82, missingCount: 5, subId: "S9" });
+    const sp = species("need1", [here, folded, away], { missingCount: 6, unconfirmedCount: 1, reviewUnavailableCount: 1, lastSubId: "S9" });
+    const index = buildPlaceIndex([], [sp]);
+    const [out] = speciesAtPlace(index.find((m) => m.key === "L1")!, [sp]);
+    expect(out.places).toHaveLength(1);
+    expect(out.places[0]).toMatchObject({ nReports: 3, totalCount: 3, missingCount: 1, unconfirmedCount: 1, reviewUnavailableCount: 1, subId: "S2" });
+    expect(out).toMatchObject({ missingCount: 1, unconfirmedCount: 1, reviewUnavailableCount: 1, lastSubId: "S2" });
+  });
+
+  it("treats absent counts as zero", () => {
+    const sp = species("need1", [place()]);
+    const [out] = speciesAtPlace(buildPlaceIndex([], [sp])[0], [sp]);
+    expect(out.places[0]).toMatchObject({ missingCount: 0, unconfirmedCount: 0, reviewUnavailableCount: 0, subId: null });
   });
 });
