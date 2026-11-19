@@ -35,6 +35,48 @@ Facts measured on 2026-11-19, from public docs and unkeyed probes:
 - **12-month window** for Sweden (Norway keeps 24). The window is never shortened silently to make a load fit **[C1-3]**.
 - **Key via Chrome:** I drive the portal sign-up in his Chrome; he does only the password and consent clicks.
 
+## Phase 0 findings (2026-11-19, done)
+- **Key:**
+  - Product "Species Observations - multiple data resources", access "Öppen" (open). Subscription "birds" on Gaylon's portal account was active immediately.
+  - The key is in `.local/connectors/artportalen.test.env` (mode 600, gitignored), never printed. `ApiInfo` returns 404; use `/Areas` as the health call.
+- **Counties:** `GET /Areas?areaTypes=County` returns 21 län with featureIds equal to the official län numbers: 1 Stockholm, 3 Uppsala, 4 Södermanland, 5 Östergötland, 6 Jönköping, 7 Kronoberg, 8 Kalmar, 9 Gotland, 10 Blekinge, 12 Skåne, 13 Halland, 14 Västra Götaland, 17 Värmland, 18 Örebro, 19 Västmanland, 20 Dalarna, 21 Gävleborg, 22 Västernorrland, 23 Jämtland, 24 Västerbotten, 25 Norrbotten. So `SE-AB`=1 … `SE-BD`=25.
+- **Selection used:** `dataProvider.ids=[1]`, taxon 4000104 with descendants, County area, `dateFilterType=OnlyStartDate`, `occurrenceStatus=Present`, `output.fieldSet=All`, `sortBy=modified` ascending.
+- **Stockholm, May 2026** (the busiest month):
+  - `Count` 96,757; the cursor returned 96,757 records with 96,757 distinct `occurrenceId`s; `totalCount` was the same on all 40 pages (`take=2500`).
+  - 98 s total, slowest page 5.6 s. No 429s and no rate-limit headers.
+  - At this rate, a 12-month Stockholm load takes about 9–10 minutes of reading.
+  - The probe process hit 398 MB RSS just from parsing pages and keeping the id set, which confirms [C1-4] matters.
+- **Jönköping, Oct 2026:** `Count` 11,824.
+- **Fields:**
+  - `occurrence.url` is `https://www.artportalen.se/sighting/<id>`: all https, none failing.
+  - `occurrence.occurrenceId` is `urn:lsid:artportalen.se:sighting:<id>`.
+  - `modified` and `startDate` carry a zone offset (`+02:00`), so they must be normalized for the contract. `event.plainStartDate` is the local Swedish date and is the right month key.
+  - `location.municipality{featureId,name}` was present on every record (26 kommuner in Stockholm). Also present: `parish` (Visingsö is a parish), `locality`, `coordinateUncertaintyInMeters` (5 m to 1.6 km in the sample), and province.
+  - Taxon: `taxon.scientificName`, Swedish `taxon.vernacularName` (e.g. "sothöna"), `taxon.attributes.redlistCategory` (`LC`, `NT`, …), `taxonRank`. Ranks seen: species 95,120 / subspecies 1,317 / unranked 247 / speciesAggregate 47 / genus 15 / family 6 / others fewer than 3.
+  - Quantity: `organismQuantityInt` is missing on 13% (count not given). The unit was empty on all but 10 of 96,757, so non-individual units are rare but real [A4-7].
+  - Validation: `identification.verificationStatus.value` is mostly "Ovaliderad" (not validated).
+- **Observers:**
+  - `occurrence.recordedBy` holds real names, and is never empty or anonymous in the samples.
+  - Multiple observers are separated by `", "` (14% of May records).
+  - `reportedBy` differs from `recordedBy` on about 12%.
+- **Privacy:**
+  - `sensitive` was false on every record (the public API leaves protected ones out).
+  - `diffusionStatus`: 0 (not diffused) 96,635; **2 = DiffusedByProvider** (the reporter blurred it; no original exists) 122, or 0.13%.
+  - **Policy:** diffused records count toward county and kommun totals and species lists, but **never** act as a point: no near / nearest / localities / pins, and no locality text.
+- **Rights and terms:**
+  - The published Artportalen dataset is **CC0** (GBIF dataset 38b4c89f).
+  - The API terms (v1.0, 2018-06-14) require:
+    - §2.3: stating in the app that the data comes from SLU Artdatabanken.
+    - §2.1: a visible link to SLU's usage rules plus a consent sentence for users ("By using this application I undertake to follow the rules…").
+    - §3.2: whoever stores personal data such as observer names is the **GDPR controller** for it.
+  - No storage, caching or rate rules; SLU may pause a key for overload.
+  - **Gaylon accepted the controller role (2026-11-19), so `store_observers = true`.** Duties:
+    - Names only show who reported what and who is most active.
+    - Signed-in users only; never public.
+    - Removal through the 12-month reload.
+    - Honour any removal request.
+  - The About page and the Sweden source card carry the attribution, the rules link and the consent line.
+
 ## Phase 0: API key + probe (no code)
 1. Open `api-portal.artdatabanken.se` in Gaylon's Chrome.
    - He signs up and consents.
