@@ -31,6 +31,7 @@ import {
 } from "$server/external-sources/admin";
 import { IngestError, queueExternalLoad } from "$server/external-sources/lifecycle";
 import { isRegionCode } from "$server/external-sources/contract";
+import { getRegion } from "$server/regions";
 import { usageAggregates } from "$server/ai-usage";
 import { meteredAiCall } from "$server/ai-call";
 import { setWorkerPauseRequested } from "$server/jobs";
@@ -415,9 +416,11 @@ export const actions: Actions = {
     if (!sourceId || !isRegionCode(regionCode)) return sourcesResult(false, "Pick a region.");
     try {
       const r = await queueExternalLoad({ sourceId, regionCode, requestedBy: locals.user.id });
+      const region = await getRegion(regionCode);
+      const label = region ? `${region.name} (${regionCode})` : regionCode;
       return sourcesResult(
         true,
-        r.created ? `Load queued for ${regionCode}.` : `A load for ${regionCode} is already queued or running.`,
+        r.created ? `Load queued for ${label}.` : `A load for ${label} is already queued or running.`,
       );
     } catch (err) {
       if (err instanceof IngestError) return sourcesResult(false, err.message, err.status === 404 ? 404 : 400);
@@ -431,14 +434,18 @@ export const actions: Actions = {
     const regionCode = String(f.get("region_code") ?? "");
     const open = f.get("open") === "1";
     if (!sourceId || !isRegionCode(regionCode)) return sourcesResult(false, "Pick a region.");
-    return (await setRegionOpen(sourceId, regionCode, open))
+    const changed = await setRegionOpen(sourceId, regionCode, open);
+    // Name the region in full, so a wrong pick is plain at once (td-99eebf).
+    const r = await getRegion(regionCode);
+    const label = r ? `${r.name} (${regionCode})` : regionCode;
+    return changed
       ? sourcesResult(
           true,
           open
-            ? `${regionCode} is open for loading.`
-            : `${regionCode} is closed for loading. Its loaded reports stay.`,
+            ? `${label} is open for loading.`
+            : `${label} is closed for loading. Its loaded reports stay.`,
         )
-      : sourcesResult(false, `${regionCode} was already ${open ? "open" : "closed"}.`);
+      : sourcesResult(false, `${label} was already ${open ? "open" : "closed"}.`);
   },
   revoke_connector: async ({ locals, request }) => {
     if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);

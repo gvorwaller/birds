@@ -135,6 +135,21 @@ describe('Admin → Sources folds (td-2219df)', () => {
 		expect(body).toContain('No loaded taxon is matched to an eBird species yet.');
 	});
 
+	it('starts every region list on "Choose a region…", so one tap never opens or loads the first region (td-99eebf)', () => {
+		const regions = [
+			{ code: 'SE-K', name: 'Blekinge län', open: false, loadedAt: null, window: null },
+			{ code: 'SE-F', name: 'Jönköpings län', open: false, loadedAt: null, window: null },
+			{ code: 'SE-AB', name: 'Stockholms län', open: true, loadedAt: null, window: null }
+		];
+		const { body } = render(SourcesPanel, { props: { sources: [source({ regions })], form: null } });
+		const selects = [...body.matchAll(/<select name="region_code"[^>]*>([\s\S]*?)<\/select>/g)].map((m) => m[1]);
+		expect(selects).toHaveLength(3); // Load a region, Closed region, Open region
+		for (const opts of selects) {
+			expect(opts).toMatch(/^\s*(<!--[^>]*-->)?\s*<option value="" disabled(="")? selected(="")?>Choose a region…<\/option>/);
+			expect(opts.match(/ selected/g)).toHaveLength(1);
+		}
+	});
+
 	it('says when no connector token is active', () => {
 		const { body } = render(SourcesPanel, { props: { sources: [source({ connectors: [] })], form: null } });
 		expect(folds(body).find((x) => x.title.startsWith('Connector'))?.title).toBe('Connector no active token');

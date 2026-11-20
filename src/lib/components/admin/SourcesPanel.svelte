@@ -318,6 +318,7 @@
 					<label class="field">
 						<span>Region</span>
 						<select name="region_code" required>
+							<option value="" disabled selected>Choose a region…</option>
 							{#each s.regions.filter((r) => r.open) as r (r.code)}
 								<option value={r.code}>
 									{r.name} ({r.code}){r.loadedAt ? ` — loaded ${ago(r.loadedAt)}` : ' — not loaded'}
@@ -351,6 +352,7 @@
 						<label class="field">
 							<span>Closed region</span>
 							<select name="region_code" required>
+								<option value="" disabled selected>Choose a region…</option>
 								{#each s.regions.filter((r) => !r.open) as r (r.code)}
 									<option value={r.code}>{r.name} ({r.code})</option>
 								{/each}
@@ -368,6 +370,7 @@
 						<label class="field">
 							<span>Open region</span>
 							<select name="region_code" required>
+								<option value="" disabled selected>Choose a region…</option>
 								{#each s.regions.filter((r) => r.open) as r (r.code)}
 									<option value={r.code}>{r.name} ({r.code})</option>
 								{/each}
