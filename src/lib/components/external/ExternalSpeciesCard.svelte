@@ -145,6 +145,15 @@
 			<!-- Shown even with no reports in the window: the latest two weeks
 			     lie after it (CODEX1 F1, e.g. a Pine Bunting this October). -->
 			<h3>Latest reports</h3>
+			{#if c.published?.recent?.truncated && c.published.recent.from}
+				<!-- CODEX1 R4: the county had more reports than the cap in its last two
+				     weeks, so only the newest were kept; say which days. -->
+				<p class="muted small partial">
+					{regionName} had more reports in its last two weeks than are kept, so this shows only those from
+					{reportDate(c.published.recent.from)}{c.published.recent.to ? ` to ${reportDate(c.published.recent.to)}` : ''}; an
+					earlier report of this species in those two weeks may be missing.
+				</p>
+			{/if}
 			{#if c.latest.length > 0}
 				<p class="muted small">From the last 14 days with reports when {regionName} was loaded, newest first.</p>
 				<ul class="latest">
@@ -171,7 +180,10 @@
 					{/each}
 				</ul>
 			{:else}
-				<p class="muted small">None in the last 14 days with reports when {regionName} was loaded.</p>
+				<p class="muted small">
+					None {c.published?.recent?.truncated ? 'among the reports kept' : 'listed from the last 14 days with reports'} when
+					{regionName} was loaded. Protected or blurred reports are never listed, so this isn't proof there were none.
+				</p>
 			{/if}
 			<p class="more">
 				<a href={whereWhenHref(c.source.id, regionCode, { month: c.month, seen: 'all' })}
@@ -194,7 +206,10 @@
 				<a href={externalRegionHref(result.externalQueued.regionCode)}>Hotspots &amp; data</a>.
 			</p>
 		{/if}
-		{#if canLoad && !status}
+		{#if canLoad && !status && !c.queueable}
+			<!-- td-99eebf: a source's counties open for loading one by one (Admin → Sources). -->
+			<p class="small not-open">Loading {c.source.name} reports for {regionName} isn't open yet.</p>
+		{:else if canLoad && !status}
 			{@const key = c.source.id}
 			<form method="POST" action="?/queueExternalLoad" use:enhance={submitter(key)}>
 				<input type="hidden" name="source_id" value={c.source.id} />

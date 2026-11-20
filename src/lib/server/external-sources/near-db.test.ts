@@ -44,9 +44,9 @@ let otherUserId = 0;
 async function addSource(id: string, active: boolean) {
 	await query(
 		`INSERT INTO external_sources (id, name, publisher, license, license_url, citation, attribution, record_semantics,
-		                               homepage, covers_country, geo_scheme, window_months, store_observers, active)
+		                               homepage, covers_country, geo_scheme, window_months, store_observers, active, locale)
 		 VALUES ($1, $2, 'Test publisher', 'CC BY 4.0', 'https://creativecommons.org/licenses/by/4.0/', 'Test citation',
-		         'Test attribution', 'reports', 'https://example.org/', 'NO', 'TEST', 24, false, $3)`,
+		         'Test attribution', 'reports', 'https://example.org/', 'NO', 'TEST', 24, false, $3, 'nb')`,
 		[id, `Test ${id}`, active]
 	);
 	await query(

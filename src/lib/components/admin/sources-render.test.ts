@@ -30,7 +30,7 @@ function source(over: Partial<AdminSource> = {}): AdminSource {
 		windowMonths: 24,
 		storeObservers: true,
 		connectors: [{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: '2026-10-29T18:00:00Z', revokedAt: null }],
-		regions: [{ code: 'NO-18', name: 'Nordland', loadedAt: '2026-10-29T12:00:00Z', window: null }],
+		regions: [{ code: 'NO-18', name: 'Nordland', open: true, loadedAt: '2026-10-29T12:00:00Z', window: null }],
 		loads: [],
 		oldestQueuedAt: null,
 		overdueLeases: 0,
@@ -100,6 +100,7 @@ describe('Admin → Sources folds (td-2219df)', () => {
 			'Reference',
 			'Connector',
 			'Load a region',
+			'Regions open for loading',
 			'Loads',
 			'Unmatched taxa',
 			'Saved matches',
@@ -107,6 +108,8 @@ describe('Admin → Sources folds (td-2219df)', () => {
 			'Re-match species'
 		]);
 		expect(f.filter((x) => x.open).map((x) => named(x.title))).toEqual(['Load a region', 'Loads']);
+		// Every region is open, so the "open for loading" fold stays closed (td-99eebf).
+		expect(f.find((x) => x.title.startsWith('Regions open for loading'))?.title).toBe('Regions open for loading (1 of 1)');
 		// The headings stay headings inside the summaries.
 		expect(body).toMatch(/<summary[^>]*><h3[^>]*>Reference<\/h3><\/summary>/);
 		expect(body).toMatch(/<summary[^>]*><h4[^>]*>Re-match species<\/h4><\/summary>/);

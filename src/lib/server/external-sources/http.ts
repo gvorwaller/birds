@@ -9,7 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { authenticateConnector, type AuthFailure, type Connector } from './auth';
-import { ContractError, MAX_BODY_BYTES, isUuid } from './contract';
+import { ContractError, MAX_BODY_BYTES, MAX_FINISH_BODY_BYTES, isUuid } from './contract';
 import { IngestError } from './lifecycle';
 
 export interface IngestContext {
@@ -63,9 +63,9 @@ export function resetIngestRateForTest(): void {
 	buckets.clear();
 }
 
-async function readCapped(request: Request): Promise<{ text: string; bytes: number } | 'too_large'> {
+async function readCapped(request: Request, cap: number): Promise<{ text: string; bytes: number } | 'too_large'> {
 	const declared = Number(request.headers.get('content-length') ?? '');
-	if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return 'too_large';
+	if (Number.isFinite(declared) && declared > cap) return 'too_large';
 	if (!request.body) return { text: '', bytes: 0 };
 	const reader = request.body.getReader();
 	const parts: Uint8Array[] = [];
@@ -74,7 +74,7 @@ async function readCapped(request: Request): Promise<{ text: string; bytes: numb
 		const { done, value } = await reader.read();
 		if (done) break;
 		bytes += value.byteLength;
-		if (bytes > MAX_BODY_BYTES) {
+		if (bytes > cap) {
 			await reader.cancel().catch(() => {});
 			return 'too_large';
 		}
@@ -123,9 +123,11 @@ export async function handleIngest(
 	if (type !== 'application/json') {
 		return done(415, { error: 'content_type', message: 'Send Content-Type: application/json.' });
 	}
-	const raw = await readCapped(request);
+	// Only finish carries the whole manifest (td-99eebf); every other call keeps the 256 KiB cap.
+	const cap = route === 'finish' ? MAX_FINISH_BODY_BYTES : MAX_BODY_BYTES;
+	const raw = await readCapped(request, cap);
 	if (raw === 'too_large') {
-		return done(413, { error: 'too_large', message: `Bodies are limited to ${MAX_BODY_BYTES} bytes.` });
+		return done(413, { error: 'too_large', message: `Bodies are limited to ${cap} bytes.` });
 	}
 	let body: unknown;
 	try {

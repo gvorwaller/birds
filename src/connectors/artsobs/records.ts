@@ -14,69 +14,15 @@
  * 9%, DatasetName 0.7%. IdentifiedBy, Habitat and Info were never filled.
  */
 import { sightingUrl } from './config';
+import { cleanText, type CompactRecord, type Taxon } from '../shared/records';
 
-export type TaxonRank = 'SPECIES' | 'SUBSPECIES';
-
-export interface Taxon {
-	/** Artskart's TaxonId. */
-	id: string;
-	/** "Genus species" or "Genus species x". */
-	canonical: string;
-	/** The name as Artskart sent it, spaces collapsed. */
-	raw: string;
-	rank: TaxonRank;
-	/** "Genus species": what an observer's species count counts. */
-	binomial: string;
-}
-
-export interface CompactRecord {
-	id: string;
-	/** YYYY-MM-DD */
-	date: string;
-	month: number;
-	/** Null: not a species or subspecies (genus or family reports, hybrids). */
-	taxon: Taxon | null;
-	/** The name of a non-species record, for the connector notes. */
-	otherName: string | null;
-	municipality: string | null;
-	locality: string | null;
-	lat: number | null;
-	lon: number | null;
-	uncertainty: number | null;
-	count: number | null;
-	observers: string[];
-	url: string | null;
-	/** Artskart's TaxonId, also for a record that is not a species. */
-	taxonId: string | null;
-	/** The Norwegian name ("grågås"). */
-	localName: string | null;
-	/** Norsk Rødliste 2021 (mainland) category and its page. */
-	redList: string | null;
-	redListUrl: string | null;
-	municipalityId: string | null;
-	behaviour: string[];
-	activity: string | null;
-	validation: string | null;
-	notes: string | null;
-	sex: string | null;
-	photos: { url: string; by: string | null }[] | null;
-	dataset: string | null;
-	/** TrackDateTime as given (no zone stated), cut to microseconds. */
-	modifiedAt: string | null;
-}
+export { cleanText, type CompactRecord, type Taxon, type TaxonRank } from '../shared/records';
 
 export type SkipReason = 'undated';
 
 const ID = /^[A-Za-z0-9._:-]{1,64}$/;
 const SPECIES = /^([A-Z][a-z]+) ([a-z][a-z-]*)$/;
 const INFRA = /^([A-Z][a-z]+) ([a-z][a-z-]*) (?:subsp\.|var\.|f\.) ([a-z][a-z/-]*)$/;
-
-/** Trimmed, inner spaces collapsed ("Astur gentilis " arrives with a trailing space). */
-export function cleanText(v: unknown): string | null {
-	if (typeof v !== 'string') return null;
-	const s = v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
-	return s.length > 0 ? s : null;
-}
 
 export function classifyName(id: string | null, name: string | null): Taxon | null {
 	if (!id || !name || !/^[A-Za-z0-9._:-]{1,64}$/.test(id)) return null;

@@ -476,17 +476,32 @@
 						eBird.
 					</li>
 				</ul>
-				<h3 id="other-sources">Reports from other sources (Norway)</h3>
+				<h3 id="other-sources">Reports from other sources (Norway and Sweden)</h3>
 				<ul>
 					<li>
-						eBird has few checklists in Norway, where birders report to
-						<strong>Artsobservasjoner</strong> instead. Its bird reports can be
-						loaded one county at a time: <strong>Hotspots &amp; data</strong> →
-						<strong>Reports from other sources</strong> → <strong>Load reports</strong>,
-						or the <strong>Load … reports</strong> button on a species forecast for a
-						Norwegian county. A load reads the last 24 complete months plus the
-						latest two weeks and takes a few minutes; nothing is fetched while
-						you browse.
+						eBird has few checklists in Norway and Sweden, where birders report to
+						<strong>Artsobservasjoner</strong> (Norway) and <strong>Artportalen</strong>
+						(Sweden) instead. Their bird reports can be loaded one county at a time:
+						<strong>Hotspots &amp; data</strong> → <strong>Reports from other
+						sources</strong> → <strong>Load reports</strong>, or the <strong>Load …
+						reports</strong> button on a species forecast for a county there. A load
+						takes a few minutes; nothing is fetched while you browse.
+					</li>
+					<li>
+						Each source keeps its own window: <strong>Norway</strong> reads the last 24
+						complete months plus the latest two weeks, <strong>Sweden</strong> the last
+						12. With 12 months there is one of each month, so a Swedish card shows no
+						"in 2 of 2 Mays"-style count.
+					</li>
+					<li>
+						<strong>Sweden</strong> opens county by county: only counties open for
+						loading show a Load button (Stockholms län and Jönköpings län first); the
+						others say loading isn't open yet. An admin opens more under
+						<strong>Admin → Sources</strong>. A report whose location its reporter
+						blurred counts in its county and municipality, but never as a place on
+						the map or in <strong>What can I see?</strong>. Data from SLU
+						Artdatabanken (Artportalen), CC0; using it means following
+						<a href="https://www.slu.se/artdatabanken/rapportering-och-fynd/oppna-data-och-apier/api-villkor" target="_blank" rel="noopener">SLU Artdatabanken's rules for its information ↗</a>.
 					</li>
 					<li>
 						These are <strong>counts of reports</strong>, not checklist
@@ -536,8 +551,9 @@
 					<li>
 						Each loaded county on Hotspots &amp; data also lists its <strong>most
 						active birders</strong>, ranked by days with reports. Names are public
-						on Artsobservasjoner. Data: Artsobservasjoner (Norwegian Biodiversity
-						Information Centre), CC BY 4.0.
+						on Artsobservasjoner and Artportalen, and are shown here only to
+						signed-in users. Data: Artsobservasjoner (Norwegian Biodiversity
+						Information Centre), CC BY 4.0; Artportalen (SLU Artdatabanken), CC0.
 					</li>
 				</ul>
 			</div>

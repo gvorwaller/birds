@@ -26,6 +26,7 @@ import {
   rematchSource,
   removeTaxonOverride,
   revokeConnector,
+  setRegionOpen,
   setTaxonOverride,
 } from "$server/external-sources/admin";
 import { IngestError, queueExternalLoad } from "$server/external-sources/lifecycle";
@@ -422,6 +423,22 @@ export const actions: Actions = {
       if (err instanceof IngestError) return sourcesResult(false, err.message, err.status === 404 ? 404 : 400);
       throw err;
     }
+  },
+  set_region_open: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const f = await request.formData();
+    const sourceId = String(f.get("source_id") ?? "");
+    const regionCode = String(f.get("region_code") ?? "");
+    const open = f.get("open") === "1";
+    if (!sourceId || !isRegionCode(regionCode)) return sourcesResult(false, "Pick a region.");
+    return (await setRegionOpen(sourceId, regionCode, open))
+      ? sourcesResult(
+          true,
+          open
+            ? `${regionCode} is open for loading.`
+            : `${regionCode} is closed for loading. Its loaded reports stay.`,
+        )
+      : sourcesResult(false, `${regionCode} was already ${open ? "open" : "closed"}.`);
   },
   revoke_connector: async ({ locals, request }) => {
     if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);

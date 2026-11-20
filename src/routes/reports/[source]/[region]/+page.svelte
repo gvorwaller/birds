@@ -61,7 +61,7 @@
 	const listed = $derived(data.mode === 'month' ? inMonth : shown);
 	const visible = $derived(showAll ? listed : listed.slice(0, FIRST_ROWS));
 
-	const placeRows = $derived(rankPlaces(data.placeRows, data.mode === 'month', needsOnly));
+	const placeRows = $derived(rankPlaces(data.placeRows, data.mode === 'month', needsOnly, data.state.source.locale));
 
 	function mapQuery(...parts: (string | null)[]): string {
 		return [...parts.filter(Boolean), data.regionName, source.countryName].join(', ');
@@ -148,7 +148,10 @@
 				<p class="error">The last load failed{data.state.failed.error ? `: ${data.state.failed.error}` : '.'}</p>
 			{/if}
 			{@render loadResult()}
-			{#if data.canLoad && !status}
+			{#if data.canLoad && !status && !data.state.queueable}
+				<!-- td-99eebf: a source's counties open for loading one by one (Admin → Sources). -->
+				<p class="muted">Loading {source.name} reports for {data.regionName} isn't open yet.</p>
+			{:else if data.canLoad && !status}
 				{@render loadForm(`Load ${source.name} reports for ${data.regionName}`, 'primary')}
 			{/if}
 			<ExternalAttribution {source} />
@@ -379,7 +382,7 @@
 				</p>
 			{/if}
 			{@render loadResult()}
-			{#if data.state.failed && data.canLoad && !status}
+			{#if data.state.failed && data.canLoad && !status && data.state.queueable}
 				{@render loadForm(`Reload ${data.regionName}`, 'secondary')}
 			{/if}
 			<ExternalAttribution

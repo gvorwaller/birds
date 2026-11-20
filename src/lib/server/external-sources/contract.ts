@@ -11,6 +11,14 @@ import { createHash } from 'node:crypto';
 export const CONTRACT_VERSION = 1;
 /** Request body cap for every ingest call, enforced before JSON parsing. */
 export const MAX_BODY_BYTES = 256 * 1024;
+/**
+ * The finish body alone may be larger (td-99eebf, CODEX1 [C1-3]): its
+ * manifest lists every chunk of the load, about 130 bytes each, and a
+ * 12-month Stockholm load sends some 1,600–2,000 records chunks, which brushes
+ * the 256 KiB cap. 2 MiB holds ~15,000 chunk entries, well past the load row
+ * and byte caps, so it can't be the limit that bites.
+ */
+export const MAX_FINISH_BODY_BYTES = 2 * 1024 * 1024;
 export const MAX_ROWS_PER_CHUNK = 5000;
 /**
  * Caps for one whole load (every chunk of every kind). Since every report is

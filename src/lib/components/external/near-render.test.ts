@@ -24,7 +24,9 @@ const source = {
 	homepage: 'https://www.artsobservasjoner.no/',
 	countryName: 'Norway',
 	regionLink: null,
-	storeObservers: true
+	storeObservers: true,
+	locale: 'nb',
+	termsUrl: null
 };
 const nordland = { code: 'NO-18', name: 'Nordland', windowStart: '2024-10-01', windowEnd: '2026-09-30' };
 
@@ -76,6 +78,7 @@ const unloaded = (over: Partial<ExternalRegionState> = {}) => ({
 	published: null,
 	active: null,
 	failed: null,
+	queueable: true,
 	regionCode: 'NO-19',
 	regionName: 'Troms',
 	...over
@@ -144,6 +147,19 @@ describe('ExternalNearCard', () => {
 		expect(t).toContain(
 			'No Artsobservasjoner reports within 5.0 mi in October, Oct 2024 – Sep 2026. The nearest is Steirohatten, Alstahaug, No, 6.8 mi away.'
 		);
+	});
+
+	it('says its counts and its zeros cover loaded counties only (CODEX1 R5)', () => {
+		const note = "From loaded counties only (Nordland); a county within the radius that isn't loaded isn't counted.";
+		expect(text(html({}))).toContain(note);
+		const nearest = { key: 'k', locality: 'Steirohatten, Alstahaug, No', municipality: 'Alstahaug', reports: 0, km: 11, regionCode: 'NO-18' };
+		expect(text(html({ cards: [card({ reports: 0, species: [], places: [], municipalities: [], nearest })] }))).toContain(note);
+	});
+
+	it('offers no load for a county not open for loading, and says so (td-99eebf)', () => {
+		const h = html({ cards: [], unloaded: [unloaded({ queueable: false })] });
+		expect(text(h)).toContain("Loading Artsobservasjoner reports for Troms isn't open yet.");
+		expect(h).not.toContain('<form');
 	});
 
 	it('offers to load an unloaded county, never to a viewer', () => {

@@ -45,10 +45,10 @@ async function addSource(id: string, opts: { observers: boolean; active: boolean
 	await query(
 		`INSERT INTO external_sources (id, name, publisher, license, license_url, citation, attribution, record_semantics,
 		                               homepage, covers_country, geo_scheme, window_months, store_observers, active,
-		                               region_link_template)
+		                               region_link_template, locale)
 		 VALUES ($1, $2, 'Test publisher', 'CC BY 4.0', 'https://creativecommons.org/licenses/by/4.0/', 'Test citation',
 		         'Test attribution', 'reports', 'https://example.org/', 'NO', 'TEST', 24, $3, $4,
-		         'https://example.org/area/{upstream_key}')`,
+		         'https://example.org/area/{upstream_key}', 'nb')`,
 		[id, `Test ${id}`, opts.observers, opts.active]
 	);
 }

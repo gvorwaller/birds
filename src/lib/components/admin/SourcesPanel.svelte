@@ -39,6 +39,11 @@
 			title: 'External sources plan',
 			about: 'How it works now: the Norway connector, what is stored and where it shows, then the ingest contract and the history of the plan.',
 			path: 'docs/2026-10-21-external-sources-plan-CC.md'
+		},
+		{
+			title: 'Sweden (Artportalen) plan',
+			about: 'The Sweden connector: what Artportalen\'s API gives, the reviews, the privacy and GDPR rules, and how counties open for loading.',
+			path: 'docs/2026-11-19-sweden-artportalen-plan-CC.md'
 		}
 	];
 	const REASON: Record<string, string> = {
@@ -313,20 +318,70 @@
 					<label class="field">
 						<span>Region</span>
 						<select name="region_code" required>
-							{#each s.regions as r (r.code)}
+							{#each s.regions.filter((r) => r.open) as r (r.code)}
 								<option value={r.code}>
 									{r.name} ({r.code}){r.loadedAt ? ` — loaded ${ago(r.loadedAt)}` : ' — not loaded'}
 								</option>
 							{/each}
 						</select>
 					</label>
-					<button type="submit" class="btn accent-solid" disabled={!s.active || busy !== null}>
+					<button type="submit" class="btn accent-solid" disabled={!s.active || busy !== null || !s.regions.some((r) => r.open)}>
 						{busy === `${at}:load` ? 'Queueing…' : 'Queue load'}
 					</button>
 				</form>
 				<p class="muted">
 					The connector picks the load up within a minute. A load replaces that region's data only when it
 					finishes completely; until then the previous data stays.
+				</p>
+			</details>
+
+			<!-- td-99eebf: a source's regions open for loading one by one. Only open
+			     regions get a Load button anywhere in the app. -->
+			<details class="sec" open={s.regions.some((r) => !r.open)}>
+				<summary>
+					<h4>
+						Regions open for loading <span class="muted">({s.regions.filter((r) => r.open).length} of {s.regions.length})</span>
+					</h4>
+				</summary>
+				{@render notice(`${at}:open`)}
+				{#if s.regions.some((r) => !r.open)}
+					<form method="POST" action="?/set_region_open" class="inline-form" use:enhance={act(`${at}:open`, `${at}:open`)}>
+						<input type="hidden" name="source_id" value={s.id} />
+						<input type="hidden" name="open" value="1" />
+						<label class="field">
+							<span>Closed region</span>
+							<select name="region_code" required>
+								{#each s.regions.filter((r) => !r.open) as r (r.code)}
+									<option value={r.code}>{r.name} ({r.code})</option>
+								{/each}
+							</select>
+						</label>
+						<button type="submit" class="btn" disabled={busy !== null}>
+							{busy === `${at}:open` ? 'Opening…' : 'Open for loading'}
+						</button>
+					</form>
+				{/if}
+				{#if s.regions.some((r) => r.open)}
+					<form method="POST" action="?/set_region_open" class="inline-form" use:enhance={act(`${at}:open`, `${at}:open`)}>
+						<input type="hidden" name="source_id" value={s.id} />
+						<input type="hidden" name="open" value="0" />
+						<label class="field">
+							<span>Open region</span>
+							<select name="region_code" required>
+								{#each s.regions.filter((r) => r.open) as r (r.code)}
+									<option value={r.code}>{r.name} ({r.code})</option>
+								{/each}
+							</select>
+						</label>
+						<button type="submit" class="btn" disabled={busy !== null}>
+							{busy === `${at}:open` ? 'Closing…' : 'Close for loading'}
+						</button>
+					</form>
+				{/if}
+				<p class="muted">
+					Everyone can load an open region from Hotspots &amp; data, Forecast and the reports pages. Closing a region
+					hides its Load buttons, cancels a load still waiting in the queue there, and stops a running load from
+					being retried; reports already loaded stay, and a load already running finishes.
 				</p>
 			</details>
 
@@ -500,14 +555,14 @@
 				{:else}
 					<p class="muted">
 						Every loaded taxon that counts as an eBird species. Change one when the automatic match is wrong
-						for the region: kråke (<i>Corvus corone</i>) is the Hooded Crow in Norway, not the Carrion Crow.
+						for the region. For example, kråke (<i>Corvus corone</i>) is the Hooded Crow in Norway, not the Carrion Crow.
 					</p>
 					{#if mounted}
 						<label class="field find">
 							<span>Find a taxon</span>
 							<input
 								type="search"
-								placeholder="Norwegian, scientific or eBird name"
+								placeholder="Local, scientific or eBird name"
 								autocomplete="off"
 								autocorrect="off"
 								autocapitalize="off"

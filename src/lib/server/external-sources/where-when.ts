@@ -102,6 +102,17 @@ export function externalWhereWhen(opts: {
 }
 
 /** Exported for the snapshot test only. */
+/**
+ * The n places with the most reports (none with zero), ties in the source's
+ * own language order, then by code point so the cut is stable (CODEX1 R9).
+ */
+export function topPlaces(list: readonly { name: string; reports: number }[], n: number, locale: string): { name: string; reports: number }[] {
+	return list
+		.filter((x) => x.reports > 0)
+		.sort((a, b) => b.reports - a.reports || a.name.localeCompare(b.name, locale) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+		.slice(0, n);
+}
+
 export async function _readWhereWhen(
 	db: Db,
 	opts: { sourceId: string; regionCode: string; place: string | null; month: number; userId: number }
@@ -151,7 +162,7 @@ export async function _readWhereWhen(
 	const places: WhereWhenPlace[] = [...byKey.values()]
 		.filter((e) => e.level === 'subregion')
 		.map((e) => ({ name: e.name, monthTotals: e.months, reports: e.months.reduce((a, b) => a + b, 0) }))
-		.sort((a, b) => a.name.localeCompare(b.name, 'nb'));
+		.sort((a, b) => a.name.localeCompare(b.name, state.source.locale));
 	const placeKey = [...byKey.entries()].find(([, e]) => e.level === 'subregion' && e.name === opts.place)?.[0] ?? null;
 	const key = placeKey ?? regionCode;
 
@@ -195,45 +206,30 @@ export async function _readWhereWhen(
 	let localities: WhereWhenLocality[] = [];
 	if (!placeKey) {
 		// Each species' top municipalities, for the month and for the window.
-		const where = await db.query<{
-			species_code: string;
-			name: string;
-			w: string;
-			mo: string | null;
-			rw: string;
-			rm: string;
-		}>(
-			`WITH m AS (
-			   SELECT x.species_code, p.name, SUM(x.reports) AS w, SUM(x.reports) FILTER (WHERE x.month = $3) AS mo
-			     FROM external_place_month_species x
-			     JOIN external_places p ON p.source_id = x.source_id AND p.place_key = x.place_key
-			    WHERE x.source_id = $1 AND x.region_code = $2 AND p.level = 'subregion' AND x.reports > 0
-			    GROUP BY x.species_code, p.name)
-			 SELECT species_code, name, w, mo, rw, rm FROM (
-			   SELECT m.*,
-			          row_number() OVER (PARTITION BY species_code ORDER BY w DESC, name) AS rw,
-			          row_number() OVER (PARTITION BY species_code ORDER BY mo DESC NULLS LAST, name) AS rm
-			     FROM m) r
-			  WHERE rw <= ${WHERE_PLACES} OR (rm <= ${WHERE_PLACES} AND mo > 0)
-			  ORDER BY species_code, name`,
+		// Ranked here, not in SQL (CODEX1 R9): a tie at the cutoff is broken in
+		// the source's own language order (Swedish å, ä, ö last), which the
+		// database's collation doesn't know. A county has at most a few hundred
+		// species × a few dozen municipalities, so every pair is read.
+		const where = await db.query<{ species_code: string; name: string; w: string; mo: string | null }>(
+			`SELECT x.species_code, p.name, SUM(x.reports) AS w, SUM(x.reports) FILTER (WHERE x.month = $3) AS mo
+			   FROM external_place_month_species x
+			   JOIN external_places p ON p.source_id = x.source_id AND p.place_key = x.place_key
+			  WHERE x.source_id = $1 AND x.region_code = $2 AND p.level = 'subregion' AND x.reports > 0
+			  GROUP BY x.species_code, p.name`,
 			[sourceId, regionCode, month]
 		);
-		const ranked = new Map<
-			string,
-			{ w: { name: string; reports: number; r: number }[]; m: { name: string; reports: number; r: number }[] }
-		>();
+		const pairs = new Map<string, { name: string; w: number; mo: number }[]>();
 		for (const r of where.rows) {
-			const e = ranked.get(r.species_code) ?? { w: [], m: [] };
-			if (Number(r.rw) <= WHERE_PLACES) e.w.push({ name: r.name, reports: Number(r.w), r: Number(r.rw) });
-			if (Number(r.rm) <= WHERE_PLACES && Number(r.mo ?? 0) > 0)
-				e.m.push({ name: r.name, reports: Number(r.mo), r: Number(r.rm) });
-			ranked.set(r.species_code, e);
+			const list = pairs.get(r.species_code) ?? [];
+			list.push({ name: r.name, w: Number(r.w), mo: Number(r.mo ?? 0) });
+			pairs.set(r.species_code, list);
 		}
-		for (const [code, e] of ranked) {
-			const s = bySpecies.get(code);
-			if (!s) continue;
-			s.whereWindow = e.w.sort((a, b) => a.r - b.r).map(({ name, reports }) => ({ name, reports }));
-			s.whereMonth = e.m.sort((a, b) => a.r - b.r).map(({ name, reports }) => ({ name, reports }));
+		const locale = state.source.locale;
+		for (const [code, list] of pairs) {
+			const sp = bySpecies.get(code);
+			if (!sp) continue;
+			sp.whereWindow = topPlaces(list.map((x) => ({ name: x.name, reports: x.w })), WHERE_PLACES, locale);
+			sp.whereMonth = topPlaces(list.map((x) => ({ name: x.name, reports: x.mo })), WHERE_PLACES, locale);
 		}
 
 		const rows = await db.query<{

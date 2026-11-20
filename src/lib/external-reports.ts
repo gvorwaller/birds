@@ -142,9 +142,9 @@ interface PlaceFigures {
 
 /**
  * Municipalities, most needs (or species) first, for the month or the whole
- * window; ties in Norwegian name order.
+ * window; ties in the source's own name order (td-99eebf: 'nb', 'sv').
  */
-export function rankPlaces<T extends PlaceFigures>(rows: readonly T[], byMonth: boolean, needsOnly: boolean): T[] {
+export function rankPlaces<T extends PlaceFigures>(rows: readonly T[], byMonth: boolean, needsOnly: boolean, locale: string): T[] {
 	const key = (r: T) => (byMonth ? (needsOnly ? r.monthNeeds : r.monthSpecies) : needsOnly ? r.needs : r.species);
-	return [...rows].sort((a, b) => key(b) - key(a) || a.name.localeCompare(b.name, 'nb'));
+	return [...rows].sort((a, b) => key(b) - key(a) || a.name.localeCompare(b.name, locale));
 }

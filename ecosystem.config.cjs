@@ -51,7 +51,12 @@ module.exports = {
 				// glibc keeps one malloc arena per thread by default; two arenas
 				// greatly reduce the freed-but-retained memory above (2026-09-26).
 				// Must be in the process environment at start: .env is too late.
-				MALLOC_ARENA_MAX: '2'
+				MALLOC_ARENA_MAX: '2',
+				// adapter-node refuses bodies over 512K by default. The ingest finish
+				// call carries the whole manifest and is capped at 2 MiB in the app
+				// (MAX_FINISH_BODY_BYTES, td-99eebf); every other ingest call keeps
+				// its own 256 KiB cap, and nginx allows 5m.
+				BODY_SIZE_LIMIT: '3M'
 			}
 		},
 		{
@@ -122,6 +127,37 @@ module.exports = {
 			env: {
 				NODE_ENV: 'production',
 				CONNECTOR_ENV_FILE: '/opt/birds/.local/connectors/artsobs.env'
+			}
+		},
+		{
+			// The Sweden sightings connector (docs/2026-11-19-sweden-artportalen-plan-CC.md,
+			// td-99eebf). It reads Artportalen through SLU's Species Observation
+			// System API and talks to the app only through /api/ingest/. Its env file
+			// holds INGEST_URL, INGEST_TOKEN and ARTPORTALEN_API_KEY; without both
+			// secrets it idles.
+			name: 'birds-connector-artportalen',
+			script: 'build/connector-artportalen.js',
+			node_args: '--max-old-space-size=320',
+			cwd: '/opt/birds',
+
+			instances: 1,
+			exec_mode: 'fork',
+
+			autorestart: true,
+			restart_delay: 10000,
+			max_restarts: 10,
+			min_uptime: '30s',
+			max_memory_restart: '600M',
+			kill_timeout: 15000,
+
+			out_file: '/var/log/pm2/birds-connector-artportalen.out.log',
+			error_file: '/var/log/pm2/birds-connector-artportalen.err.log',
+			merge_logs: true,
+			time: true,
+
+			env: {
+				NODE_ENV: 'production',
+				CONNECTOR_ENV_FILE: '/opt/birds/.local/connectors/artportalen.env'
 			}
 		}
 	]

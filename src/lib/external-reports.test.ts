@@ -96,10 +96,24 @@ describe('where and when to look (td-eec7db Phase 4)', () => {
 			{ name: 'Bodø', monthSpecies: 5, monthNeeds: 4, species: 30, needs: 10 },
 			{ name: 'Andøy', monthSpecies: 5, monthNeeds: 2, species: 20, needs: 15 }
 		];
-		expect(rankPlaces(rows, true, true).map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
-		expect(rankPlaces(rows, true, false).map((r) => r.name)).toEqual(['Øksnes', 'Andøy', 'Bodø']);
-		expect(rankPlaces(rows, false, true).map((r) => r.name)).toEqual(['Andøy', 'Øksnes', 'Bodø']);
-		expect(rankPlaces(rows, false, false).map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
+		expect(rankPlaces(rows, true, true, 'nb').map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
+		expect(rankPlaces(rows, true, false, 'nb').map((r) => r.name)).toEqual(['Øksnes', 'Andøy', 'Bodø']);
+		expect(rankPlaces(rows, false, true, 'nb').map((r) => r.name)).toEqual(['Andøy', 'Øksnes', 'Bodø']);
+		expect(rankPlaces(rows, false, false, 'nb').map((r) => r.name)).toEqual(['Bodø', 'Andøy', 'Øksnes']);
+	});
+
+	it('breaks ties in the source\'s own language order (td-99eebf)', () => {
+		const tie = (name: string) => ({ name, monthSpecies: 1, monthNeeds: 1, species: 1, needs: 1 });
+		const rows = [tie('Österåker'), tie('Ale'), tie('Åre'), tie('Ängelholm'), tie('Zelda')];
+		// Swedish: … Z, Å, Ä, Ö.
+		expect(rankPlaces(rows, false, false, 'sv').map((r) => r.name)).toEqual(['Ale', 'Zelda', 'Åre', 'Ängelholm', 'Österåker']);
+		// Norwegian: … Z, Æ, Ø, Å (Ä and Ö file with Æ and Ø).
+		expect(rankPlaces([tie('Ørsta'), tie('Åsnes'), tie('Zola'), tie('Alta')], false, false, 'nb').map((r) => r.name)).toEqual([
+			'Alta',
+			'Zola',
+			'Ørsta',
+			'Åsnes'
+		]);
 	});
 
 	it('links to the view and the trip planner', () => {
@@ -110,5 +124,21 @@ describe('where and when to look (td-eec7db Phase 4)', () => {
 		// "Every species" from the species card must not hide species already seen (CODEX1 P3).
 		expect(whereWhenHref('artsobs', 'NO-18', { month: 6, seen: 'all' })).toBe('/reports/artsobs/NO-18?month=6&seen=all');
 		expect(tripPlanHref('Kjerringøy', 67.5, 14.7)).toBe('/trips/plan?place=Kjerring%C3%B8y&lat=67.50000&lng=14.70000');
+	});
+});
+
+import { topPlaces } from '$server/external-sources/where-when';
+
+describe('topPlaces (CODEX1 R9)', () => {
+	it('breaks a tie at the cutoff in the source language, so the same place is always kept', () => {
+		const list = [
+			{ name: 'Österåker', reports: 5 },
+			{ name: 'Åre', reports: 5 },
+			{ name: 'Zelda', reports: 5 },
+			{ name: 'Ale', reports: 9 },
+			{ name: 'Nowhere', reports: 0 }
+		];
+		expect(topPlaces(list, 3, 'sv').map((p) => p.name)).toEqual(['Ale', 'Zelda', 'Åre']);
+		expect(topPlaces(list, 10, 'sv').map((p) => p.name)).toEqual(['Ale', 'Zelda', 'Åre', 'Österåker']);
 	});
 });

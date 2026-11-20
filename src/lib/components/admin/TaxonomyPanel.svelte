@@ -250,7 +250,7 @@
 			<li>
 				Wait until eBird says its update is complete, then press <strong>Back up, sync and compare</strong>.
 				Straight away the app's species list, names, tags and photo matches switch to the new taxonomy, and
-				sightings from other sources (such as Norway) are re-matched to it. A species eBird removed stops
+				sightings from other sources (such as Norway and Sweden) are re-matched to it. A species eBird removed stops
 				appearing in forecasts until its locations are reloaded (step 3).
 			</li>
 			<li>Read the list of changes below.</li>
@@ -458,7 +458,7 @@
 						<span class="muted sum-note">{n(run.sources.summaries.length)}</span>
 					</summary>
 					<p class="muted">
-						Sightings from other sources (such as Norway's Artsobservasjoner) carry eBird species too. They are
+						Sightings from other sources (such as Norway's Artsobservasjoner and Sweden's Artportalen) carry eBird species too. They are
 						re-matched to the new taxonomy; a scientific name eBird no longer uses is followed through the names
 						eBird used before, and left unmatched when eBird gives no single answer.
 					</p>

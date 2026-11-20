@@ -4,10 +4,10 @@
  * errors, 429 and 5xx. An answer without its counts is a broken answer and
  * fails as retryable; it never reads as "no records".
  */
+import { abortableSleep, retryAfterMs, type FetchFn, type SleepFn } from '../shared/http';
 import { ARTSKART_API, ARTSKART_BACKOFF_MAX_MS, ARTSKART_DEADLINE_MS, ARTSKART_MAX_TRIES, BIRDS_TAXON_GROUP, COLLECTION, USER_AGENT } from './config';
 
-export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
-export type SleepFn = (ms: number, signal: AbortSignal) => Promise<void>;
+export { abortableSleep, retryAfterMs, type FetchFn, type SleepFn };
 
 export class ArtskartError extends Error {
 	constructor(
@@ -17,28 +17,6 @@ export class ArtskartError extends Error {
 		super(message);
 		this.name = 'ArtskartError';
 	}
-}
-
-export const abortableSleep: SleepFn = (ms, signal) =>
-	new Promise((resolve, reject) => {
-		if (signal.aborted) return reject(signal.reason);
-		const t = setTimeout(() => {
-			signal.removeEventListener('abort', onAbort);
-			resolve();
-		}, ms);
-		const onAbort = () => {
-			clearTimeout(t);
-			reject(signal.reason);
-		};
-		signal.addEventListener('abort', onAbort, { once: true });
-	});
-
-/** Retry-After as seconds or an HTTP date, capped at two minutes; null when absent or unreadable. */
-export function retryAfterMs(header: string | null, now = Date.now()): number | null {
-	if (!header) return null;
-	const secs = Number(header);
-	const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(header) - now;
-	return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 120_000) : null;
 }
 
 export interface ListPage {

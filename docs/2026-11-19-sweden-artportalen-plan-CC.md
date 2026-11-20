@@ -223,3 +223,37 @@ Facts measured on 2026-11-19, from public docs and unkeyed probes:
 - Local loads: month totals equal `Count`. Preflight shows headroom on rows, bytes and the finish body. Peak RSS stays under 600M under production flags. Visingsö near-card behaviour is checked.
 - UI: Sweden appears as a second source with no source-specific app code; Swedish ordering is correct and Norwegian order unchanged; partial and no-coverage states are labelled.
 - Prod: health OK; both connector apps pass the gate in one sample; each load is compared with its own evidence.
+
+## Implementation notes (2026-11-19, built locally, not yet deployed)
+- **Phase 1 (shared core):** moved into `src/connectors/shared/` with `git mv`:
+  - `ingest.ts`, `spool.ts`, `payload.ts`, `aggregate.ts`.
+  - New `http.ts`, `limits.ts`, `months.ts` and `records.ts`.
+  - Norway keeps thin re-export wrappers, so its tests are unchanged.
+  - `src/connectors/artsobs/parity.test.ts` pins the digests of Norway's chunks, records, manifest and fingerprint, computed before the move. They are identical after it.
+- **Shared aggregate options:**
+  - `sourceLabel` (the notes text) and `locale` (tie-breaks in the ranked lists cut at 25).
+  - `recentKeepDays`: recent candidates are kept only within N days of the NEWEST REPORT seen so far, since months are read oldest first. Sweden uses 14 and also trims at 2× the 20k cap instead of 4×. Norway keeps 60 and 4×, so its output is unchanged.
+  - An earlier version anchored a floor to the load's last day (`recentFloorDays`). CODEX1 round 2 showed it dropped every recent row for a county whose newest report was weeks old, so it was replaced.
+  - Latest reports are chosen from rows WITH a link before the 20k cap. Protected or blurred rows never displace listable ones, and `recent_from` and `recent_to` are the span actually kept.
+- **Sweden connector** (`src/connectors/artportalen/`): `sos.ts`, `records.ts`, `fetch.ts`, `run.ts`, `main.ts`, plus fixtures with made-up names and ids.
+  - Each month's records are buffered on disk. County-wide ids are kept as a `Set<number>`.
+- **Live measurements** (Stockholm, 12-month window 2025-11-01 – 2026-10-31 read through 2026-11-19, `--max-old-space-size=320`, macOS):
+
+  | Recent-candidate rule | Result |
+  |---|---|
+  | rev A: 60 days from newest, trim at 4× | Out of memory in May |
+  | rev B: today − 30 floor | 554,515 reports, heap 177 MB, RSS 432 MB |
+  | rev C: 14 days from newest, trim at 4× | heap 246 MB, RSS 523 MB |
+  | **rev D (built): 14 days from newest, trim at 2×** | **554,517 reports; heap 217 MB, RSS 532 MB; 300 s** |
+
+  - In every successful run, all 13 months equalled `Count` on their first read.
+  - Preflight (rev B): 599k rows, 305 MB; finish body about 272 KB, which needs the 2 MiB finish cap.
+  - **Jönköping** (rev B, built connector through the dev app): 175,246 records published in 237 s, peak RSS 318 MB, 247 species, 10 unmatched subspecies taxa. Gråkråka (Corvus corone cornix, Hooded Crow) has 1,993 reports.
+  - **Risk:** Stockholm's RSS is about 89% of PM2's 600M restart limit on macOS. The production SE-AB load is measured read-only on Linux. If it gets close, the options are a smaller page size or raising `max_memory_restart` for this app (owner's call, as for Norway).
+- **Finish body:** the finish route alone accepts up to 2 MiB (`MAX_FINISH_BODY_BYTES`). Every other ingest call keeps 256 KiB. adapter-node gets `BODY_SIZE_LIMIT=3M` in `ecosystem.config.cjs`.
+- **Registry (migration 0103):**
+  - `external_sources.locale` and `external_sources.terms_url`. The SLU rules link and consent line show beside the attribution.
+  - `external_region_map.queueable`, with a 409 `region_not_open` from `queueExternalLoad`.
+  - Admin → Sources "Regions open for loading" opens and closes regions, so no command line is needed.
+- **Visingsö county pick [A4-4]:** `majorityRegionCode` picks SE-F at every radius: 5/5 hotspots at 5 mi, 8/9 at 10 mi, 39/53 at 20 mi, 63/124 at 31 mi. The 31-mile case is a bare majority, but correct, so no change.
+- **Feral Pigeon:** `Columba livia, domesticated populations` arrives unranked. It is kept as the form `Columba livia domestica` (SUBSPECIES under Columba livia), so Admin → Sources suggests Rock Pigeon for it and it isn't dropped as not-a-species.

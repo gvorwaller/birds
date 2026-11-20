@@ -54,7 +54,7 @@ const species = Array.from({ length: 45 }, (_, i) => ({
 function view(search: string, over: Record<string, unknown> = {}) {
 	nav.url = new URL(`http://x/reports/artsobs/NO-18${search}`);
 	const data = {
-		state: { source, published, active: null, failed: null },
+		state: { source, published, active: null, failed: null, queueable: true },
 		regionName: 'Nordland',
 		month: 6,
 		place: null,
@@ -107,7 +107,7 @@ describe('/reports/[source]/[region] load state', () => {
 	const failed = { at: '2026-10-28T01:00:00.000Z', error: 'Artskart answered 503' };
 
 	it('says a reload failed beside the last good counts, and offers Reload', () => {
-		const html = view('?month=6', { state: { source, published, active: null, failed } });
+		const html = view('?month=6', { state: { source, published, active: null, failed, queueable: true } });
 		expect(html).toContain('The last reload failed: Artskart answered 503');
 		expect(html).toContain('These counts are from the load before it.');
 		expect(html).toContain('Reload Nordland');
@@ -116,13 +116,13 @@ describe('/reports/[source]/[region] load state', () => {
 
 	it('offers no Reload without a failure, nor to a viewer', () => {
 		expect(view('?month=6')).not.toContain('Reload Nordland');
-		const viewer = view('?month=6', { state: { source, published, active: null, failed }, canLoad: false });
+		const viewer = view('?month=6', { state: { source, published, active: null, failed, queueable: true }, canLoad: false });
 		expect(viewer).toContain('The last reload failed');
 		expect(viewer).not.toContain('Reload Nordland');
 	});
 
 	it('says a first load failed when nothing is loaded', () => {
-		const html = view('', { state: { source, published: null, active: null, failed } });
+		const html = view('', { state: { source, published: null, active: null, failed, queueable: true } });
 		expect(html).toContain('The last load failed: Artskart answered 503');
 		expect(html).toContain('Load Artsobservasjoner reports for Nordland');
 	});
@@ -130,7 +130,7 @@ describe('/reports/[source]/[region] load state', () => {
 
 describe('/reports/[source]/[region] wording', () => {
 	it('never words counts as likelihoods, and always credits the source', () => {
-		for (const html of [view('?month=6'), view('?view=species'), view('', { state: { source, published: null, active: null, failed: null } })]) {
+		for (const html of [view('?month=6'), view('?view=species'), view('', { state: { source, published: null, active: null, failed: null, queueable: true } })]) {
 			expect(html).not.toMatch(/likely|frequency(?! or)/i);
 			expect(html).toContain('not checklist frequency or the chance of seeing a bird');
 			expect(html).toContain('Artsobservasjoner');

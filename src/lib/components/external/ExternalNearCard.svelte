@@ -91,6 +91,16 @@
 		return labels.length === 1 ? labels[0] : "each county's loaded window";
 	}
 
+	/**
+	 * CODEX1 R5: a radius can cross into counties that aren't loaded (Visingsö
+	 * at 31 mi reaches Västra Götaland and Östergötland), so every count and
+	 * every "no reports" covers only the loaded counties, and says which.
+	 */
+	function coverageText(c: ExternalNearCard): string {
+		const names = c.counties.map((w) => w.name).join(', ');
+		return `From loaded counties only (${names}); a county within the radius that isn't loaded isn't counted.`;
+	}
+
 	function yearsText(s: NearSpecies, c: ExternalNearCard): string | null {
 		if (c.monthYears < 2) return null;
 		return `in ${s.years} of ${c.monthYears} ${monthName}s`;
@@ -160,6 +170,7 @@
 					still need ({c.reports.toLocaleString('en-US')} bird reports in all).
 				{/if}
 			</p>
+			{#if c.counties.length > 0}<p class="muted small">{coverageText(c)}</p>{/if}
 
 			{#if needs.length > 0}
 				<ol class="needs">
@@ -225,6 +236,7 @@
 				No {source.name} reports within {within} in {monthName}, {windowText(c)}. The nearest is
 				{whereText(c.nearest)}, {formatDistance(c.nearest.km, 'mi')} away.
 			</p>
+			{#if c.counties.length > 0}<p class="muted small">{coverageText(c)}</p>{/if}
 		{/if}
 
 		{#if u}
@@ -243,7 +255,10 @@
 					<a href={externalRegionHref(result.externalQueued.regionCode)}>Hotspots &amp; data</a>.
 				</p>
 			{/if}
-			{#if canLoad && !status}
+			{#if canLoad && !status && !u.queueable}
+				<!-- td-99eebf: a source's counties open for loading one by one (Admin → Sources). -->
+				<p class="small not-open">Loading {source.name} reports for {u.regionName} isn't open yet.</p>
+			{:else if canLoad && !status}
 				<form method="POST" action="?/queueExternalLoad" use:enhance={submitter(id)}>
 					<input type="hidden" name="source_id" value={source.id} />
 					<input type="hidden" name="region_code" value={u.regionCode} />

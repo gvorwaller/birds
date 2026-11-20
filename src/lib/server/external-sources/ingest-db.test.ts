@@ -14,7 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { loadTestEnv, requireTestDb } from '$server/testing/test-env';
 import { query, withTransaction } from '$lib/db';
 import { newConnectorToken, tokenHash } from './auth';
-import { allowedWindowEnds, rowsDigest, windowStartFor, MAX_BODY_BYTES } from './contract';
+import { allowedWindowEnds, rowsDigest, windowStartFor, MAX_BODY_BYTES, MAX_FINISH_BODY_BYTES } from './contract';
 import { resetIngestRateForTest } from './http';
 import { finishLoad, publishedCounts, putChunk, queueExternalLoad, sweepExternalStaging } from './lifecycle';
 import { adminSources, rematchSource, removeTaxonOverride, revokeConnector, setTaxonOverride } from './admin';
@@ -354,6 +354,19 @@ describe('hooks and HTTP surface', () => {
 		expect((await call(claimRoute, null, null, { raw: big })).status).toBe(413);
 		expect((await call(claimRoute, null, null, { raw: '{"contract_version":' })).status).toBe(400);
 		expect((await call(claimRoute, null, { contract_version: 1, idempotency_key: 'claim-x-1', extra: 1 })).status).toBe(422);
+	});
+
+	it('lets only finish carry a manifest past 256 KiB, up to its own 2 MiB cap (td-99eebf)', async () => {
+		const id = '00000000-0000-4000-8000-0000000000ff';
+		const pad = (n: number) => JSON.stringify({ contract_version: 1, lease_token: id, attempt: 1, manifest: { pad: 'x'.repeat(n) } });
+		// Past the general cap but within finish's: read and parsed, then refused for what it says (never 413).
+		const mid = await call(finishRoute, id, null, { raw: pad(MAX_BODY_BYTES + 50_000) });
+		expect(mid.status).not.toBe(413);
+		// Past finish's own cap: 413 before parsing.
+		expect((await call(finishRoute, id, null, { raw: pad(MAX_FINISH_BODY_BYTES) })).status).toBe(413);
+		// Every other call keeps the 256 KiB cap.
+		expect((await call(heartbeatRoute, id, null, { raw: pad(MAX_BODY_BYTES + 50_000) })).status).toBe(413);
+		expect((await call(chunksRoute, id, null, { raw: pad(MAX_BODY_BYTES + 50_000) })).status).toBe(413);
 	});
 
 	it('answers 429 with Retry-After when a connector floods the API', async () => {

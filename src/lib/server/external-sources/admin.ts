@@ -4,7 +4,7 @@
  */
 import { query, withTransaction } from '$lib/db';
 import { buildMatcher } from '$server/species-match';
-import type { LoadResult } from './lifecycle';
+import { CLOSED_FOR_LOADING, type LoadResult } from './lifecycle';
 import { deriveSpecies, lockSourceDerived } from './taxa';
 
 export interface AdminConnector {
@@ -38,7 +38,7 @@ export interface AdminLoad {
 export interface AdminUnmatched {
 	upstreamTaxonId: string;
 	canonicalName: string;
-	/** The source's own common name (Artskart: Norwegian), when it sent one. */
+	/** The source's own common name (Norwegian for Artsobservasjoner, Swedish for Artportalen), when it sent one. */
 	localName: string | null;
 	reason: string;
 	reports: number;
@@ -71,7 +71,8 @@ export interface AdminSource {
 	windowMonths: number;
 	storeObservers: boolean;
 	connectors: AdminConnector[];
-	regions: { code: string; name: string; loadedAt: string | null; window: { start: string; end: string } | null }[];
+	/** `open`: loads may be queued for the region (td-99eebf). */
+	regions: { code: string; name: string; open: boolean; loadedAt: string | null; window: { start: string; end: string } | null }[];
 	loads: AdminLoad[];
 	oldestQueuedAt: string | null;
 	overdueLeases: number;
@@ -114,8 +115,9 @@ export function pickSuggestion(
 	return null;
 }
 
-const byLocalName = (a: { localName: string | null; canonicalName: string }, b: typeof a) =>
-	(a.localName ?? a.canonicalName).localeCompare(b.localName ?? b.canonicalName, 'nb') ||
+/** Local names in the source's own language order (td-99eebf: Swedish å, ä, ö sort last). */
+const byLocalName = (locale: string) => (a: { localName: string | null; canonicalName: string }, b: typeof a) =>
+	(a.localName ?? a.canonicalName).localeCompare(b.localName ?? b.canonicalName, locale) ||
 	a.canonicalName.localeCompare(b.canonicalName);
 
 export async function adminSources(): Promise<AdminSource[]> {
@@ -127,7 +129,8 @@ export async function adminSources(): Promise<AdminSource[]> {
 		active: boolean;
 		window_months: number;
 		store_observers: boolean;
-	}>(`SELECT id, name, publisher, license, active, window_months, store_observers FROM external_sources ORDER BY name, id`);
+		locale: string;
+	}>(`SELECT id, name, publisher, license, active, window_months, store_observers, locale FROM external_sources ORDER BY name, id`);
 	const out: AdminSource[] = [];
 	for (const s of sources.rows) {
 		const [connectors, regions, loads, queue, unmatched, matched, overrides] = await Promise.all([
@@ -136,8 +139,8 @@ export async function adminSources(): Promise<AdminSource[]> {
 				  WHERE source_id = $1 ORDER BY revoked_at NULLS FIRST, created_at DESC`,
 				[s.id]
 			),
-			query<{ code: string; name: string; finished_at: Date | null; window_start: string | null; window_end: string | null }>(
-				`SELECT m.region_code AS code, r.name, d.finished_at,
+			query<{ code: string; name: string; queueable: boolean; finished_at: Date | null; window_start: string | null; window_end: string | null }>(
+				`SELECT m.region_code AS code, r.name, m.queueable, d.finished_at,
 				        to_char(d.window_start, 'YYYY-MM-DD') AS window_start, to_char(d.window_end, 'YYYY-MM-DD') AS window_end
 				   FROM external_region_map m JOIN regions r ON r.code = m.region_code
 				   LEFT JOIN external_loads d ON d.source_id = m.source_id AND d.region_code = m.region_code AND d.status = 'done'
@@ -262,9 +265,10 @@ export async function adminSources(): Promise<AdminSource[]> {
 				lastSeenAt: iso(c.last_seen_at),
 				revokedAt: iso(c.revoked_at)
 			})),
-			regions: regions.rows.map((r) => ({
+			regions: [...regions.rows].sort((a, b) => a.name.localeCompare(b.name, s.locale)).map((r) => ({
 				code: r.code,
 				name: r.name,
+				open: r.queueable,
 				loadedAt: iso(r.finished_at),
 				window: r.window_start && r.window_end ? { start: r.window_start, end: r.window_end } : null
 			})),
@@ -308,7 +312,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 					method: m.match_reason,
 					reports: Number(m.reports)
 				}))
-				.sort(byLocalName),
+				.sort(byLocalName(s.locale)),
 			overrides: overrides.rows.map((o) => ({
 				upstreamTaxonId: o.upstream_taxon_id,
 				canonicalName: o.canonical_name,
@@ -323,6 +327,47 @@ export async function adminSources(): Promise<AdminSource[]> {
 }
 
 /** Revoke a connector token. Its next call is refused; it can never publish. */
+/** A queued load cancelled by closing its region. */
+export const CLOSED_BEFORE_START = CLOSED_FOR_LOADING;
+
+/**
+ * Open or close a region for loading (td-99eebf): a source's counties open
+ * one by one. Closing keeps published data and lets an attempt already
+ * running finish; it ends any load still QUEUED there as failed with a plain
+ * reason, and the lifecycle never retries, re-queues or claims a load for a
+ * closed region (CODEX1 R8, round 2). The map row's lock serializes this with
+ * queueExternalLoad and a retryable fail.
+ */
+export async function setRegionOpen(sourceId: string, regionCode: string, open: boolean): Promise<boolean> {
+	return withTransaction(async (c) => {
+		if (!open) {
+			// Lock order: the region's active loads, then its map row (CODEX1
+			// round 3). A lease expiry or retry holding a load finishes first, so
+			// a load it puts back in the queue is visible to the cancel below; one
+			// that starts after this lock skips these loads and, next sweep, sees
+			// the region closed. failLoad takes the same order (load, then map).
+			await c.query(
+				`SELECT id FROM external_loads
+				  WHERE source_id = $1 AND region_code = $2 AND status IN ('queued', 'leased', 'staging')
+				  ORDER BY id FOR UPDATE`,
+				[sourceId, regionCode]
+			);
+		}
+		const r = await c.query(
+			`UPDATE external_region_map SET queueable = $3 WHERE source_id = $1 AND region_code = $2 AND queueable <> $3`,
+			[sourceId, regionCode, open]
+		);
+		if (!open) {
+			await c.query(
+				`UPDATE external_loads SET status = 'failed', error = $3, finished_at = now()
+				  WHERE source_id = $1 AND region_code = $2 AND status = 'queued'`,
+				[sourceId, regionCode, CLOSED_BEFORE_START]
+			);
+		}
+		return (r.rowCount ?? 0) > 0;
+	});
+}
+
 export async function revokeConnector(connectorId: number): Promise<boolean> {
 	const r = await query(`UPDATE external_connectors SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, [
 		connectorId

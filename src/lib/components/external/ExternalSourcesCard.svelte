@@ -80,7 +80,9 @@
 	const shown = (s: ExternalOverviewSource, r: ExternalOverviewRegion) =>
 		Boolean(r.published || r.failed || activeOf(s.source.id, r));
 	const shownRegions = (s: ExternalOverviewSource) => s.regions.filter((r) => shown(s, r));
-	const otherRegions = (s: ExternalOverviewSource) => s.regions.filter((r) => !shown(s, r));
+	// td-99eebf: only regions open for loading are offered; the rest are counted.
+	const otherRegions = (s: ExternalOverviewSource) => s.regions.filter((r) => !shown(s, r) && r.queueable);
+	const openCount = (s: ExternalOverviewSource) => s.regions.filter((r) => r.queueable).length;
 
 	function submitter(key: string) {
 		return () => {
@@ -112,7 +114,9 @@
 			<div class="source">
 				<h3>{s.source.name} <span class="muted">· {s.country.name}</span></h3>
 				<p class="muted">
-					{loaded} of {s.regions.length} regions loaded ·
+					{loaded} of {s.regions.length} regions loaded{openCount(s) < s.regions.length
+						? ` · ${openCount(s)} open for loading`
+						: ''} ·
 					<a href={s.source.homepage} target="_blank" rel="noopener">{s.source.name} ↗</a>
 				</p>
 
@@ -142,7 +146,7 @@
 											<span class="state err">Last load failed{r.failed.error ? `: ${r.failed.error}` : '.'}</span>
 										{/if}
 									</div>
-									{#if canLoad && !active}
+									{#if canLoad && !active && r.queueable}
 										<form method="POST" action="?/queueExternalLoad" use:enhance={submitter(key)}>
 											<input type="hidden" name="source_id" value={s.source.id} />
 											<input type="hidden" name="region_code" value={r.code} />

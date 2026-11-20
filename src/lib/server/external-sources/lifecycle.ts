@@ -43,6 +43,9 @@ const BACKOFF_MINUTES = 2;
 export const STAGING_TTL_DAYS = 7;
 
 /** Maps to an HTTP status in the route layer. */
+/** Why a load ended without running: its region was closed for loading (td-99eebf). */
+export const CLOSED_FOR_LOADING = 'Loading was closed for this region, so this load stopped and will not be retried.';
+
 export class IngestError extends Error {
 	constructor(
 		readonly status: 401 | 403 | 404 | 409 | 413 | 422 | 429,
@@ -244,16 +247,23 @@ export async function queueExternalLoad(opts: {
 	afterConflictForTest?: () => Promise<void>;
 }): Promise<{ loadId: string; created: boolean }> {
 	return withTransaction(async (c) => {
-		const src = await c.query<{ active: boolean; window_months: number; mapped: boolean }>(
-			`SELECT s.active, s.window_months,
-			        EXISTS (SELECT 1 FROM external_region_map m WHERE m.source_id = s.id AND m.region_code = $2) AS mapped
-			   FROM external_sources s WHERE s.id = $1`,
+		const src = await c.query<{ active: boolean; window_months: number }>(
+			`SELECT s.active, s.window_months FROM external_sources s WHERE s.id = $1`,
+			[opts.sourceId]
+		);
+		// The region's map row is locked until this transaction commits, so an
+		// admin closing the region (setRegionOpen) waits for this queue and then
+		// cancels what it queued, or this queue sees the close (CODEX1 R8).
+		const map = await c.query<{ queueable: boolean }>(
+			`SELECT queueable FROM external_region_map WHERE source_id = $1 AND region_code = $2 FOR SHARE`,
 			[opts.sourceId, opts.regionCode]
 		);
-		const s = src.rows[0];
+		const s = src.rows[0] ? { ...src.rows[0], mapped: map.rows.length > 0, queueable: map.rows[0]?.queueable === true } : undefined;
 		if (!s) throw new IngestError(404, 'unknown_source', 'Unknown source.');
 		if (!s.active) throw new IngestError(409, 'inactive_source', 'This source is switched off.');
 		if (!s.mapped) throw new IngestError(422, 'unmapped_region', 'This source has no data for that region.');
+		// td-99eebf: a source's counties open for loading one by one.
+		if (!s.queueable) throw new IngestError(409, 'region_not_open', 'Loading is not open for this region yet.');
 		// The active load we collided with can finish between the INSERT and the
 		// SELECT (READ COMMITTED); then the insert is simply tried again.
 		for (let tries = 0; tries < 5; tries++) {
@@ -283,31 +293,59 @@ export async function queueExternalLoad(opts: {
  * Leases past their expiry go back to the queue with a backoff, or fail
  * after max_attempts; their staging is discarded. Loads locked by a running
  * finish are skipped (SKIP LOCKED) — finish re-checks the lease itself.
+ *
+ * Two statements, and the caller's transaction must hold them together
+ * (claimLoad and the sweeper do): first the expired loads are LOCKED, then
+ * their fate is decided by a second statement that sees the region map as it
+ * is after those locks (CODEX1 td-99eebf round 4). In one statement the map
+ * came from a snapshot taken before a close could commit, so an expiry that
+ * started first could re-queue a load in a just-closed region. A close locks
+ * the region's loads first (setRegionOpen), so either it waits for this, or
+ * this skips its loads and the next sweep sees the region closed.
+ * `afterLockForTest` runs between the two statements, for the race test.
  */
-export async function expireLeases(db: Pick<Db, 'query'>, sourceId: string | null): Promise<number> {
+export async function expireLeases(
+	db: Pick<Db, 'query'>,
+	sourceId: string | null,
+	afterLockForTest?: () => Promise<void>
+): Promise<number> {
+	const locked = await db.query<{ id: string }>(
+		`SELECT id FROM external_loads
+		  WHERE status IN ('leased', 'staging') AND lease_expires_at <= now()
+		    AND ($1::text IS NULL OR source_id = $1)
+		  FOR UPDATE SKIP LOCKED`,
+		[sourceId]
+	);
+	const ids = locked.rows.map((x) => x.id);
+	if (ids.length === 0) return 0;
+	if (afterLockForTest) await afterLockForTest();
 	const r = await db.query<{ id: string }>(
-		`WITH expired AS (
-		   SELECT id FROM external_loads
-		    WHERE status IN ('leased', 'staging') AND lease_expires_at <= now()
-		      AND ($1::text IS NULL OR source_id = $1)
-		    FOR UPDATE SKIP LOCKED
+		`WITH decided AS (
+		   SELECT e.id,
+		          -- td-99eebf: a region closed for loading never goes back to the
+		          -- queue; the expired attempt simply ends.
+		          EXISTS (SELECT 1 FROM external_region_map m
+		                   WHERE m.source_id = e.source_id AND m.region_code = e.region_code AND m.queueable) AS open,
+		          e.attempt >= e.max_attempts AS spent
+		     FROM external_loads e WHERE e.id = ANY($1::uuid[])
 		 )
 		 UPDATE external_loads l
-		    SET status = CASE WHEN l.attempt >= l.max_attempts THEN 'failed' ELSE 'queued' END,
-		        error = CASE WHEN l.attempt >= l.max_attempts
+		    SET status = CASE WHEN d.spent OR NOT d.open THEN 'failed' ELSE 'queued' END,
+		        error = CASE WHEN NOT d.open THEN $2
+		                     WHEN d.spent
 		                     THEN 'The connector stopped responding on ' || l.attempt || ' attempts; the load was given up.'
 		                     ELSE l.error END,
-		        finished_at = CASE WHEN l.attempt >= l.max_attempts THEN now() ELSE NULL END,
+		        finished_at = CASE WHEN d.spent OR NOT d.open THEN now() ELSE NULL END,
 		        not_before = now() + l.attempt * interval '${BACKOFF_MINUTES} minutes',
-		        lease_token = CASE WHEN l.attempt >= l.max_attempts THEN l.lease_token ELSE NULL END,
+		        lease_token = CASE WHEN d.spent OR NOT d.open THEN l.lease_token ELSE NULL END,
 		        claim_idempotency_key = NULL,
 		        lease_expires_at = NULL,
 		        heartbeat_at = NULL,
 		        progress = NULL,
 		        updated_at = now()
-		   FROM expired WHERE l.id = expired.id
+		   FROM decided d WHERE l.id = d.id
 		 RETURNING l.id`,
-		[sourceId]
+		[ids, CLOSED_FOR_LOADING]
 	);
 	await clearStaging(db, r.rows.map((x) => x.id));
 	return r.rowCount ?? 0;
@@ -385,6 +423,10 @@ export async function claimLoad(connector: Connector, idempotencyKey: string): P
 			  WHERE l.id = (
 			    SELECT id FROM external_loads
 			     WHERE source_id = $1 AND status = 'queued' AND not_before <= now() AND attempt < max_attempts
+			       -- td-99eebf: only regions open for loading start work.
+			       AND EXISTS (SELECT 1 FROM external_region_map m
+			                    WHERE m.source_id = external_loads.source_id
+			                      AND m.region_code = external_loads.region_code AND m.queueable)
 			     ORDER BY created_at, id
 			     FOR UPDATE SKIP LOCKED
 			     LIMIT 1)
@@ -820,8 +862,14 @@ export async function failLoad(
 		}
 		// An expired lease may still be released by its own holder.
 		if (!sameLease(load, fence)) throw new IngestError(409, 'fenced', 'The lease token or attempt does not match the live lease.');
-		const text = sanitizeReason(reason) || 'The connector reported a failure without a reason.';
-		const requeue = retryable && load.attempt < load.max_attempts;
+		// td-99eebf: a region closed for loading is never retried; the attempt ends here.
+		const open = await c.query<{ queueable: boolean }>(
+			`SELECT queueable FROM external_region_map WHERE source_id = $1 AND region_code = $2 FOR SHARE`,
+			[load.source_id, load.region_code]
+		);
+		const closed = open.rows[0]?.queueable !== true;
+		const text = closed ? CLOSED_FOR_LOADING : sanitizeReason(reason) || 'The connector reported a failure without a reason.';
+		const requeue = retryable && load.attempt < load.max_attempts && !closed;
 		await c.query(
 			`UPDATE external_loads
 			    SET status = $2, error = $3, lease_expires_at = NULL, heartbeat_at = NULL, progress = NULL,

@@ -249,10 +249,12 @@ export async function _readNear(
 		attribution: string;
 		homepage: string;
 		store_observers: boolean;
+		locale: string;
+		terms_url: string | null;
 		country_name: string;
 	}>(
 		`SELECT s.id, s.name, s.publisher, s.license, s.license_url, s.citation, s.doi, s.attribution, s.homepage,
-		        s.store_observers, c.name AS country_name
+		        s.store_observers, s.locale, s.terms_url, c.name AS country_name
 		   FROM external_sources s JOIN regions c ON c.code = s.covers_country
 		  WHERE s.id = ANY($1) ORDER BY s.name, s.id`,
 		[sourceIds]
@@ -333,7 +335,7 @@ export async function _readNear(
 			}
 		}
 		const byReports = <T extends { reports: number; km: number; locality: string }>(a: T, b: T) =>
-			b.reports - a.reports || a.km - b.km || a.locality.localeCompare(b.locality, 'nb');
+			b.reports - a.reports || a.km - b.km || a.locality.localeCompare(b.locality, s.locale);
 		const places: NearPlace[] = [...placeAcc.values()]
 			.sort(byReports)
 			.slice(0, NEAR_PLACES)
@@ -342,7 +344,7 @@ export async function _readNear(
 				return { ...p, lat: pin ? bestLat : null, lon: pin ? bestLon : null };
 			});
 		const municipalities = [...muniAcc.values()].sort(
-			(a, b) => b.reports - a.reports || a.name.localeCompare(b.name, 'nb')
+			(a, b) => b.reports - a.reports || a.name.localeCompare(b.name, s.locale)
 		);
 
 		// Species: reports, the years with one, their top places and counties.
@@ -404,7 +406,9 @@ export async function _readNear(
 				homepage: s.homepage,
 				countryName: s.country_name,
 				regionLink: null,
-				storeObservers: s.store_observers
+				storeObservers: s.store_observers,
+				locale: s.locale,
+				termsUrl: s.terms_url
 			},
 			month,
 			radiusKm,

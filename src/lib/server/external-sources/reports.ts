@@ -38,6 +38,10 @@ export interface ExternalSourceInfo {
 	/** The source's page for this region, when its template gives one. */
 	regionLink: string | null;
 	storeObservers: boolean;
+	/** The language its place, observer and local species names are in, for sorting (td-99eebf). */
+	locale: string;
+	/** The source's usage rules, linked beside its attribution when its terms ask for that (td-99eebf). */
+	termsUrl: string | null;
 }
 
 /** The data a region currently shows: the load that published it. */
@@ -48,6 +52,12 @@ export interface ExternalPublished {
 	windowEnd: string;
 	retrievedAt: string | null;
 	finishedAt: string;
+	/**
+	 * The latest-reports span the connector kept, when it says (td-99eebf,
+	 * CODEX1 R4): a busy county can have more reports in its last 14 days than
+	 * the 20,000-row cap, and then only the newest are kept.
+	 */
+	recent: { from: string | null; to: string | null; truncated: number } | null;
 }
 
 export interface ExternalRegionState {
@@ -62,6 +72,11 @@ export interface ExternalRegionState {
 	} | null;
 	/** The last failed load, only when it is newer than the published data. */
 	failed: { at: string; error: string | null } | null;
+	/**
+	 * Whether a load may be queued for this region (td-99eebf): a source's
+	 * counties open for loading one by one, so a Load button shows only here.
+	 */
+	queueable: boolean;
 }
 
 interface SourceRow {
@@ -76,6 +91,9 @@ interface SourceRow {
 	homepage: string;
 	region_link_template: string | null;
 	store_observers: boolean;
+	locale: string;
+	terms_url: string | null;
+	queueable: boolean;
 	country_name: string;
 	upstream_key: string;
 	load_id: string | null;
@@ -83,6 +101,7 @@ interface SourceRow {
 	window_end: string | null;
 	retrieved_at: Date | null;
 	finished_at: Date | null;
+	source_snapshot: Record<string, unknown> | null;
 	active_status: string | null;
 	active_progress: { phase?: string; done?: number; total?: number } | null;
 	failed_error: string | null;
@@ -94,6 +113,16 @@ function regionLink(template: string | null, upstreamKey: string): string | null
 	return template.replaceAll('{upstream_key}', encodeURIComponent(upstreamKey));
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The recent span from a load's source snapshot; null for a source that doesn't record one. */
+function recentSpan(snap: Record<string, unknown> | null): ExternalPublished['recent'] {
+	if (!snap || !('recent_truncated' in snap)) return null;
+	const day = (v: unknown) => (typeof v === 'string' && DAY.test(v) ? v : null);
+	const n = Number(snap.recent_truncated);
+	return { from: day(snap.recent_from), to: day(snap.recent_to), truncated: Number.isFinite(n) && n > 0 ? n : 0 };
+}
+
 function toState(r: SourceRow): ExternalRegionState {
 	const published: ExternalPublished | null =
 		r.load_id && r.window_start && r.window_end && r.finished_at
@@ -102,7 +131,8 @@ function toState(r: SourceRow): ExternalRegionState {
 					windowStart: r.window_start,
 					windowEnd: r.window_end,
 					retrievedAt: r.retrieved_at?.toISOString() ?? null,
-					finishedAt: r.finished_at.toISOString()
+					finishedAt: r.finished_at.toISOString(),
+					recent: recentSpan(r.source_snapshot)
 				}
 			: null;
 	const p = r.active_progress ?? {};
@@ -131,11 +161,14 @@ function toState(r: SourceRow): ExternalRegionState {
 			homepage: r.homepage,
 			countryName: r.country_name,
 			regionLink: regionLink(r.region_link_template, r.upstream_key),
-			storeObservers: r.store_observers
+			storeObservers: r.store_observers,
+			locale: r.locale,
+			termsUrl: r.terms_url
 		},
 		published,
 		active,
-		failed
+		failed,
+		queueable: r.queueable
 	};
 }
 
@@ -147,9 +180,9 @@ export async function externalSourcesForRegion(regionCode: string, db?: Db): Pro
 	if (!db) return withReadSnapshot((c) => externalSourcesForRegion(regionCode, c));
 	const r = await db.query<SourceRow>(
 		`SELECT s.id, s.name, s.publisher, s.license, s.license_url, s.citation, s.doi, s.attribution,
-		        s.homepage, s.region_link_template, s.store_observers, c.name AS country_name, m.upstream_key,
+		        s.homepage, s.region_link_template, s.store_observers, s.locale, s.terms_url, m.queueable, c.name AS country_name, m.upstream_key,
 		        pl.id AS load_id, to_char(pl.window_start, 'YYYY-MM-DD') AS window_start,
-		        to_char(pl.window_end, 'YYYY-MM-DD') AS window_end, pl.retrieved_at, pl.finished_at,
+		        to_char(pl.window_end, 'YYYY-MM-DD') AS window_end, pl.retrieved_at, pl.finished_at, pl.source_snapshot,
 		        al.status AS active_status, al.progress AS active_progress,
 		        fl.error AS failed_error, fl.finished_at AS failed_at
 		   FROM external_sources s
@@ -204,6 +237,8 @@ export interface ExternalOverviewRegion {
 	failed: ExternalRegionState['failed'];
 	/** The most active observers in the region; empty unless the source stores observers. */
 	observers: ExternalObserver[];
+	/** Loads may be queued here (td-99eebf). */
+	queueable: boolean;
 }
 
 export interface ExternalOverviewSource {
@@ -232,10 +267,10 @@ export async function _readOverview(db: Db): Promise<ExternalOverviewSource[]> {
 		}
 	>(
 		`SELECT s.id, s.id AS source_id, s.name, s.publisher, s.license, s.license_url, s.citation, s.doi, s.attribution,
-		        s.homepage, s.region_link_template, s.store_observers, s.covers_country, c.name AS country_name,
-		        m.upstream_key, m.region_code, g.name AS region_name,
+		        s.homepage, s.region_link_template, s.store_observers, s.locale, s.terms_url, s.covers_country, c.name AS country_name,
+		        m.upstream_key, m.queueable, m.region_code, g.name AS region_name,
 		        pl.id AS load_id, to_char(pl.window_start, 'YYYY-MM-DD') AS window_start,
-		        to_char(pl.window_end, 'YYYY-MM-DD') AS window_end, pl.retrieved_at, pl.finished_at,
+		        to_char(pl.window_end, 'YYYY-MM-DD') AS window_end, pl.retrieved_at, pl.finished_at, pl.source_snapshot,
 		        al.status AS active_status, al.progress AS active_progress,
 		        fl.error AS failed_error, fl.finished_at AS failed_at
 		   FROM external_sources s
@@ -346,9 +381,13 @@ export async function _readOverview(db: Db): Promise<ExternalOverviewSource[]> {
 				: null,
 			active: state.active,
 			failed: state.failed,
-			observers: state.published ? (observersBy.get(k) ?? []) : []
+			observers: state.published ? (observersBy.get(k) ?? []) : [],
+			queueable: state.queueable
 		});
 	}
+	// Each source's regions in its own language order (CODEX1 R9: the SQL
+	// order is the database's collation).
+	for (const s of out) s.regions.sort((a, b) => a.name.localeCompare(b.name, s.source.locale) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 	return out;
 }
 
@@ -501,7 +540,7 @@ export async function _readSpeciesInRegion(
 		const ranked = (
 			scope === 'month' ? inMonth : places.rows.map((p) => ({ name: p.name, reports: Number(p.reports) }))
 		)
-			.sort((a, b) => b.reports - a.reports || a.name.localeCompare(b.name, 'nb'))
+			.sort((a, b) => b.reports - a.reports || a.name.localeCompare(b.name, s.source.locale))
 			.slice(0, TOP_PLACES);
 		cards.push({
 			...s,

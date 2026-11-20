@@ -22,14 +22,17 @@ const source = {
 	homepage: 'https://www.artsobservasjoner.no/',
 	countryName: 'Norway',
 	regionLink: null,
-	storeObservers: true
+	storeObservers: true,
+	locale: 'nb',
+	termsUrl: null
 };
 const published = {
 	loadId: '00000000-0000-0000-0000-000000000001',
 	windowStart: '2024-10-01',
 	windowEnd: '2026-09-30',
 	retrievedAt: '2026-10-28T00:04:31.000Z',
-	finishedAt: '2026-10-28T00:13:19.000Z'
+	finishedAt: '2026-10-28T00:13:19.000Z',
+	recent: null as { from: string | null; to: string | null; truncated: number } | null
 };
 
 function card(over: Partial<Card> = {}): Card {
@@ -38,6 +41,7 @@ function card(over: Partial<Card> = {}): Card {
 		published,
 		active: null,
 		failed: null,
+		queueable: true,
 		months: [10, 12, 30, 90, 142, 120, 60, 40, 20, 15, 8, 5],
 		monthTotals: [8250, 6567, 10928, 19714, 32195, 18897, 11793, 9841, 11847, 10024, 5255, 3215],
 		month: 5,
@@ -155,6 +159,30 @@ describe('ExternalSpeciesCard', () => {
 		expect(speciesCard(unloaded, false)).not.toContain('<form');
 	});
 
+	it('offers no load for a region not open for loading, and says so (td-99eebf)', () => {
+		const closed = card({ published: null, months: null, monthTotals: null, places: [], latest: [], queueable: false });
+		const h = speciesCard(closed);
+		expect(text(h)).toContain("Loading Artsobservasjoner reports for Nordland isn't open yet.");
+		expect(h).not.toContain('<form');
+		expect(speciesCard(card({ queueable: false }))).not.toContain('Reload Nordland');
+	});
+
+	it('states the real span when the latest reports were cut, populated or empty (CODEX1 R4)', () => {
+		const cut = { ...published, recent: { from: '2026-10-20', to: '2026-10-23', truncated: 4123 } };
+		const t = text(speciesCard(card({ published: cut })));
+		expect(t).toContain('Nordland had more reports in its last two weeks than are kept, so this shows only those from');
+		expect(t).toContain('an earlier report of this species in those two weeks may be missing');
+		const none = text(speciesCard(card({ published: cut, latest: [] })));
+		expect(none).toContain('None among the reports kept when Nordland was loaded.');
+		expect(none).not.toContain('None listed from the last 14 days');
+		// Not cut: still never worded as absence (CODEX1 round 2: a species reported only in protected reports).
+		const empty = text(speciesCard(card({ latest: [] })));
+		expect(empty).toContain('None listed from the last 14 days with reports when Nordland was loaded.');
+		expect(empty).toContain("Protected or blurred reports are never listed, so this isn't proof there were none.");
+		// Not cut: the usual caption, no warning.
+		expect(text(speciesCard(card()))).not.toContain('than are kept');
+	});
+
 	it('says a load is in progress instead of offering another', () => {
 		const t = text(speciesCard(card({ active: { status: 'running', done: 3, total: 30, phase: 'fetching' } })));
 		expect(t).toContain('Loading now.');
@@ -175,9 +203,10 @@ describe('ExternalSourcesCard', () => {
 					published: { ...published, reports: 148526, species: 298, places: 41, monthTotals: new Array(12).fill(100) },
 					active: null,
 					failed: null,
-					observers: [{ rank: 1, observer: 'Observer A', days: 300, species: 250, localities: 80, reports: 9000 }]
+					observers: [{ rank: 1, observer: 'Observer A', days: 300, species: 250, localities: 80, reports: 9000 }],
+					queueable: true
 				},
-				{ code: 'NO-19', name: 'Troms', link: null, published: null, active: null, failed: null, observers: [] },
+				{ code: 'NO-19', name: 'Troms', link: null, published: null, active: null, failed: null, observers: [], queueable: true },
 				{
 					code: 'NO-20',
 					name: 'Finnmark',
@@ -185,7 +214,8 @@ describe('ExternalSourcesCard', () => {
 					published: null,
 					active: null,
 					failed: { at: '2026-10-28T00:00:00.000Z', error: 'Artskart answered 503' },
-					observers: []
+					observers: [],
+					queueable: true
 				}
 			]
 		}

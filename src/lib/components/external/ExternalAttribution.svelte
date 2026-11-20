@@ -16,7 +16,7 @@
 		retrievedAt = null
 	}: {
 		source: Pick<ExternalSourceInfo, 'name' | 'attribution' | 'license' | 'licenseUrl' | 'homepage'> &
-			Partial<Pick<ExternalSourceInfo, 'citation' | 'doi'>>;
+			Partial<Pick<ExternalSourceInfo, 'citation' | 'doi' | 'termsUrl'>>;
 		windowStart?: string | null;
 		windowEnd?: string | null;
 		retrievedAt?: string | null;
@@ -31,7 +31,8 @@
 
 <p class="attrib">
 	{source.attribution}{#if windowStart && windowEnd}&nbsp;· {windowLabel(windowStart, windowEnd)}{/if}{#if retrievedOn}&nbsp;·
-		retrieved {retrievedOn}{/if}
+		retrieved {retrievedOn}{/if}{#if source.termsUrl}&nbsp;·
+		<a href={source.termsUrl} target="_blank" rel="noopener">terms of use ↗</a>{/if}
 </p>
 <details class="license">
 	<summary>Source &amp; license</summary>
@@ -50,6 +51,13 @@
 		<p>
 			Some sensitive species are hidden by the source, so "no reports" never means a bird isn't there.
 		</p>
+		{#if source.termsUrl}
+			<!-- td-99eebf: SLU's API terms (§2.1) ask for this sentence and link where its data shows. -->
+			<p>
+				By using this application I undertake to follow the
+				<a href={source.termsUrl} target="_blank" rel="noopener">rules for using {source.name}'s information ↗</a>.
+			</p>
+		{/if}
 	</div>
 </details>
 

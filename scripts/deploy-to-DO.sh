@@ -144,13 +144,17 @@ if ! pm2 jlist | grep -q '"name":"birds-worker"'; then
   echo "!! birds-worker missing from pm2 process list" >&2
   exit 1
 fi
-# The Norway sightings connector (external sources Phase 2) idles without a
-# token, so it must always be present and online. Present is not enough: it
-# must stay online for 35 s, past PM2's min_uptime of 30 s (ecosystem.config.cjs),
-# within 90 s. pm2 can print warnings such as "[PM2][WARN] …" before the JSON,
-# so the list is the first "[" from which the rest parses as a JSON array.
+# The sightings connectors (external sources: Norway, Sweden td-99eebf) idle
+# without their secrets, so each must always be present and online. Present is
+# not enough: each must stay online for 35 s, past PM2's min_uptime of 30 s
+# (ecosystem.config.cjs), within 90 s, and BOTH must pass in the same pm2
+# sample (one resetting while the other is up is a failure). pm2 can print
+# warnings such as "[PM2][WARN] …" before the JSON, so the list is the first
+# "[" from which the rest parses as a JSON array. Prints "<status> <uptime>
+# <detail>": online and the smallest uptime only when every connector is online.
 connector_state() {
   pm2 jlist | node -e '
+    const NAMES = ["birds-connector-artsobs", "birds-connector-artportalen"];
     let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
       let list = null;
       for (let i = s.indexOf("["); i >= 0 && !list; i = s.indexOf("[", i + 1)) {
@@ -159,25 +163,36 @@ connector_state() {
           if (Array.isArray(v)) list = v;
         } catch {}
       }
-      if (!list) return console.log("unreadable 0");
-      const p = list.find((x) => x.name === "birds-connector-artsobs");
-      if (!p) return console.log("missing 0");
-      const up = p.pm2_env.status === "online" ? Math.floor((Date.now() - p.pm2_env.pm_uptime) / 1000) : 0;
-      console.log(`${String(p.pm2_env.status).replace(/\s+/g, "_")} ${up}`);
+      if (!list) return console.log("unreadable 0 -");
+      const rows = NAMES.map((name) => {
+        const p = list.find((x) => x && x.name === name);
+        if (!p || !p.pm2_env) return { name, status: "missing", up: 0 };
+        const status = String(p.pm2_env.status).replace(/\s+/g, "_");
+        // A start time that is missing, zero, not a number or in the future is
+        // not proof of uptime (CODEX1 R10): null would read as 1970.
+        const started = p.pm2_env.pm_uptime;
+        const sane = typeof started === "number" && Number.isFinite(started) && started > 0 && started <= Date.now();
+        if (status === "online" && !sane) return { name, status: "bad_uptime", up: 0 };
+        const up = status === "online" ? Math.floor((Date.now() - started) / 1000) : 0;
+        return { name, status, up };
+      });
+      const bad = rows.find((r) => r.status !== "online");
+      const detail = rows.map((r) => `${r.name.replace("birds-connector-", "")}=${r.status}:${r.up}`).join(",");
+      console.log(bad ? `${bad.status} 0 ${detail}` : `online ${Math.min(...rows.map((r) => r.up))} ${detail}`);
     });'
 }
 conn_ok=0
 for i in $(seq 1 18); do
-  read -r conn_status conn_up < <(connector_state || echo "unreadable 0")
+  read -r conn_status conn_up conn_detail < <(connector_state || echo "unreadable 0 -")
   if [[ "${conn_status}" == "online" && "${conn_up}" -ge 35 ]]; then
-    echo "==> birds-connector-artsobs online (${conn_up}s)"
+    echo "==> sightings connectors online (${conn_detail})"
     conn_ok=1
     break
   fi
   sleep 5
 done
 if [[ "${conn_ok}" != 1 ]]; then
-  echo "!! birds-connector-artsobs not staying online (status=${conn_status:-?} uptime=${conn_up:-?}s)" >&2
+  echo "!! sightings connectors not staying online (${conn_detail:-status=${conn_status:-?}})" >&2
   exit 1
 fi
 

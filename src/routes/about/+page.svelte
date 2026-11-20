@@ -78,6 +78,16 @@
 				API and shown as counts of reports, never as eBird frequencies. CC BY 4.0.
 			</li>
 			<li>
+				<strong>Artportalen (SLU Artdatabanken, the Swedish Species Information Centre)</strong> — Bird
+				reports for Swedish counties, loaded on demand through SLU's Species Observation System
+				API and shown as counts of reports, never as eBird frequencies. Data from SLU
+				Artdatabanken, CC0. By using this application I undertake to follow the
+				<a href="https://www.slu.se/artdatabanken/rapportering-och-fynd/oppna-data-och-apier/api-villkor" target="_blank" rel="noopener">rules for using SLU
+				Artdatabanken's information ↗</a>. Observer names come from Artportalen, are shown only to
+				signed-in users, and are used only to show who reported a bird and who is most active in
+				an area; ask the owner to have a name removed.
+			</li>
+			<li>
 				<strong>Wikipedia &amp; Wikidata</strong> — Provides global taxonomy mapping, IUCN
 				conservation statuses, physical dimensions (mass, wingspan), and natural history
 				articles.
@@ -125,6 +135,7 @@
 				{#if openVersions['v0.1.6']}
 					<div class="version-body">
 						<ul>
+							<li><strong>Sweden in Reports from other sources</strong> — bird reports from Artportalen, Sweden's reporting portal (SLU Artdatabanken), load one county at a time, like Norway's. Stockholms län and Jönköpings län (with Visingsö) are open first; an admin opens more in Admin → Sources, and only open counties show a Load button. A load reads the last 12 complete months plus the latest two weeks, so the month cards compare one year, not two. Swedish names sort the Swedish way (å, ä, ö last). A report whose location the reporter blurred counts in its county and municipality but never as a place on the map or near you.</li>
 							<li><strong>Choose how often need alerts check</strong> — Settings → Need alerts has a new choice, "Check for new reports every", from 15 minutes to 6 hours. It was fixed at 30 minutes, and 30 minutes is still where every account starts. At 15 minutes the app asks eBird for fresh reports on every check instead of reusing a copy up to 30 minutes old. The Alerts page shows your interval and when your account was last checked.</li>
 							<li><strong>Taxonomy refresh for admins</strong> — eBird updates its taxonomy once a year. A new Admin tab, Taxonomy, shows our eBird version and eBird's latest. One button backs the taxonomy up, syncs it and compares the two copies, listing every change and the stored frequency locations it affects; a second reloads those locations from eBird, with progress and a retry for any it could not finish. Every refresh keeps both backups and its list of changes. The taxonomy sync left Settings, so no sync can skip the backup.</li>
 							<li><strong>Norway sightings follow the taxonomy</strong> — sightings from other sources, such as Norway's Artsobservasjoner, carry eBird species too. A taxonomy refresh now re-matches them, and Admin → Taxonomy lists every taxon that moved to another species, was lost or was kept. A scientific name eBird no longer uses is followed through the names eBird used before, so a bird moved to a new genus, like the Reed Bunting (now <i>Schoeniclus</i>), keeps its species; when eBird gives no single answer, the taxon is left for an admin to match. Admin → Sources says when a match came through a former name and what eBird calls the bird now.</li>
