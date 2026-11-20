@@ -128,13 +128,15 @@ it("publishes only approved improvements, archives the original, and retains the
   ]);
   const row = (
     await query(
-      "SELECT content,input_hash,published_hash,next_attempt_at-generated_at AS interval FROM family_enrichment WHERE family_code='pandio1'",
+      // Exact, whatever the date: subtracting the timestamps gives 179 days
+      // 23:00 when the 180 days cross a DST change (td-c77b24).
+      "SELECT content,input_hash,published_hash,next_attempt_at = generated_at + interval '180 days' AS six_months FROM family_enrichment WHERE family_code='pandio1'",
     )
   ).rows[0];
   expect(row.content).toEqual(fresh);
   expect(row.input_hash).toBe(hash);
   expect(row.published_hash).toBe(hash);
-  expect(row.interval.days).toBe(180);
+  expect(row.six_months).toBe(true);
   expect(
     (
       await query(

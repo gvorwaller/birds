@@ -25,7 +25,8 @@ describe("SearchableSelect", () => {
   });
 
   it("submits the committed code through one hidden input, never the typed text", () => {
-    expect(source).toContain("<input type=\"hidden\" {name} {value} />");
+    // {form} (d364cde) lets a picker outside its <form> still submit with it.
+    expect(source).toContain("<input type=\"hidden\" {name} {value} {form} />");
     expect(source.match(/\{name\}/g)).toHaveLength(1);
     // Every way of leaving without choosing puts the committed label back.
     expect(source).toMatch(/function dismiss\(\)[\s\S]*?text = committedLabel;/);
