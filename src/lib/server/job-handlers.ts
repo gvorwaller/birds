@@ -29,6 +29,8 @@ import { defaultReplace, runTaxonomyRun } from '$server/taxonomy-refresh';
 import { buildMatcher } from '$server/species-match';
 import { seenSet } from '$server/needs';
 import { sendWebPush, PushError, type PushSubscriptionRow } from '$server/push';
+import { runRefreshPass } from '$server/external-sources/refresh';
+import { REFRESH_TICK_MS } from '$lib/external-refresh-policy';
 import {
 	alertCandidates,
 	isScanDue,
@@ -671,6 +673,44 @@ export async function ensureNeedAlertScan(): Promise<void> {
 	if (await hasActiveJob('scan_need_alerts:global')) return;
 	const adminId = await lowestAdminId();
 	await enqueueJob(scanEnqueueParams(adminId, 5_000));
+}
+
+// ---------------------------------------------------------------------------
+// Other sources: automatic refresh + owner alerts (td-9fe839) — system-recurring singleton
+// ---------------------------------------------------------------------------
+
+function externalRefreshEnqueueParams(adminId: number, runAfterMs: number) {
+	return {
+		type: 'refresh_external_sources' as const,
+		payload: {},
+		dedupKey: dedupKeys.refreshExternalSources(),
+		requestedBy: adminId,
+		label: 'hourly',
+		runAfterMs
+	};
+}
+
+/** Startup and every idle tick: exactly one active refresh job (repairs a lost chain). */
+export async function ensureExternalRefresh(): Promise<void> {
+	if (await hasActiveJob(dedupKeys.refreshExternalSources())) return;
+	const adminId = await lowestAdminId();
+	await enqueueJob(externalRefreshEnqueueParams(adminId, 60_000));
+}
+
+async function runExternalRefresh(job: JobRow): Promise<void> {
+	const attempts = job.attempts;
+	await recordEvent(job.id, 'claimed', { attempt: attempts });
+	let outcome: { kind: 'complete'; result: unknown } | { kind: 'fail'; error: string; result?: unknown };
+	try {
+		const result = await runRefreshPass({ origin: env.BIRDS_PUBLIC_ORIGIN ?? 'https://birds.gaylon.photos' });
+		outcome = { kind: 'complete', result };
+	} catch (err) {
+		if (isStaleClaim(err)) throw err;
+		// One bad pass never ends the chain: it fails visibly and the next runs in an hour.
+		outcome = { kind: 'fail', error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) };
+	}
+	const adminId = await lowestAdminId();
+	await terminalizeAndReschedule(job.id, attempts, outcome, externalRefreshEnqueueParams(adminId, REFRESH_TICK_MS));
 }
 
 // ---------------------------------------------------------------------------
@@ -2790,6 +2830,10 @@ async function dispatchJob(job: JobRow, ctx: WorkerContext): Promise<void> {
 			}
 			case 'repair_hotspot_coords': {
 				await runHotspotCoordinateRepair(job);
+				return;
+			}
+			case 'refresh_external_sources': {
+				await runExternalRefresh(job);
 				return;
 			}
 			case 'enrich_species': {

@@ -29,6 +29,9 @@ function source(over: Partial<AdminSource> = {}): AdminSource {
 		active: true,
 		windowMonths: 24,
 		storeObservers: true,
+		refreshDays: 7,
+		failedRefreshes: [],
+		reloadable: 1,
 		connectors: [{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: '2026-10-29T18:00:00Z', revokedAt: null }],
 		regions: [{ code: 'NO-18', name: 'Nordland', open: true, loadedAt: '2026-10-29T12:00:00Z', window: null }],
 		loads: [],
@@ -42,7 +45,8 @@ function source(over: Partial<AdminSource> = {}): AdminSource {
 				reason: 'no_match',
 				reports: 97,
 				regions: ['NO-18'],
-				suggestion: { code: 'rocpig', comName: 'Rock Pigeon', sciName: 'Columba livia' }
+				suggestion: { code: 'rocpig', comName: 'Rock Pigeon', sciName: 'Columba livia' },
+				isNew: false
 			}
 		],
 		matched: [
@@ -100,6 +104,7 @@ describe('Admin → Sources folds (td-2219df)', () => {
 			'Reference',
 			'Connector',
 			'Load a region',
+			'Refresh Weekly',
 			'Regions open for loading',
 			'Loads',
 			'Unmatched taxa',
@@ -185,5 +190,73 @@ describe('Admin → Sources after a taxonomy re-match (td-493c58)', () => {
 		}
 		const { body } = render(SourcesPanel, { props: { sources: [source()], form: null } });
 		expect(body).toMatch(/<details class="sec[^"]*" id="source-artsobs-unmatched">/);
+	});
+});
+
+describe('Admin → Sources refresh and alerts (td-9fe839)', () => {
+	const text = (body: string) => body.replace(/<!--[^>]*-->/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+	it('puts what needs the owner under the subtitle: taxa to match (new ones counted) and failed refreshes', () => {
+		const unmatched = [
+			{ ...source().unmatched[0], isNew: true },
+			{ ...source().unmatched[0], upstreamTaxonId: '9', canonicalName: 'Nonexistus fakeus', localName: null, isNew: false }
+		];
+		const failedRefreshes = [{ regionCode: 'NO-18', regionName: 'Nordland', error: 'Artskart answered 503', at: '2026-11-26T04:00:00Z' }];
+		const { body } = render(SourcesPanel, { props: { sources: [source({ unmatched, failedRefreshes })], form: null } });
+		const t = text(body);
+		expect(t).toContain('Attention 2 taxa need a match (1 new)');
+		expect(body).toContain('href="/admin?tab=sources&amp;unmatched=artsobs#source-artsobs-unmatched"');
+		expect(t).toMatch(/Refresh failed Nordland, .*The previous reports are still shown\. Artskart answered 503/);
+		expect(t.indexOf('2 taxa need a match')).toBeLessThan(t.indexOf('Load a region'));
+		// The new taxon carries a New badge and sorts first (the server orders; the badge shows).
+		expect(body.match(/data-tone="warn">New</g)).toHaveLength(1);
+	});
+
+	it('says nothing when nothing needs the owner, and says one taxon in the singular', () => {
+		expect(text(render(SourcesPanel, { props: { sources: [source({ unmatched: [] })], form: null } }).body)).not.toContain('Attention');
+		expect(text(render(SourcesPanel, { props: { sources: [source()], form: null } }).body)).toContain('1 taxon needs a match');
+	});
+
+	it('offers the refresh setting with a Save button, and Reload loaded regions only when there is one', () => {
+		const { body } = render(SourcesPanel, { props: { sources: [source()], form: null } });
+		const sel = body.match(/<select name="refresh_days"[^>]*>([\s\S]*?)<\/select>/)![1];
+		expect([...sel.matchAll(/>([^<]+)<\/option>/g)].map((m) => m[1])).toEqual(['Off', 'Weekly', 'Every 2 weeks', 'Monthly']);
+		expect(sel).toMatch(/<option value="7" selected/);
+		expect(text(body)).toContain('Reload loaded regions (1)');
+		const none = render(SourcesPanel, { props: { sources: [source({ reloadable: 0, refreshDays: null })], form: null } }).body;
+		expect(text(none)).not.toContain('Reload loaded regions');
+		expect(none).toMatch(/<option value="off" selected/);
+	});
+
+	it('marks an automatic load as such instead of naming the admin it runs under', () => {
+		const load = {
+			id: 'l1',
+			regionCode: 'NO-18',
+			regionName: 'Nordland',
+			status: 'queued',
+			attempt: 0,
+			maxAttempts: 3,
+			requestedByName: 'Gaylon',
+			origin: 'auto' as const,
+			createdAt: '2026-11-27T04:00:00Z',
+			finishedAt: null,
+			heartbeatAt: null,
+			leaseExpiresAt: null,
+			overdue: false,
+			progress: null,
+			error: null,
+			result: null,
+			notes: []
+		};
+		const t = text(render(SourcesPanel, { props: { sources: [source({ loads: [load] })], form: null } }).body);
+		expect(t).toContain('Auto');
+		expect(t).not.toContain('by Gaylon');
+	});
+
+	it('labels a nominate match', () => {
+		const matched = [{ ...source().matched[0], canonicalName: 'Pica pica pica', method: 'nominate' }];
+		expect(text(render(SourcesPanel, { props: { sources: [source({ matched })], form: null } }).body)).toContain(
+			'matched as its species (nominate subspecies)'
+		);
 	});
 });

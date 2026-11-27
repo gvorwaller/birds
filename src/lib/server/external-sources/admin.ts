@@ -4,7 +4,7 @@
  */
 import { query, withTransaction } from '$lib/db';
 import { buildMatcher } from '$server/species-match';
-import { CLOSED_FOR_LOADING, type LoadResult } from './lifecycle';
+import { CLOSED_FOR_LOADING, IngestError, queueExternalLoad, type LoadResult } from './lifecycle';
 import { deriveSpecies, lockSourceDerived } from './taxa';
 
 export interface AdminConnector {
@@ -23,6 +23,8 @@ export interface AdminLoad {
 	attempt: number;
 	maxAttempts: number;
 	requestedByName: string | null;
+	/** td-9fe839: 'auto' = started by the refresh job, not a person. */
+	origin: 'manual' | 'auto';
 	createdAt: string;
 	finishedAt: string | null;
 	heartbeatAt: string | null;
@@ -45,6 +47,8 @@ export interface AdminUnmatched {
 	regions: string[];
 	/** An eBird species to offer with one tap; never applied without the owner. */
 	suggestion: { code: string; comName: string; sciName: string } | null;
+	/** td-9fe839: brought in by a load in the last 30 days (an owner alert named it). */
+	isNew: boolean;
 }
 
 /** A taxon that counts as an eBird species, so the owner can change a wrong automatic match. */
@@ -56,7 +60,7 @@ export interface AdminMatched {
 	comName: string | null;
 	/** eBird's scientific name for the species today (shown for a former-name match). */
 	sciName: string | null;
-	/** How it was matched: 'scientific' | 'subspecies' | 'former_name' | 'override'. */
+	/** How it was matched: 'scientific' | 'subspecies' | 'former_name' | 'nominate' | 'override'. */
 	method: string;
 	/** Stored reports (td-769300 records) for the taxon, across loaded regions. */
 	reports: number;
@@ -70,6 +74,12 @@ export interface AdminSource {
 	active: boolean;
 	windowMonths: number;
 	storeObservers: boolean;
+	/** td-9fe839: automatic reload interval in days; null = Off. */
+	refreshDays: number | null;
+	/** Automatic refreshes that failed and that no later load has replaced (kept until one does). */
+	failedRefreshes: { regionCode: string; regionName: string; error: string | null; at: string }[];
+	/** Loaded, open regions with no load queued or running: what "Reload loaded regions" would queue. */
+	reloadable: number;
 	connectors: AdminConnector[];
 	/** `open`: loads may be queued for the region (td-99eebf). */
 	regions: { code: string; name: string; open: boolean; loadedAt: string | null; window: { start: string; end: string } | null }[];
@@ -130,10 +140,14 @@ export async function adminSources(): Promise<AdminSource[]> {
 		window_months: number;
 		store_observers: boolean;
 		locale: string;
-	}>(`SELECT id, name, publisher, license, active, window_months, store_observers, locale FROM external_sources ORDER BY name, id`);
+		refresh_days: number | null;
+	}>(
+		`SELECT id, name, publisher, license, active, window_months, store_observers, locale, refresh_days
+		   FROM external_sources ORDER BY name, id`
+	);
 	const out: AdminSource[] = [];
 	for (const s of sources.rows) {
-		const [connectors, regions, loads, queue, unmatched, matched, overrides] = await Promise.all([
+		const [connectors, regions, loads, queue, unmatched, matched, overrides, fresh, failed, reloadable] = await Promise.all([
 			query<{ id: string; label: string; created_at: Date; last_seen_at: Date | null; revoked_at: Date | null }>(
 				`SELECT id, label, created_at, last_seen_at, revoked_at FROM external_connectors
 				  WHERE source_id = $1 ORDER BY revoked_at NULLS FIRST, created_at DESC`,
@@ -155,6 +169,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 				attempt: number;
 				max_attempts: number;
 				requested_by_name: string | null;
+				origin: 'manual' | 'auto';
 				created_at: Date;
 				finished_at: Date | null;
 				heartbeat_at: Date | null;
@@ -166,7 +181,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 				notes: AdminLoad['notes'] | null;
 			}>(
 				`SELECT l.id, l.region_code, r.name AS region_name, l.status, l.attempt, l.max_attempts,
-				        u.display_name AS requested_by_name, l.created_at, l.finished_at, l.heartbeat_at,
+				        u.display_name AS requested_by_name, l.origin, l.created_at, l.finished_at, l.heartbeat_at,
 				        l.lease_expires_at,
 				        (l.status IN ('leased', 'staging') AND l.lease_expires_at <= now()) AS overdue,
 				        l.progress, l.error, l.result,
@@ -238,8 +253,28 @@ export async function adminSources(): Promise<AdminSource[]> {
 				   FROM external_taxon_overrides o LEFT JOIN taxonomy_cache t ON t.species_code = o.species_code
 				  WHERE o.source_id = $1 ORDER BY o.canonical_name`,
 				[s.id]
-			)
+			),
+			// td-9fe839: taxa named by a new-unmatched alert in the last 30 days.
+			query<{ id: string }>(
+				`SELECT DISTINCT t->>'id' AS id FROM external_alerts a, jsonb_array_elements(a.taxa) t
+				  WHERE a.source_id = $1 AND a.kind = 'new_unmatched' AND a.created_at > now() - interval '30 days'`,
+				[s.id]
+			),
+			// Failed automatic refreshes no later load replaced, newest per region.
+			// No age limit: the warning stays until a load replaces it (CODEX1 #6).
+			query<{ region_code: string; region_name: string; error: string | null; created_at: Date }>(
+				`SELECT DISTINCT ON (a.region_code) a.region_code, r.name AS region_name, a.error, a.created_at
+				   FROM external_alerts a JOIN regions r ON r.code = a.region_code
+				  WHERE a.source_id = $1 AND a.kind = 'refresh_failed'
+				    AND NOT EXISTS (SELECT 1 FROM external_loads d
+				                     WHERE d.source_id = a.source_id AND d.region_code = a.region_code
+				                       AND d.status = 'done' AND d.finished_at > a.created_at)
+				  ORDER BY a.region_code, a.created_at DESC`,
+				[s.id]
+			),
+			query<{ n: string }>(`SELECT COUNT(*) AS n FROM (${RELOADABLE_SQL}) x`, [s.id])
 		]);
+		const freshIds = new Set(fresh.rows.map((x) => x.id));
 		const candidates = [...new Set(unmatched.rows.flatMap((u) => suggestionCandidates(u.canonical_name)))];
 		const suggestable = candidates.length
 			? (
@@ -258,6 +293,14 @@ export async function adminSources(): Promise<AdminSource[]> {
 			active: s.active,
 			windowMonths: s.window_months,
 			storeObservers: s.store_observers,
+			refreshDays: s.refresh_days,
+			failedRefreshes: failed.rows.map((f) => ({
+				regionCode: f.region_code,
+				regionName: f.region_name,
+				error: f.error,
+				at: f.created_at.toISOString()
+			})),
+			reloadable: Number(reloadable.rows[0].n),
 			connectors: connectors.rows.map((c) => ({
 				id: Number(c.id),
 				label: c.label,
@@ -280,6 +323,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 				attempt: l.attempt,
 				maxAttempts: l.max_attempts,
 				requestedByName: l.requested_by_name,
+				origin: l.origin,
 				createdAt: l.created_at.toISOString(),
 				finishedAt: iso(l.finished_at),
 				heartbeatAt: iso(l.heartbeat_at),
@@ -292,15 +336,19 @@ export async function adminSources(): Promise<AdminSource[]> {
 			})),
 			oldestQueuedAt: iso(queue.rows[0]?.oldest ?? null),
 			overdueLeases: Number(queue.rows[0]?.overdue ?? 0),
-			unmatched: unmatched.rows.map((u) => ({
-				upstreamTaxonId: u.upstream_taxon_id,
-				canonicalName: u.canonical_name,
-				localName: u.local_name,
-				reason: u.reason,
-				reports: Number(u.reports),
-				regions: u.regions,
-				suggestion: pickSuggestion(u.canonical_name, suggestable)
-			})),
+			// New ones first, then the most reported (the query's order).
+			unmatched: unmatched.rows
+				.map((u) => ({
+					upstreamTaxonId: u.upstream_taxon_id,
+					canonicalName: u.canonical_name,
+					localName: u.local_name,
+					reason: u.reason,
+					reports: Number(u.reports),
+					regions: u.regions,
+					suggestion: pickSuggestion(u.canonical_name, suggestable),
+					isNew: freshIds.has(u.upstream_taxon_id)
+				}))
+				.sort((a, b) => Number(b.isNew) - Number(a.isNew)),
 			matched: matched.rows
 				.map((m) => ({
 					upstreamTaxonId: m.upstream_taxon_id,
@@ -324,6 +372,47 @@ export async function adminSources(): Promise<AdminSource[]> {
 		});
 	}
 	return out;
+}
+
+// ── Refresh (td-9fe839) ────────────────────────────────────────────────────
+
+/** A source's loaded, open regions with no load queued or running. */
+const RELOADABLE_SQL = `SELECT m.region_code FROM external_region_map m
+	  WHERE m.source_id = $1 AND m.queueable
+	    AND EXISTS (SELECT 1 FROM external_loads d WHERE d.source_id = m.source_id AND d.region_code = m.region_code AND d.status = 'done')
+	    AND NOT EXISTS (SELECT 1 FROM external_loads q WHERE q.source_id = m.source_id AND q.region_code = m.region_code
+	                     AND q.status IN ('queued', 'leased', 'staging'))`;
+
+/** The automatic reload interval (days, or null = Off). The caller validates `days`. */
+export async function setRefreshDays(sourceId: string, days: number | null): Promise<boolean> {
+	const r = await query(`UPDATE external_sources SET refresh_days = $2 WHERE id = $1`, [sourceId, days]);
+	return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * "Reload loaded regions": a load for every loaded, open region of the source
+ * with none queued or running, whatever its age or the refresh setting. The
+ * connector still runs them one at a time. Each region is queued on its own,
+ * so a region closed meanwhile is skipped without undoing the others
+ * (CODEX1 td-9fe839 #5). Returns how many were queued.
+ */
+export async function reloadLoadedRegions(sourceId: string, userId: number): Promise<number> {
+	// An unknown or switched-off source says so, not "already queued" (AGY4).
+	const src = await query<{ active: boolean }>(`SELECT active FROM external_sources WHERE id = $1`, [sourceId]);
+	if (!src.rows[0]) throw new IngestError(404, 'unknown_source', 'Unknown source.');
+	if (!src.rows[0].active) throw new IngestError(409, 'inactive_source', 'This source is switched off.');
+	const regions = await query<{ region_code: string }>(`${RELOADABLE_SQL} ORDER BY m.region_code`, [sourceId]);
+	let queued = 0;
+	for (const r of regions.rows) {
+		try {
+			const q = await queueExternalLoad({ sourceId, regionCode: r.region_code, requestedBy: userId });
+			if (q.created) queued++;
+		} catch (err) { // stale-safe: a web form action, never under a job claim; skips only a region closed meanwhile
+			if (err instanceof IngestError && err.code === 'region_not_open') continue;
+			throw err;
+		}
+	}
+	return queued;
 }
 
 /** Revoke a connector token. Its next call is refused; it can never publish. */

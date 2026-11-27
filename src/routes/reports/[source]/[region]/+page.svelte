@@ -382,7 +382,8 @@
 				</p>
 			{/if}
 			{@render loadResult()}
-			{#if data.state.failed && data.canLoad && !status && data.state.queueable}
+			<!-- td-9fe839: Reload is always offered beside how current the reports are. -->
+			{#if data.canLoad && !status && data.state.queueable}
 				{@render loadForm(`Reload ${data.regionName}`, 'secondary')}
 			{/if}
 			<ExternalAttribution
@@ -390,6 +391,7 @@
 				windowStart={published.windowStart}
 				windowEnd={published.windowEnd}
 				retrievedAt={published.retrievedAt}
+				through={published.through}
 			/>
 		</section>
 	{/if}

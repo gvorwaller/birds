@@ -229,6 +229,7 @@
 				windowStart={c.published.windowStart}
 				windowEnd={c.published.windowEnd}
 				retrievedAt={c.published.retrievedAt}
+				through={c.published.through}
 			/>
 		{:else}
 			<ExternalAttribution source={c.source} />

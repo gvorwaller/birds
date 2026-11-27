@@ -6,6 +6,7 @@
  * error is still in hand (CODEX1 #2) — this module only consumes structured
  * kinds; it never parses messages.
  */
+import { RECURRING_JOB_TYPES } from "$lib/recurring-jobs";
 import { createHash } from "node:crypto";
 import { HOTSPOT_FAILURE_COOLDOWN_MS } from "$server/barchart";
 
@@ -230,6 +231,7 @@ export const dedupKeys = {
   tagFamilyRefs: () => "tag_family_refs",
   // td-c2f2b2: the one outstanding hotspot-coordinate repair.
   repairHotspotCoords: () => "repair_hotspot_coords:global",
+  refreshExternalSources: () => "refresh_external_sources:global",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -457,6 +459,7 @@ const TYPE_NAMES: Record<string, string> = {
   // Retired by td-7162f6 (totals maintained at write time); history rows remain.
   refresh_species_counts: "Species count refresh (system)",
   repair_hotspot_coords: "Hotspot coordinates (system)",
+  refresh_external_sources: "Other sources refresh (system)",
 };
 
 export function displayName(
@@ -478,12 +481,7 @@ export function displayName(
 }
 
 /** Recurring singleton types that sit 'pending' between runs by design. */
-const RECURRING_SINGLETONS = new Set([
-  "scan_enrichment",
-  "scan_need_alerts",
-  "enrich_families",
-  "tag_consistency",
-]);
+const RECURRING_SINGLETONS = RECURRING_JOB_TYPES;
 
 /**
  * A recurring singleton parked until its NEXT scheduled run (td-b7d021,

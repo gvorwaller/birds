@@ -53,6 +53,12 @@ export interface ExternalPublished {
 	retrievedAt: string | null;
 	finishedAt: string;
 	/**
+	 * td-9fe839: the day the load read reports through (its source snapshot's
+	 * `through`), YYYY-MM-DD; null for a load that didn't record one. The
+	 * monthly counts still stop at windowEnd.
+	 */
+	through: string | null;
+	/**
 	 * The latest-reports span the connector kept, when it says (td-99eebf,
 	 * CODEX1 R4): a busy county can have more reports in its last 14 days than
 	 * the 20,000-row cap, and then only the newest are kept.
@@ -115,6 +121,13 @@ function regionLink(template: string | null, upstreamKey: string): string | null
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/** A real calendar day as YYYY-MM-DD (2026-02-31 is not), else null. */
+function calendarDay(v: unknown): string | null {
+	if (typeof v !== 'string' || !DAY.test(v)) return null;
+	const d = new Date(`${v}T00:00:00Z`);
+	return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === v ? v : null;
+}
+
 /** The recent span from a load's source snapshot; null for a source that doesn't record one. */
 function recentSpan(snap: Record<string, unknown> | null): ExternalPublished['recent'] {
 	if (!snap || !('recent_truncated' in snap)) return null;
@@ -132,6 +145,7 @@ function toState(r: SourceRow): ExternalRegionState {
 					windowEnd: r.window_end,
 					retrievedAt: r.retrieved_at?.toISOString() ?? null,
 					finishedAt: r.finished_at.toISOString(),
+					through: calendarDay(r.source_snapshot?.through),
 					recent: recentSpan(r.source_snapshot)
 				}
 			: null;

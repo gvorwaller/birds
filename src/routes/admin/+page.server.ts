@@ -28,7 +28,10 @@ import {
   revokeConnector,
   setRegionOpen,
   setTaxonOverride,
+  setRefreshDays,
+  reloadLoadedRegions,
 } from "$server/external-sources/admin";
+import { isRefreshDays, refreshLabel } from "$lib/external-refresh-policy";
 import { IngestError, queueExternalLoad } from "$server/external-sources/lifecycle";
 import { isRegionCode } from "$server/external-sources/contract";
 import { getRegion } from "$server/regions";
@@ -446,6 +449,37 @@ export const actions: Actions = {
             : `${label} is closed for loading. Its loaded reports stay.`,
         )
       : sourcesResult(false, `${label} was already ${open ? "open" : "closed"}.`);
+  },
+  // td-9fe839: how often loaded regions reload on their own.
+  set_refresh_days: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const f = await request.formData();
+    const sourceId = String(f.get("source_id") ?? "");
+    const raw = String(f.get("refresh_days") ?? "");
+    const days = raw === "off" ? null : Number(raw);
+    if (!sourceId || (days !== null && !isRefreshDays(days))) return sourcesResult(false, "Pick how often to refresh.");
+    return (await setRefreshDays(sourceId, days))
+      ? sourcesResult(
+          true,
+          days === null
+            ? "Automatic refresh is off. Loaded regions reload only when you ask."
+            : `Loaded regions now reload ${refreshLabel(days).toLowerCase()} on their own.`,
+        )
+      : sourcesResult(false, "Unknown source.", 404);
+  },
+  reload_loaded_regions: async ({ locals, request }) => {
+    if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);
+    const sourceId = String((await request.formData()).get("source_id") ?? "");
+    if (!sourceId) return sourcesResult(false, "Unknown source.");
+    try {
+      const n = await reloadLoadedRegions(sourceId, locals.user.id);
+      return n > 0
+        ? sourcesResult(true, `Queued ${n} ${n === 1 ? "reload" : "reloads"}. The connector runs them one at a time.`)
+        : sourcesResult(false, "Every loaded region is already queued or loading.");
+    } catch (err) {
+      if (err instanceof IngestError) return sourcesResult(false, err.message, err.status === 404 || err.status === 409 ? err.status : 400);
+      throw err;
+    }
   },
   revoke_connector: async ({ locals, request }) => {
     if (locals.user?.role !== "admin") return sourcesResult(false, "Admins only.", 403);

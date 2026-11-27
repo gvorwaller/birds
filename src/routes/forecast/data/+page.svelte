@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { RECURRING_JOB_TYPES } from "$lib/recurring-jobs";
   import { enhance } from "$app/forms";
   import { browser } from "$app/environment";
   import { afterNavigate, beforeNavigate, goto, invalidateAll, replaceState } from "$app/navigation";
@@ -961,11 +962,7 @@
   const scheduledJobs = $derived(
     jobsPoll.active.filter((j) => ["scheduled", "retry-scheduled", "waiting"].includes(j.presentation?.state ?? "")),
   );
-  const recurringJobTypes = new Set([
-    "scan_enrichment",
-    "scan_need_alerts",
-    "enrich_families",
-  ]);
+  const recurringJobTypes = RECURRING_JOB_TYPES;
   // Next enrichment scan (td-543431): follows the polled jobs list once a
   // poll has arrived, so a scan finishing no longer has to reload this page;
   // the server value covers the first paint. Same rule as the server query:

@@ -18,6 +18,7 @@
  *   lock_timeout micro-transaction retried to a deadline, so a held row
  *   delays a transition but never wedges it.
  */
+import { RECURRING_JOB_TYPES } from '$lib/recurring-jobs';
 import type pg from 'pg';
 import { query, queryTimed } from '$lib/db';
 import { sweepExternalStaging } from '$server/external-sources/lifecycle';
@@ -58,7 +59,8 @@ export type JobType =
 	| 'tag_preview'
 	| 'tag_family_refs'
 	| 'refresh_species_counts'
-	| 'repair_hotspot_coords';
+	| 'repair_hotspot_coords'
+	| 'refresh_external_sources';
 
 /**
  * System-recurring types: self-rescheduling singletons owned by the lowest-id
@@ -66,12 +68,7 @@ export type JobType =
  * reconciliation would resurrect them anyway) — disable the FEATURE in
  * Settings instead of killing the scheduler.
  */
-export const RECURRING_TYPES: ReadonlySet<string> = new Set([
-	'scan_need_alerts',
-	'scan_enrichment',
-	'enrich_families',
-	'tag_consistency'
-]);
+export const RECURRING_TYPES: ReadonlySet<string> = RECURRING_JOB_TYPES;
 
 export type JobEventAction =
 	| 'enqueued'

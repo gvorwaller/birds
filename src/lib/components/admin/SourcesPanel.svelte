@@ -15,6 +15,7 @@
 	import type { AdminSource, AdminLoad } from '$server/external-sources/admin';
 	import AdminBadge from './AdminBadge.svelte';
 	import { findTaxa } from '$lib/taxon-find';
+	import { REFRESH_DAYS_OPTIONS, refreshLabel } from '$lib/external-refresh-policy';
 
 	type SourcesForm = { kind: 'sources'; ok: boolean; message: string } | null | undefined;
 	let { sources, form }: { sources: AdminSource[] | null; form: SourcesForm } = $props();
@@ -56,6 +57,7 @@
 		scientific: 'matched by the same scientific name',
 		subspecies: 'matched as the species eBird reports this subspecies as',
 		former_name: 'matched by a scientific name eBird used before',
+		nominate: 'matched as its species (nominate subspecies)',
 		override: 'your match'
 	};
 	// The "Find a taxon" box filters in the browser; without JavaScript the whole list shows.
@@ -248,6 +250,25 @@
 				{s.publisher} · {s.license} · latest {s.windowMonths} complete months per load · observer names
 				{s.storeObservers ? 'stored' : 'not stored'}
 			</p>
+			<!-- td-9fe839: what needs the owner, first thing on the card. -->
+			{#if s.unmatched.length > 0}
+				<p class="warn-line">
+					<AdminBadge tone="warn" label="Attention" />
+					<a href={`/admin?tab=sources&unmatched=${encodeURIComponent(s.id)}#${at}-unmatched`} data-sveltekit-reload
+						>{s.unmatched.length} {s.unmatched.length === 1 ? 'taxon needs' : 'taxa need'} a match</a
+					>{#if s.unmatched.some((u) => u.isNew)}<span class="muted">
+							({s.unmatched.filter((u) => u.isNew).length} new)</span
+						>{/if}
+				</p>
+			{/if}
+			{#each s.failedRefreshes as f (f.regionCode)}
+				<p class="warn-line">
+					<AdminBadge tone="error" label="Refresh failed" />
+					{f.regionName}, {when(f.at)}. The previous reports are still shown.{#if f.error}<span class="muted">
+							{f.error}</span
+						>{/if}
+				</p>
+			{/each}
 
 			<details class="sec">
 				<summary>
@@ -336,6 +357,54 @@
 				</p>
 			</details>
 
+			<!-- td-9fe839: loaded regions reload on their own. Closed by default:
+			     the summary already says the setting (AGY4). -->
+			<details class="sec">
+				<summary>
+					<h4>Refresh</h4>
+					<span class="muted sum-note">{refreshLabel(s.refreshDays)}</span>
+				</summary>
+				{@render notice(`${at}:refresh`)}
+				<form
+					method="POST"
+					action="?/set_refresh_days"
+					class="inline-form"
+					use:enhance={act(`${at}:refresh`, `${at}:refresh`)}
+				>
+					<input type="hidden" name="source_id" value={s.id} />
+					<label class="field">
+						<span>Refresh loaded regions</span>
+						<select name="refresh_days">
+							<option value="off" selected={s.refreshDays === null}>Off</option>
+							{#each REFRESH_DAYS_OPTIONS as d (d)}
+								<option value={String(d)} selected={s.refreshDays === d}>{refreshLabel(d)}</option>
+							{/each}
+						</select>
+					</label>
+					<button type="submit" class="btn" disabled={busy !== null}>
+						{busy === `${at}:refresh` ? 'Saving…' : 'Save'}
+					</button>
+				</form>
+				<p class="muted">
+					Each loaded region reloads once its reports are older than this, one region at a time. A failed
+					refresh keeps the previous reports and is tried again next interval. New taxa that need a match, and a
+					failed refresh, are sent as notifications to your devices.
+				</p>
+				{#if s.reloadable > 0}
+					<form
+						method="POST"
+						action="?/reload_loaded_regions"
+						class="inline-form"
+						use:enhance={act(`${at}:reload`, `${at}:refresh`, () => jobsPoll.track(0))}
+					>
+						<input type="hidden" name="source_id" value={s.id} />
+						<button type="submit" class="btn" disabled={!s.active || busy !== null}>
+							{busy === `${at}:reload` ? 'Queueing…' : `Reload loaded regions (${s.reloadable})`}
+						</button>
+					</form>
+				{/if}
+			</details>
+
 			<!-- td-99eebf: a source's regions open for loading one by one. Only open
 			     regions get a Load button anywhere in the app. -->
 			<details class="sec" open={s.regions.some((r) => !r.open)}>
@@ -400,11 +469,12 @@
 								<div class="line">
 									<strong>{l.regionName}</strong>
 									<AdminBadge tone={st.tone} label={st.label} />
+									{#if l.origin === 'auto'}<AdminBadge tone="neutral" label="Auto" />{/if}
 									<span class="muted">attempt {l.attempt} of {l.maxAttempts}</span>
 								</div>
 								<p class="muted">
 									{[
-										`Queued ${when(l.createdAt)}${l.requestedByName ? ` by ${l.requestedByName}` : ''}`,
+										`Queued ${when(l.createdAt)}${l.origin !== 'auto' && l.requestedByName ? ` by ${l.requestedByName}` : ''}`,
 										l.finishedAt ? `finished ${when(l.finishedAt)}` : null,
 										l.heartbeatAt && !l.finishedAt ? `last heartbeat ${ago(l.heartbeatAt)}` : null
 									]
@@ -474,6 +544,7 @@
 							<li>
 								<div class="line">
 									<strong>{#if u.localName}{`${u.localName} · `}{/if}<i>{u.canonicalName}</i></strong>
+									{#if u.isNew}<AdminBadge tone="warn" label="New" />{/if}
 									<span class="muted">{n(u.reports)} reports · {u.regions.join(', ')}</span>
 								</div>
 								<p class="muted">Not matched: {REASON[u.reason] ?? u.reason}.</p>

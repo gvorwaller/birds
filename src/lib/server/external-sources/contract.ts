@@ -790,6 +790,8 @@ export function parseManifest(
 			(typeof sv === 'string' && sv.length <= 200 && !CONTROL.test(sv));
 		if (!ok) throw new ContractError(`manifest.source_snapshot.${k}: expected short text, a number or null`);
 	}
+	// td-9fe839: `through` is shown as "reports through {date}", so it must be a real day.
+	if (v.source_snapshot.through != null) isoDate(v.source_snapshot.through, 'manifest.source_snapshot.through');
 
 	if (typeof v.filter_fingerprint !== 'string' || !HEX64.test(v.filter_fingerprint)) {
 		throw new ContractError('manifest.filter_fingerprint: expected 64 hex digits');

@@ -13,13 +13,16 @@
 		source,
 		windowStart = null,
 		windowEnd = null,
-		retrievedAt = null
+		retrievedAt = null,
+		through = null
 	}: {
 		source: Pick<ExternalSourceInfo, 'name' | 'attribution' | 'license' | 'licenseUrl' | 'homepage'> &
 			Partial<Pick<ExternalSourceInfo, 'citation' | 'doi' | 'termsUrl'>>;
 		windowStart?: string | null;
 		windowEnd?: string | null;
 		retrievedAt?: string | null;
+		/** td-9fe839: YYYY-MM-DD the load read reports through; shown instead of "retrieved". */
+		through?: string | null;
 	} = $props();
 
 	const retrievedOn = $derived(
@@ -27,10 +30,21 @@
 			? new Date(retrievedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
 			: null
 	);
+	const throughOn = $derived(
+		through
+			? new Date(`${through}T00:00:00Z`).toLocaleDateString('en-US', {
+					day: 'numeric',
+					month: 'short',
+					year: 'numeric',
+					timeZone: 'UTC'
+				})
+			: null
+	);
 </script>
 
 <p class="attrib">
-	{source.attribution}{#if windowStart && windowEnd}&nbsp;· {windowLabel(windowStart, windowEnd)}{/if}{#if retrievedOn}&nbsp;·
+	{source.attribution}{#if windowStart && windowEnd}&nbsp;· {windowLabel(windowStart, windowEnd)}{/if}{#if throughOn}&nbsp;·
+		reports through {throughOn}{:else if retrievedOn}&nbsp;·
 		retrieved {retrievedOn}{/if}{#if source.termsUrl}&nbsp;·
 		<a href={source.termsUrl} target="_blank" rel="noopener">terms of use ↗</a>{/if}
 </p>

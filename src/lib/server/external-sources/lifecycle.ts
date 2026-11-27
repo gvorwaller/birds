@@ -62,6 +62,8 @@ export interface LoadRow {
 	source_id: string;
 	region_code: string;
 	requested_by: number | null;
+	/** td-9fe839: who started it — a person, or the refresh job. */
+	origin: 'manual' | 'auto';
 	status: 'queued' | 'leased' | 'staging' | 'done' | 'failed' | 'superseded';
 	attempt: number;
 	max_attempts: number;
@@ -235,56 +237,97 @@ async function clearStaging(db: Pick<Db, 'query'>, loadIds: string[]): Promise<v
 
 // ── Queue ──────────────────────────────────────────────────────────────────
 
+export interface QueueOptions {
+	sourceId: string;
+	regionCode: string;
+	requestedBy: number | null;
+	/** td-9fe839: 'auto' only from the refresh job; a collided request keeps the active load's own origin. */
+	origin?: 'manual' | 'auto';
+	/** Test seam only: runs between a conflicting INSERT and the follow-up SELECT. */
+	afterConflictForTest?: () => Promise<void>;
+}
+
 /**
  * Queue a load for one region. One active load per (source, region): a
  * second request returns the active one instead of a duplicate.
  */
-export async function queueExternalLoad(opts: {
-	sourceId: string;
-	regionCode: string;
-	requestedBy: number | null;
-	/** Test seam only: runs between a conflicting INSERT and the follow-up SELECT. */
-	afterConflictForTest?: () => Promise<void>;
-}): Promise<{ loadId: string; created: boolean }> {
-	return withTransaction(async (c) => {
-		const src = await c.query<{ active: boolean; window_months: number }>(
-			`SELECT s.active, s.window_months FROM external_sources s WHERE s.id = $1`,
-			[opts.sourceId]
+export async function queueExternalLoad(opts: QueueOptions): Promise<{ loadId: string; created: boolean }> {
+	return withTransaction((c) => queueExternalLoadTx(c, opts));
+}
+
+/** queueExternalLoad inside the caller's transaction (the refresh job's claim-fenced one). */
+export async function queueExternalLoadTx(c: Db, opts: QueueOptions): Promise<{ loadId: string; created: boolean }> {
+	const src = await c.query<{ active: boolean; window_months: number }>(
+		`SELECT s.active, s.window_months FROM external_sources s WHERE s.id = $1`,
+		[opts.sourceId]
+	);
+	// The region's map row is locked until this transaction commits, so an
+	// admin closing the region (setRegionOpen) waits for this queue and then
+	// cancels what it queued, or this queue sees the close (CODEX1 R8).
+	const map = await c.query<{ queueable: boolean }>(
+		`SELECT queueable FROM external_region_map WHERE source_id = $1 AND region_code = $2 FOR SHARE`,
+		[opts.sourceId, opts.regionCode]
+	);
+	const s = src.rows[0] ? { ...src.rows[0], mapped: map.rows.length > 0, queueable: map.rows[0]?.queueable === true } : undefined;
+	if (!s) throw new IngestError(404, 'unknown_source', 'Unknown source.');
+	if (!s.active) throw new IngestError(409, 'inactive_source', 'This source is switched off.');
+	if (!s.mapped) throw new IngestError(422, 'unmapped_region', 'This source has no data for that region.');
+	// td-99eebf: a source's counties open for loading one by one.
+	if (!s.queueable) throw new IngestError(409, 'region_not_open', 'Loading is not open for this region yet.');
+	// The active load we collided with can finish between the INSERT and the
+	// SELECT (READ COMMITTED); then the insert is simply tried again.
+	for (let tries = 0; tries < 5; tries++) {
+		const ins = await c.query<{ id: string }>(
+			`INSERT INTO external_loads (source_id, region_code, requested_by, max_attempts, window_months, origin)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (source_id, region_code) WHERE status IN ('queued', 'leased', 'staging') DO NOTHING
+			 RETURNING id`,
+			[opts.sourceId, opts.regionCode, opts.requestedBy, MAX_ATTEMPTS, s.window_months, opts.origin ?? 'manual']
 		);
-		// The region's map row is locked until this transaction commits, so an
-		// admin closing the region (setRegionOpen) waits for this queue and then
-		// cancels what it queued, or this queue sees the close (CODEX1 R8).
-		const map = await c.query<{ queueable: boolean }>(
-			`SELECT queueable FROM external_region_map WHERE source_id = $1 AND region_code = $2 FOR SHARE`,
+		if (ins.rows[0]) return { loadId: ins.rows[0].id, created: true };
+		if (opts.afterConflictForTest) await opts.afterConflictForTest();
+		const active = await c.query<{ id: string }>(
+			`SELECT id FROM external_loads
+			  WHERE source_id = $1 AND region_code = $2 AND status IN ('queued', 'leased', 'staging')`,
 			[opts.sourceId, opts.regionCode]
 		);
-		const s = src.rows[0] ? { ...src.rows[0], mapped: map.rows.length > 0, queueable: map.rows[0]?.queueable === true } : undefined;
-		if (!s) throw new IngestError(404, 'unknown_source', 'Unknown source.');
-		if (!s.active) throw new IngestError(409, 'inactive_source', 'This source is switched off.');
-		if (!s.mapped) throw new IngestError(422, 'unmapped_region', 'This source has no data for that region.');
-		// td-99eebf: a source's counties open for loading one by one.
-		if (!s.queueable) throw new IngestError(409, 'region_not_open', 'Loading is not open for this region yet.');
-		// The active load we collided with can finish between the INSERT and the
-		// SELECT (READ COMMITTED); then the insert is simply tried again.
-		for (let tries = 0; tries < 5; tries++) {
-			const ins = await c.query<{ id: string }>(
-				`INSERT INTO external_loads (source_id, region_code, requested_by, max_attempts, window_months)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (source_id, region_code) WHERE status IN ('queued', 'leased', 'staging') DO NOTHING
-				 RETURNING id`,
-				[opts.sourceId, opts.regionCode, opts.requestedBy, MAX_ATTEMPTS, s.window_months]
-			);
-			if (ins.rows[0]) return { loadId: ins.rows[0].id, created: true };
-			if (opts.afterConflictForTest) await opts.afterConflictForTest();
-			const active = await c.query<{ id: string }>(
-				`SELECT id FROM external_loads
-				  WHERE source_id = $1 AND region_code = $2 AND status IN ('queued', 'leased', 'staging')`,
-				[opts.sourceId, opts.regionCode]
-			);
-			if (active.rows[0]) return { loadId: active.rows[0].id, created: false };
-		}
-		throw new IngestError(409, 'queue_busy', 'The region is being loaded and finished at the same moment; try again.');
-	});
+		if (active.rows[0]) return { loadId: active.rows[0].id, created: false };
+	}
+	throw new IngestError(409, 'queue_busy', 'The region is being loaded and finished at the same moment; try again.');
+}
+
+// ── Owner alerts (td-9fe839) ───────────────────────────────────────────────
+
+export interface AlertTaxon {
+	id: string;
+	name: string;
+	reports: number;
+}
+
+/**
+ * Records an owner alert in the caller's transaction, so it exists exactly
+ * when the outcome it reports commits. The worker's refresh job pushes it.
+ */
+export async function insertAlert(
+	db: Pick<Db, 'query'>,
+	a: { sourceId: string; regionCode: string; loadId: string } & (
+		| { kind: 'new_unmatched'; taxa: AlertTaxon[] }
+		| { kind: 'refresh_failed'; error: string | null }
+	)
+): Promise<void> {
+	await db.query(
+		`INSERT INTO external_alerts (source_id, region_code, kind, load_id, taxa, error)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+		 ON CONFLICT (load_id, kind) DO NOTHING`,
+		[
+			a.sourceId,
+			a.regionCode,
+			a.kind,
+			a.loadId,
+			a.kind === 'new_unmatched' ? JSON.stringify(a.taxa) : null,
+			a.kind === 'refresh_failed' ? (a.error ?? '').slice(0, 500) || null : null
+		]
+	);
 }
 
 // ── Lease expiry ───────────────────────────────────────────────────────────
@@ -344,9 +387,16 @@ export async function expireLeases(
 		        progress = NULL,
 		        updated_at = now()
 		   FROM decided d WHERE l.id = d.id
-		 RETURNING l.id`,
+		 RETURNING l.id, l.status, l.origin, l.source_id, l.region_code, l.error, d.open`,
 		[ids, CLOSED_FOR_LOADING]
 	);
+	// td-9fe839: an automatic load given up here (the connector died, e.g. on
+	// memory, so failLoad never ran) tells the owner. A deliberate close does not.
+	for (const x of r.rows as { id: string; status: string; origin: string; source_id: string; region_code: string; error: string | null; open: boolean }[]) {
+		if (x.status === 'failed' && x.origin === 'auto' && x.open) {
+			await insertAlert(db, { kind: 'refresh_failed', sourceId: x.source_id, regionCode: x.region_code, loadId: x.id, error: x.error });
+		}
+	}
 	await clearStaging(db, r.rows.map((x) => x.id));
 	return r.rowCount ?? 0;
 }
@@ -772,6 +822,13 @@ export async function finishLoad(
 		}
 		assertLiveLease(load, fence);
 		await lockSourceDerived(c, load.source_id);
+		// td-9fe839: the source's outstanding unmatched taxa BEFORE publish
+		// empties this region's list; a taxon is new only if it was outstanding
+		// nowhere in the source (Admin lists them per source).
+		const outstanding = await c.query<{ upstream_taxon_id: string }>(
+			`SELECT DISTINCT upstream_taxon_id FROM external_unmatched WHERE source_id = $1`,
+			[load.source_id]
+		);
 		let manifest: Manifest;
 		try {
 			manifest = parseManifest(rawManifest, {
@@ -790,6 +847,21 @@ export async function finishLoad(
 		const gaps = await checkTotals(c, load.id);
 
 		await publish(c, load);
+		const fresh = await c.query<{ upstream_taxon_id: string; canonical_name: string; reports: string }>(
+			`SELECT upstream_taxon_id, canonical_name, reports FROM external_unmatched
+			  WHERE source_id = $1 AND region_code = $2 AND NOT (upstream_taxon_id = ANY($3::text[]))
+			  ORDER BY reports DESC, canonical_name`,
+			[load.source_id, load.region_code, outstanding.rows.map((x) => x.upstream_taxon_id)]
+		);
+		if (fresh.rows.length > 0) {
+			await insertAlert(c, {
+				kind: 'new_unmatched',
+				sourceId: load.source_id,
+				regionCode: load.region_code,
+				loadId: load.id,
+				taxa: fresh.rows.map((x) => ({ id: x.upstream_taxon_id, name: x.canonical_name, reports: Number(x.reports) }))
+			});
+		}
 		if (opts.failAfterSwapForTest) throw new Error('test: failure in the middle of the swap');
 
 		const summary = await c.query<{ species: string; unmatched_taxa: string; unmatched_reports: string }>(
@@ -881,6 +953,10 @@ export async function failLoad(
 			  WHERE id = $1`,
 			[load.id, requeue ? 'queued' : 'failed', text]
 		);
+		// td-9fe839: an automatic load that failed for good tells the owner; a close does not.
+		if (!requeue && !closed && load.origin === 'auto') {
+			await insertAlert(c, { kind: 'refresh_failed', sourceId: load.source_id, regionCode: load.region_code, loadId: load.id, error: text });
+		}
 		await clearStaging(c, [load.id]);
 		return { status: requeue ? ('queued' as const) : ('failed' as const) };
 	});

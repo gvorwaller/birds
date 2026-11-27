@@ -122,3 +122,64 @@ describe('resolveMatches: former eBird names (td-493c58)', () => {
 		expect(match('Apus affinis [nipalensis Group]', { former: [] })).toEqual({ code: 'y00960', method: 'subspecies' });
 	});
 });
+
+describe('resolveMatches: nominate subspecies (td-9fe839)', () => {
+	const NOW: MatchTaxon[] = [
+		sp('eurmag1', 'Pica pica'),
+		sp('carcro1', 'Corvus corone'),
+		sp('hoocro1', 'Corvus cornix'),
+		sp('comter', 'Sterna hirundo'),
+		sp('aaa1', 'Twinus dup'),
+		sp('aaa2', 'Twinus dup'),
+		sp('bbb1', 'Exactus issfus'),
+		sp('bbb2', 'Exactus other'),
+		issf('bbb3', 'Exactus issfus issfus', 'bbb2'),
+		sp('ccc1', 'Brokenus link'),
+		issf('ccc2', 'Brokenus link link', 'gone99'),
+		sp('ddd1', 'Formerus pointer'),
+		sp('ddd2', 'Formerus elsewhere')
+	];
+	const FORMER: MatchTaxon[] = [sp('ddd2', 'Formerus pointer pointer')];
+	const nominate = (name: string, o: { former?: MatchTaxon[]; overrides?: Map<string, string>; enabled?: boolean } = {}) =>
+		resolveMatches([{ upstreamTaxonId: '1', canonicalName: name }], NOW, o.overrides ?? new Map(), o.former ?? [], {
+			nominate: o.enabled ?? true
+		}).get(taxonKey('1', name));
+
+	it('matches "Genus sp sp" to its one eBird species "Genus sp"', () => {
+		expect(nominate('Pica pica pica')).toEqual({ code: 'eurmag1', method: 'nominate' });
+		expect(nominate('Sterna  hirundo HIRUNDO')).toEqual({ code: 'comter', method: 'nominate' });
+	});
+
+	it('never rolls up a non-nominate subspecies (Corvus corone cornix is the Hooded Crow)', () => {
+		expect(nominate('Corvus corone cornix')).toEqual({ code: null, reason: 'no_match' });
+	});
+
+	it('is ambiguous when "Genus sp" names two eBird species', () => {
+		expect(nominate('Twinus dup dup')).toEqual({ code: null, reason: 'ambiguous' });
+	});
+
+	it('keeps an exact issf ahead of the guess, even when it points elsewhere', () => {
+		expect(nominate('Exactus issfus issfus')).toEqual({ code: 'bbb2', method: 'subspecies' });
+	});
+
+	it('leaves for review a full name eBird has but reports as no species', () => {
+		expect(nominate('Brokenus link link')).toEqual({ code: null, reason: 'no_match' });
+	});
+
+	it('follows a former full name instead of guessing', () => {
+		expect(nominate('Formerus pointer pointer', { former: FORMER })).toEqual({ code: 'ddd2', method: 'former_name' });
+	});
+
+	it('leaves unresolved former evidence for review', () => {
+		const gone = [slash('zzz9', 'Formerus pointer pointer')];
+		expect(nominate('Formerus pointer pointer', { former: gone })).toEqual({ code: null, reason: 'no_match' });
+	});
+
+	it('keeps an override first', () => {
+		expect(nominate('Pica pica pica', { overrides: new Map([['1', 'hoocro1']]) })).toEqual({ code: 'hoocro1', method: 'override' });
+	});
+
+	it('is off until the caller has read the former names', () => {
+		expect(nominate('Pica pica pica', { enabled: false })).toEqual({ code: null, reason: 'no_match' });
+	});
+});

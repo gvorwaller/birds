@@ -37,6 +37,7 @@ const published = {
 	windowStart: '2024-10-01',
 	windowEnd: '2026-09-30',
 	retrievedAt: null,
+	through: '2026-10-27',
 	finishedAt: '2026-10-28T00:00:00.000Z'
 };
 const june = (n: number) => [0, 0, 0, 0, 0, n, 0, 0, 0, 0, 0, 0];
@@ -114,11 +115,17 @@ describe('/reports/[source]/[region] load state', () => {
 		expect(html).toContain('Species 00');
 	});
 
-	it('offers no Reload without a failure, nor to a viewer', () => {
-		expect(view('?month=6')).not.toContain('Reload Nordland');
+	it('offers Reload whenever reports are loaded (td-9fe839), but not to a viewer', () => {
+		expect(view('?month=6')).toContain('Reload Nordland');
+		const closed = view('?month=6', { state: { source, published, active: null, failed: null, queueable: false } });
+		expect(closed).not.toContain('Reload Nordland');
 		const viewer = view('?month=6', { state: { source, published, active: null, failed, queueable: true }, canLoad: false });
 		expect(viewer).toContain('The last reload failed');
 		expect(viewer).not.toContain('Reload Nordland');
+	});
+
+	it('says how current the reports are beside Reload (td-9fe839)', () => {
+		expect(view('?month=6')).toContain('reports through Oct 27, 2026');
 	});
 
 	it('says a first load failed when nothing is loaded', () => {

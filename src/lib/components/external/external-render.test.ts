@@ -32,6 +32,7 @@ const published = {
 	windowEnd: '2026-09-30',
 	retrievedAt: '2026-10-28T00:04:31.000Z',
 	finishedAt: '2026-10-28T00:13:19.000Z',
+	through: null as string | null,
 	recent: null as { from: string | null; to: string | null; truncated: number } | null
 };
 

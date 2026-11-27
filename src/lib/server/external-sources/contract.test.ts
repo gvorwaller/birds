@@ -304,6 +304,11 @@ describe('manifest', () => {
 		expect(() => parseManifest({ ...base, retrieved_at: '2026-10-23T00:00:00Z' }, opts)).toThrow(/future/);
 		expect(() => parseManifest({ ...base, source_snapshot: { nested: { a: 1 } } }, opts)).toThrow(/short text/);
 	});
+	it('accepts a real "through" day and refuses an impossible one (td-9fe839)', () => {
+		expect(() => parseManifest({ ...base, source_snapshot: { through: '2026-10-11' } }, opts)).not.toThrow();
+		expect(() => parseManifest({ ...base, source_snapshot: { through: '2026-02-31' } }, opts)).toThrow(/calendar date/);
+		expect(() => parseManifest({ ...base, source_snapshot: { through: 'yesterday' } }, opts)).toThrow(/YYYY-MM-DD/);
+	});
 });
 
 describe('sanitizeReason', () => {

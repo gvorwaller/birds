@@ -488,6 +488,15 @@
 						takes a few minutes; nothing is fetched while you browse.
 					</li>
 					<li>
+						Loaded counties <strong>refresh on their own</strong>, weekly unless an
+						admin changes it, so the latest reports keep up. A county page shows
+						<strong>reports through</strong> the day its reports were read, and a
+						<strong>Reload …</strong> button to read them again now. A reload
+						replaces the county's reports only once it finishes; if it fails, the
+						previous reports stay. The monthly counts cover complete months, so a
+						new month joins them with the first refresh after it ends.
+					</li>
+					<li>
 						Each source keeps its own window: <strong>Norway</strong> reads the last 24
 						complete months plus the latest two weeks, <strong>Sweden</strong> the last
 						12. With 12 months there is one of each month, so a Swedish card shows no
@@ -1705,6 +1714,67 @@
 					Every refresh keeps a backup of the taxonomy from before and after
 					its sync, and its list of changes, under <strong>History</strong>.
 				</p>
+			</div>
+		{/if}
+
+		<!-- Admin: Sources (td-9fe839) -->
+		<button
+			class="toggle"
+			class:open={open === 'admin-sources'}
+			aria-expanded={open === 'admin-sources'}
+			onclick={() => toggle('admin-sources')}
+		>
+			<span class="ico">🌍</span>
+			<span class="title">Admin: Sources</span>
+			<span class="chev">{open === 'admin-sources' ? '▾' : '▸'}</span>
+		</button>
+		{#if open === 'admin-sources'}
+			<div class="body">
+				<p class="lead">
+					Admins only — the <strong>Sources</strong> tab on the Admin page, one card
+					per source (Artsobservasjoner for Norway, Artportalen for Sweden).
+				</p>
+				<ul>
+					<li>
+						<strong>Refresh → Refresh loaded regions</strong> (Off, Weekly, Every 2
+						weeks, Monthly; then <strong>Save</strong>) sets how often each loaded
+						region reloads on its own. One region reloads at a time across all
+						sources, the one with the oldest reports first. A refresh that fails
+						keeps the previous reports and is tried again the next interval. Off
+						stops new automatic reloads; nothing users see changes until a reload
+						finishes.
+					</li>
+					<li>
+						<strong>Reload loaded regions (N)</strong> queues a reload of every
+						loaded region now, whatever its age. In <strong>Loads</strong>, a reload
+						the app started itself shows <strong>Auto</strong>.
+					</li>
+					<li>
+						<strong>Alerts.</strong> When a load brings taxa that match no eBird
+						species and weren't already waiting in <strong>Unmatched taxa</strong>,
+						or an automatic refresh fails for good, a notification goes to every admin
+						device with notifications on (Settings → Need alerts → <strong>Enable
+						notifications on this device</strong>), whether or not need alerts are
+						on. It is sent once: when at least one device takes it, it is not
+						sent again, so a device that couldn't be reached then misses it (the
+						source's card in Admin → Sources still shows what needs you). Rarely, a device may show the
+						same notification twice. Tapping a taxa
+						alert opens <strong>Unmatched taxa</strong>, where they show
+						<strong>New</strong>; a failure alert opens the source's card. An alert
+						is skipped if you matched the taxa, or a later load replaced the failed
+						one, before it went out. The card also says how many taxa need a match,
+						and which automatic refreshes failed.
+					</li>
+					<li>
+						<strong>Nominate subspecies match on their own.</strong> A name like
+						<i>Pica pica pica</i> (the last word repeating the species) is matched
+						to eBird's <i>Pica pica</i> when that is exactly one eBird species and
+						eBird has nothing of its own under the full name; it shows as
+						"matched as its species (nominate subspecies)". Any other subspecies
+						still waits for you: <i>Corvus corone cornix</i> is the Hooded Crow,
+						not the Carrion Crow. Your own match always wins.
+					</li>
+				</ul>
 			</div>
 		{/if}
 	</div>

@@ -19,7 +19,13 @@ import pg from 'pg';
 import { recordMemorySample, startMemorySampler } from '$server/process-health';
 import { flushEbirdTrafficOnShutdown, setTrafficProcess, startEbirdTrafficFlusher } from '$server/ebird-traffic';
 import { claimNextJob, markWorkerStarted, bumpWorkerHeartbeat, setWorkerStatus, reclaimStartupJobs, pruneHistory, workerPauseRequested } from '$server/jobs';
-import { runJob, ensureNeedAlertScan, ensureEnrichmentScan, ensureHotspotCoordinateRepair } from '$server/job-handlers';
+import {
+	runJob,
+	ensureNeedAlertScan,
+	ensureEnrichmentScan,
+	ensureHotspotCoordinateRepair,
+	ensureExternalRefresh
+} from '$server/job-handlers';
 import { ensureTagConsistency } from '$server/tag-jobs';
 
 declare const __GIT_SHA__: string;
@@ -101,6 +107,12 @@ async function main(): Promise<void> {
 	await ensureNeedAlertScan().catch((err) => {
 		console.error(
 			'[birds-worker] startup scan ensure failed:',
+			err instanceof Error ? err.message : err
+		);
+	});
+	await ensureExternalRefresh().catch((err) => {
+		console.error(
+			'[birds-worker] startup external refresh ensure failed:',
 			err instanceof Error ? err.message : err
 		);
 	});
@@ -213,6 +225,12 @@ async function main(): Promise<void> {
 			await ensureNeedAlertScan().catch((err) => {
 				console.error(
 					'[birds-worker] scan reconciliation failed:',
+					err instanceof Error ? err.message : err
+				);
+			});
+			await ensureExternalRefresh().catch((err) => {
+				console.error(
+					'[birds-worker] external refresh reconciliation failed:',
 					err instanceof Error ? err.message : err
 				);
 			});

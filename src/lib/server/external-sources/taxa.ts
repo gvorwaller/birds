@@ -7,11 +7,13 @@
  * `species` → an eBird `issf` or `form` of that exact name whose `report_as`
  * is a species (Phase 2 rev B: subspecies such as "Anas crecca carolinensis"
  * count as the species eBird itself reports them as) → a name eBird used
- * before, followed into today's taxonomy (td-493c58, resolveMatches) →
- * unmatched. The
- * gallery's common-name overrides are never consulted, and nothing is
+ * before, followed into today's taxonomy (td-493c58, resolveMatches) → a
+ * nominate subspecies ("Pica pica pica") as its one eBird species "Pica pica"
+ * (td-9fe839) → unmatched. The
+ * gallery's common-name overrides are never consulted, and nothing else is
  * guessed: a name that leads to two eBird species is "ambiguous" and stays
- * unmatched, and a subspecies is never rolled up to its binomial. Name
+ * unmatched, and any other subspecies is never rolled up to its binomial
+ * ("Corvus corone cornix" is the Hooded Crow, not the Carrion Crow). Name
  * normalization is the gallery matcher's (species-match.ts), so both match
  * the same way.
  */
@@ -19,7 +21,7 @@ import type pg from 'pg';
 import { normalizeName } from '$server/species-match';
 
 export type TaxonMatch =
-	| { code: string; method: 'override' | 'scientific' | 'subspecies' | 'former_name' }
+	| { code: string; method: 'override' | 'scientific' | 'subspecies' | 'former_name' | 'nominate' }
 	| { code: null; reason: 'no_match' | 'ambiguous' | 'override_code_missing' };
 
 export interface UpstreamTaxon {
@@ -74,19 +76,30 @@ function infraIndex(rows: readonly MatchTaxon[], species: ReadonlySet<string>): 
  * Exactly one surviving species and nothing unresolved → a match; nothing
  * surviving → no match; anything else (name reuse across years, a split) →
  * ambiguous. Wrong is worse than unmatched: the owner can match by hand.
+ *
+ * `nominate` (td-9fe839): a nominate trinomial "Genus sp sp" with NO evidence
+ * of its own — no current species/issf/form row of that full name (an issf
+ * whose report_as isn't a species still counts as evidence) and no former
+ * row — is matched to the one eBird species "Genus sp" (two → ambiguous).
+ * Callers enable it only once the former names have been looked up, so the
+ * fallback never skips history it hasn't read.
  */
 export function resolveMatches(
 	taxa: readonly UpstreamTaxon[],
 	current: readonly MatchTaxon[],
 	overrides: ReadonlyMap<string, string>,
-	former: readonly FormerTaxon[]
+	former: readonly FormerTaxon[],
+	opts: { nominate?: boolean } = {}
 ): Map<string, TaxonMatch> {
 	const out = new Map<string, TaxonMatch>();
 	const codes = new Set<string>();
 	const byCode = new Map<string, MatchTaxon>();
 	const bySci = new Map<string, string[]>();
+	/** Every current name, any matched category: evidence the nominate fallback must not override. */
+	const currentNames = new Set<string>();
 	for (const t of current) {
 		byCode.set(t.species_code, t);
+		currentNames.add(normalizeName(t.sci_name));
 		if (t.category !== 'species') continue;
 		codes.add(t.species_code);
 		const key = normalizeName(t.sci_name);
@@ -140,6 +153,14 @@ export function resolveMatches(
 			continue;
 		}
 		const was = formerByName.get(name);
+		if (!was && opts.nominate && !currentNames.has(name)) {
+			const parent = nominateParent(name);
+			const parents = parent ? (bySci.get(parent) ?? []) : [];
+			if (parents.length > 0) {
+				out.set(key, parents.length === 1 ? { code: parents[0], method: 'nominate' } : { code: null, reason: 'ambiguous' });
+				continue;
+			}
+		}
 		if (!was || was.targets.size === 0) {
 			out.set(key, { code: null, reason: 'no_match' });
 			continue;
@@ -152,6 +173,16 @@ export function resolveMatches(
 		);
 	}
 	return out;
+}
+
+/**
+ * "genus sp sp" (normalized) → "genus sp"; anything else → null. Only the
+ * nominate form: the third word must repeat the second.
+ */
+export function nominateParent(normalized: string): string | null {
+	const parts = normalized.split(' ');
+	if (parts.length !== 3 || parts[1] !== parts[2]) return null;
+	return `${parts[0]} ${parts[1]}`;
 }
 
 /** The SQL twin of normalizeName for scientific names (ASCII, no diacritics). */
@@ -201,8 +232,8 @@ export async function matchExternalTaxa(
 		  WHERE ${SQL_NAME('sci_name')} = ANY($1::text[])`,
 		[missing]
 	);
-	if (former.rows.length === 0) return first;
-	return resolveMatches(taxa, current, byOverride, former.rows);
+	// History read: now the nominate fallback may fill what nothing else did.
+	return resolveMatches(taxa, current, byOverride, former.rows, { nominate: true });
 }
 
 /** Parallel arrays for `unnest` (one round trip, no row cap). */
@@ -316,6 +347,22 @@ export async function deriveSpecies(db: Db, sourceId: string, regionCode: string
 		  WHERE m.reason IS NOT NULL
 		  GROUP BY u.source_id, u.region_code, u.upstream_taxon_id`,
 		[sourceId, regionCode, ids, names, reasons]
+	);
+	// td-9fe839: a taxon no longer waiting anywhere in the source has ended its
+	// episode (matched, or gone from every region), so it leaves the pending
+	// alerts that named it; if it comes back, the load that brings it raises a
+	// new one. Not a new alert, so this stays a rebuild (CODEX1 re-review).
+	await db.query(
+		`UPDATE external_alerts a
+		    SET taxa = (SELECT COALESCE(jsonb_agg(t ORDER BY o), '[]'::jsonb)
+		                  FROM jsonb_array_elements(a.taxa) WITH ORDINALITY AS e(t, o)
+		                 WHERE EXISTS (SELECT 1 FROM external_unmatched u
+		                                WHERE u.source_id = a.source_id AND u.upstream_taxon_id = e.t->>'id'))
+		  WHERE a.source_id = $1 AND a.kind = 'new_unmatched' AND a.status = 'pending'
+		    AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.taxa) x
+		                 WHERE NOT EXISTS (SELECT 1 FROM external_unmatched u
+		                                    WHERE u.source_id = a.source_id AND u.upstream_taxon_id = x->>'id'))`,
+		[sourceId]
 	);
 	await deriveTaxa(db, sourceId, taxonomy);
 }
