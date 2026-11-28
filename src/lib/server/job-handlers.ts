@@ -30,7 +30,7 @@ import { buildMatcher } from '$server/species-match';
 import { seenSet } from '$server/needs';
 import { sendWebPush, PushError, type PushSubscriptionRow } from '$server/push';
 import { runRefreshPass } from '$server/external-sources/refresh';
-import { REFRESH_TICK_MS } from '$lib/external-refresh-policy';
+import { REFRESH_TICK_LABEL, REFRESH_TICK_MS } from '$lib/external-refresh-policy';
 import {
 	alertCandidates,
 	isScanDue,
@@ -685,13 +685,29 @@ function externalRefreshEnqueueParams(adminId: number, runAfterMs: number) {
 		payload: {},
 		dedupKey: dedupKeys.refreshExternalSources(),
 		requestedBy: adminId,
-		label: 'hourly',
+		label: REFRESH_TICK_LABEL,
 		runAfterMs
 	};
 }
 
-/** Startup and every idle tick: exactly one active refresh job (repairs a lost chain). */
+/** A waiting run of `dedupKey` due later than one `tickMs` from now runs one tick from now, relabelled. */
+export async function pullForwardRecurring(dedupKey: string, tickMs: number, label: string): Promise<number> {
+	const r = await query(
+		`UPDATE jobs SET next_retry_at = now() + make_interval(secs => $2), label = $3
+		  WHERE dedup_key = $1 AND status = 'pending' AND next_retry_at > now() + make_interval(secs => $2)`,
+		[dedupKey, tickMs / 1000, label]
+	);
+	return r.rowCount ?? 0;
+}
+
+/**
+ * Startup and every idle tick: exactly one active refresh job (repairs a lost
+ * chain). A waiting run scheduled further out than one tick — the hourly
+ * successor left by the previous version (td-afba28 [C-4]) — is pulled
+ * forward to one tick, so the faster connector checks start at deploy.
+ */
 export async function ensureExternalRefresh(): Promise<void> {
+	await pullForwardRecurring(dedupKeys.refreshExternalSources(), REFRESH_TICK_MS, REFRESH_TICK_LABEL);
 	if (await hasActiveJob(dedupKeys.refreshExternalSources())) return;
 	const adminId = await lowestAdminId();
 	await enqueueJob(externalRefreshEnqueueParams(adminId, 60_000));
@@ -706,7 +722,7 @@ async function runExternalRefresh(job: JobRow): Promise<void> {
 		outcome = { kind: 'complete', result };
 	} catch (err) {
 		if (isStaleClaim(err)) throw err;
-		// One bad pass never ends the chain: it fails visibly and the next runs in an hour.
+		// One bad pass never ends the chain: it fails visibly and the next runs one tick later.
 		outcome = { kind: 'fail', error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) };
 	}
 	const adminId = await lowestAdminId();

@@ -3,6 +3,7 @@
  * the refresh choices, the push wording and the retry schedule. The worker
  * side is $server/external-sources/refresh.ts.
  */
+import { CONNECTOR_OFFLINE_MS } from './connector-health-policy';
 
 /** Must match external_sources_refresh_days_check (migration 0104). */
 export const REFRESH_DAYS_OPTIONS = [7, 14, 30] as const;
@@ -27,8 +28,25 @@ export function refreshLabel(days: number | null): string {
 	}
 }
 
-/** How often the worker's refresh job runs. */
-export const REFRESH_TICK_MS = 60 * 60_000;
+/**
+ * How often the worker's refresh job runs: lease expiry, give-up, connector
+ * outage checks and alert delivery every pass (td-afba28; it was hourly).
+ */
+export const REFRESH_TICK_MS = 5 * 60_000;
+
+/** The job's label in Admin, matching REFRESH_TICK_MS. */
+export const REFRESH_TICK_LABEL = 'every 5 min';
+
+/**
+ * At most one automatic load is started in this long, app-wide, so the
+ * faster tick doesn't press the providers harder than the hourly pass did
+ * (CODEX1 td-afba28 [C-4]). Five minutes short of an hour, so the pass that
+ * lands near the hour still counts.
+ */
+export const AUTO_ADMIT_EVERY_MS = 55 * 60_000;
+
+/** The base of the alert retry schedule (hourly), separate from the tick. */
+export const ALERT_RETRY_BASE_MS = 60 * 60_000;
 
 /**
  * An automatic load still queued this long after it was created is given up
@@ -38,18 +56,19 @@ export const REFRESH_TICK_MS = 60 * 60_000;
 export const AUTO_LOAD_GIVE_UP_HOURS = 6;
 
 /** A source gets an automatic load only if a connector was heard from this recently (they poll every 10 s). */
-export const CONNECTOR_ALIVE_MINUTES = 5;
+export const CONNECTOR_ALIVE_MINUTES = CONNECTOR_OFFLINE_MS / 60_000;
 
 /** A push that reached no device is tried this many times in all. */
 export const ALERT_MAX_ATTEMPTS = 5;
 
 /**
  * Wait before the next try after `attempts` failed ones: the 1st, 2nd, 4th
- * and 8th hourly pass after it. Five minutes short of whole hours, so a pass
- * that runs a little early still counts (AGY4).
+ * and 8th hour after it. Five minutes short of whole hours, so a pass that
+ * runs a little early still counts (AGY4); with 5-minute passes the retry
+ * goes out within 5 minutes of that.
  */
 export function alertRetryDelayMs(attempts: number): number {
-	return REFRESH_TICK_MS * 2 ** Math.max(0, attempts - 1) - 5 * 60_000;
+	return ALERT_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1) - 5 * 60_000;
 }
 
 /** Names shown in a push body before "+N more". */

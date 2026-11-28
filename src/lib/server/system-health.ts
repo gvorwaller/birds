@@ -16,6 +16,7 @@ import {
   enrichmentCoverage,
   type EnrichmentCoverage,
 } from "$server/species-enrichment";
+import { connectorHealth, type ConnectorsCard } from "$server/external-sources/connector-health";
 
 /** The Server health precedent (process-health.ts HEALTH_READ_TIMEOUT_MS). */
 export const CARD_TIMEOUT_MS = 3_000;
@@ -117,7 +118,10 @@ export interface BackupStatus {
 
 export interface SystemHealth {
   now: string;
+  /** The app's own build, for the connectors' version check (td-afba28). */
+  appVersion: string;
   worker: HealthCard<AdminWorker>;
+  connectors: HealthCard<ConnectorsCard>;
   queue: HealthCard<QueueSummary>;
   postgres: HealthCard<PostgresSummary>;
   disk: HealthCard<DiskSpace>;
@@ -402,8 +406,9 @@ export async function lastBackup(): Promise<BackupStatus> {
 
 /** Everything the system cards show, each card independent of the others. */
 export async function systemHealth(): Promise<SystemHealth> {
-  const [worker, queue, postgres, disk, tables, coverage, backup] = await Promise.all([
+  const [worker, connectors, queue, postgres, disk, tables, coverage, backup] = await Promise.all([
     card("worker", async () => adminWorker(await workerHealth(CARD_TIMEOUT_MS))),
+    card("connectors", () => connectorHealth(CARD_TIMEOUT_MS)),
     card("queue", jobQueueSummary),
     card("postgres", postgresSummary),
     card("disk", () => diskSpace()),
@@ -411,5 +416,16 @@ export async function systemHealth(): Promise<SystemHealth> {
     card("coverage", coverageSummary),
     card("backup", lastBackup),
   ]);
-  return { now: new Date().toISOString(), worker, queue, postgres, disk, tables, coverage, backup };
+  return {
+    now: new Date().toISOString(),
+    appVersion: typeof __GIT_SHA__ === "string" ? __GIT_SHA__ : "dev",
+    worker,
+    connectors,
+    queue,
+    postgres,
+    disk,
+    tables,
+    coverage,
+    backup,
+  };
 }

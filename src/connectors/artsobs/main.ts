@@ -20,6 +20,8 @@ import { runLoad } from './run';
 
 declare const __GIT_SHA__: string;
 const VERSION = typeof __GIT_SHA__ === 'string' ? __GIT_SHA__ : 'dev';
+/** Captured once: every call reports the same start until a restart (td-afba28). */
+const STARTED_AT = new Date().toISOString();
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
 	console.log(`[connector] ${JSON.stringify({ event, ...fields })}`);
@@ -84,7 +86,7 @@ async function main(): Promise<void> {
 		}
 		if (lastProblem !== null) log('ready', { ingest: s.base.origin });
 		lastProblem = null;
-		const ingest = new IngestClient(s.base, s.token);
+		const ingest = new IngestClient(s.base, s.token, { identity: { version: VERSION, startedAt: STARTED_AT } });
 		let wait = CLAIM_EVERY_MS;
 		try {
 			// One key per claim; the client retries a lost answer with the same key.

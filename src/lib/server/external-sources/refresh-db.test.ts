@@ -22,6 +22,10 @@ import { expireLeases, finishLoad, queueExternalLoad } from './lifecycle';
 import { reloadLoadedRegions, removeTaxonOverride, setTaxonOverride } from './admin';
 import { actions as adminActions } from '../../../routes/admin/+page.server';
 import { AUTO_LOAD_GAVE_UP, AUTO_LOAD_SOURCE_OFF, runRefreshPass } from './refresh';
+import { recordCheckIn } from './auth';
+import { connectorHealth } from './connector-health';
+import { enqueueJob } from '$server/jobs';
+import { pullForwardRecurring } from '$server/job-handlers';
 import * as claimRoute from '../../../routes/api/ingest/loads/claim/+server';
 import * as chunksRoute from '../../../routes/api/ingest/loads/[id]/chunks/+server';
 import * as finishRoute from '../../../routes/api/ingest/loads/[id]/finish/+server';
@@ -49,6 +53,8 @@ let magpie = '';
 let WINDOW_END = '';
 let WINDOW_START = '';
 const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+/** A believable reported process start: an hour before the test runs (CODEX1 code review #7). */
+const STARTED = new Date(Math.floor(Date.now() / 1000) * 1000 - 3_600_000).toISOString();
 const pass = (send?: (s: PushSubscriptionRow, m: PushMessage) => Promise<void>) =>
 	runRefreshPass({ origin: 'https://birds.test', sourceIds: [SRC], admins: [adminId], send: send ?? (async () => {}) });
 
@@ -102,10 +108,14 @@ async function clean(): Promise<void> {
 		'external_taxon_overrides',
 		'external_taxa',
 		'external_alerts',
+		'external_connector_outages',
 		'external_loads'
 	]) {
 		await query(`DELETE FROM ${table} WHERE source_id = $1`, [SRC]);
 	}
+	// td-afba28: the fixture token back to usable, and any extra token gone.
+	await query(`DELETE FROM external_connectors WHERE source_id = $1 AND id <> $2`, [SRC, tokenId]);
+	await query(`UPDATE external_connectors SET revoked_at = NULL, version = NULL, started_at = NULL WHERE id = $1`, [tokenId]);
 	await query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [adminId]);
 	await query(`UPDATE external_sources SET active = true, refresh_days = 7 WHERE id = $1`, [SRC]);
 	await query(`UPDATE external_region_map SET queueable = true WHERE source_id = $1`, [SRC]);
@@ -134,11 +144,16 @@ interface Lease {
 	attempt: number;
 }
 
-async function call(route: Route, loadId: string | null, body: unknown): Promise<{ status: number; body: any }> {
+async function call(
+	route: Route,
+	loadId: string | null,
+	body: unknown,
+	headers: Record<string, string> = {}
+): Promise<{ status: number; body: any }> {
 	resetIngestRateForTest();
 	const request = new Request('http://localhost/api/ingest/x', {
 		method: 'POST',
-		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers },
 		body: JSON.stringify(body)
 	});
 	const res = await route.POST({ request, params: { id: loadId ?? undefined } } as never);
@@ -417,7 +432,12 @@ describe('refresh pass: queueing', () => {
 		await load(A);
 		const q = await queueExternalLoad({ sourceId: SRC, regionCode: B, requestedBy: adminId, origin: 'auto' });
 		await claim();
-		await query(`UPDATE external_loads SET attempt = max_attempts, lease_expires_at = now() - interval '1 minute' WHERE id = $1`, [q.loadId]);
+		// Started an hour ago, so the hourly admission gate (td-afba28) is open again.
+		await query(
+			`UPDATE external_loads SET attempt = max_attempts, lease_expires_at = now() - interval '1 minute',
+			        created_at = now() - interval '1 hour' WHERE id = $1`,
+			[q.loadId]
+		);
 		await age(A, 8);
 		const r = await pass();
 		expect(r.expired).toBe(1);
@@ -704,5 +724,563 @@ describe('Reload loaded regions', () => {
 		});
 		expect(r.status).toBe(409);
 		expect(r.data).toMatchObject({ ok: false, message: 'This source is switched off.' });
+	});
+});
+
+// ── Connector watch (td-afba28) ─────────────────────────────────────────────
+
+/** The connector last checked in `minutes` ago, and the source has been on for a day. */
+async function silence(minutes: number): Promise<void> {
+	await query(`UPDATE external_connectors SET last_seen_at = now() - make_interval(mins => $2) WHERE source_id = $1`, [SRC, minutes]);
+	await query(`UPDATE external_sources SET active_changed_at = now() - interval '1 day' WHERE id = $1`, [SRC]);
+}
+
+/** Resolves once some backend is waiting on a lock held by `pid` (CODEX1 round 7: no timers). */
+async function blockedBy(pid: number): Promise<void> {
+	for (let i = 0; i < 200; i++) {
+		const r = await query(`SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, [pid]);
+		if (r.rowCount) return;
+		await new Promise((res) => setTimeout(res, 25));
+	}
+	throw new Error(`nothing became blocked by backend ${pid}`);
+}
+
+/** A check-in: an empty claim, as a polling connector makes every 10 s. */
+async function checkIn(headers: Record<string, string> = {}): Promise<void> {
+	const r = await call(claimRoute, null, { contract_version: 1, idempotency_key: `poll-${Math.random().toString(36).slice(2, 10)}` }, headers);
+	expect([200, 204]).toContain(r.status);
+}
+
+async function outages() {
+	return (
+		await query<{ id: string; closed_reason: string | null; closed_at: Date | null; last_seen_at: Date }>(
+			`SELECT id, closed_reason, closed_at, last_seen_at FROM external_connector_outages WHERE source_id = $1 ORDER BY id`,
+			[SRC]
+		)
+	).rows;
+}
+
+async function connectorAlerts() {
+	return (
+		await query<{ kind: string; status: string; outage_id: string; attempts: number }>(
+			`SELECT kind, status, outage_id, attempts FROM external_alerts WHERE source_id = $1 AND outage_id IS NOT NULL ORDER BY id`,
+			[SRC]
+		)
+	).rows;
+}
+
+function recorder() {
+	const got: { endpoint: string; msg: PushMessage }[] = [];
+	return { got, send: async (s: PushSubscriptionRow, msg: PushMessage) => void got.push({ endpoint: s.endpoint, msg }) };
+}
+
+describe('connector watch: outages', () => {
+	it('opens an outage only after 15 silent minutes, once, and pushes it once to each device', async () => {
+		await addSubs();
+		await silence(10);
+		expect((await pass()).connectors.opened).toBe(0);
+		await silence(20);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.opened).toBe(1);
+		expect(r.alerts.sent).toBe(1);
+		expect(rec.got.map((g) => g.endpoint)).toEqual(ENDPOINTS);
+		expect(rec.got[0].msg).toMatchObject({
+			title: 'Norway connector offline',
+			url: 'https://birds.test/admin?tab=health#sys-connectors',
+			tag: `ext-${SRC}-connector`
+		});
+		expect(rec.got[0].msg.body).toMatch(/^Last heard from 20 min ago\. Loads wait until it's back\.$/);
+		rec.got.length = 0;
+		const again = await pass(rec.send);
+		expect(again.connectors.opened).toBe(0);
+		expect(rec.got).toEqual([]);
+		expect(await outages()).toHaveLength(1);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([['connector_offline', 'sent']]);
+	});
+
+	it('opens nothing for a token that never checked in, or within 15 minutes of the source being switched on', async () => {
+		await query(`UPDATE external_connectors SET last_seen_at = NULL WHERE source_id = $1`, [SRC]);
+		await query(`UPDATE external_sources SET active_changed_at = now() - interval '1 day' WHERE id = $1`, [SRC]);
+		expect((await pass()).connectors.opened).toBe(0);
+		await silence(60);
+		// Switched off and on again: the trigger dates the switch-on now.
+		await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		await query(`UPDATE external_sources SET active = true WHERE id = $1`, [SRC]);
+		const on = await query<{ recent: boolean }>(`SELECT active_changed_at > now() - interval '1 minute' AS recent FROM external_sources WHERE id = $1`, [SRC]);
+		expect(on.rows[0].recent).toBe(true);
+		expect((await pass()).connectors.opened).toBe(0);
+		expect(await outages()).toEqual([]);
+	});
+
+	it('says nothing about a gap that ended between two checks', async () => {
+		await silence(20);
+		await checkIn();
+		const r = await pass();
+		expect(r.connectors.opened).toBe(0);
+		expect(await outages()).toEqual([]);
+	});
+
+	it('closes the outage at the check-in, then sends exactly one back-online push', async () => {
+		await addSubs();
+		await silence(20);
+		await pass();
+		await checkIn();
+		const [o] = await outages();
+		expect(o.closed_reason).toBe('back_online');
+		expect(Date.now() - o.closed_at!.getTime()).toBeLessThan(60_000);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.backOnline).toBe(1);
+		expect(rec.got).toHaveLength(2);
+		expect(rec.got[0].msg).toMatchObject({
+			title: 'Norway connector back online',
+			body: 'It was offline for 20 min.',
+			url: 'https://birds.test/admin?tab=health#sys-connectors',
+			tag: `ext-${SRC}-connector`
+		});
+		rec.got.length = 0;
+		const again = await pass(rec.send);
+		expect(again.connectors.backOnline).toBe(0);
+		expect(rec.got).toEqual([]);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([
+			['connector_offline', 'sent'],
+			['connector_online', 'sent']
+		]);
+	});
+
+	it('back before the offline push went out: neither push is sent', async () => {
+		await silence(20);
+		const first = await pass();
+		expect(first.connectors.opened).toBe(1);
+		expect(first.alerts.waiting).toBe(1); // no device yet
+		await checkIn();
+		await addSubs();
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.backOnline).toBe(0);
+		expect(rec.got).toEqual([]);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([['connector_offline', 'dropped']]);
+	});
+
+	it('a check-in after the alert was picked but before any device took it drops it', async () => {
+		await addSubs();
+		await silence(20);
+		let sends = 0;
+		const r = await pass(async () => {
+			sends++;
+			await checkIn();
+			throw new PushError('push service unavailable', 503, false);
+		});
+		expect(sends).toBe(1); // the second device's rebuild saw the check-in
+		expect(r.alerts.dropped).toBe(1);
+		expect((await connectorAlerts()).map((a) => a.status)).toEqual(['dropped']);
+	});
+
+	it('a recovery during the accepted offline send still gets its one back-online push', async () => {
+		await addSubs(1);
+		await silence(20);
+		// The check-in commits while the push is in flight; the device then accepts.
+		await pass(async () => {
+			await checkIn();
+		});
+		expect((await outages())[0].closed_reason).toBe('back_online');
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([['connector_offline', 'sent']]);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.backOnline).toBe(1);
+		expect(rec.got.map((g) => g.msg.title)).toEqual(['Norway connector back online']);
+	});
+
+	it('closes quietly when the source is switched off, and when its last usable token is revoked', async () => {
+		await silence(20);
+		await pass();
+		await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		// The switch itself ends it (0105's trigger), before any pass.
+		expect((await outages())[0].closed_reason).toBe('source_off');
+		const off = await pass();
+		expect(off.connectors.closed).toBe(0);
+		expect((await connectorAlerts()).map((a) => a.status)).toEqual(['dropped']);
+
+		await query(`UPDATE external_sources SET active = true WHERE id = $1`, [SRC]);
+		await silence(20);
+		await pass();
+		// Revoke-and-replace: the new token has not checked in yet.
+		await query(`UPDATE external_connectors SET revoked_at = now() WHERE id = $1`, [tokenId]);
+		await query(`INSERT INTO external_connectors (source_id, label, token_sha256) VALUES ($1, 'xr-new', $2)`, [SRC, tokenHash(newConnectorToken())]);
+		const revoked = await pass();
+		expect(revoked.connectors.closed).toBe(1);
+		expect((await outages()).map((o) => o.closed_reason)).toEqual(['source_off', 'no_token']);
+		expect((await connectorAlerts()).map((a) => a.status)).toEqual(['dropped', 'dropped']);
+	});
+
+	it('a back-online push is dropped once the connector is quiet again or a newer outage opened', async () => {
+		await addSubs(1);
+		await silence(20);
+		await pass();
+		await checkIn();
+		// Quiet again before the back-online push went out.
+		await query(`UPDATE external_connectors SET last_seen_at = now() - interval '10 minutes' WHERE source_id = $1`, [SRC]);
+		const rec = recorder();
+		const quiet = await pass(rec.send);
+		expect(quiet.connectors.backOnline).toBe(1);
+		expect(rec.got).toEqual([]);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([
+			['connector_offline', 'sent'],
+			['connector_online', 'dropped']
+		]);
+	});
+
+	it('a check-in that is followed by a new silence makes two outages, never one', async () => {
+		await addSubs(1);
+		await silence(20);
+		await pass();
+		await checkIn();
+		await silence(20);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.opened).toBe(1);
+		expect(await outages()).toHaveLength(2);
+		// The new offline goes out; the first outage's back-online is stale (a newer outage) and dropped.
+		expect(rec.got.map((g) => g.msg.title)).toEqual(['Norway connector offline']);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([
+			['connector_offline', 'sent'],
+			['connector_offline', 'sent'],
+			['connector_online', 'dropped']
+		]);
+	});
+
+	it('records the reported version and start, keeping them through calls without or with bad headers', async () => {
+		await silence(1);
+		await checkIn({ 'x-connector-version': 'abc1234', 'x-connector-started': STARTED });
+		const read = async () =>
+			(await query<{ version: string | null; started_at: Date | null }>(`SELECT version, started_at FROM external_connectors WHERE id = $1`, [tokenId]))
+				.rows[0];
+		expect(await read()).toEqual({ version: 'abc1234', started_at: new Date(STARTED) });
+		await silence(1);
+		await checkIn({ 'x-connector-version': 'not a sha!', 'x-connector-started': '2099-01-01T00:00:00Z' });
+		await silence(1);
+		await checkIn();
+		expect(await read()).toEqual({ version: 'abc1234', started_at: new Date(STARTED) });
+	});
+
+	it('refuses an alert that names another source than its outage', async () => {
+		const other = `${SRC}-b`;
+		await query(
+			`INSERT INTO external_sources (id, name, publisher, license, license_url, citation, attribution, record_semantics,
+			                               homepage, covers_country, geo_scheme, window_months)
+			 VALUES ($1, $1, 'p', 'l', 'https://example.org/', 'c', 'a', 'reports', 'https://example.org/', 'NO', 'TEST', 24)`,
+			[other]
+		);
+		try {
+			const o = await query<{ id: string }>(`INSERT INTO external_connector_outages (source_id, last_seen_at) VALUES ($1, now()) RETURNING id`, [SRC]);
+			await expect(
+				query(`INSERT INTO external_alerts (source_id, kind, outage_id) VALUES ($1, 'connector_offline', $2)`, [other, o.rows[0].id])
+			).rejects.toMatchObject({ code: '23503' });
+			// A connector alert with a region, or a load alert without one, is refused too.
+			await expect(
+				query(`INSERT INTO external_alerts (source_id, kind, outage_id, region_code) VALUES ($1, 'connector_offline', $2, $3)`, [SRC, o.rows[0].id, A])
+			).rejects.toMatchObject({ code: '23514' });
+		} finally {
+			await query(`DELETE FROM external_sources WHERE id = $1`, [other]);
+		}
+	});
+});
+
+describe('connector watch: hourly admission and the card', () => {
+	it('starts at most one automatic load an hour', async () => {
+		await load(A);
+		await load(B);
+		await age(A, 8);
+		await age(B, 9);
+		const first = await pass();
+		expect(first.queued).toMatchObject({ regionCode: B });
+		const lease = await claim();
+		await call(failRoute, lease.id, { ...fence(lease), reason: 'test', retryable: false });
+		const soon = await pass();
+		expect(soon.queued).toBeNull();
+		expect(soon.skipped).toContain('an automatic load was started within the hour');
+		await query(`UPDATE external_loads SET created_at = now() - interval '56 minutes' WHERE source_id = $1 AND origin = 'auto'`, [SRC]);
+		const later = await pass();
+		expect(later.queued).toMatchObject({ regionCode: A });
+	});
+
+	it('pulls a waiting run scheduled an hour out forward to one tick', async () => {
+		const key = `refresh_external_sources:xr-${RUN}`;
+		const { jobId } = await enqueueJob({ type: 'refresh_external_sources', payload: {}, dedupKey: key, requestedBy: adminId, label: 'hourly', runAfterMs: 3_600_000 });
+		try {
+			expect(await pullForwardRecurring(key, 5 * 60_000, 'every 5 min')).toBe(1);
+			const j = await query<{ label: string; soon: boolean }>(
+				`SELECT label, next_retry_at <= now() + interval '5 minutes' AS soon FROM jobs WHERE id = $1`,
+				[jobId]
+			);
+			expect(j.rows[0]).toEqual({ label: 'every 5 min', soon: true });
+			// Already within a tick: left alone.
+			expect(await pullForwardRecurring(key, 5 * 60_000, 'every 5 min')).toBe(0);
+		} finally {
+			await query(`DELETE FROM job_events WHERE job_id = $1`, [jobId]);
+			await query(`DELETE FROM jobs WHERE id = $1`, [jobId]);
+		}
+	});
+
+	it('the Server health card reads the source as it is', async () => {
+		await addSubs(1);
+		await load(A);
+		await silence(1); // past the 5 s check-in throttle the load's calls just used
+		await checkIn({ 'x-connector-version': 'abc1234', 'x-connector-started': STARTED });
+		let row = (await connectorHealth(5_000)).rows.find((x) => x.sourceId === SRC)!;
+		expect(row).toMatchObject({ state: 'online', version: 'abc1234', queued: 0, loading: [], outage: null, refreshDays: 7 });
+		expect(row.lastLoad).toMatchObject({ regionName: 'Nordland', status: 'done', origin: 'manual' });
+		expect(row.oldestLoaded).toMatchObject({ regionName: 'Nordland' });
+		await silence(20);
+		await pass(async () => {});
+		row = (await connectorHealth(5_000)).rows.find((x) => x.sourceId === SRC)!;
+		expect(row.state).toBe('offline');
+		expect(row.outage).toMatchObject({ notice: 'sent' });
+		await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		row = (await connectorHealth(5_000)).rows.find((x) => x.sourceId === SRC)!;
+		expect(row.state).toBe('off');
+	});
+});
+
+describe('connector watch: code review fixes (CODEX1 td-afba28)', () => {
+	it('an off/on cycle ends an open outage, so its offline alert is never sent into the new activation', async () => {
+		await silence(20);
+		const first = await pass();
+		expect(first.connectors.opened).toBe(1);
+		// Switched off and straight back on between two passes; then a device appears.
+		await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		await query(`UPDATE external_sources SET active = true WHERE id = $1`, [SRC]);
+		expect((await outages()).map((o) => o.closed_reason)).toEqual(['source_off']);
+		await addSubs(1);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(rec.got).toEqual([]);
+		expect(r.connectors.opened).toBe(0); // inside 15 min of the switch-on
+		expect((await connectorAlerts()).map((a) => a.status)).toEqual(['dropped']);
+		// Silent past 15 min of the new activation: a new outage, and its push.
+		await silence(20);
+		const next = await pass(rec.send);
+		expect(next.connectors.opened).toBe(1);
+		expect(rec.got.map((g) => g.msg.title)).toEqual(['Norway connector offline']);
+	});
+
+	it('a switch off and on while an outage is being opened waits for it, ends it, and the next silence gets its own push (two connections)', async () => {
+		await silence(20);
+		let switching: Promise<unknown> | null = null;
+		let settled = false;
+		const r = await runRefreshPass({
+			origin: 'https://birds.test',
+			sourceIds: [SRC],
+			admins: [adminId],
+			send: async () => {},
+			afterOutageOpened: async (_id, pid) => {
+				// Another connection switches the source off and on while the outage
+				// is opened but not committed: it must wait for this transaction.
+				switching = (async () => {
+					await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+					await query(`UPDATE external_sources SET active = true WHERE id = $1`, [SRC]);
+				})().finally(() => (settled = true));
+				await blockedBy(pid);
+				expect(settled).toBe(false);
+			}
+		});
+		expect(r.connectors.opened).toBe(1);
+		await switching;
+		// The switch's trigger saw the committed outage and ended it.
+		expect((await outages()).map((o) => o.closed_reason)).toEqual(['source_off']);
+		// Silent past the new activation's grace: exactly one new outage and one push.
+		await addSubs(1);
+		await silence(20);
+		const rec = recorder();
+		const next = await pass(rec.send);
+		expect(next.connectors.opened).toBe(1);
+		expect(rec.got.map((g) => g.msg.title)).toEqual(['Norway connector offline']);
+		expect((await connectorAlerts()).map((a) => a.status)).toEqual(['dropped', 'sent']);
+	});
+
+	it('a recovery committed inside a long switch transaction is from before the switch: no back-online push after it (two connections)', async () => {
+		await addSubs(1);
+		await silence(20);
+		await pass(); // offline sent
+		await withTransaction(async (c) => {
+			await c.query('SELECT 1'); // the switch transaction starts here
+			await checkIn(); // another connection: back online, closing the outage
+			await c.query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+			await c.query(`UPDATE external_sources SET active = true WHERE id = $1`, [SRC]);
+		});
+		expect((await outages()).map((o) => o.closed_reason)).toEqual(['back_online']);
+		const rec = recorder();
+		await pass(rec.send);
+		expect(rec.got).toEqual([]);
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([
+			['connector_offline', 'sent'],
+			['connector_online', 'dropped']
+		]);
+	});
+
+	it('an outage opened inside a long switch transaction ends no earlier than it was detected (two connections)', async () => {
+		await silence(20);
+		await withTransaction(async (c) => {
+			await c.query('SELECT 1'); // the switch transaction starts here
+			expect((await pass()).connectors.opened).toBe(1); // the worker, on another connection
+			await c.query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		});
+		const o = await query<{ closed_reason: string; ordered: boolean }>(
+			`SELECT closed_reason, closed_at >= detected_at AS ordered FROM external_connector_outages WHERE source_id = $1`,
+			[SRC]
+		);
+		expect(o.rows).toEqual([{ closed_reason: 'source_off', ordered: true }]);
+	});
+
+	it.each([
+		['its token', false],
+		['a token issued during the pass', true]
+	])('a check-in by %s, paused after its source lock, makes the worker skip the source: no outage is decided mid-check-in (two connections)', async (_name, fresh) => {
+		await silence(20);
+		let id = String(tokenId);
+		if (fresh) {
+			id = (
+				await query<{ id: string }>(`INSERT INTO external_connectors (source_id, label, token_sha256) VALUES ($1, 'xr-new', $2) RETURNING id`, [
+					SRC,
+					tokenHash(newConnectorToken())
+				])
+			).rows[0].id;
+		}
+		let during: Awaited<ReturnType<typeof pass>> | null = null;
+		await recordCheckIn(id, SRC, { version: null, startedAt: null }, async () => {
+			during = await pass();
+		});
+		expect(during!.connectors.opened).toBe(0);
+		expect(await outages()).toEqual([]);
+		// Checked in: the next pass sees a live connector.
+		expect((await pass()).connectors.opened).toBe(0);
+		expect(await outages()).toEqual([]);
+	});
+
+	it('a token issued after the worker scanned the tokens waits to check in, then closes the outage at its own moment (two connections)', async () => {
+		await silence(20);
+		let checking: Promise<void> | null = null;
+		let newId = '';
+		const r = await runRefreshPass({
+			origin: 'https://birds.test',
+			sourceIds: [SRC],
+			admins: [adminId],
+			send: async () => {},
+			afterOutageOpened: async (_id, pid) => {
+				// Another connection issues a token and checks in with it while the
+				// outage is opened but not committed: the check-in must wait.
+				newId = (
+					await query<{ id: string }>(`INSERT INTO external_connectors (source_id, label, token_sha256) VALUES ($1, 'xr-new', $2) RETURNING id`, [
+						SRC,
+						tokenHash(newConnectorToken())
+					])
+				).rows[0].id;
+				checking = recordCheckIn(newId, SRC, { version: null, startedAt: null });
+				await blockedBy(pid);
+				expect(await outages()).toEqual([]); // not committed yet: nothing visible elsewhere
+			}
+		});
+		expect(r.connectors.opened).toBe(1);
+		await checking;
+		const o = await query<{ closed_reason: string; same: boolean; ordered: boolean }>(
+			`SELECT o.closed_reason, k.last_seen_at = o.closed_at AS same, o.closed_at >= o.detected_at AS ordered
+			   FROM external_connector_outages o JOIN external_connectors k ON k.id = $2
+			  WHERE o.source_id = $1`,
+			[SRC, newId]
+		);
+		expect(o.rows).toEqual([{ closed_reason: 'back_online', same: true, ordered: true }]);
+	});
+
+	it('a check-in that closes an outage records one moment for both, inside the episode', async () => {
+		await silence(20);
+		await pass();
+		await silence(1); // past the throttle, still in the episode
+		await query(`UPDATE external_sources SET active_changed_at = now() - interval '1 day' WHERE id = $1`, [SRC]);
+		await recordCheckIn(String(tokenId), SRC, { version: null, startedAt: null });
+		const o = await query<{ closed_reason: string; ordered: boolean; same: boolean }>(
+			`SELECT o.closed_reason, o.closed_at >= o.detected_at AS ordered, k.last_seen_at = o.closed_at AS same
+			   FROM external_connector_outages o JOIN external_connectors k ON k.id = $2
+			  WHERE o.source_id = $1`,
+			[SRC, tokenId]
+		);
+		expect(o.rows).toEqual([{ closed_reason: 'back_online', ordered: true, same: true }]);
+	});
+
+	it('a check-in that waits for its token row records the time after the wait, not before (two connections)', async () => {
+		await silence(20);
+		let checkIn: Promise<void> | null = null;
+		let releasedAt = new Date(0);
+		await withTransaction(async (c) => {
+			// A load step on another connection holds the token row, as assertConnectorLive does.
+			await c.query(`SELECT 1 FROM external_connectors WHERE id = $1 FOR SHARE`, [tokenId]);
+			checkIn = recordCheckIn(String(tokenId), SRC, { version: null, startedAt: null });
+			await blockedBy((await c.query<{ pid: number }>(`SELECT pg_backend_pid() AS pid`)).rows[0].pid);
+			releasedAt = (await c.query<{ t: Date }>(`SELECT clock_timestamp() AS t`)).rows[0].t;
+		});
+		await checkIn;
+		const seen = (await query<{ last_seen_at: Date }>(`SELECT last_seen_at FROM external_connectors WHERE id = $1`, [tokenId])).rows[0];
+		expect(seen.last_seen_at.getTime()).toBeGreaterThanOrEqual(releasedAt.getTime());
+	});
+
+	it('a check-in by a token revoked, or for a source switched off, after it was looked up counts for nothing', async () => {
+		await silence(20);
+		await pass();
+		const before = (await query<{ last_seen_at: Date }>(`SELECT last_seen_at FROM external_connectors WHERE id = $1`, [tokenId])).rows[0].last_seen_at;
+		await query(`UPDATE external_connectors SET revoked_at = now() WHERE id = $1`, [tokenId]);
+		await recordCheckIn(String(tokenId), SRC, { version: null, startedAt: null });
+		await query(`UPDATE external_connectors SET revoked_at = NULL WHERE id = $1`, [tokenId]);
+		expect((await outages())[0].closed_at).toBeNull();
+		const after = (await query<{ last_seen_at: Date }>(`SELECT last_seen_at FROM external_connectors WHERE id = $1`, [tokenId])).rows[0].last_seen_at;
+		expect(after).toEqual(before);
+		// Switched off after the lookup: nothing recorded either (the trigger closed the outage as source_off).
+		await query(`UPDATE external_sources SET active = false WHERE id = $1`, [SRC]);
+		await recordCheckIn(String(tokenId), SRC, { version: null, startedAt: null });
+		expect((await outages())[0].closed_reason).toBe('source_off');
+		expect((await query<{ last_seen_at: Date }>(`SELECT last_seen_at FROM external_connectors WHERE id = $1`, [tokenId])).rows[0].last_seen_at).toEqual(before);
+	});
+
+	it('a device that accepted the offline push wins over a takeover drop, the rest are not told, and back-online follows', async () => {
+		await addSubs(2);
+		await silence(20);
+		const sentTo: string[] = [];
+		await pass(async (sub) => {
+			sentTo.push(sub.endpoint);
+			// While this push is in flight, the connector comes back and a worker that
+			// took over drops the alert; then this device accepts it.
+			await checkIn();
+			await query(`UPDATE external_alerts SET status = 'dropped', finished_at = now() WHERE source_id = $1 AND status = 'pending'`, [SRC]);
+		});
+		expect(sentTo).toEqual([ENDPOINTS[0]]); // the second device saw the connector back
+		expect((await connectorAlerts()).map((a) => [a.kind, a.status])).toEqual([['connector_offline', 'sent']]);
+		const rec = recorder();
+		const r = await pass(rec.send);
+		expect(r.connectors.backOnline).toBe(1);
+		expect(rec.got.map((g) => g.msg.title)).toEqual(['Norway connector back online', 'Norway connector back online']);
+	});
+
+	it('a push no device took is tried again on the pass after its hourly delay, not before', async () => {
+		await addSubs(1);
+		await silence(20);
+		const fail = async () => {
+			throw new PushError('push service unavailable', 503, false);
+		};
+		const r = await pass(fail);
+		expect(r.alerts.retrying).toBe(1);
+		const due = await query<{ mins: number }>(
+			`SELECT extract(epoch FROM next_attempt_at - now()) / 60 AS mins FROM external_alerts WHERE source_id = $1`,
+			[SRC]
+		);
+		expect(Number(due.rows[0].mins)).toBeGreaterThan(54);
+		expect(Number(due.rows[0].mins)).toBeLessThan(56);
+		// The next 5-minute pass leaves it alone.
+		let tries = 0;
+		await pass(async () => void tries++);
+		expect(tries).toBe(0);
+		// Once the delay has passed, the next pass sends it.
+		await query(`UPDATE external_alerts SET next_attempt_at = now() - interval '1 second' WHERE source_id = $1`, [SRC]);
+		const later = await pass(async () => void tries++);
+		expect(tries).toBe(1);
+		expect(later.alerts.sent).toBe(1);
 	});
 });

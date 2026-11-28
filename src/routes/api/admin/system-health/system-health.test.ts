@@ -24,7 +24,9 @@ describe("GET /api/admin/system-health", () => {
   it("returns uncached cards to an admin, a failed card included", async () => {
     mocked.mockResolvedValue({
       now: "2026-10-17T16:00:00.000Z",
+      appVersion: "19e8845",
       worker: { ok: false, reason: "Timed out after 3 s." },
+      connectors: { ok: false, reason: "Timed out after 3 s." },
       queue: { ok: true, data: { rows: [], retentionDays: 90 } },
       postgres: { ok: false, reason: "Timed out after 3 s." },
       disk: { ok: true, data: { path: "/", totalBytes: 10, freeBytes: 5 } },

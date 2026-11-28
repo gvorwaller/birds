@@ -7,7 +7,8 @@
  * token or an inactive source is refused on every call.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { query } from '$lib/db';
+import { query, withTransaction } from '$lib/db';
+import { isConnectorVersion, parseConnectorStarted } from '$lib/connector-health-policy';
 
 export interface Connector {
 	connectorId: number;
@@ -34,8 +35,23 @@ export function bearerToken(request: Request): string | null {
 }
 
 /**
+ * What a connector says about itself in its headers (td-afba28): its build
+ * version and process start. A value that isn't believable is null, and a
+ * null never overwrites what was stored; it never refuses the call.
+ */
+export function connectorMeta(request: Request): { version: string | null; startedAt: Date | null } {
+	const v = request.headers.get('x-connector-version');
+	return {
+		version: isConnectorVersion(v) ? v : null,
+		startedAt: parseConnectorStarted(request.headers.get('x-connector-started'))
+	};
+}
+
+/**
  * Looks the token up by its hash. Runs before the body is read or parsed.
- * Also records `last_seen_at` (at most every 5 s, so polling stays cheap).
+ * Also records `last_seen_at` (at most every 5 s, so polling stays cheap), the
+ * reported version and start, and — that check-in being proof the connector
+ * is back — closes its source's open outage at that moment (td-afba28 [C-1]).
  */
 export async function authenticateConnector(
 	request: Request
@@ -62,13 +78,69 @@ export async function authenticateConnector(
 	}
 	if (row.revoked_at) return { ok: false, reason: 'revoked' };
 	if (!row.active) return { ok: false, reason: 'inactive' };
-	await query(
-		`UPDATE external_connectors SET last_seen_at = now()
-		  WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 seconds')`,
-		[row.id]
-	);
+	const meta = connectorMeta(request);
+	await recordCheckIn(row.id, row.source_id, meta);
 	return {
 		ok: true,
 		connector: { connectorId: Number(row.id), sourceId: row.source_id, storeObservers: row.store_observers }
 	};
+}
+
+/**
+ * A check-in, and the end of its source's open outage, in one transaction
+ * (td-afba28). It counts only while the token is still unrevoked and the
+ * source still on when it is written — a revoke or switch-off committing
+ * after the lookup above makes it a no-op (CODEX1 code review #3): the
+ * source row is held FOR SHARE (a switch-off waits, or is seen), and a revoke
+ * of the token row is re-checked by the UPDATE itself.
+ *
+ * The outage close is a separate statement after the token is locked and
+ * written, on purpose: when the worker's outage check holds this token row,
+ * the lock waits for it, and the close then sees the outage it just opened
+ * (refresh.ts watchConnectors).
+ * Throttled: at most every 5 s per token, so polling stays cheap.
+ */
+export async function recordCheckIn(
+	connectorId: string,
+	sourceId: string,
+	meta: { version: string | null; startedAt: Date | null },
+	/** Tests: runs once the source row is held, before the token is written. */
+	afterSourceLock?: () => Promise<void>
+): Promise<void> {
+	const due = await query(
+		`SELECT 1 FROM external_connectors WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 seconds')`,
+		[connectorId]
+	);
+	if (!due.rowCount) return;
+	await withTransaction(async (c) => {
+		const on = await c.query(`SELECT 1 FROM external_sources WHERE id = $1 AND active FOR SHARE`, [sourceId]);
+		if (!on.rowCount) return;
+		if (afterSourceLock) await afterSourceLock();
+		// The token row locked first (a load step holding it FOR SHARE, or the
+		// worker's outage check, can make this wait); only then is the time
+		// read, so a long wait can't record a stale check-in that makes a real
+		// recovery look old (CODEX1 round 6).
+		const due = await c.query(
+			`SELECT 1 FROM external_connectors
+			  WHERE id = $1 AND revoked_at IS NULL AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 seconds')
+			    FOR UPDATE`,
+			[connectorId]
+		);
+		if (!due.rowCount) return;
+		await c.query(
+			`UPDATE external_connectors
+			    SET last_seen_at = clock_timestamp(), version = COALESCE($2, version), started_at = COALESCE($3, started_at)
+			  WHERE id = $1`,
+			[connectorId, meta.version, meta.startedAt]
+		);
+		// Closed at that same moment, read back from the row (a JavaScript Date
+		// would drop the microseconds): never before the outage was detected
+		// (CODEX1 round 5), and the recovering check-in is exactly its end.
+		await c.query(
+			`UPDATE external_connector_outages
+			    SET closed_at = (SELECT last_seen_at FROM external_connectors WHERE id = $2), closed_reason = 'back_online'
+			  WHERE source_id = $1 AND closed_at IS NULL`,
+			[sourceId, connectorId]
+		);
+	});
 }

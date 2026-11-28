@@ -459,7 +459,7 @@ const TYPE_NAMES: Record<string, string> = {
   // Retired by td-7162f6 (totals maintained at write time); history rows remain.
   refresh_species_counts: "Species count refresh (system)",
   repair_hotspot_coords: "Hotspot coordinates (system)",
-  refresh_external_sources: "Other sources refresh (system)",
+  refresh_external_sources: "Other sources check (system)",
 };
 
 export function displayName(

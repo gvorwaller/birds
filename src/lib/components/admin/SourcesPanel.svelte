@@ -16,6 +16,7 @@
 	import AdminBadge from './AdminBadge.svelte';
 	import { findTaxa } from '$lib/taxon-find';
 	import { REFRESH_DAYS_OPTIONS, refreshLabel } from '$lib/external-refresh-policy';
+	import { CONNECTOR_STATE_LABEL, CONNECTOR_STATE_TONE } from '$lib/connector-health-policy';
 
 	type SourcesForm = { kind: 'sources'; ok: boolean; message: string } | null | undefined;
 	let { sources, form }: { sources: AdminSource[] | null; form: SourcesForm } = $props();
@@ -148,9 +149,10 @@
 		);
 	}
 
-	function ago(iso: string | null): string {
+	/** `asOf`: measure against that reading's clock, not the browser's (td-afba28 [A-2]). */
+	function ago(iso: string | null, asOf?: string): string {
 		if (!iso) return 'never';
-		const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+		const s = Math.round(((asOf ? new Date(asOf).getTime() : Date.now()) - new Date(iso).getTime()) / 1000);
 		if (s < 60) return 'just now';
 		if (s < 3600) return `${Math.round(s / 60)} min ago`;
 		if (s < 86400) return `${Math.round(s / 3600)} h ago`;
@@ -261,6 +263,12 @@
 						>{/if}
 				</p>
 			{/if}
+			{#if s.outageSince}
+				<p class="warn-line">
+					<AdminBadge tone="error" label="Offline" />
+					<a href="/admin?tab=health#sys-connectors" data-sveltekit-reload>Connector offline since {when(s.outageSince)}</a>
+				</p>
+			{/if}
 			{#each s.failedRefreshes as f (f.regionCode)}
 				<p class="warn-line">
 					<AdminBadge tone="error" label="Refresh failed" />
@@ -274,12 +282,22 @@
 				<summary>
 					<h4>Connector</h4>
 					<span class="muted sum-note">
-						{active.length === 0
+						{s.connectorState === 'no_token'
 							? 'no active token'
-							: `last seen ${ago(active.map((c) => c.lastSeenAt).filter(Boolean).sort().at(-1) ?? null)}`}
+							: s.connectorState === 'never'
+								? 'never checked in'
+								: `${CONNECTOR_STATE_LABEL[s.connectorState].toLowerCase()}, last seen ${ago(
+									active.map((c) => c.lastSeenAt).filter(Boolean).sort().at(-1) ?? null,
+									s.connectorAsOf
+								)}`}
 					</span>
 				</summary>
 				{@render notice(`${at}:connector`)}
+				<!-- td-afba28: a reading from when this page loaded, dated; the live view is Server health. -->
+				<p class="muted">
+					As of {when(s.connectorAsOf)}.
+					<a href="/admin?tab=health#sys-connectors" data-sveltekit-reload>Live status in Server health</a>
+				</p>
 				{#if s.connectors.length === 0}
 					<p class="muted">No connector token yet. One is created on the server with scripts/connector-token.mjs.</p>
 				{:else}
@@ -288,14 +306,14 @@
 							<li>
 								<div class="line">
 									<strong>{c.label}</strong>
-									{#if c.revokedAt}
+									{#if c.revokedAt || !c.state}
 										<AdminBadge tone="neutral" label="Revoked" />
 									{:else}
-										<AdminBadge tone={c.lastSeenAt ? 'ok' : 'warn'} label={c.lastSeenAt ? 'Active' : 'Never seen'} />
+										<AdminBadge tone={CONNECTOR_STATE_TONE[c.state]} label={CONNECTOR_STATE_LABEL[c.state]} />
 									{/if}
 								</div>
 								<p class="muted">
-									{[`Created ${ago(c.createdAt)}`, `last seen ${ago(c.lastSeenAt)}`, c.revokedAt ? `revoked ${ago(c.revokedAt)}` : null]
+									{[`Created ${ago(c.createdAt, s.connectorAsOf)}`, `last seen ${ago(c.lastSeenAt, s.connectorAsOf)}`, c.revokedAt ? `revoked ${ago(c.revokedAt, s.connectorAsOf)}` : null]
 										.filter(Boolean)
 										.join(' · ')}
 								</p>

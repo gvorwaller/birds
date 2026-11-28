@@ -2,6 +2,7 @@
  * Admin → Sources (td-eec7db Phase 1): the registry, connector health, loads
  * and unmatched taxa, plus the admin actions. Callers check role==='admin'.
  */
+import { connectorState, type ConnectorState } from '$lib/connector-health-policy';
 import { query, withTransaction } from '$lib/db';
 import { buildMatcher } from '$server/species-match';
 import { CLOSED_FOR_LOADING, IngestError, queueExternalLoad, type LoadResult } from './lifecycle';
@@ -13,6 +14,8 @@ export interface AdminConnector {
 	createdAt: string;
 	lastSeenAt: string | null;
 	revokedAt: string | null;
+	/** td-afba28: from lastSeenAt as of the source's connectorAsOf; null when revoked. */
+	state: ConnectorState | null;
 }
 
 export interface AdminLoad {
@@ -81,6 +84,16 @@ export interface AdminSource {
 	/** Loaded, open regions with no load queued or running: what "Reload loaded regions" would queue. */
 	reloadable: number;
 	connectors: AdminConnector[];
+	/**
+	 * td-afba28: the database's clock when the connector rows were read. The
+	 * states and "last seen" are measured against it, never against the
+	 * browser's clock, so a long-open page shows a dated reading (AGY4 [A-2]).
+	 */
+	connectorAsOf: string;
+	/** The source's connector state: its newest non-revoked check-in; 'no_token' without one. */
+	connectorState: ConnectorState | 'no_token';
+	/** An open outage: the last check-in before it. */
+	outageSince: string | null;
 	/** `open`: loads may be queued for the region (td-99eebf). */
 	regions: { code: string; name: string; open: boolean; loadedAt: string | null; window: { start: string; end: string } | null }[];
 	loads: AdminLoad[];
@@ -99,6 +112,34 @@ export interface AdminSource {
 }
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
+
+/**
+ * The connector rows as the Sources card shows them (td-afba28). The query
+ * always returns one row (a LEFT JOIN from a single row) so the clock and the
+ * open outage arrive even for a source with no token; that row has a null id.
+ */
+function connectorView(
+	rows: { id: string | null; label: string; created_at: Date; last_seen_at: Date | null; revoked_at: Date | null; now: Date; outage_since: Date | null }[]
+): Pick<AdminSource, 'connectors' | 'connectorAsOf' | 'connectorState' | 'outageSince'> {
+	const now = rows[0].now;
+	const tokens = rows.filter((c) => c.id != null);
+	const connectors = tokens.map((c) => ({
+		id: Number(c.id),
+		label: c.label,
+		createdAt: c.created_at.toISOString(),
+		lastSeenAt: iso(c.last_seen_at),
+		revokedAt: iso(c.revoked_at),
+		state: c.revoked_at ? null : connectorState(c.last_seen_at, now)
+	}));
+	const live = tokens.filter((c) => !c.revoked_at);
+	const newest = live.map((c) => c.last_seen_at).filter((d): d is Date => d != null).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+	return {
+		connectors,
+		connectorAsOf: now.toISOString(),
+		connectorState: live.length === 0 ? 'no_token' : connectorState(newest, now),
+		outageSince: iso(rows[0].outage_since)
+	};
+}
 
 /**
  * The eBird binomials worth offering for an unmatched trinomial "Genus
@@ -148,9 +189,12 @@ export async function adminSources(): Promise<AdminSource[]> {
 	const out: AdminSource[] = [];
 	for (const s of sources.rows) {
 		const [connectors, regions, loads, queue, unmatched, matched, overrides, fresh, failed, reloadable] = await Promise.all([
-			query<{ id: string; label: string; created_at: Date; last_seen_at: Date | null; revoked_at: Date | null }>(
-				`SELECT id, label, created_at, last_seen_at, revoked_at FROM external_connectors
-				  WHERE source_id = $1 ORDER BY revoked_at NULLS FIRST, created_at DESC`,
+			query<{ id: string; label: string; created_at: Date; last_seen_at: Date | null; revoked_at: Date | null; now: Date; outage_since: Date | null }>(
+				`SELECT k.id, k.label, k.created_at, k.last_seen_at, k.revoked_at, now() AS now,
+				        (SELECT o.last_seen_at FROM external_connector_outages o WHERE o.source_id = $1 AND o.closed_at IS NULL) AS outage_since
+				   FROM (SELECT 1) one
+				   LEFT JOIN external_connectors k ON k.source_id = $1
+				  ORDER BY k.revoked_at NULLS FIRST, k.created_at DESC`,
 				[s.id]
 			),
 			query<{ code: string; name: string; queueable: boolean; finished_at: Date | null; window_start: string | null; window_end: string | null }>(
@@ -301,13 +345,7 @@ export async function adminSources(): Promise<AdminSource[]> {
 				at: f.created_at.toISOString()
 			})),
 			reloadable: Number(reloadable.rows[0].n),
-			connectors: connectors.rows.map((c) => ({
-				id: Number(c.id),
-				label: c.label,
-				createdAt: c.created_at.toISOString(),
-				lastSeenAt: iso(c.last_seen_at),
-				revokedAt: iso(c.revoked_at)
-			})),
+			...connectorView(connectors.rows),
 			regions: [...regions.rows].sort((a, b) => a.name.localeCompare(b.name, s.locale)).map((r) => ({
 				code: r.code,
 				name: r.name,

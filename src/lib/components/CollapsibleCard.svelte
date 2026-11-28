@@ -14,6 +14,7 @@
    * groups on /forecast/data.
    */
   import { browser } from "$app/environment";
+  import { untrack } from "svelte";
 
   let {
     id,
@@ -22,12 +23,19 @@
     badge = null,
     /** Default state the first time this card is ever seen. */
     initiallyOpen = true,
+    /**
+     * Open on arrival whatever was remembered — a link aimed at this card
+     * (td-afba28). Read once: the owner can still collapse it, and the
+     * remembered state changes only when they toggle.
+     */
+    forceOpen = false,
     children,
   }: {
     id: string;
     title: string;
     badge?: string | number | null;
     initiallyOpen?: boolean;
+    forceOpen?: boolean;
     children: import("svelte").Snippet;
   } = $props();
 
@@ -45,7 +53,8 @@
   // null = "no explicit choice yet", so the prop default stays live rather
   // than being captured once at init.
   let chosen = $state<boolean | null>(null);
-  const open = $derived(chosen ?? initiallyOpen);
+  let forced = $state(untrack(() => forceOpen));
+  const open = $derived(forced || (chosen ?? initiallyOpen));
   $effect(() => {
     const stored = readState()[id];
     if (typeof stored === "boolean") chosen = stored;
@@ -53,6 +62,7 @@
 
   function toggle() {
     const next = !open;
+    forced = false;
     chosen = next;
     if (!browser) return;
     try {

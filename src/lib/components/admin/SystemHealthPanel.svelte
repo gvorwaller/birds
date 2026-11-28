@@ -5,10 +5,11 @@
 	 * tab opens and every 30 s while it stays open and visible. Each card shows
 	 * its own "unavailable" reason; one failed card never hides the others.
 	 */
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import CollapsibleCard from '$components/CollapsibleCard.svelte';
 	import AdminBadge from './AdminBadge.svelte';
 	import type { HealthCard, SystemHealth } from '$server/system-health';
+	import ConnectorsCardBody from './ConnectorsCard.svelte';
 
 	const REFRESH_MS = 30_000;
 	const TABLES_SHOWN = 10;
@@ -16,8 +17,21 @@
 	let health = $state<SystemHealth | null>(null);
 	let loadError = $state<string | null>(null);
 	let showAllTables = $state(false);
+	/**
+	 * Arrived by a link aimed at the connectors card (a connector push,
+	 * td-afba28): open it whatever was remembered, and bring it into view once
+	 * the first reading has rendered.
+	 */
+	let aimConnectors = $state(false);
+	let aimed = false;
+	$effect(() => {
+		if (!aimConnectors || aimed || !health) return;
+		aimed = true;
+		void tick().then(() => document.getElementById('sys-connectors')?.scrollIntoView({ block: 'start' }));
+	});
 
 	onMount(() => {
+		aimConnectors = location.hash === '#sys-connectors';
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		let controller: AbortController | null = null;
 		let lastLoadedAt = 0;
@@ -132,6 +146,8 @@
 {/if}
 {#if !health}
 	{#if !loadError}<p class="muted">Loading system cards…</p>{/if}
+	<!-- A link aimed at the connectors card finds its target before the first reading. -->
+	<div id="sys-connectors"></div>
 {:else}
 	{@const h = health}
 	<p class="muted">Read at {fmtTime(h.now)}. These cards refresh every 30 s while this tab is open.</p>
@@ -201,6 +217,12 @@
 			{/if}
 		{/if}
 	</CollapsibleCard>
+
+	<div id="sys-connectors" class="anchor">
+		<CollapsibleCard id="sys-connectors" title="Sightings connectors" forceOpen={aimConnectors}>
+			<ConnectorsCardBody card={h.connectors} now={h.now} appVersion={h.appVersion} />
+		</CollapsibleCard>
+	</div>
 
 	<CollapsibleCard id="sys-postgres" title="Database">
 		{#if h.disk.ok}
@@ -359,6 +381,9 @@
 	dd {
 		margin: 0;
 		overflow-wrap: anywhere;
+	}
+	.anchor {
+		scroll-margin-top: 12px;
 	}
 	.queue {
 		list-style: none;

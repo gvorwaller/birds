@@ -114,17 +114,31 @@ export function finishCallBody(load: ClaimedLoad, manifest: Manifest) {
 	return { ...fenceOf(load), manifest };
 }
 
+/**
+ * What the connector says about itself on every call (td-afba28): its build
+ * and when its process started. Sent as headers, not body fields, so an app
+ * of either version accepts the call during a deploy (the bodies are checked
+ * field by field).
+ */
+export interface ConnectorIdentity {
+	version: string;
+	/** ISO time, captured once when the process started. */
+	startedAt: string;
+}
+
 export class IngestClient {
 	private readonly fetchFn: FetchFn;
 	private readonly sleep: SleepFn;
+	private readonly identity: ConnectorIdentity | null;
 
 	constructor(
 		private readonly base: URL,
 		private readonly token: string,
-		opts: { fetch?: FetchFn; sleep?: SleepFn } = {}
+		opts: { fetch?: FetchFn; sleep?: SleepFn; identity?: ConnectorIdentity } = {}
 	) {
 		this.fetchFn = opts.fetch ?? ((input, init) => fetch(input, init));
 		this.sleep = opts.sleep ?? abortableSleep;
+		this.identity = opts.identity ?? null;
 	}
 
 	private url(path: string): string {
@@ -159,7 +173,10 @@ export class IngestClient {
 					headers: {
 						authorization: `Bearer ${this.token}`,
 						'content-type': 'application/json',
-						'x-request-id': randomUUID()
+						'x-request-id': randomUUID(),
+						...(this.identity
+							? { 'x-connector-version': this.identity.version, 'x-connector-started': this.identity.startedAt }
+							: {})
 					},
 					body: payload,
 					signal: AbortSignal.any([signal, AbortSignal.timeout(deadlineMs)])

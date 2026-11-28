@@ -32,7 +32,12 @@ function source(over: Partial<AdminSource> = {}): AdminSource {
 		refreshDays: 7,
 		failedRefreshes: [],
 		reloadable: 1,
-		connectors: [{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: '2026-10-29T18:00:00Z', revokedAt: null }],
+		connectors: [
+			{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: '2026-10-29T18:00:00Z', revokedAt: null, state: 'online' }
+		],
+		connectorAsOf: '2026-10-29T18:00:30Z',
+		connectorState: 'online',
+		outageSince: null,
 		regions: [{ code: 'NO-18', name: 'Nordland', open: true, loadedAt: '2026-10-29T12:00:00Z', window: null }],
 		loads: [],
 		oldestQueuedAt: null,
@@ -94,7 +99,7 @@ function folds(body: string): { title: string; open: boolean }[] {
 	}
 	return out;
 }
-const named = (title: string) => title.replace(/\s*\(.*$/, '').replace(/ (last seen|no active).*$/, '');
+const named = (title: string) => title.replace(/\s*\(.*$/, '').replace(/ (online|quiet|offline|never checked in|no active).*$/, '');
 
 describe('Admin → Sources folds (td-2219df)', () => {
 	it('puts every section in a fold, headings kept, only the load sections open', () => {
@@ -120,7 +125,8 @@ describe('Admin → Sources folds (td-2219df)', () => {
 		expect(body).toMatch(/<summary[^>]*><h4[^>]*>Re-match species<\/h4><\/summary>/);
 		// Counts and the connector state are readable while closed.
 		expect(f.find((x) => x.title.startsWith('Unmatched'))?.title).toBe('Unmatched taxa (1)');
-		expect(f.find((x) => x.title.startsWith('Connector'))?.title).toMatch(/^Connector last seen /);
+		// Measured against the reading's clock (30 s after the check-in), not the test machine's (td-afba28).
+		expect(f.find((x) => x.title.startsWith('Connector'))?.title).toBe('Connector online, last seen just now');
 		// Nothing is busy on the server: the buttons are live and say what they do.
 		expect(body).toContain('Match to Rock Pigeon');
 		expect(body).not.toContain('Matching…');
@@ -156,7 +162,7 @@ describe('Admin → Sources folds (td-2219df)', () => {
 	});
 
 	it('says when no connector token is active', () => {
-		const { body } = render(SourcesPanel, { props: { sources: [source({ connectors: [] })], form: null } });
+		const { body } = render(SourcesPanel, { props: { sources: [source({ connectors: [], connectorState: 'no_token' })], form: null } });
 		expect(folds(body).find((x) => x.title.startsWith('Connector'))?.title).toBe('Connector no active token');
 	});
 
@@ -258,5 +264,55 @@ describe('Admin → Sources refresh and alerts (td-9fe839)', () => {
 		expect(text(render(SourcesPanel, { props: { sources: [source({ matched })], form: null } }).body)).toContain(
 			'matched as its species (nominate subspecies)'
 		);
+	});
+});
+
+describe('Admin → Sources: connector freshness (td-afba28)', () => {
+	const text = (body: string) => body.replace(/<!--[^>]*-->/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+	it('shows the state read when the page loaded, dated, with a link to the live view', () => {
+		const { body } = render(SourcesPanel, {
+			props: {
+				sources: [
+					source({
+						connectors: [
+							{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: '2026-10-29T17:00:00Z', revokedAt: null, state: 'offline' }
+						],
+						connectorAsOf: '2026-10-29T18:00:00Z',
+						connectorState: 'offline'
+					})
+				],
+				form: null
+			}
+		});
+		// "last seen" against the reading's clock, not the test machine's.
+		expect(folds(body).find((x) => x.title.startsWith('Connector'))?.title).toBe('Connector offline, last seen 1 h ago');
+		expect(text(body)).toMatch(/As of Oct 29, \d+:00 [AP]M\. Live status in Server health/);
+		expect(body).toMatch(/<a href="\/admin\?tab=health#sys-connectors" data-sveltekit-reload[^>]*>Live status in Server health<\/a>/);
+		expect(text(body)).toContain('droplet Offline');
+	});
+
+	it('says only "never checked in" for a connector that never has (AGY4)', () => {
+		const { body } = render(SourcesPanel, {
+			props: {
+				sources: [
+					source({
+						connectors: [{ id: 1, label: 'droplet', createdAt: '2026-10-20T10:00:00Z', lastSeenAt: null, revokedAt: null, state: 'never' }],
+						connectorState: 'never'
+					})
+				],
+				form: null
+			}
+		});
+		expect(folds(body).find((x) => x.title.startsWith('Connector'))?.title).toBe('Connector never checked in');
+	});
+
+	it('puts an open outage with the attention lines, linked to Server health', () => {
+		const { body } = render(SourcesPanel, {
+			props: { sources: [source({ connectorState: 'offline', outageSince: '2026-10-29T17:00:00Z' })], form: null }
+		});
+		expect(text(body)).toMatch(/Offline Connector offline since Oct 29, \d+:00 [AP]M/);
+		expect(body).toMatch(/<a href="\/admin\?tab=health#sys-connectors" data-sveltekit-reload[^>]*>Connector offline since/);
+		expect(text(render(SourcesPanel, { props: { sources: [source()], form: null } }).body)).not.toContain('Connector offline since');
 	});
 });

@@ -412,6 +412,33 @@ describe('ingest client', () => {
 		expect(String(err.message)).not.toContain(TOKEN);
 	});
 
+	it('sends its version and one stable start time on every call, retries included (td-afba28)', async () => {
+		const seen: (Record<string, string> | undefined)[] = [];
+		let n = 0;
+		const c = new IngestClient(base, TOKEN, {
+			fetch: async (_url, init) => {
+				seen.push(init?.headers as Record<string, string>);
+				return ++n === 1 ? new Response('{}', { status: 503 }) : new Response(null, { status: 204 });
+			},
+			sleep: noSleep,
+			identity: { version: 'abc1234', startedAt: '2026-11-27T21:00:00.000Z' }
+		});
+		expect(await c.claim('claim-key-1', never)).toBeNull();
+		expect(await c.claim('claim-key-2', never)).toBeNull();
+		expect(seen).toHaveLength(3);
+		for (const h of seen) {
+			expect(h).toMatchObject({ 'x-connector-version': 'abc1234', 'x-connector-started': '2026-11-27T21:00:00.000Z' });
+		}
+		// Without an identity (an older build) nothing extra is sent.
+		const plain: (Record<string, string> | undefined)[] = [];
+		const old = new IngestClient(base, TOKEN, {
+			fetch: async (_url, init) => (plain.push(init?.headers as Record<string, string>), new Response(null, { status: 204 })),
+			sleep: noSleep
+		});
+		await old.claim('claim-key-3', never);
+		expect(Object.keys(plain[0] ?? {})).not.toContain('x-connector-version');
+	});
+
 	it('retries 503 and network errors, returns null for 204, and classifies lease loss', async () => {
 		let n = 0;
 		const c = new IngestClient(base, TOKEN, {

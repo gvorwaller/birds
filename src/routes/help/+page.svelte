@@ -1454,6 +1454,15 @@
 								failure, they are. Finished jobs are kept 90 days.
 							</li>
 							<li>
+								<strong>Sightings connectors</strong>: for each outside source
+								(Norway, Sweden), whether its connector program is checking in
+								(Online, Quiet, Offline), what it is loading, its last load, the
+								refresh setting with the oldest loaded region, the version it last
+								reported (flagged if it differs from the app's) and since when it
+								has been running. <strong>Tokens and loads</strong> opens the source
+								on the Sources tab.
+							</li>
+							<li>
 								<strong>Database</strong>: free space on the server's disk, the
 								database's size, its main memory settings, and how often reads were
 								answered from Postgres's memory. Those percentages are totals since
@@ -1739,7 +1748,8 @@
 						<strong>Refresh → Refresh loaded regions</strong> (Off, Weekly, Every 2
 						weeks, Monthly; then <strong>Save</strong>) sets how often each loaded
 						region reloads on its own. One region reloads at a time across all
-						sources, the one with the oldest reports first. A refresh that fails
+						sources, and about one automatic reload is queued an hour at most, the
+						one with the oldest reports first. A refresh that fails
 						keeps the previous reports and is tried again the next interval. Off
 						stops new automatic reloads; nothing users see changes until a reload
 						finishes.
@@ -1764,6 +1774,26 @@
 						is skipped if you matched the taxa, or a later load replaced the failed
 						one, before it went out. The card also says how many taxa need a match,
 						and which automatic refreshes failed.
+					</li>
+					<li>
+						<strong>Connector.</strong> Each source's connector program checks in
+						every 10 seconds while it waits for work. The badge reads
+						<strong>Online</strong> (heard from in the last 2 minutes),
+						<strong>Quiet</strong> (2–5 minutes) or <strong>Offline</strong> (longer);
+						it is the reading from when the page loaded ("As of …"), and
+						<strong>Live status in Server health</strong> opens the live card.
+						If an active source's connector has been silent for 15 minutes, a
+						notification goes to the admin devices with notifications on
+						("Sweden connector offline"), and one more when it checks in again
+						("back online"); tapping either opens Server health. Each counts as sent
+						once the push service accepts it for at least one admin device, so a
+						device that couldn't be reached then misses it. A silence that ends
+						before the app's next check (every 5 minutes) is not reported, and if the
+						connector is back before the first notification went out, neither is
+						sent. Switching a source off or revoking its token sends nothing. These
+						come from the app's own background worker, so if the whole server is
+						down nothing can be sent. The Server health tab's Worker card shows
+						that.
 					</li>
 					<li>
 						<strong>Nominate subspecies match on their own.</strong> A name like
